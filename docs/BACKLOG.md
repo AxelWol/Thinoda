@@ -41,10 +41,14 @@ persistence, accessibility and verification constraints are in the current
 
 **Notes formatting:** Markdown-source strikethrough is available in the Notes
 inspector and enlarged editor, with bounded rendered-span validation and
-localized feedback instead of silently inserting ineffective markers. Applying
-one action across paragraphs or inside code, handling over-limit notes, and
-extending equivalent validation to the older bold/italic actions remain open.
-This does not implement selected-range formatting in board-card titles.
+localized feedback instead of silently inserting ineffective markers. Bold and
+italic now validate their rendered spans, other inline styles and document
+structure; the same preservation checks apply to strikethrough. Rejected
+actions retain focused drafts for save and recovery. Applying one action across
+paragraphs or inside code and styling over-limit notes remain open. Caret-only
+insertion and marker removal are also rejected if either note exceeds the
+preview bounds or an existing rendered style would change. This does not
+implement selected-range formatting in board-card titles.
 
 **Compact Settings and recovery warning:** the previously obstructing warning
 now uses a bounded, scrollable notification strip while nonmodal Settings is

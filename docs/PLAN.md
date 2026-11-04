@@ -66,6 +66,17 @@ Selections crossing paragraphs and code are not supported by this action.
 This is separate from the open selected-range board-card model; see the
 [critique](FREEFORM.md#notes-strikethrough-checkpoint-and-critique).
 
+**Notes formatting safety continuation:** bold, italic and strikethrough check
+the bounded Markdown preview before committing. For nonempty selections they
+preserve projected text, other inline styles, document structure and the target
+style outside the selection. Empty marker pairs preserve existing rendered
+content and styles. Common nested bold/italic and escaped-marker examples remain
+reversible. Rejected actions retain focused drafts, selection and unsaved-change
+protection; they do not promote a plain note to Markdown. Both source and result
+must fit the preview limits, including for caret-only actions and marker
+removal. See the [critique](FREEFORM.md#notes-strikethrough-checkpoint-and-critique)
+for conservative rejections and remaining limitations.
+
 **2026-11-03 selected-connector checkpoint:** the board toolbox offers straight,
 elbow and curved routes, start/end arrows, width presets and an exact width,
 and automatic, swatch or custom color for a single selected connector. Compact

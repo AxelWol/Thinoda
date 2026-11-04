@@ -79,6 +79,7 @@ Formatting is stored as Markdown text; other views and exports may show markup.|
 Bold notes|Notas em negrito
 Strikethrough notes|Tachar notas
 Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.|Não é possível tachar aqui. Selecione texto em um parágrafo fora de código ou encurte a nota.
+Cannot apply formatting to this selection. The formatting action was canceled.|Não é possível aplicar formatação a esta seleção. A ação de formatação foi cancelada.
 Board export changes|Alterações na exportação do quadro
 The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.|O formato selecionado altera ou omite conteúdo do quadro. O quadro na memória permanece inalterado; salve-o como Thinoda para preservá-lo.
 Shapes omitted|Formas omitidas

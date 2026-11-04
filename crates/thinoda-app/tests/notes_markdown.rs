@@ -6,7 +6,7 @@ use thinoda_app::{
     i18n::t,
 };
 use thinoda_canvas::Action;
-use thinoda_platform::settings::ThemeMode;
+use thinoda_platform::{Paths, recovery::RecoveryManager, settings::ThemeMode};
 
 #[test]
 fn copying_plain_text_requires_preview_and_does_not_change_the_note_or_undo_history() {
@@ -484,17 +484,229 @@ fn notes_strikethrough_commits_focused_unicode_draft_as_one_undo() {
 }
 
 #[test]
-fn notes_strikethrough_rejects_unrenderable_selection_without_editing() {
+fn notes_emphasis_rejects_unrenderable_selection_without_editing() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for (label, warning, expected) in [
+            (
+                "Bold notes",
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+                "**first**\n\nsecond",
+            ),
+            (
+                "Italic notes",
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+                "*first*\n\nsecond",
+            ),
+            (
+                "Strikethrough notes",
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+                "~~first~~\n\nsecond",
+            ),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.mode = mode;
+            app.format_tab = thinoda_app::app::FormatTab::Data;
+            let doc = app.doc_mut().unwrap();
+            let root = doc.doc.sheet().root;
+            let source = "first\n\nsecond";
+            doc.doc
+                .edit_sheet("Fixture", |sheet| {
+                    sheet.set_notes(root, Some(source.into()))
+                })
+                .unwrap();
+            let revision = doc.doc.state_id();
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(1280.0, 1000.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .focus();
+            h.run_steps(3);
+            h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+            h.run_steps(3);
+            h.get_by_role_and_label(Role::Button, t(label))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            let doc = h.state().doc().unwrap();
+            assert_eq!(doc.doc.state_id(), revision, "{mode:?} {label}");
+            let note = doc.doc.sheet().root_topic().notes.as_ref().unwrap();
+            assert_eq!(&**note, source);
+            assert!(!note.is_markdown());
+            assert!(h.query_by_label(t(warning)).is_some());
+
+            let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+            let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+            let selection = state.cursor.char_range().unwrap().as_sorted_char_range();
+            assert_eq!(selection.start.0..selection.end.0, 0..13);
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(5),
+                )));
+            state.store(&h.ctx, focused);
+            h.run_steps(3);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            let note = h
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap();
+            assert_eq!(&**note, expected);
+            assert!(note.is_markdown());
+            assert!(h.query_by_label(t(warning)).is_none());
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+            let note = h
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap();
+            assert_eq!(&**note, source);
+            assert!(!note.is_markdown());
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+            let note = h
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap();
+            assert_eq!(&**note, expected);
+            assert!(note.is_markdown());
+        }
+    }
+}
+
+#[test]
+fn notes_nested_bold_and_italic_remain_reversible_in_both_views() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for (label, source, selection) in [
+            ("Bold notes", "*café*", 0..6),
+            ("Italic notes", "**café**", 2..6),
+            ("Italic notes", "**café**", 1..7),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.mode = mode;
+            app.format_tab = thinoda_app::app::FormatTab::Data;
+            let doc = app.doc_mut().unwrap();
+            let root = doc.doc.sheet().root;
+            doc.doc
+                .edit_sheet("Fixture", |sheet| {
+                    sheet.set_markdown_notes(root, Some(source.into()))
+                })
+                .unwrap();
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(1280.0, 1000.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .focus();
+            h.run_steps(3);
+            let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+            let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(selection.start),
+                    egui::text::CCursor::new(selection.end),
+                )));
+            state.store(&h.ctx, focused);
+            h.run_steps(3);
+            h.get_by_role_and_label(Role::Button, t(label))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            let note = h
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap();
+            assert_eq!(&**note, "***café***", "{mode:?} {label}");
+            let document = thinoda_core::notes::formatted_document(note).unwrap();
+            assert!(
+                document
+                    .paragraphs
+                    .iter()
+                    .flat_map(|p| &p.runs)
+                    .any(|run| { run.text == "café" && run.style.bold && run.style.italic })
+            );
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .as_deref(),
+                Some(source)
+            );
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .as_deref(),
+                Some("***café***")
+            );
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .as_deref(),
+                Some(source)
+            );
+        }
+    }
+}
+
+#[test]
+fn notes_reject_partial_delimiters_that_would_change_other_styles() {
+    let warning = "Cannot apply formatting to this selection. The formatting action was canceled.";
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;
         app.format_tab = thinoda_app::app::FormatTab::Data;
         let doc = app.doc_mut().unwrap();
         let root = doc.doc.sheet().root;
-        let source = "first\n\nsecond";
         doc.doc
             .edit_sheet("Fixture", |sheet| {
-                sheet.set_notes(root, Some(source.into()))
+                sheet.set_markdown_notes(root, Some("__a__ b".into()))
             })
             .unwrap();
         let revision = doc.doc.state_id();
@@ -505,51 +717,374 @@ fn notes_strikethrough_rejects_unrenderable_selection_without_editing() {
         h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
             .focus();
         h.run_steps(3);
-        h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+        let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+        let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(4),
+            )));
+        state.store(&h.ctx, focused);
         h.run_steps(3);
-        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
             .scroll_to_me();
         h.run_steps(8);
-        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
             .click();
         h.run_steps(4);
         let doc = h.state().doc().unwrap();
         assert_eq!(doc.doc.state_id(), revision);
         let note = doc.doc.sheet().root_topic().notes.as_ref().unwrap();
-        assert_eq!(&**note, source);
-        assert!(!note.is_markdown());
-        let warning = t(
-            "Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.",
-        );
-        assert!(h.query_by_label(warning).is_some());
-
+        assert_eq!(&**note, "__a__ b");
+        assert!(note.is_markdown());
+        assert!(h.query_by_label(t(warning)).is_some());
+        let editor = h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"));
+        assert!(editor.is_focused());
         let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
-        let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
-        let selection = state.cursor.char_range().unwrap().as_sorted_char_range();
-        assert_eq!(selection.start.0..selection.end.0, 0..13);
-        state
+        let selection = egui::TextEdit::load_state(&h.ctx, focused)
+            .unwrap()
             .cursor
-            .set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(5),
-            )));
-        state.store(&h.ctx, focused);
-        h.run_steps(3);
-        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
-            .click();
-        h.run_steps(4);
-        assert_eq!(
-            h.state()
+            .char_range()
+            .unwrap()
+            .as_sorted_char_range();
+        assert_eq!(selection.start.0..selection.end.0, 1..4);
+    }
+}
+
+#[test]
+fn notes_empty_emphasis_rejects_code_and_existing_marker_boundaries() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for (label, source, caret, warning) in [
+            (
+                "Bold notes",
+                "**café**",
+                1,
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+            ),
+            (
+                "Italic notes",
+                "`café`",
+                3,
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+            ),
+            (
+                "Italic notes",
+                "**café**",
+                4,
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+            ),
+            (
+                "Strikethrough notes",
+                "~~café~~",
+                1,
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+            ),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.mode = mode;
+            app.format_tab = thinoda_app::app::FormatTab::Data;
+            let doc = app.doc_mut().unwrap();
+            let root = doc.doc.sheet().root;
+            doc.doc
+                .edit_sheet("Fixture", |sheet| {
+                    sheet.set_markdown_notes(root, Some(source.into()))
+                })
+                .unwrap();
+            let revision = doc.doc.state_id();
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(1280.0, 1000.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .focus();
+            h.run_steps(3);
+            let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+            let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(caret),
+                )));
+            state.store(&h.ctx, focused);
+            h.run_steps(3);
+            h.get_by_role_and_label(Role::Button, t(label))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            let doc = h.state().doc().unwrap();
+            assert_eq!(doc.doc.state_id(), revision, "{mode:?} {label}");
+            assert_eq!(doc.doc.sheet().root_topic().notes.as_deref(), Some(source));
+            assert!(h.query_by_label(t(warning)).is_some());
+            assert_eq!(h.ctx.memory(|memory| memory.focused()), Some(focused));
+            let selection = egui::TextEdit::load_state(&h.ctx, focused)
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap()
+                .as_sorted_char_range();
+            assert_eq!(selection.start.0..selection.end.0, caret..caret);
+        }
+    }
+}
+
+#[test]
+fn empty_notes_emphasis_allows_typing_and_undo_in_both_views() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for (label, placeholder, formatted, caret) in [
+            ("Bold notes", "a****b", "a**é**b", 3),
+            ("Italic notes", "a**b", "a*é*b", 2),
+            ("Strikethrough notes", "a~~~~b", "a~~é~~b", 3),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.mode = mode;
+            app.format_tab = thinoda_app::app::FormatTab::Data;
+            let doc = app.doc_mut().unwrap();
+            let root = doc.doc.sheet().root;
+            doc.doc
+                .edit_sheet("Fixture", |sheet| sheet.set_notes(root, Some("ab".into())))
+                .unwrap();
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(1280.0, 1000.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .focus();
+            h.run_steps(3);
+            let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+            let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(1),
+                )));
+            state.store(&h.ctx, focused);
+            h.run_steps(3);
+            h.get_by_role_and_label(Role::Button, t(label))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            let note = h
+                .state()
                 .doc()
                 .unwrap()
                 .doc
                 .sheet()
                 .root_topic()
                 .notes
-                .as_deref(),
-            Some("~~first~~\n\nsecond")
-        );
-        assert!(h.query_by_label(warning).is_none());
+                .as_ref()
+                .unwrap();
+            assert_eq!(&**note, placeholder, "{mode:?} {label}");
+            assert!(note.is_markdown());
+            let selection = egui::TextEdit::load_state(&h.ctx, focused)
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap()
+                .as_sorted_char_range();
+            assert_eq!(selection.start.0..selection.end.0, caret..caret);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .type_text("é");
+            h.run_steps(2);
+            h.ctx.memory_mut(|memory| memory.surrender_focus(focused));
+            h.run_steps(4);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .as_deref(),
+                Some(formatted),
+                "{mode:?} {label}"
+            );
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .as_deref(),
+                Some(placeholder)
+            );
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+            let note = h
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap();
+            assert_eq!(&**note, "ab");
+            assert!(!note.is_markdown());
+        }
+    }
+}
+
+#[test]
+fn rejected_notes_formatting_preserves_a_focused_draft() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for (label, warning) in [
+            (
+                "Bold notes",
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+            ),
+            (
+                "Italic notes",
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+            ),
+            (
+                "Strikethrough notes",
+                "Cannot apply formatting to this selection. The formatting action was canceled.",
+            ),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.mode = mode;
+            app.format_tab = thinoda_app::app::FormatTab::Data;
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(1280.0, 1000.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .focus();
+            h.run_steps(2);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .type_text("first\n\nsecond");
+            h.run_steps(2);
+            h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+            h.run_steps(2);
+            h.get_by_role_and_label(Role::Button, t(label))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            let editor = h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"));
+            assert!(editor.is_focused());
+            assert_eq!(editor.value().as_deref(), Some("first\n\nsecond"));
+            assert!(h.state().doc().unwrap().is_dirty(), "{mode:?} {label}");
+            assert!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .is_none()
+            );
+            let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+            h.ctx.memory_mut(|memory| memory.surrender_focus(focused));
+            h.run_steps(4);
+            let note = h
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap();
+            assert_eq!(&**note, "first\n\nsecond", "{mode:?} {label}");
+            assert!(!note.is_markdown());
+            assert!(h.query_by_label(t(warning)).is_some());
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .is_none()
+            );
+            h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .as_deref(),
+                Some("first\n\nsecond")
+            );
+        }
+    }
+}
+
+#[test]
+fn rejected_notes_formatting_keeps_draft_for_recovery_and_native_save() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for label in ["Bold notes", "Italic notes", "Strikethrough notes"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("draft.thinoda");
+            let mut app = ThinodaApp::headless();
+            app.mode = mode;
+            app.format_tab = thinoda_app::app::FormatTab::Data;
+            app.doc_mut().unwrap().save_to(&path, false).unwrap();
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(1280.0, 1000.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .focus();
+            h.run_steps(2);
+            h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                .type_text("first\n\nsecond");
+            h.run_steps(2);
+            h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+            h.run_steps(2);
+            h.get_by_role_and_label(Role::Button, t(label))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            assert!(h.state().doc().unwrap().is_dirty(), "{mode:?} {label}");
+            let paths = Paths::from_root(dir.path().join("profile"));
+            let recovery = RecoveryManager::start(&paths).unwrap();
+            h.state_mut().doc_mut().unwrap().snapshot(&recovery);
+            recovery.flush().unwrap();
+            recovery.suspend().unwrap();
+            let orphans = RecoveryManager::find_orphans(&paths);
+            let recovered = orphans[0].docs[0].load().unwrap();
+            let note = recovered.active().root_topic().notes.as_ref().unwrap();
+            assert_eq!(&**note, "first\n\nsecond", "{mode:?} {label}");
+            assert!(!note.is_markdown());
+            assert!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .is_none()
+            );
+            drop(orphans);
+            recovery.resume().unwrap();
+            recovery.finish().unwrap();
+            h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::S);
+            h.run_steps(4);
+            let saved = OpenDoc::open(&path).unwrap();
+            let note = saved.doc.sheet().root_topic().notes.as_ref().unwrap();
+            assert_eq!(&**note, "first\n\nsecond", "{mode:?} {label}");
+            assert!(!note.is_markdown());
+        }
     }
 }
 

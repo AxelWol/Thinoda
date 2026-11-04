@@ -3,7 +3,7 @@ pub(crate) const EXPORT_SOURCE_WARNING: &str = "This format exports formatted no
 pub(crate) const EXPORT_SOURCE_REQUIRED: &str = "This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.";
 
 use egui::{Id, Response, Ui};
-use pulldown_cmark::{Event, Parser, Tag};
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 use crate::{i18n::t, legal_markdown::Markdown};
 
@@ -14,15 +14,104 @@ pub(crate) const FREEMIND_LIMIT: &str = "FreeMind note export limit reached. The
 pub(crate) const FREEMIND_UNSUPPORTED: &str = "FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.";
 pub(crate) const EXCEL_LIMIT: &str = "Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.";
 pub(crate) const EXCEL_UNSUPPORTED: &str = "Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.";
-const STRIKE_UNAVAILABLE: &str = "Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.";
+const EMPHASIS_UNAVAILABLE: &str =
+    "Cannot apply formatting to this selection. The formatting action was canceled.";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Format {
     Bold,
     Italic,
     Strike,
     Bullet,
     Numbered,
+}
+
+fn marker_is_escaped(source: &str, position: usize) -> bool {
+    source[..position]
+        .bytes()
+        .rev()
+        .take_while(|byte| *byte == b'\\')
+        .count()
+        % 2
+        == 1
+}
+
+fn unescaped_asterisk_run(source: &str, position: usize) -> usize {
+    let before = source[..position]
+        .bytes()
+        .rev()
+        .take_while(|byte| *byte == b'*')
+        .count();
+    let after = source[position..]
+        .bytes()
+        .take_while(|byte| *byte == b'*')
+        .count();
+    (before + after).saturating_sub(usize::from(marker_is_escaped(source, position - before)))
+}
+
+fn italic_marker_runs_are_odd(opening: usize, closing: usize) -> bool {
+    opening % 2 == 1 && closing % 2 == 1
+}
+
+fn empty_emphasis_in_unsupported_context(source: &str, selection: &std::ops::Range<usize>) -> bool {
+    let only_whitespace = source
+        .chars()
+        .skip(selection.start)
+        .take(selection.end.saturating_sub(selection.start))
+        .all(char::is_whitespace);
+    if !only_whitespace {
+        return false;
+    }
+    let position = source
+        .char_indices()
+        .nth(selection.end)
+        .map_or(source.len(), |(byte, _)| byte);
+    let bytes = source.as_bytes();
+    let mut adjacent_runs = Vec::new();
+    for candidate in [position.checked_sub(1), Some(position)]
+        .into_iter()
+        .flatten()
+    {
+        let Some(&marker) = bytes.get(candidate) else {
+            continue;
+        };
+        if !matches!(marker, b'*' | b'_' | b'~') {
+            continue;
+        }
+        let mut start = candidate;
+        let mut end = candidate + 1;
+        while start > 0 && bytes[start - 1] == marker {
+            start -= 1;
+        }
+        while end < bytes.len() && bytes[end] == marker {
+            end += 1;
+        }
+        if !adjacent_runs.contains(&(start..end)) {
+            adjacent_runs.push(start..end);
+        }
+    }
+    if !preview_allowed(source) {
+        return true;
+    }
+    Parser::new_ext(source, crate::legal_markdown::OPTIONS)
+        .into_offset_iter()
+        .any(|(event, range)| {
+            let inside = range.start < position && position < range.end;
+            match event {
+                Event::Code(_) | Event::Html(_) | Event::InlineHtml(_) => inside,
+                Event::Start(Tag::CodeBlock(_)) => inside,
+                Event::Start(Tag::Strong | Tag::Emphasis | Tag::Strikethrough) => {
+                    adjacent_runs.iter().any(|run| {
+                        run.contains(&range.start)
+                            || range
+                                .end
+                                .checked_sub(1)
+                                .is_some_and(|last| run.contains(&last))
+                    })
+                }
+                _ => false,
+            }
+        })
 }
 
 fn remove_emphasis(
@@ -36,20 +125,49 @@ fn remove_emphasis(
         .strip_prefix(delimiter)
         .and_then(|text| text.strip_suffix(delimiter))
     {
-        let first = source[..start].chars().count();
-        return Some((
-            format!("{}{}{}", &source[..start], inner, &source[end..]),
-            first..first + inner.chars().count(),
-        ));
+        let opening = unescaped_asterisk_run(source, start);
+        let closing = unescaped_asterisk_run(source, end - delimiter.len());
+        if !marker_is_escaped(source, start)
+            && !marker_is_escaped(source, end - delimiter.len())
+            && (delimiter != "*" || italic_marker_runs_are_odd(opening, closing))
+        {
+            let first = source[..start].chars().count();
+            return Some((
+                format!("{}{}{}", &source[..start], inner, &source[end..]),
+                first..first + inner.chars().count(),
+            ));
+        }
     }
     if source[..start].ends_with(delimiter) && source[end..].starts_with(delimiter) {
-        let prefix = &source[..start - delimiter.len()];
-        let suffix = &source[end + delimiter.len()..];
-        let first = prefix.chars().count();
-        return Some((
-            format!("{prefix}{selected}{suffix}"),
-            first..first + selected.chars().count(),
-        ));
+        let opening = if start == end {
+            source[..start]
+                .bytes()
+                .rev()
+                .take_while(|byte| *byte == b'*')
+                .count()
+        } else {
+            unescaped_asterisk_run(source, start - delimiter.len())
+        };
+        let closing = if start == end {
+            source[end..]
+                .bytes()
+                .take_while(|byte| *byte == b'*')
+                .count()
+        } else {
+            unescaped_asterisk_run(source, end)
+        };
+        if !marker_is_escaped(source, start - delimiter.len())
+            && !marker_is_escaped(source, end)
+            && (delimiter != "*" || italic_marker_runs_are_odd(opening, closing))
+        {
+            let prefix = &source[..start - delimiter.len()];
+            let suffix = &source[end + delimiter.len()..];
+            let first = prefix.chars().count();
+            return Some((
+                format!("{prefix}{selected}{suffix}"),
+                first..first + selected.chars().count(),
+            ));
+        }
     }
     None
 }
@@ -82,6 +200,430 @@ fn strikethrough_is_rendered(source: &str, selection: &std::ops::Range<usize>) -
         .any(|(event, range)| {
             matches!(event, Event::Start(Tag::Strikethrough)) && range == expected
         })
+}
+
+fn projection_is_preserved(source: &str, replacement: &str) -> bool {
+    let Some(before) = thinoda_core::notes::plain_text_projection(source) else {
+        return false;
+    };
+    thinoda_core::notes::plain_text_projection(replacement).as_deref() == Some(before.as_str())
+}
+
+fn emphasis_is_rendered(
+    source: &str,
+    replacement: &str,
+    selection: &std::ops::Range<usize>,
+    format: Format,
+) -> bool {
+    if selection.start > selection.end {
+        return false;
+    }
+    if selection.end > replacement.chars().count() {
+        return false;
+    }
+    if selection.is_empty() {
+        return true;
+    }
+    let Some(before) = thinoda_core::notes::plain_text_projection(source) else {
+        return false;
+    };
+    if thinoda_core::notes::plain_text_projection(replacement).as_deref() != Some(before.as_str()) {
+        return false;
+    }
+    let byte_index = |index| {
+        replacement
+            .char_indices()
+            .nth(index)
+            .map_or(replacement.len(), |(byte, _)| byte)
+    };
+    let selected = byte_index(selection.start)..byte_index(selection.end);
+    let events: Vec<_> = Parser::new_ext(replacement, crate::legal_markdown::OPTIONS)
+        .into_offset_iter()
+        .collect();
+    events.iter().any(|(event, outer)| {
+        let is_requested_style = matches!(
+            (format, event),
+            (Format::Bold, Event::Start(Tag::Strong))
+                | (Format::Italic, Event::Start(Tag::Emphasis))
+        );
+        if !is_requested_style || outer.start > selected.start || outer.end < selected.end {
+            return false;
+        }
+        let mut visible = false;
+        for (event, range) in &events {
+            let is_visible = match event {
+                Event::Text(text) | Event::Code(text) => !text.is_empty(),
+                Event::Html(text) | Event::InlineHtml(text) => {
+                    !text.is_empty() && !text.trim_start().starts_with("<!--")
+                }
+                Event::SoftBreak | Event::HardBreak | Event::FootnoteReference(_) => true,
+                _ => false,
+            };
+            if !is_visible || range.start < outer.start || range.end > outer.end {
+                continue;
+            }
+            visible = true;
+            if range.start < selected.start || range.end > selected.end {
+                return false;
+            }
+        }
+        visible
+    })
+}
+
+const BOLD_STYLE: u8 = 1;
+const ITALIC_STYLE: u8 = 2;
+const STRIKE_STYLE: u8 = 4;
+const CODE_STYLE: u8 = 8;
+
+#[derive(Clone, Copy)]
+struct StyledCharacter {
+    character: char,
+    style: u8,
+    selected: bool,
+}
+
+#[derive(Default)]
+struct StyledDocument {
+    characters: Vec<StyledCharacter>,
+    structure: Vec<(usize, String)>,
+}
+
+fn character_byte_range(
+    source: &str,
+    range: &std::ops::Range<usize>,
+) -> Option<std::ops::Range<usize>> {
+    if range.start > range.end || range.end > source.chars().count() {
+        return None;
+    }
+    let byte_index = |index| {
+        source
+            .char_indices()
+            .nth(index)
+            .map_or(source.len(), |(byte, _)| byte)
+    };
+    Some(byte_index(range.start)..byte_index(range.end))
+}
+
+fn styled_document(
+    source: &str,
+    selection: Option<&std::ops::Range<usize>>,
+) -> Option<StyledDocument> {
+    fn append(
+        result: &mut Vec<StyledCharacter>,
+        source: &str,
+        text: &str,
+        range: &std::ops::Range<usize>,
+        selection: Option<&std::ops::Range<usize>>,
+        style: u8,
+    ) -> Option<()> {
+        let exact_offsets = source.get(range.clone())? == text;
+        let contained = selection.is_some_and(|s| range.start >= s.start && range.end <= s.end);
+        let disjoint = selection.is_none_or(|s| range.end <= s.start || range.start >= s.end);
+        if !exact_offsets && !contained && !disjoint {
+            return None;
+        }
+        for (offset, character) in text.char_indices() {
+            let selected = if exact_offsets {
+                selection.is_some_and(|s| {
+                    let start = range.start + offset;
+                    start >= s.start && start + character.len_utf8() <= s.end
+                })
+            } else {
+                contained
+            };
+            result.push(StyledCharacter {
+                character,
+                style,
+                selected,
+            });
+        }
+        Some(())
+    }
+
+    let mut result = StyledDocument::default();
+    let mut bold = 0usize;
+    let mut italic = 0usize;
+    let mut strike = 0usize;
+    let mut code = 0usize;
+    for (event, range) in Parser::new_ext(source, crate::legal_markdown::OPTIONS).into_offset_iter()
+    {
+        match event {
+            Event::Start(tag) => {
+                match &tag {
+                    Tag::Strong => bold += 1,
+                    Tag::Emphasis => italic += 1,
+                    Tag::Strikethrough => strike += 1,
+                    Tag::CodeBlock(_) => code += 1,
+                    _ => {}
+                }
+                if !matches!(tag, Tag::Strong | Tag::Emphasis | Tag::Strikethrough) {
+                    result
+                        .structure
+                        .push((result.characters.len(), format!("+{tag:?}")));
+                }
+            }
+            Event::End(tag) => {
+                match tag {
+                    TagEnd::Strong => bold -= 1,
+                    TagEnd::Emphasis => italic -= 1,
+                    TagEnd::Strikethrough => strike -= 1,
+                    TagEnd::CodeBlock => code -= 1,
+                    _ => {}
+                }
+                if !matches!(
+                    tag,
+                    TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough
+                ) {
+                    result
+                        .structure
+                        .push((result.characters.len(), format!("-{tag:?}")));
+                }
+            }
+            event => {
+                let style = (u8::from(bold > 0) * BOLD_STYLE)
+                    | (u8::from(italic > 0) * ITALIC_STYLE)
+                    | (u8::from(strike > 0) * STRIKE_STYLE)
+                    | (u8::from(code > 0) * CODE_STYLE);
+                match event {
+                    Event::Text(text) => {
+                        append(
+                            &mut result.characters,
+                            source,
+                            &text,
+                            &range,
+                            selection,
+                            style,
+                        )?;
+                    }
+                    Event::Code(text) => {
+                        append(
+                            &mut result.characters,
+                            source,
+                            &text,
+                            &range,
+                            selection,
+                            style | CODE_STYLE,
+                        )?;
+                    }
+                    Event::Html(text) | Event::InlineHtml(text)
+                        if !text.trim_start().starts_with("<!--") =>
+                    {
+                        append(
+                            &mut result.characters,
+                            source,
+                            &text,
+                            &range,
+                            selection,
+                            style,
+                        )?;
+                    }
+                    Event::SoftBreak | Event::HardBreak => {
+                        let text = if matches!(event, Event::SoftBreak) {
+                            " "
+                        } else {
+                            "\n"
+                        };
+                        append(
+                            &mut result.characters,
+                            source,
+                            text,
+                            &range,
+                            selection,
+                            style,
+                        )?;
+                    }
+                    Event::FootnoteReference(name) => {
+                        append(
+                            &mut result.characters,
+                            source,
+                            &format!("[{name}]"),
+                            &range,
+                            selection,
+                            style,
+                        )?;
+                    }
+                    Event::Rule | Event::TaskListMarker(_) => {
+                        result
+                            .structure
+                            .push((result.characters.len(), format!("{event:?}")));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Some(result)
+}
+
+fn unchanged_without_selected_characters(before: &StyledDocument, after: &StyledDocument) -> bool {
+    let visible = |document: &StyledDocument| {
+        document
+            .characters
+            .iter()
+            .filter(|character| !character.selected)
+            .map(|character| (character.character, character.style))
+            .collect::<Vec<_>>()
+    };
+    if visible(before) != visible(after) || before.structure.len() != after.structure.len() {
+        return false;
+    }
+    let offsets = |document: &StyledDocument| {
+        let mut count = 0usize;
+        std::iter::once(0)
+            .chain(document.characters.iter().map(|character| {
+                count += usize::from(!character.selected);
+                count
+            }))
+            .collect::<Vec<_>>()
+    };
+    let before_offsets = offsets(before);
+    let after_offsets = offsets(after);
+    before.structure.iter().zip(&after.structure).all(
+        |((before_index, before_tag), (after_index, after_tag))| {
+            before_offsets[*before_index] == after_offsets[*after_index] && before_tag == after_tag
+        },
+    )
+}
+
+fn empty_emphasis_preserves_existing_content(
+    source: &str,
+    replacement: &str,
+    previous_selection: &std::ops::Range<usize>,
+    selection: &std::ops::Range<usize>,
+    format: Format,
+    adding: bool,
+) -> bool {
+    if !preview_allowed(source) || !preview_allowed(replacement) {
+        return false;
+    }
+    let delimiter = match format {
+        Format::Bold => "**",
+        Format::Italic => "*",
+        Format::Strike => "~~",
+        Format::Bullet | Format::Numbered => return false,
+    };
+    let (marked, caret) = if adding {
+        (replacement, selection.start)
+    } else {
+        (source, previous_selection.start)
+    };
+    let Some(start) = caret.checked_sub(delimiter.len()) else {
+        return false;
+    };
+    let Some(end) = caret.checked_add(delimiter.len()) else {
+        return false;
+    };
+    let Some(markers) = character_byte_range(marked, &(start..end)) else {
+        return false;
+    };
+    if marked.get(markers.clone()) != Some(format!("{delimiter}{delimiter}").as_str()) {
+        return false;
+    }
+    let before = styled_document(source, (!adding).then_some(&markers));
+    let after = styled_document(replacement, adding.then_some(&markers));
+    match (before, after) {
+        (Some(before), Some(after)) => unchanged_without_selected_characters(&before, &after),
+        _ => false,
+    }
+}
+
+fn emphasis_styles_are_preserved(
+    source: &str,
+    replacement: &str,
+    selection: &std::ops::Range<usize>,
+    format: Format,
+    adding: bool,
+) -> bool {
+    let target = match format {
+        Format::Bold => BOLD_STYLE,
+        Format::Italic => ITALIC_STYLE,
+        Format::Strike => STRIKE_STYLE,
+        Format::Bullet | Format::Numbered => return false,
+    };
+    let Some(selection) = character_byte_range(replacement, selection) else {
+        return false;
+    };
+    let Some(before) = styled_document(source, None) else {
+        return false;
+    };
+    let Some(after) = styled_document(replacement, Some(&selection)) else {
+        return false;
+    };
+    if before.characters.len() != after.characters.len() || before.structure != after.structure {
+        return false;
+    }
+    let mut changed = false;
+    for (before, after) in before.characters.iter().zip(&after.characters) {
+        if before.character != after.character || (before.style ^ after.style) & !target != 0 {
+            return false;
+        }
+        let was_styled = before.style & target != 0;
+        let is_styled = after.style & target != 0;
+        if after.selected {
+            if adding && !is_styled || !adding && !was_styled && is_styled {
+                return false;
+            }
+            changed |= was_styled != is_styled;
+        } else if was_styled != is_styled {
+            return false;
+        }
+    }
+    changed
+}
+
+fn emphasis_change_is_valid(
+    source: &str,
+    replacement: &str,
+    previous_selection: &std::ops::Range<usize>,
+    selection: &std::ops::Range<usize>,
+    format: Format,
+) -> bool {
+    if !matches!(format, Format::Bold | Format::Italic | Format::Strike) {
+        return true;
+    }
+    if empty_emphasis_in_unsupported_context(source, previous_selection) {
+        return false;
+    }
+    if replacement.len() > source.len() {
+        if selection.is_empty() {
+            return empty_emphasis_preserves_existing_content(
+                source,
+                replacement,
+                previous_selection,
+                selection,
+                format,
+                true,
+            );
+        }
+        let rendered = match format {
+            Format::Bold | Format::Italic => {
+                emphasis_is_rendered(source, replacement, selection, format)
+            }
+            Format::Strike => {
+                strikethrough_is_rendered(replacement, selection)
+                    && projection_is_preserved(source, replacement)
+            }
+            Format::Bullet | Format::Numbered => unreachable!(),
+        };
+        rendered && emphasis_styles_are_preserved(source, replacement, selection, format, true)
+    } else if replacement.len() < source.len() {
+        if previous_selection.is_empty() {
+            empty_emphasis_preserves_existing_content(
+                source,
+                replacement,
+                previous_selection,
+                selection,
+                format,
+                false,
+            )
+        } else {
+            projection_is_preserved(source, replacement)
+                && emphasis_styles_are_preserved(source, replacement, selection, format, false)
+        }
+    } else {
+        true
+    }
 }
 
 fn format_selection(
@@ -380,7 +922,7 @@ fn tools_inline(
         .unwrap_or_else(|| current.to_owned());
     let selection_id = response.id.with("format-selection");
     let selection_owner = response.id.with(&source);
-    let feedback_id = response.id.with("strike-feedback");
+    let feedback_id = response.id.with("format-feedback");
     if response.has_focus()
         && let Some(range) = egui::TextEdit::load_state(ui.ctx(), response.id)
             .and_then(|state| state.cursor.char_range())
@@ -410,10 +952,14 @@ fn tools_inline(
                     });
                 let previous_selection = selection.clone();
                 let (replacement, selection) = format_selection(&source, selection, format);
-                let invalid_strike = matches!(format, Format::Strike)
-                    && replacement.len() > source.len()
-                    && !strikethrough_is_rendered(&replacement, &selection);
-                let selection = if invalid_strike {
+                let invalid = !emphasis_change_is_valid(
+                    &source,
+                    &replacement,
+                    &previous_selection,
+                    &selection,
+                    format,
+                );
+                let selection = if invalid {
                     previous_selection
                 } else {
                     selection
@@ -428,11 +974,15 @@ fn tools_inline(
                     )));
                 state.store(ui.ctx(), response.id);
                 response.request_focus();
-                if invalid_strike {
-                    ui.data_mut(|data| data.insert_temp(feedback_id, selection_owner));
+                if invalid {
+                    ui.data_mut(|data| {
+                        data.insert_temp(response.id, source.clone());
+                        data.insert_temp(feedback_id, (selection_owner, EMPHASIS_UNAVAILABLE));
+                    });
+                    *done = None;
                     continue;
                 }
-                ui.data_mut(|data| data.remove::<Id>(feedback_id));
+                ui.data_mut(|data| data.remove::<(Id, &'static str)>(feedback_id));
                 source = replacement;
                 // Commit through the same conflict-checked inspector path as typing.
                 ui.data_mut(|data| data.insert_temp(response.id, source.clone()));
@@ -441,8 +991,10 @@ fn tools_inline(
             }
         }
     });
-    if ui.data(|data| data.get_temp::<Id>(feedback_id)) == Some(selection_owner) {
-        ui.colored_label(ui.visuals().warn_fg_color, t(STRIKE_UNAVAILABLE));
+    if let Some((owner, message)) = ui.data(|data| data.get_temp::<(Id, &'static str)>(feedback_id))
+        && owner == selection_owner
+    {
+        ui.colored_label(ui.visuals().warn_fg_color, t(message));
     }
     ui.small(t(
         "Formatting is stored as Markdown text; other views and exports may show markup.",
@@ -535,9 +1087,9 @@ mod tests {
     }
 
     #[test]
-    fn strikethrough_messages_exist_in_every_catalog() {
+    fn formatting_feedback_exists_in_every_catalog() {
         for language in crate::i18n::Lang::ALL {
-            for key in ["Strikethrough notes", STRIKE_UNAVAILABLE] {
+            for key in ["Strikethrough notes", EMPHASIS_UNAVAILABLE] {
                 if language != crate::i18n::Lang::En {
                     assert_ne!(crate::i18n::t_in(language, key), key, "{language:?}: {key}");
                 }
@@ -617,6 +1169,89 @@ mod tests {
     }
 
     #[test]
+    fn italic_does_not_remove_bold_or_escaped_markers() {
+        assert_eq!(
+            format_selection("**café**", 2..6, Format::Italic),
+            ("***café***".into(), 3..7)
+        );
+        assert_eq!(
+            format_selection("**café**", 0..8, Format::Italic),
+            ("***café***".into(), 1..9)
+        );
+        assert_eq!(
+            format_selection("**café**", 1..7, Format::Italic),
+            ("***café***".into(), 2..8)
+        );
+        assert_eq!(
+            format_selection("***café***", 3..7, Format::Italic),
+            ("**café**".into(), 2..6)
+        );
+        assert_eq!(
+            format_selection("***café***", 3..7, Format::Bold),
+            ("*café*".into(), 1..5)
+        );
+        let source = r"\*café*";
+        let (formatted, inner) = format_selection(source, 2..6, Format::Italic);
+        assert_eq!(formatted, r"\**café**");
+        assert!(emphasis_is_rendered(
+            source,
+            &formatted,
+            &inner,
+            Format::Italic
+        ));
+    }
+
+    #[test]
+    fn asterisk_runs_respect_escaped_markers_at_each_boundary() {
+        for (source, positions, expected) in [
+            (r"\***x", 1..=4, 2),
+            (r"z\\***x", 3..=6, 3),
+            ("é\\***x", 3..=6, 2),
+        ] {
+            for position in positions {
+                assert_eq!(
+                    unescaped_asterisk_run(source, position),
+                    expected,
+                    "{source:?} at byte {position}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_emphasis_avoids_code_and_existing_marker_runs() {
+        for (source, selection) in [
+            ("**café**", 1..1),
+            ("**café**", 2..2),
+            ("**café**", 6..6),
+            ("***café***", 1..1),
+            ("***café***", 2..2),
+            ("~~café~~", 1..1),
+            ("`code`", 3..3),
+            ("~~~\n  \n~~~", 4..6),
+            ("    code", 6..6),
+            ("<span>text</span>", 3..3),
+        ] {
+            assert!(
+                empty_emphasis_in_unsupported_context(source, &selection),
+                "{source:?} {selection:?}"
+            );
+        }
+        for (source, selection) in [
+            ("a**bc", 2..2),
+            ("a  b", 1..3),
+            ("café", 0..0),
+            ("café", 4..4),
+            ("**café**", 4..4),
+        ] {
+            assert!(
+                !empty_emphasis_in_unsupported_context(source, &selection),
+                "{source:?} {selection:?}"
+            );
+        }
+    }
+
+    #[test]
     fn emphasis_preserves_outer_whitespace_and_formats_selected_text() {
         let source = "a  café 🌱  end";
         for format in [Format::Bold, Format::Italic, Format::Strike] {
@@ -635,6 +1270,337 @@ mod tests {
                 "{formatted:?}: {document:?}"
             );
             assert_eq!(format_selection(&formatted, selection, format).0, source);
+        }
+    }
+
+    #[test]
+    fn emphasis_validation_accepts_rendered_nested_styles_without_spill() {
+        for (format, source, selection) in [
+            (Format::Bold, "café 🌱", 0..6),
+            (Format::Italic, "café 🌱", 0..6),
+            (Format::Bold, "*café*", 0..6),
+            (Format::Italic, "**café**", 2..6),
+            (Format::Italic, "**one two**", 6..9),
+            (Format::Bold, "one\ntwo", 0..7),
+            (Format::Bold, "[café](https://example.invalid)", 0..31),
+        ] {
+            let (formatted, inner) = format_selection(source, selection, format);
+            assert!(
+                emphasis_is_rendered(source, &formatted, &inner, format),
+                "{format:?}: {source:?} -> {formatted:?}, {inner:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn emphasis_validation_rejects_unrenderable_or_bounded_out_selections() {
+        for format in [Format::Bold, Format::Italic] {
+            for (source, selection) in [
+                ("first\n\nsecond", 0..13),
+                ("`code`", 1..5),
+                ("~~~\ncode\n~~~", 4..8),
+                ("*", 0..1),
+            ] {
+                let (formatted, inner) = format_selection(source, selection, format);
+                assert!(
+                    !emphasis_is_rendered(source, &formatted, &inner, format),
+                    "{format:?}: {source:?} -> {formatted:?}, {inner:?}"
+                );
+            }
+            let large = "x".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES + 1);
+            let (formatted, inner) = format_selection(&large, 0..1, format);
+            assert!(!emphasis_is_rendered(&large, &formatted, &inner, format));
+            let many_events = format!("{}target", "**x** ".repeat(700));
+            let last = many_events.chars().count();
+            let (formatted, inner) = format_selection(&many_events, last - 6..last, format);
+            assert!(!emphasis_is_rendered(
+                &many_events,
+                &formatted,
+                &inner,
+                format
+            ));
+            let deep = format!(
+                "{}target",
+                "> ".repeat(thinoda_core::notes::MAX_PROJECTION_DEPTH)
+            );
+            let last = deep.chars().count();
+            let (formatted, inner) = format_selection(&deep, last - 6..last, format);
+            assert!(!emphasis_is_rendered(&deep, &formatted, &inner, format));
+            let (formatted, inner) = format_selection("a  b", 1..3, format);
+            assert!(emphasis_is_rendered("a  b", &formatted, &inner, format));
+            assert!(!emphasis_is_rendered("a", "a", &(2..2), format));
+        }
+    }
+
+    #[test]
+    fn emphasis_validation_preserves_other_styles_selection_and_structure() {
+        let source = "__a__ b";
+        let original = 1..4;
+        let (replacement, selection) = format_selection(source, original.clone(), Format::Bold);
+        assert_eq!(replacement, "_**_a_**_ b");
+        assert!(emphasis_is_rendered(
+            source,
+            &replacement,
+            &selection,
+            Format::Bold
+        ));
+        assert!(!emphasis_change_is_valid(
+            source,
+            &replacement,
+            &original,
+            &selection,
+            Format::Bold
+        ));
+
+        assert!(!emphasis_styles_are_preserved(
+            "ab",
+            "**ab**",
+            &(2..3),
+            Format::Bold,
+            true
+        ));
+        assert!(emphasis_styles_are_preserved(
+            "**ab**",
+            "a**b**",
+            &(0..1),
+            Format::Bold,
+            false
+        ));
+        assert!(!emphasis_styles_are_preserved(
+            "**ab**",
+            "ab",
+            &(0..1),
+            Format::Bold,
+            false
+        ));
+        assert!(!emphasis_styles_are_preserved(
+            "*a*",
+            "~~a~~",
+            &(2..3),
+            Format::Strike,
+            true
+        ));
+        assert!(!emphasis_styles_are_preserved(
+            "[a](x)",
+            "**[a](y)**",
+            &(2..8),
+            Format::Bold,
+            true
+        ));
+        assert!(!emphasis_styles_are_preserved(
+            "# a",
+            "**a**",
+            &(2..3),
+            Format::Bold,
+            true
+        ));
+
+        for (format, source, original) in [
+            (Format::Bold, "[café](https://example.invalid)", 0..31),
+            (Format::Bold, "x &amp; y", 2..7),
+            (Format::Italic, "**one two**", 6..9),
+            (Format::Strike, "before **café** after", 7..15),
+        ] {
+            let (replacement, selection) = format_selection(source, original.clone(), format);
+            assert!(
+                emphasis_change_is_valid(source, &replacement, &original, &selection, format),
+                "{format:?} {source:?} {original:?} -> {replacement:?} {selection:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_emphasis_is_rejected_when_preview_context_exceeds_bounds() {
+        let plain = "x".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES + 1);
+        let code = format!("`{plain}`");
+        for source in [&plain, &code] {
+            for format in [Format::Bold, Format::Italic, Format::Strike] {
+                let original = 2..2;
+                let (replacement, selection) = format_selection(source, original.clone(), format);
+                assert!(!emphasis_change_is_valid(
+                    source,
+                    &replacement,
+                    &original,
+                    &selection,
+                    format
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn emphasis_checks_both_source_and_result_at_the_exact_byte_limit() {
+        let limit = thinoda_core::notes::MAX_PROJECTION_BYTES;
+        for (length, expected) in [(limit - 4, true), (limit - 3, false)] {
+            let source = "x".repeat(length);
+            for original in [1..1, 1..2] {
+                let (replacement, selection) =
+                    format_selection(&source, original.clone(), Format::Bold);
+                assert_eq!(
+                    emphasis_change_is_valid(
+                        &source,
+                        &replacement,
+                        &original,
+                        &selection,
+                        Format::Bold
+                    ),
+                    expected,
+                    "source bytes: {length}, selection: {original:?}"
+                );
+            }
+        }
+        for (length, expected) in [(limit, true), (limit + 1, false)] {
+            let source = format!("**x**{}", "x".repeat(length - 5));
+            let original = 2..3;
+            let (replacement, selection) =
+                format_selection(&source, original.clone(), Format::Bold);
+            assert_eq!(
+                emphasis_change_is_valid(
+                    &source,
+                    &replacement,
+                    &original,
+                    &selection,
+                    Format::Bold
+                ),
+                expected,
+                "source bytes: {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_emphasis_does_not_change_existing_rendered_content() {
+        for format in [Format::Bold, Format::Italic, Format::Strike] {
+            for (source, original) in [("abcd", 2..2), ("a  b", 1..3)] {
+                let (replacement, selection) = format_selection(source, original.clone(), format);
+                assert!(
+                    emphasis_change_is_valid(source, &replacement, &original, &selection, format),
+                    "{format:?} {source:?} -> {replacement:?}"
+                );
+                let (restored, restored_selection) =
+                    format_selection(&replacement, selection.clone(), format);
+                assert_eq!(restored, source);
+                assert!(
+                    emphasis_change_is_valid(
+                        &replacement,
+                        &restored,
+                        &selection,
+                        &restored_selection,
+                        format
+                    ),
+                    "{format:?} {replacement:?} -> {restored:?}"
+                );
+            }
+        }
+        let source = "**café**";
+        let original = 4..4;
+        let (replacement, selection) = format_selection(source, original.clone(), Format::Italic);
+        assert_eq!(replacement, "**ca**fé**");
+        assert!(!emphasis_change_is_valid(
+            source,
+            &replacement,
+            &original,
+            &selection,
+            Format::Italic
+        ));
+    }
+
+    #[test]
+    fn accepted_emphasis_does_not_change_other_rendered_styles() {
+        let fixtures = [
+            "abc",
+            "*abc*",
+            "**abc**",
+            "***abc***",
+            "a *bc* d",
+            "**ab** cd",
+            "*a* **b** c",
+            "a `bc` d",
+            "a ~~bc~~ d",
+            "a \\* b",
+            "__a__ b",
+            "a **b *c* d** e",
+            "*a **b** c* d",
+        ];
+        let mut accepted = [0usize; 3];
+        let rendered = |source: &str| {
+            thinoda_core::notes::formatted_document(source)
+                .ok()
+                .map(|doc| {
+                    doc.paragraphs
+                        .into_iter()
+                        .flat_map(|paragraph| paragraph.runs)
+                        .flat_map(|run| {
+                            run.text
+                                .chars()
+                                .map(|character| (character, run.style))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                })
+        };
+        for source in fixtures {
+            let Some(before) = rendered(source) else {
+                continue;
+            };
+            for start in 0..source.chars().count() {
+                for end in start + 1..=source.chars().count() {
+                    for (index, format) in [Format::Bold, Format::Italic, Format::Strike]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let previous_selection = start..end;
+                        let (replacement, selection) =
+                            format_selection(source, previous_selection.clone(), format);
+                        if selection.is_empty() {
+                            continue;
+                        }
+                        if !emphasis_change_is_valid(
+                            source,
+                            &replacement,
+                            &previous_selection,
+                            &selection,
+                            format,
+                        ) {
+                            continue;
+                        }
+                        let Some(after) = rendered(&replacement) else {
+                            continue;
+                        };
+                        accepted[index] += 1;
+                        assert_eq!(
+                            before.iter().map(|(ch, _)| ch).collect::<String>(),
+                            after.iter().map(|(ch, _)| ch).collect::<String>(),
+                            "{format:?} {source:?} {start}..{end} -> {replacement:?}"
+                        );
+                        for ((_, old), (_, new)) in before.iter().zip(&after) {
+                            assert_eq!(
+                                old.code, new.code,
+                                "{format:?} {source:?} {start}..{end} -> {replacement:?}"
+                            );
+                            match format {
+                                Format::Bold => assert_eq!(
+                                    (old.italic, old.strike),
+                                    (new.italic, new.strike),
+                                    "{format:?} {source:?} {start}..{end} -> {replacement:?}"
+                                ),
+                                Format::Italic => assert_eq!(
+                                    (old.bold, old.strike),
+                                    (new.bold, new.strike),
+                                    "{format:?} {source:?} {start}..{end} -> {replacement:?}"
+                                ),
+                                Format::Strike => assert_eq!(
+                                    (old.bold, old.italic),
+                                    (new.bold, new.italic),
+                                    "{format:?} {source:?} {start}..{end} -> {replacement:?}"
+                                ),
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    assert!(accepted.into_iter().all(|count| count > 0));
+                }
+            }
         }
     }
 

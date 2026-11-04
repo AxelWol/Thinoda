@@ -376,29 +376,89 @@ fn enlarged_notes_strikethrough_stays_staged_until_applied() {
 }
 
 #[test]
-fn enlarged_notes_reject_unrenderable_strikethrough_without_changing_the_draft() {
+fn enlarged_notes_reject_unrenderable_emphasis_without_changing_the_draft() {
     let _language = LANGUAGE.lock().unwrap();
-    let mut h = harness(ThinodaApp::headless());
-    click(&mut h, "Enlarge notes editor");
-    text(&mut h, "Notes", "first\n\nsecond");
-    h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
-    h.run_steps(3);
-    click(&mut h, "Strikethrough notes");
-    assert!(
-        h.query_by_label(t(
-            "Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note."
-        ))
-        .is_some()
-    );
-    assert!(
-        h.state()
+    for (label, warning) in [
+        (
+            "Bold notes",
+            "Cannot apply formatting to this selection. The formatting action was canceled.",
+        ),
+        (
+            "Italic notes",
+            "Cannot apply formatting to this selection. The formatting action was canceled.",
+        ),
+        (
+            "Strikethrough notes",
+            "Cannot apply formatting to this selection. The formatting action was canceled.",
+        ),
+    ] {
+        let mut h = harness(ThinodaApp::headless());
+        click(&mut h, "Enlarge notes editor");
+        text(&mut h, "Notes", "first\n\nsecond");
+        h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+        h.run_steps(3);
+        click(&mut h, label);
+        assert!(h.query_by_label(t(warning)).is_some());
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .is_none()
+        );
+        click(&mut h, "Apply notes");
+        let note = h
+            .state()
             .doc()
             .unwrap()
             .doc
             .sheet()
             .root_topic()
             .notes
-            .is_none()
+            .as_ref()
+            .unwrap();
+        assert_eq!(&**note, "first\n\nsecond");
+        assert!(!note.is_markdown());
+    }
+}
+
+#[test]
+fn enlarged_notes_reject_partial_delimiters_that_change_other_styles() {
+    let _language = LANGUAGE.lock().unwrap();
+    let mut app = ThinodaApp::headless();
+    let doc = app.doc_mut().unwrap();
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Fixture", |sheet| {
+            sheet.set_markdown_notes(root, Some("__a__ b".into()))
+        })
+        .unwrap();
+    let mut h = harness(app);
+    click(&mut h, "Enlarge notes editor");
+    h.query_all_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+        .find(|node| !node.accesskit_node().is_disabled())
+        .unwrap()
+        .focus();
+    h.run_steps(3);
+    let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+    let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(1),
+            egui::text::CCursor::new(4),
+        )));
+    state.store(&h.ctx, focused);
+    h.run_steps(3);
+    click(&mut h, "Bold notes");
+    assert!(
+        h.query_by_label(t(
+            "Cannot apply formatting to this selection. The formatting action was canceled."
+        ))
+        .is_some()
     );
     click(&mut h, "Apply notes");
     let note = h
@@ -411,8 +471,8 @@ fn enlarged_notes_reject_unrenderable_strikethrough_without_changing_the_draft()
         .notes
         .as_ref()
         .unwrap();
-    assert_eq!(&**note, "first\n\nsecond");
-    assert!(!note.is_markdown());
+    assert_eq!(&**note, "__a__ b");
+    assert!(note.is_markdown());
 }
 
 #[test]

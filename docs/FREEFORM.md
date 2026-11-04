@@ -1144,26 +1144,46 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 - The existing Notes inspector and its staged enlarged editor add a localized
   strikethrough action using Markdown markers and the established draft/undo
-  transaction. Repeating the action removes its markers. Bold, italic and
-  strikethrough now leave selected outer whitespace outside their delimiters;
-  a whitespace-only selection inserts an empty pair at its end for subsequent
-  typing.
+  transaction. Repeating the action removes its markers when the parsed result
+  is safe. Bold, italic and strikethrough now leave selected outer whitespace
+  outside their delimiters; a safe whitespace-only selection inserts an empty
+  pair at its end for subsequent typing.
 - Duck check: a pair of markers is not proof of rendered formatting. Before
-  applying a nonempty strikethrough, the action checks that the preview parser
-  actually recognizes the complete span and that the note stays within the
-  existing preview limits. Code, paragraph-spanning and over-limit selections
-  are rejected without changing the source; a localized warning retains the
-  selection and returns focus. Removing existing markers remains possible.
-  Multi-paragraph application remains open, and the older bold/italic actions
-  do not yet have this rendered-span check.
+  applying a nonempty bold, italic or strikethrough action, the preview parser
+  must recognize the span. Before and after must have the same projected text,
+  unchanged non-target inline styles and Markdown structure, and no target-style
+  change outside the selected source. This includes link destinations and
+  headings, not only the more limited formatted-export parser. The action
+  rejects unsafe combinations without changing the source; a localized warning
+  retains the selection and returns focus. Common nested bold/italic examples
+  remain reversible, and italic no longer removes a bold marker merely because
+  it contains an asterisk. Escaped markers are not stripped as markup.
+- Duck check: returning focus after rejecting an action could discard an
+  uncommitted inspector buffer that had just blurred. All three actions now
+  restore that buffer and keep it dirty rather than committing or discarding it.
+  Empty or whitespace-only insertion is rejected inside recognized code, HTML
+  or adjacent formatting-marker runs, and its visible marker characters are
+  excluded when checking that existing text, styles and structure stay intact.
+  Formatting and marker removal both require the source and result to fit the
+  16 KiB, 2,048-event and depth-32 preview bounds; no caret-only exception
+  assumes unknown context in an over-limit note. The checks are deliberately
+  conservative and can reject valid Markdown combinations, particularly where
+  decoded text cannot be mapped precisely to a partial source selection.
+  Multi-paragraph formatting, over-limit formatting and richer editing remain
+  open; manual source editing is unaffected.
+- Duck check: asterisk-run parity uses byte offsets at valid character
+  boundaries. The count before a position cannot exceed that prefix's byte
+  length; tests cover escaped and unescaped runs after both ASCII and
+  multibyte text rather than assuming character indices are byte indices.
 - Duck check: explicitly formatting a legacy plain note promotes the whole note
   to Markdown, so pre-existing literal Markdown characters may acquire meaning.
   This is the existing opt-in note contract, not a rich-text migration. The
   source-first editor still uses character offsets rather than a grapheme/IME
   transaction model, and formatting cannot be represented in all exports.
 - Native egui coverage exercises Map and Outliner, focused Unicode drafts,
-  selected whitespace, rejection, undo/redo, native save/reopen, all language
-  catalogs and the enlarged editor's apply boundary. A user-authored example
+  selected whitespace, nested styles, rejection, undo/redo, recovering and
+  saving a rejected focused draft, all language catalogs and the enlarged
+  editor's apply boundary. A user-authored example
   also reaches FreeMind as a strikethrough run; existing Word, Excel and
   FreeMind format tests cover their supported note subsets. Physical input,
   screen readers and external Office applications remain separate acceptance.
