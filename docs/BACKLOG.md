@@ -34,9 +34,10 @@ Save and window transitions preserve the order of queued card input, and
 deferred tab closures bind to their intended document and window.
 Conflicting drafts retain their text without taking focus or keyboard and IME
 input from the minimap and other editors.
-Selected-range formatting and lists remain open. Additional brushes are not
-represented as working features. Their
-persistence, accessibility and verification constraints are in the current
+Selected-range formatting and lists remain open. An isolated history experiment
+estimates retained snapshot bytes but does not implement board-card rich text.
+Additional brushes are not represented as working features. The persistence,
+accessibility and verification constraints for these features are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).
 
 **Notes formatting:** Markdown-source strikethrough is available in the Notes

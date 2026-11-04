@@ -219,10 +219,50 @@ struct Draft<S> {
     typing_style: S,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+trait StyleAllocation {
+    /// Counts owned style allocations that remain immutable while a snapshot is retained.
+    fn estimated_heap_bytes(&self) -> Option<usize>;
+}
+
+#[derive(Debug, PartialEq)]
 struct HistoryEntry<S> {
     before: Draft<S>,
     after: Draft<S>,
+    estimated_bytes: usize,
+}
+
+impl<S: StyleAllocation> HistoryEntry<S> {
+    fn estimate(before: &Draft<S>, after: &Draft<S>) -> Result<usize, HistoryError> {
+        fn heap_bytes<S: StyleAllocation>(draft: &Draft<S>) -> Option<usize> {
+            let spans = draft
+                .value
+                .spans
+                .capacity()
+                .checked_mul(std::mem::size_of::<Span<S>>())?;
+            let mut bytes = draft.value.text.capacity().checked_add(spans)?;
+            bytes = bytes.checked_add(draft.typing_style.estimated_heap_bytes()?)?;
+            for span in &draft.value.spans {
+                bytes = bytes.checked_add(span.style.estimated_heap_bytes()?)?;
+            }
+            Some(bytes)
+        }
+
+        let before_bytes = heap_bytes(before).ok_or(HistoryError::HistorySizeOverflow)?;
+        let after_bytes = heap_bytes(after).ok_or(HistoryError::HistorySizeOverflow)?;
+        std::mem::size_of::<Self>()
+            .checked_add(before_bytes)
+            .and_then(|bytes| bytes.checked_add(after_bytes))
+            .ok_or(HistoryError::HistorySizeOverflow)
+    }
+
+    fn new(before: Draft<S>, after: Draft<S>) -> Result<Self, HistoryError> {
+        let estimated_bytes = Self::estimate(&before, &after)?;
+        Ok(Self {
+            before,
+            after,
+            estimated_bytes,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -237,6 +277,7 @@ enum HistoryError {
     Edit(EditError),
     InvalidSelection,
     InvalidHistoryLimit,
+    HistorySizeOverflow,
     CompositionActive,
     CompositionMissing,
     UndoUnavailable,
@@ -249,6 +290,15 @@ enum CommitOutcome {
     Provisional,
     Recorded,
     RecordedAfterEviction,
+    RecordedOverBudget,
+    RecordedAfterEvictionOverBudget,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BudgetOutcome {
+    evicted: usize,
+    estimated_bytes: usize,
+    over_budget: bool,
 }
 
 struct DraftHistory<S> {
@@ -258,15 +308,18 @@ struct DraftHistory<S> {
     composition: Option<Composition<S>>,
     limits: Limits,
     max_entries: usize,
+    max_history_bytes: usize,
+    history_bytes: usize,
 }
 
-impl<S: Clone + Default + PartialEq> DraftHistory<S> {
+impl<S: Clone + Default + PartialEq + StyleAllocation> DraftHistory<S> {
     fn new(
         value: StyledText<S>,
         selection: Selection,
         typing_style: S,
         limits: Limits,
         max_entries: usize,
+        max_history_bytes: usize,
     ) -> Result<Self, HistoryError> {
         value.validate(limits).map_err(HistoryError::Edit)?;
         if !selection.valid(value.text.chars().count()) {
@@ -286,6 +339,8 @@ impl<S: Clone + Default + PartialEq> DraftHistory<S> {
             composition: None,
             limits,
             max_entries,
+            max_history_bytes,
+            history_bytes: 0,
         })
     }
 
@@ -306,23 +361,64 @@ impl<S: Clone + Default + PartialEq> DraftHistory<S> {
         Ok(())
     }
 
-    fn record(&mut self, before: Draft<S>, after: Draft<S>) -> CommitOutcome {
+    fn trim_history(&mut self) -> usize {
+        let mut removed = 0;
+        while self.history_bytes > self.max_history_bytes
+            || self.undo.len() + self.redo.len() > self.max_entries
+        {
+            let remove_undo = match (self.undo.len() > 1, self.redo.len() > 1) {
+                (true, true) => self.undo.len() >= self.redo.len(),
+                (true, false) => true,
+                (false, true) => false,
+                (false, false) => break,
+            };
+            let entry = if remove_undo {
+                self.undo.pop_front().unwrap()
+            } else {
+                self.redo.remove(0)
+            };
+            self.history_bytes -= entry.estimated_bytes;
+            removed += 1;
+        }
+        removed
+    }
+
+    fn set_history_byte_budget(&mut self, bytes: usize) -> Result<BudgetOutcome, HistoryError> {
+        self.ensure_idle()?;
+        self.max_history_bytes = bytes;
+        let evicted = self.trim_history();
+        Ok(BudgetOutcome {
+            evicted,
+            estimated_bytes: self.history_bytes,
+            over_budget: self.history_bytes > self.max_history_bytes,
+        })
+    }
+
+    fn record(&mut self, before: Draft<S>, after: Draft<S>) -> Result<CommitOutcome, HistoryError> {
         if before.value == after.value {
             self.current = after;
-            return CommitOutcome::NoDocumentChange;
+            return Ok(CommitOutcome::NoDocumentChange);
         }
-        let evicted = self.undo.len() == self.max_entries;
-        if evicted {
-            self.undo.pop_front();
-        }
+        let entry = HistoryEntry::new(before, after)?;
+        let retained_bytes = self
+            .undo
+            .iter()
+            .try_fold(entry.estimated_bytes, |total, old| {
+                total.checked_add(old.estimated_bytes)
+            })
+            .ok_or(HistoryError::HistorySizeOverflow)?;
+        self.current = entry.after.clone();
         self.redo.clear();
-        self.current = after.clone();
-        self.undo.push_back(HistoryEntry { before, after });
-        if evicted {
-            CommitOutcome::RecordedAfterEviction
-        } else {
-            CommitOutcome::Recorded
-        }
+        self.undo.push_back(entry);
+        self.history_bytes = retained_bytes;
+        let evicted = self.trim_history() > 0;
+        let over_budget = self.history_bytes > self.max_history_bytes;
+        Ok(match (evicted, over_budget) {
+            (false, false) => CommitOutcome::Recorded,
+            (true, false) => CommitOutcome::RecordedAfterEviction,
+            (false, true) => CommitOutcome::RecordedOverBudget,
+            (true, true) => CommitOutcome::RecordedAfterEvictionOverBudget,
+        })
     }
 
     fn replace_selection(&mut self, inserted: &str) -> Result<CommitOutcome, HistoryError> {
@@ -339,7 +435,7 @@ impl<S: Clone + Default + PartialEq> DraftHistory<S> {
             .replace(range, inserted, before.typing_style.clone(), self.limits)
             .map_err(HistoryError::Edit)?;
         after.selection = Selection::caret(end);
-        Ok(self.record(before, after))
+        self.record(before, after)
     }
 
     fn format_selection(
@@ -358,7 +454,7 @@ impl<S: Clone + Default + PartialEq> DraftHistory<S> {
             .value
             .format(range, change, self.limits)
             .map_err(HistoryError::Edit)?;
-        Ok(self.record(before, after))
+        self.record(before, after)
     }
 
     fn begin_composition(&mut self) -> Result<(), HistoryError> {
@@ -445,7 +541,7 @@ impl<S: Clone + Default + PartialEq> DraftHistory<S> {
             self.current = after;
             Ok(CommitOutcome::Provisional)
         } else {
-            Ok(self.record(before, after))
+            self.record(before, after)
         }
     }
 
@@ -454,12 +550,26 @@ impl<S: Clone + Default + PartialEq> DraftHistory<S> {
         text: &str,
         selection: Selection,
     ) -> Result<CommitOutcome, HistoryError> {
+        let previous_current = self.current.clone();
+        let previous_composition = self.composition.clone();
         self.update_composition(text, selection)?;
-        let composition = self
+        let before = self
             .composition
-            .take()
-            .ok_or(HistoryError::CompositionMissing)?;
-        Ok(self.record(composition.before, self.current.clone()))
+            .as_ref()
+            .ok_or(HistoryError::CompositionMissing)?
+            .before
+            .clone();
+        match self.record(before, self.current.clone()) {
+            Ok(outcome) => {
+                self.composition = None;
+                Ok(outcome)
+            }
+            Err(error) => {
+                self.current = previous_current;
+                self.composition = previous_composition;
+                Err(error)
+            }
+        }
     }
 
     fn cancel_composition(&mut self) -> Result<(), HistoryError> {
@@ -501,6 +611,13 @@ mod tests {
     struct Style {
         bold: Option<bool>,
         italic: Option<bool>,
+        family: Option<String>,
+    }
+
+    impl StyleAllocation for Style {
+        fn estimated_heap_bytes(&self) -> Option<usize> {
+            Some(self.family.as_ref().map_or(0, String::capacity))
+        }
     }
 
     fn bold(value: bool) -> Style {
@@ -533,6 +650,7 @@ mod tests {
             typing_style,
             LIMITS,
             max_entries,
+            usize::MAX,
         )
         .unwrap()
     }
@@ -621,6 +739,26 @@ mod tests {
         for (entry, (before, after)) in actual.redo.iter().zip(redo) {
             assert_draft_matches(&entry.before, before);
             assert_draft_matches(&entry.after, after);
+        }
+        assert_history_accounting(actual);
+    }
+
+    fn assert_history_accounting<S: StyleAllocation>(history: &DraftHistory<S>) {
+        let mut bytes = 0usize;
+        for entry in history.undo.iter().chain(&history.redo) {
+            assert_eq!(
+                entry.estimated_bytes,
+                HistoryEntry::estimate(&entry.before, &entry.after).unwrap()
+            );
+            bytes = bytes.checked_add(entry.estimated_bytes).unwrap();
+        }
+        assert_eq!(history.history_bytes, bytes);
+        assert!(history.undo.len() + history.redo.len() <= history.max_entries);
+    }
+
+    fn assert_history_trimmed<S>(history: &DraftHistory<S>) {
+        if history.history_bytes > history.max_history_bytes {
+            assert!(history.undo.len() <= 1 && history.redo.len() <= 1);
         }
     }
 
@@ -847,6 +985,7 @@ mod tests {
             bold(false),
             limits,
             2,
+            usize::MAX,
         )
         .unwrap();
         let before = history.current.clone();
@@ -1012,7 +1151,8 @@ mod tests {
                 Selection::caret(0),
                 Style::default(),
                 LIMITS,
-                0
+                0,
+                usize::MAX
             ),
             Err(HistoryError::InvalidHistoryLimit)
         ));
@@ -1042,6 +1182,329 @@ mod tests {
         history.replace_selection("X").unwrap();
         assert_eq!(history.current.value.text, "abX");
         assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable));
+    }
+
+    #[test]
+    fn history_byte_budget_evicts_old_entries_but_retains_nearest_undo_and_redo() {
+        let mut history = history("", vec![], Selection::caret(0), Style::default(), 8);
+        for text in ["a", "b", "c"] {
+            assert_eq!(history.replace_selection(text), Ok(CommitOutcome::Recorded));
+        }
+        assert_history_accounting(&history);
+        let limit = history.undo[1].estimated_bytes + history.undo[2].estimated_bytes;
+        assert_eq!(
+            history.set_history_byte_budget(limit),
+            Ok(BudgetOutcome {
+                evicted: 1,
+                estimated_bytes: limit,
+                over_budget: false,
+            })
+        );
+        history.undo().unwrap();
+        assert_eq!(history.current.value.text, "ab");
+        assert_eq!(
+            history.set_history_byte_budget(0),
+            Ok(BudgetOutcome {
+                evicted: 0,
+                estimated_bytes: limit,
+                over_budget: true,
+            })
+        );
+        history.undo().unwrap();
+        assert_eq!(history.current.value.text, "a");
+        let nearest_redo_bytes = history.redo.last().unwrap().estimated_bytes;
+        assert_eq!(
+            history.set_history_byte_budget(0),
+            Ok(BudgetOutcome {
+                evicted: 1,
+                estimated_bytes: nearest_redo_bytes,
+                over_budget: true,
+            })
+        );
+        assert_history_accounting(&history);
+        history.redo().unwrap();
+        assert_eq!(history.current.value.text, "ab");
+        assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable));
+        assert_eq!(
+            history.replace_selection("X"),
+            Ok(CommitOutcome::RecordedAfterEvictionOverBudget)
+        );
+        assert_history_accounting(&history);
+        history.undo().unwrap();
+        assert_eq!(history.current.value.text, "ab");
+    }
+
+    #[test]
+    fn budget_trimming_keeps_the_nearest_entry_on_each_branch() {
+        let mut history = history("", vec![], Selection::caret(0), Style::default(), 8);
+        for text in ["a", "b", "c", "d", "e"] {
+            history.replace_selection(text).unwrap();
+        }
+        history.undo().unwrap();
+        history.undo().unwrap();
+        let outcome = history.set_history_byte_budget(0).unwrap();
+        assert_eq!(outcome.evicted, 3);
+        assert!(outcome.over_budget);
+        assert_eq!(history.undo.len(), 1);
+        assert_eq!(history.redo.len(), 1);
+        assert_history_accounting(&history);
+        assert_history_trimmed(&history);
+        history.undo().unwrap();
+        assert_eq!(history.current.value.text, "ab");
+        history.redo().unwrap();
+        assert_eq!(history.current.value.text, "abc");
+        history.redo().unwrap();
+        assert_eq!(history.current.value.text, "abcd");
+        assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable));
+        assert_history_accounting(&history);
+    }
+
+    #[test]
+    fn history_byte_budget_honors_the_exact_threshold() {
+        let mut history = history("", vec![], Selection::caret(0), Style::default(), 8);
+        for text in ["a", "b", "c"] {
+            history.replace_selection(text).unwrap();
+        }
+        let two_entries = history.undo[1].estimated_bytes + history.undo[2].estimated_bytes;
+        let exact = history.set_history_byte_budget(two_entries).unwrap();
+        assert_eq!(exact.evicted, 1);
+        assert_eq!(exact.estimated_bytes, two_entries);
+        assert!(!exact.over_budget);
+        let below = history.set_history_byte_budget(two_entries - 1).unwrap();
+        assert_eq!(below.evicted, 1);
+        assert_eq!(history.undo.len(), 1);
+        assert!(!below.over_budget);
+        assert_history_accounting(&history);
+    }
+
+    #[test]
+    fn history_counts_owned_font_storage_and_reports_oversized_nearest_entry() {
+        let family = "f".repeat(1024);
+        let mut history = history(
+            "",
+            vec![],
+            Selection::caret(0),
+            Style {
+                family: Some(family.clone()),
+                ..Style::default()
+            },
+            4,
+        );
+        assert_eq!(
+            history.set_history_byte_budget(0),
+            Ok(BudgetOutcome {
+                evicted: 0,
+                estimated_bytes: 0,
+                over_budget: false,
+            })
+        );
+        assert_eq!(
+            history.replace_selection("é"),
+            Ok(CommitOutcome::RecordedOverBudget)
+        );
+        let entry = history.undo.front().unwrap();
+        assert!(
+            entry.estimated_bytes >= std::mem::size_of::<HistoryEntry<Style>>() + 3 * family.len()
+        );
+        assert_history_accounting(&history);
+        history.undo().unwrap();
+        history.redo().unwrap();
+        assert_eq!(history.current.value.text, "é");
+        assert_history_accounting(&history);
+    }
+
+    #[test]
+    fn history_size_overflow_does_not_change_draft_composition_or_redo() {
+        #[derive(Clone, Debug, Default, PartialEq)]
+        struct OverflowStyle(bool);
+        impl StyleAllocation for OverflowStyle {
+            fn estimated_heap_bytes(&self) -> Option<usize> {
+                Some(if self.0 { usize::MAX } else { 0 })
+            }
+        }
+        let mut history = DraftHistory::new(
+            StyledText::new(String::new(), vec![], LIMITS).unwrap(),
+            Selection::caret(0),
+            OverflowStyle::default(),
+            LIMITS,
+            4,
+            usize::MAX,
+        )
+        .unwrap();
+        history.replace_selection("a").unwrap();
+        history.undo().unwrap();
+        history.format_selection(|_| OverflowStyle(true)).unwrap();
+        let before = history.current.clone();
+        let redo = history
+            .redo
+            .iter()
+            .map(|entry| {
+                (
+                    entry.before.clone(),
+                    entry.after.clone(),
+                    entry.estimated_bytes,
+                )
+            })
+            .collect::<Vec<_>>();
+        let bytes = history.history_bytes;
+        assert_eq!(
+            history.replace_selection("x"),
+            Err(HistoryError::HistorySizeOverflow)
+        );
+        assert_eq!(history.current, before);
+        assert_eq!(history.redo.len(), redo.len());
+        assert!(history.redo.iter().zip(&redo).all(|(entry, snapshot)| {
+            entry.before == snapshot.0
+                && entry.after == snapshot.1
+                && entry.estimated_bytes == snapshot.2
+        }));
+        assert_eq!(history.history_bytes, bytes);
+
+        history.begin_composition().unwrap();
+        history
+            .update_composition("n", Selection::caret(1))
+            .unwrap();
+        let preview = history.current.clone();
+        let composition = history.composition.clone();
+        assert_eq!(
+            history.set_history_byte_budget(0),
+            Err(HistoryError::CompositionActive)
+        );
+        assert_eq!(
+            history.commit_composition("ni", Selection::caret(2)),
+            Err(HistoryError::HistorySizeOverflow)
+        );
+        assert_eq!(history.current, preview);
+        assert_eq!(history.composition, composition);
+        assert_eq!(history.redo.len(), redo.len());
+        assert!(history.redo.iter().zip(&redo).all(|(entry, snapshot)| {
+            entry.before == snapshot.0
+                && entry.after == snapshot.1
+                && entry.estimated_bytes == snapshot.2
+        }));
+        assert_eq!(history.history_bytes, bytes);
+        history.cancel_composition().unwrap();
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current.value.text, "a");
+        assert_history_accounting(&history);
+    }
+
+    #[test]
+    fn changing_history_budgets_remains_consistent_during_randomized_edits() {
+        for mut seed in [0xa640_9b57_u64, 0x1234_5678, 0xcafe_babe, 0x4ea2_67af] {
+            let mut history = history("aé", vec![], Selection::caret(1), Style::default(), 8);
+            let mut next = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed as usize
+            };
+            let texts = ["x", "é", "🙂", ""];
+            for _ in 0..2500 {
+                let length = history.current.value.text.chars().count();
+                if length > 50 {
+                    history
+                        .set_selection(Selection {
+                            anchor: 0,
+                            active: length,
+                        })
+                        .unwrap();
+                    history.replace_selection("x").unwrap();
+                    assert_history_trimmed(&history);
+                }
+                let length = history.current.value.text.chars().count();
+                match next() % 7 {
+                    0 => history
+                        .set_selection(Selection {
+                            anchor: next() % (length + 1),
+                            active: next() % (length + 1),
+                        })
+                        .unwrap(),
+                    1 => {
+                        let outcome = history
+                            .replace_selection(texts[next() % texts.len()])
+                            .unwrap();
+                        if outcome != CommitOutcome::NoDocumentChange {
+                            assert_history_trimmed(&history);
+                        }
+                    }
+                    2 => {
+                        let bold = next().is_multiple_of(2);
+                        let family = next().is_multiple_of(2).then(|| "font".repeat(next() % 9));
+                        let outcome = history
+                            .format_selection(|style| Style {
+                                bold: Some(bold),
+                                family: family.clone(),
+                                ..style.clone()
+                            })
+                            .unwrap();
+                        if outcome != CommitOutcome::NoDocumentChange {
+                            assert_history_trimmed(&history);
+                        }
+                    }
+                    3 => {
+                        let bytes = history.history_bytes;
+                        if history.undo.is_empty() {
+                            assert_eq!(history.undo(), Err(HistoryError::UndoUnavailable));
+                        } else {
+                            history.undo().unwrap();
+                        }
+                        assert_eq!(history.history_bytes, bytes);
+                    }
+                    4 => {
+                        let bytes = history.history_bytes;
+                        if history.redo.is_empty() {
+                            assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable));
+                        } else {
+                            history.redo().unwrap();
+                        }
+                        assert_eq!(history.history_bytes, bytes);
+                    }
+                    5 => {
+                        let budget = [
+                            0,
+                            history.history_bytes / 2,
+                            history.history_bytes,
+                            usize::MAX,
+                        ][next() % 4];
+                        let entries = history.undo.len() + history.redo.len();
+                        let outcome = history.set_history_byte_budget(budget).unwrap();
+                        assert_eq!(
+                            outcome.evicted,
+                            entries - history.undo.len() - history.redo.len()
+                        );
+                        assert_eq!(outcome.estimated_bytes, history.history_bytes);
+                        assert_eq!(outcome.over_budget, history.history_bytes > budget);
+                        assert_history_trimmed(&history);
+                    }
+                    _ => {
+                        let before = history.current.clone();
+                        let bytes = history.history_bytes;
+                        let entries = (history.undo.len(), history.redo.len());
+                        history.begin_composition().unwrap();
+                        let text = texts[next() % texts.len()];
+                        history
+                            .update_composition(text, Selection::caret(text.chars().count()))
+                            .unwrap();
+                        if next().is_multiple_of(2) {
+                            history.cancel_composition().unwrap();
+                            assert_eq!(history.current, before);
+                            assert_eq!(history.history_bytes, bytes);
+                            assert_eq!((history.undo.len(), history.redo.len()), entries);
+                        } else {
+                            let outcome = history
+                                .commit_composition(text, Selection::caret(text.chars().count()))
+                                .unwrap();
+                            if outcome != CommitOutcome::NoDocumentChange {
+                                assert_history_trimmed(&history);
+                            }
+                        }
+                    }
+                }
+                assert_history_accounting(&history);
+            }
+        }
     }
 
     #[test]
@@ -1155,6 +1618,7 @@ mod tests {
         let both = Style {
             bold: Some(true),
             italic: Some(true),
+            ..Style::default()
         };
         let mut value = StyledText::new(
             "abc".into(),
@@ -1188,6 +1652,7 @@ mod tests {
                 style: Style {
                     bold: None,
                     italic: Some(true),
+                    ..Style::default()
                 }
             }]
         );
@@ -1205,8 +1670,9 @@ mod tests {
         )
         .unwrap();
         let before = value.clone();
+        let reversed = Range { start: 3, end: 2 };
         assert_eq!(
-            value.replace(3..2, "", Style::default(), LIMITS),
+            value.replace(reversed, "", Style::default(), LIMITS),
             Err(EditError::InvalidRange)
         );
         assert_eq!(

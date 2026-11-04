@@ -1391,7 +1391,8 @@ including invalid ranges and budget rejection. It now also explores snapshot
 history, directional selections, caret typing styles and explicit IME
 preedit/commit/cancel transactions. Independent randomized character-level
 oracles exercise 2,500 span operations and 2,500 mixed history/composition
-operations. It is not compiled into Thinoda. Egui event/undo integration,
+operations; a further 10,000 operations exercise changing history budgets.
+It is not compiled into Thinoda. Egui event/undo integration,
 empty-commit versus cancellation, example limits, style memory and validation,
 grapheme behavior, paragraph lists, persistence and rendering are not
 production implementations.
@@ -1406,11 +1407,21 @@ surrounding-deletion cursor arithmetic but may pass an oversized range to the
 buffer, while the prototype rejects invalid ranges. The app's synthetic egui
 characterization tests cover these operations and whole-string undo/redo; they
 do not establish real IME event sequences. The event mapping, cancellation and
-treatment of surrounding edits need explicit real-platform decisions. Snapshot
-counts bound the number of entries, not their true memory use, and eviction
-plus caret-style inheritance
-still need product decisions and real input acceptance. A passing scalar-level
-oracle does not establish grapheme, bidirectional or egui-editor correctness.
+treatment of surrounding edits need explicit real-platform decisions.
+
+Duck check: an entry-count limit alone does not bound snapshot memory. The
+standalone history now estimates retained undo/redo entry bytes, including text
+and span capacities and style-reported allocations; a font-name example,
+budget-boundary tests and explicit overflow rejection cover that accounting.
+It preserves the nearest undo and redo even if they exceed the budget, reports
+eviction and over-budget retention, and does not trim merely because undo/redo
+move entries between stacks. That last behavior differs from the existing
+document history and needs a product decision. The estimate excludes allocator
+overhead, stack capacity, current and composition drafts, and temporary copies;
+shared allocations or inaccurate style accounting also affect it. It is not a
+hard or peak-memory bound. Caret-style inheritance, eviction policy and real
+input acceptance remain open. A passing scalar-level oracle does not establish
+grapheme, bidirectional or egui-editor correctness.
 
 The implementation must audit `Sheet::set_title`, search/replace, FIM
 projection, template/copy paths and direct title assignments as well as canvas
