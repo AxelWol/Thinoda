@@ -167,7 +167,10 @@ graph TD
   versions cannot carry formatted envelopes. Recovery and internal subtree/
   outline copies retain the same type; draft conflict checks compare both source
   and format. The existing 16 KiB / 2,048-event / 32-depth preview/projection
-  limits do not truncate stored source or prevent editing larger notes.
+  limits do not truncate stored source or prevent editing larger notes. Notes
+  formatting actions use those bounds and reject transformations that cannot
+  preserve unrelated rendered content or list membership; rejection leaves the
+  draft and selection intact.
   The first XV7b slice uses one canonical trailing `thinoda-math-v1` fenced
   block inside `markdown-v1`, not a new topic field or persisted AST.
   `thinoda-core::equations` parses an explicit ASCII subset (groups, fraction,

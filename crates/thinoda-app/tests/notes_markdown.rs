@@ -129,6 +129,71 @@ fn list_actions_convert_and_toggle_as_single_edits_in_both_views() {
 }
 
 #[test]
+fn list_actions_reject_code_and_unselected_paragraph_changes_without_committing() {
+    let warning = "Cannot apply formatting to this selection. The formatting action was canceled.";
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for (source, selection, markdown) in
+            [("one\ntwo", 0..3, false), ("```\ncode\n```", 4..8, true)]
+        {
+            for label in ["Bulleted list", "Numbered list"] {
+                let mut app = ThinodaApp::headless();
+                app.mode = mode;
+                app.format_tab = thinoda_app::app::FormatTab::Data;
+                let doc = app.doc_mut().unwrap();
+                let root = doc.doc.sheet().root;
+                doc.doc
+                    .edit_sheet("Fixture", |sheet| {
+                        if markdown {
+                            sheet.set_markdown_notes(root, Some(source.into()))
+                        } else {
+                            sheet.set_notes(root, Some(source.into()))
+                        }
+                    })
+                    .unwrap();
+                let revision = doc.doc.state_id();
+                let mut h = Harness::builder()
+                    .with_size(egui::vec2(1280.0, 1000.0))
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                h.run_steps(4);
+                h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+                    .focus();
+                h.run_steps(3);
+                let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+                let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(selection.start),
+                        egui::text::CCursor::new(selection.end),
+                    )));
+                state.store(&h.ctx, focused);
+                h.run_steps(3);
+                h.get_by_role_and_label(Role::Button, t(label))
+                    .scroll_to_me();
+                h.run_steps(8);
+                h.get_by_role_and_label(Role::Button, t(label)).click();
+                h.run_steps(4);
+
+                let doc = h.state().doc().unwrap();
+                assert_eq!(doc.doc.state_id(), revision, "{mode:?} {label}");
+                let note = doc.doc.sheet().root_topic().notes.as_ref().unwrap();
+                assert_eq!(&**note, source);
+                assert_eq!(note.is_markdown(), markdown);
+                assert!(h.query_by_label(t(warning)).is_some());
+                assert_eq!(h.ctx.memory(|memory| memory.focused()), Some(focused));
+                let actual = egui::TextEdit::load_state(&h.ctx, focused)
+                    .unwrap()
+                    .cursor
+                    .char_range()
+                    .unwrap()
+                    .as_sorted_char_range();
+                assert_eq!(actual.start.0..actual.end.0, selection);
+            }
+        }
+    }
+}
+
+#[test]
 fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
@@ -934,20 +999,14 @@ fn empty_notes_emphasis_allows_typing_and_undo_in_both_views() {
 
 #[test]
 fn rejected_notes_formatting_preserves_a_focused_draft() {
+    let warning = "Cannot apply formatting to this selection. The formatting action was canceled.";
     for mode in [CenterMode::Map, CenterMode::Outliner] {
-        for (label, warning) in [
-            (
-                "Bold notes",
-                "Cannot apply formatting to this selection. The formatting action was canceled.",
-            ),
-            (
-                "Italic notes",
-                "Cannot apply formatting to this selection. The formatting action was canceled.",
-            ),
-            (
-                "Strikethrough notes",
-                "Cannot apply formatting to this selection. The formatting action was canceled.",
-            ),
+        for (label, source, selection) in [
+            ("Bold notes", "first\n\nsecond", None),
+            ("Italic notes", "first\n\nsecond", None),
+            ("Strikethrough notes", "first\n\nsecond", None),
+            ("Bulleted list", "one\ntwo", Some(0..3)),
+            ("Numbered list", "one\ntwo", Some(0..3)),
         ] {
             let mut app = ThinodaApp::headless();
             app.mode = mode;
@@ -960,9 +1019,21 @@ fn rejected_notes_formatting_preserves_a_focused_draft() {
                 .focus();
             h.run_steps(2);
             h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
-                .type_text("first\n\nsecond");
+                .type_text(source);
             h.run_steps(2);
-            h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+            if let Some(selection) = selection {
+                let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+                let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(selection.start),
+                        egui::text::CCursor::new(selection.end),
+                    )));
+                state.store(&h.ctx, focused);
+            } else {
+                h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+            }
             h.run_steps(2);
             h.get_by_role_and_label(Role::Button, t(label))
                 .scroll_to_me();
@@ -971,7 +1042,7 @@ fn rejected_notes_formatting_preserves_a_focused_draft() {
             h.run_steps(4);
             let editor = h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"));
             assert!(editor.is_focused());
-            assert_eq!(editor.value().as_deref(), Some("first\n\nsecond"));
+            assert_eq!(editor.value().as_deref(), Some(source));
             assert!(h.state().doc().unwrap().is_dirty(), "{mode:?} {label}");
             assert!(
                 h.state()
@@ -996,7 +1067,7 @@ fn rejected_notes_formatting_preserves_a_focused_draft() {
                 .notes
                 .as_ref()
                 .unwrap();
-            assert_eq!(&**note, "first\n\nsecond", "{mode:?} {label}");
+            assert_eq!(&**note, source, "{mode:?} {label}");
             assert!(!note.is_markdown());
             assert!(h.query_by_label(t(warning)).is_some());
             let ctx = h.ctx.clone();
@@ -1021,7 +1092,7 @@ fn rejected_notes_formatting_preserves_a_focused_draft() {
                     .root_topic()
                     .notes
                     .as_deref(),
-                Some("first\n\nsecond")
+                Some(source)
             );
         }
     }
@@ -1030,7 +1101,13 @@ fn rejected_notes_formatting_preserves_a_focused_draft() {
 #[test]
 fn rejected_notes_formatting_keeps_draft_for_recovery_and_native_save() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
-        for label in ["Bold notes", "Italic notes", "Strikethrough notes"] {
+        for (label, source, selection) in [
+            ("Bold notes", "first\n\nsecond", None),
+            ("Italic notes", "first\n\nsecond", None),
+            ("Strikethrough notes", "first\n\nsecond", None),
+            ("Bulleted list", "one\ntwo", Some(0..3)),
+            ("Numbered list", "one\ntwo", Some(0..3)),
+        ] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("draft.thinoda");
             let mut app = ThinodaApp::headless();
@@ -1045,9 +1122,21 @@ fn rejected_notes_formatting_keeps_draft_for_recovery_and_native_save() {
                 .focus();
             h.run_steps(2);
             h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
-                .type_text("first\n\nsecond");
+                .type_text(source);
             h.run_steps(2);
-            h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+            if let Some(selection) = selection {
+                let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+                let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(selection.start),
+                        egui::text::CCursor::new(selection.end),
+                    )));
+                state.store(&h.ctx, focused);
+            } else {
+                h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+            }
             h.run_steps(2);
             h.get_by_role_and_label(Role::Button, t(label))
                 .scroll_to_me();
@@ -1063,7 +1152,7 @@ fn rejected_notes_formatting_keeps_draft_for_recovery_and_native_save() {
             let orphans = RecoveryManager::find_orphans(&paths);
             let recovered = orphans[0].docs[0].load().unwrap();
             let note = recovered.active().root_topic().notes.as_ref().unwrap();
-            assert_eq!(&**note, "first\n\nsecond", "{mode:?} {label}");
+            assert_eq!(&**note, source, "{mode:?} {label}");
             assert!(!note.is_markdown());
             assert!(
                 h.state()
@@ -1082,7 +1171,7 @@ fn rejected_notes_formatting_keeps_draft_for_recovery_and_native_save() {
             h.run_steps(4);
             let saved = OpenDoc::open(&path).unwrap();
             let note = saved.doc.sheet().root_topic().notes.as_ref().unwrap();
-            assert_eq!(&**note, "first\n\nsecond", "{mode:?} {label}");
+            assert_eq!(&**note, source, "{mode:?} {label}");
             assert!(!note.is_markdown());
         }
     }

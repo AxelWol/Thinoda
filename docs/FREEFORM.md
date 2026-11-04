@@ -1180,6 +1180,27 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   This is the existing opt-in note contract, not a rich-text migration. The
   source-first editor still uses character offsets rather than a grapheme/IME
   transaction model, and formatting cannot be represented in all exports.
+- Duck check: list buttons previously inserted or removed markers without
+  checking what Markdown would render. Formatting one line could absorb an
+  unselected following line into a list, alter an existing item's numbering,
+  or put literal markers inside a code block. Both list actions now compare the
+  bounded plain-text projection and non-list syntax, preserve list membership
+  and numbering outside the affected lines, and require parsed list items for
+  the affected lines. Rejection uses the existing localized warning and keeps
+  the draft, selection and plain/Markdown format unchanged.
+- This check is intentionally conservative: for example, listing the first
+  line of an adjacent two-line paragraph can be rejected rather than silently
+  absorbing the second line. Nested-list edits and over-limit notes can also be
+  rejected; manual Markdown source editing remains available. Creating a list
+  can intentionally change paragraph and soft-break layout around the selected
+  lines, even when projected text is unchanged. The comparison operates on
+  parser events and does not resolve the plain-note promotion or physical IME
+  and screen-reader limitations above.
+- The list tests include formatted and plain Notes in Map and Outliner, the
+  staged enlarged editor, links and inline styles, nested lists, Unicode,
+  twelve numbered items and 17,280 mixed three-line candidate operations. The
+  generated cases check parsed item coverage for accepted operations; they are
+  not a substitute for real input-device or assistive-technology acceptance.
 - Native egui coverage exercises Map and Outliner, focused Unicode drafts,
   selected whitespace, nested styles, rejection, undo/redo, recovering and
   saving a rejected focused draft, all language catalogs and the enlarged

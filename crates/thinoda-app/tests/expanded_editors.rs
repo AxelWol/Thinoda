@@ -426,6 +426,46 @@ fn enlarged_notes_reject_unrenderable_emphasis_without_changing_the_draft() {
 }
 
 #[test]
+fn enlarged_notes_reject_list_changes_inside_a_code_block() {
+    let _language = LANGUAGE.lock().unwrap();
+    for label in ["Bulleted list", "Numbered list"] {
+        let mut h = harness(ThinodaApp::headless());
+        click(&mut h, "Enlarge notes editor");
+        text(&mut h, "Notes", "```\ncode\n```");
+        let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+        let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(4),
+                egui::text::CCursor::new(8),
+            )));
+        state.store(&h.ctx, focused);
+        h.run_steps(3);
+        click(&mut h, label);
+        assert!(
+            h.query_by_label(t(
+                "Cannot apply formatting to this selection. The formatting action was canceled."
+            ))
+            .is_some()
+        );
+        click(&mut h, "Apply notes");
+        let note = h
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .as_ref()
+            .unwrap();
+        assert_eq!(&**note, "```\ncode\n```");
+        assert!(!note.is_markdown());
+    }
+}
+
+#[test]
 fn enlarged_notes_reject_partial_delimiters_that_change_other_styles() {
     let _language = LANGUAGE.lock().unwrap();
     let mut app = ThinodaApp::headless();

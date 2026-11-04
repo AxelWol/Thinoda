@@ -277,6 +277,11 @@ recovery, undo and versioned clipboard retain both source and format. Older
 Thinoda releases cannot open native v4 files; keep a copy before using new
 formatting tools in a document that must remain readable by older versions.
 The source is still editable even when it exceeds preview/projection bounds.
+Formatting actions may be refused when the bounded Markdown parser cannot verify
+that surrounding content and list membership remain unchanged. The draft and
+selection are retained; edit the Markdown source directly when needed. A list
+action on one line of a paragraph can be refused rather than absorbing adjacent
+unselected lines.
 This is not XMind rich-text parity: underline, a persisted block/span model,
 formatted foreign-file interchange and rendered equations are not delivered.
 XMind export retains the format only in Thinoda's private metadata and exposes

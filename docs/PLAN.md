@@ -79,6 +79,13 @@ must fit the preview limits, including for caret-only actions and marker
 removal. See the [critique](FREEFORM.md#notes-strikethrough-checkpoint-and-critique)
 for conservative rejections and remaining limitations.
 
+**Notes list safety continuation:** bulleted and numbered actions now validate
+the bounded Markdown projection, inline structure and list membership before
+committing. Unsafe changes, including markers inside code and changes to
+unselected list items, keep the draft and selection and show the existing
+localized warning. Some otherwise useful partial-line operations are rejected
+conservatively; see the [critique](FREEFORM.md#notes-strikethrough-checkpoint-and-critique).
+
 **2026-11-03 selected-connector checkpoint:** the board toolbox offers straight,
 elbow and curved routes, start/end arrows, width presets and an exact width,
 and automatic, swatch or custom color for a single selected connector. Compact

@@ -14,7 +14,7 @@ pub(crate) const FREEMIND_LIMIT: &str = "FreeMind note export limit reached. The
 pub(crate) const FREEMIND_UNSUPPORTED: &str = "FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.";
 pub(crate) const EXCEL_LIMIT: &str = "Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.";
 pub(crate) const EXCEL_UNSUPPORTED: &str = "Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.";
-const EMPHASIS_UNAVAILABLE: &str =
+const FORMATTING_UNAVAILABLE: &str =
     "Cannot apply formatting to this selection. The formatting action was canceled.";
 
 #[derive(Clone, Copy, Debug)]
@@ -626,6 +626,251 @@ fn emphasis_change_is_valid(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ListMarker {
+    Bullet,
+    Numbered(u64),
+}
+
+struct OpenList {
+    next: Option<u64>,
+    current: Option<ListMarker>,
+}
+
+struct ListCharacter {
+    character: char,
+    selected: bool,
+    lists: std::rc::Rc<[ListMarker]>,
+}
+
+struct ListItem {
+    start: usize,
+    selected: bool,
+    lists: Vec<ListMarker>,
+}
+
+#[derive(Default)]
+struct ListDocument {
+    characters: Vec<ListCharacter>,
+    items: Vec<ListItem>,
+    other_structure: Vec<(usize, String)>,
+}
+
+fn list_document(source: &str, selection: &std::ops::Range<usize>) -> Option<ListDocument> {
+    fn append(
+        document: &mut ListDocument,
+        source: &str,
+        text: &str,
+        range: &std::ops::Range<usize>,
+        selection: &std::ops::Range<usize>,
+        lists: &[OpenList],
+    ) -> Option<()> {
+        let exact_offsets = source.get(range.clone())? == text;
+        let contained = range.start >= selection.start && range.end <= selection.end;
+        let disjoint = range.end <= selection.start || range.start >= selection.end;
+        if !exact_offsets && !contained && !disjoint {
+            return None;
+        }
+        let lists: std::rc::Rc<[ListMarker]> = lists
+            .iter()
+            .filter_map(|list| list.current.clone())
+            .collect::<Vec<_>>()
+            .into();
+        for (offset, character) in text.char_indices() {
+            let selected = if exact_offsets {
+                let start = range.start + offset;
+                start >= selection.start && start + character.len_utf8() <= selection.end
+            } else {
+                contained
+            };
+            document.characters.push(ListCharacter {
+                character,
+                selected,
+                lists: lists.clone(),
+            });
+        }
+        Some(())
+    }
+
+    let mut document = ListDocument::default();
+    let mut lists: Vec<OpenList> = Vec::new();
+    for (event, range) in Parser::new_ext(source, crate::legal_markdown::OPTIONS).into_offset_iter()
+    {
+        match event {
+            Event::Start(Tag::List(start)) => lists.push(OpenList {
+                next: start,
+                current: None,
+            }),
+            Event::Start(Tag::Item) => {
+                let list = lists.last_mut()?;
+                let marker = if let Some(number) = list.next {
+                    list.next = Some(number.checked_add(1)?);
+                    ListMarker::Numbered(number)
+                } else {
+                    ListMarker::Bullet
+                };
+                list.current = Some(marker);
+                document.items.push(ListItem {
+                    start: range.start,
+                    selected: range.start >= selection.start && range.start <= selection.end,
+                    lists: lists
+                        .iter()
+                        .filter_map(|list| list.current.clone())
+                        .collect(),
+                });
+            }
+            Event::End(TagEnd::Item) => lists.last_mut()?.current = None,
+            Event::End(TagEnd::List(_)) => {
+                lists.pop()?;
+            }
+            // Turning lines into items intentionally changes paragraph and soft-break boundaries.
+            Event::Start(Tag::Paragraph) | Event::End(TagEnd::Paragraph) | Event::SoftBreak => {}
+            Event::Start(tag) => document
+                .other_structure
+                .push((document.characters.len(), format!("+{tag:?}"))),
+            Event::End(tag) => document
+                .other_structure
+                .push((document.characters.len(), format!("-{tag:?}"))),
+            Event::Text(text) => append(&mut document, source, &text, &range, selection, &lists)?,
+            event => {
+                document
+                    .other_structure
+                    .push((document.characters.len(), format!("{event:?}")));
+                let text = match &event {
+                    Event::Code(text)
+                    | Event::Html(text)
+                    | Event::InlineHtml(text)
+                    | Event::InlineMath(text)
+                    | Event::DisplayMath(text) => Some(text.to_string()),
+                    Event::FootnoteReference(name) => Some(format!("[{name}]")),
+                    Event::TaskListMarker(checked) => {
+                        Some(if *checked { "[x] " } else { "[ ] " }.to_owned())
+                    }
+                    _ => None,
+                };
+                if let Some(text) = text {
+                    append(&mut document, source, &text, &range, selection, &lists)?;
+                }
+            }
+        }
+    }
+    Some(document)
+}
+
+fn list_line_byte_range(source: &str, start: usize, end: usize) -> std::ops::Range<usize> {
+    let start = source[..start].rfind('\n').map_or(0, |byte| byte + 1);
+    let end = if end > start && source[..end].ends_with('\n') {
+        end - 1
+    } else {
+        source[end..]
+            .find('\n')
+            .map_or(source.len(), |byte| end + byte)
+    };
+    start..end
+}
+
+fn list_change_is_valid(
+    source: &str,
+    replacement: &str,
+    previous_selection: &std::ops::Range<usize>,
+    selection: &std::ops::Range<usize>,
+    format: Format,
+) -> bool {
+    if !projection_is_preserved(source, replacement) {
+        return false;
+    }
+    let Some(previous) = character_byte_range(source, previous_selection) else {
+        return false;
+    };
+    let previous = list_line_byte_range(source, previous.start, previous.end);
+    let Some(selection) = character_byte_range(replacement, selection) else {
+        return false;
+    };
+    let lines = &source[previous.clone()];
+    let removing = lines
+        .split('\n')
+        .all(|line| list_content(line, format).is_some());
+    let (Some(before), Some(after)) = (
+        list_document(source, &previous),
+        list_document(replacement, &selection),
+    ) else {
+        return false;
+    };
+    if before.other_structure != after.other_structure
+        || before.characters.len() != after.characters.len()
+    {
+        return false;
+    }
+    let expected = |marker: &ListMarker| {
+        matches!(
+            (format, marker),
+            (Format::Bullet, ListMarker::Bullet) | (Format::Numbered, ListMarker::Numbered(_))
+        )
+    };
+    for (before, after) in before.characters.iter().zip(&after.characters) {
+        if before.character != after.character || before.selected != after.selected {
+            return false;
+        }
+        if before.selected {
+            if removing {
+                if !after.lists.is_empty() {
+                    return false;
+                }
+            } else if !after.lists.last().is_some_and(expected) {
+                return false;
+            }
+        } else if before.lists != after.lists {
+            return false;
+        }
+    }
+    let unchanged_items = |document: &ListDocument| {
+        document
+            .items
+            .iter()
+            .filter(|item| !item.selected)
+            .map(|item| item.lists.clone())
+            .collect::<Vec<_>>()
+    };
+    if unchanged_items(&before) != unchanged_items(&after) {
+        return false;
+    }
+    let (listed, text, range) = if removing {
+        (&before, source, &previous)
+    } else {
+        (&after, replacement, &selection)
+    };
+    let mut items = listed.items.iter().filter(|item| item.selected);
+    let mut start = range.start;
+    for line in text[range.clone()].split('\n') {
+        let end = start + line.len();
+        let Some(item) = items.next() else {
+            return false;
+        };
+        if !(start..=end).contains(&item.start) || !item.lists.last().is_some_and(expected) {
+            return false;
+        }
+        start = end + 1;
+    }
+    items.next().is_none() && (!removing || !after.items.iter().any(|item| item.selected))
+}
+
+fn formatting_change_is_valid(
+    source: &str,
+    replacement: &str,
+    previous_selection: &std::ops::Range<usize>,
+    selection: &std::ops::Range<usize>,
+    format: Format,
+) -> bool {
+    match format {
+        Format::Bold | Format::Italic | Format::Strike => {
+            emphasis_change_is_valid(source, replacement, previous_selection, selection, format)
+        }
+        Format::Bullet | Format::Numbered => {
+            list_change_is_valid(source, replacement, previous_selection, selection, format)
+        }
+    }
+}
+
 fn format_selection(
     source: &str,
     range: std::ops::Range<usize>,
@@ -669,16 +914,9 @@ fn format_selection(
     };
     let (start, end) = match format {
         Format::Bullet | Format::Numbered => {
-            let start = source[..start].rfind('\n').map_or(0, |byte| byte + 1);
             // A selection ending at the start of a line excludes that line.
-            let end = if end > start && source[..end].ends_with('\n') {
-                end - 1
-            } else {
-                source[end..]
-                    .find('\n')
-                    .map_or(source.len(), |byte| end + byte)
-            };
-            (start, end)
+            let range = list_line_byte_range(source, start, end);
+            (range.start, range.end)
         }
         _ => (start, end),
     };
@@ -952,7 +1190,7 @@ fn tools_inline(
                     });
                 let previous_selection = selection.clone();
                 let (replacement, selection) = format_selection(&source, selection, format);
-                let invalid = !emphasis_change_is_valid(
+                let invalid = !formatting_change_is_valid(
                     &source,
                     &replacement,
                     &previous_selection,
@@ -977,7 +1215,7 @@ fn tools_inline(
                 if invalid {
                     ui.data_mut(|data| {
                         data.insert_temp(response.id, source.clone());
-                        data.insert_temp(feedback_id, (selection_owner, EMPHASIS_UNAVAILABLE));
+                        data.insert_temp(feedback_id, (selection_owner, FORMATTING_UNAVAILABLE));
                     });
                     *done = None;
                     continue;
@@ -1089,7 +1327,7 @@ mod tests {
     #[test]
     fn formatting_feedback_exists_in_every_catalog() {
         for language in crate::i18n::Lang::ALL {
-            for key in ["Strikethrough notes", EMPHASIS_UNAVAILABLE] {
+            for key in ["Strikethrough notes", FORMATTING_UNAVAILABLE] {
                 if language != crate::i18n::Lang::En {
                     assert_ne!(crate::i18n::t_in(language, key), key, "{language:?}: {key}");
                 }
@@ -1136,6 +1374,163 @@ mod tests {
             format_selection("café\n二", 99..99, Format::Numbered).0,
             "café\n1. 二"
         );
+    }
+
+    #[test]
+    fn list_actions_preserve_unselected_structure_and_inline_styles() {
+        let valid = |source: &str, selection: std::ops::Range<usize>, format| {
+            let (replacement, new_selection) = format_selection(source, selection.clone(), format);
+            formatting_change_is_valid(source, &replacement, &selection, &new_selection, format)
+        };
+        for (source, selection, format) in [
+            ("café\n日本語", 0..8, Format::Bullet),
+            ("- one\n- *two*", 0..13, Format::Numbered),
+            ("- one\n- *two*", 0..13, Format::Bullet),
+            ("- one\n- two", 0..5, Format::Numbered),
+            (
+                "[one](https://example.invalid)\n**two**",
+                0..38,
+                Format::Bullet,
+            ),
+            ("", 0..0, Format::Bullet),
+            ("plain\n\n~~~\ncode\n~~~", 0..5, Format::Bullet),
+        ] {
+            assert!(valid(source, selection, format), "{source:?} {format:?}");
+        }
+        for (source, selection, format) in [
+            ("one\ntwo", 0..3, Format::Bullet),
+            ("```\ncode\n```", 4..8, Format::Numbered),
+            ("<div>\ncode\n</div>", 6..10, Format::Bullet),
+            ("**bold\nstill**", 0..6, Format::Bullet),
+            ("- parent\n  - child\n- sibling", 0..8, Format::Numbered),
+            ("1. one\n2. two\n3. three", 0..6, Format::Numbered),
+        ] {
+            assert!(!valid(source, selection, format), "{source:?} {format:?}");
+        }
+        let large = "x".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES + 1);
+        assert!(!valid(&large, 0..1, Format::Bullet));
+    }
+
+    #[test]
+    fn list_validation_allows_more_than_nine_numbered_items() {
+        let source = (1..=12)
+            .map(|number| format!("item {number}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let original = 0..source.chars().count();
+        let (listed, selection) = format_selection(&source, original.clone(), Format::Numbered);
+        assert!(listed.contains("12. item 12"));
+        assert!(formatting_change_is_valid(
+            &source,
+            &listed,
+            &original,
+            &selection,
+            Format::Numbered
+        ));
+        let (restored, restored_selection) =
+            format_selection(&listed, selection.clone(), Format::Numbered);
+        assert_eq!(restored, source);
+        assert!(formatting_change_is_valid(
+            &listed,
+            &restored,
+            &selection,
+            &restored_selection,
+            Format::Numbered
+        ));
+    }
+
+    #[test]
+    fn list_validation_checks_both_source_and_result_at_preview_limits() {
+        let valid = |source: &str| {
+            let original = 0..1;
+            let (replacement, selection) =
+                format_selection(source, original.clone(), Format::Bullet);
+            formatting_change_is_valid(source, &replacement, &original, &selection, Format::Bullet)
+        };
+        let fits = "x".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES - 2);
+        assert!(valid(&fits));
+        let at_limit = "x".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES);
+        assert!(!valid(&at_limit));
+        let many_events = "**x** ".repeat(700);
+        assert!(!valid(&many_events));
+        let deep = format!(
+            "{}x",
+            "> ".repeat(thinoda_core::notes::MAX_PROJECTION_DEPTH + 1)
+        );
+        assert!(!valid(&deep));
+    }
+
+    #[test]
+    fn accepted_list_changes_have_one_item_on_each_affected_line() {
+        let fragments = [
+            "a", "b", "- a", "- - b", "1. a", "  - b", "```", "", "<div>", ">", "**", "    code",
+        ];
+        for first in fragments {
+            for second in fragments {
+                for third in fragments {
+                    let source = format!("{first}\n{second}\n{third}");
+                    let all = source.chars().count();
+                    let first_end = first.chars().count();
+                    let second_end = first_end + 1 + second.chars().count();
+                    for selection in [
+                        0..all,
+                        0..first_end,
+                        first_end + 1..second_end,
+                        second_end + 1..all,
+                        0..second_end,
+                    ] {
+                        for format in [Format::Bullet, Format::Numbered] {
+                            let (replacement, new_selection) =
+                                format_selection(&source, selection.clone(), format);
+                            if !formatting_change_is_valid(
+                                &source,
+                                &replacement,
+                                &selection,
+                                &new_selection,
+                                format,
+                            ) {
+                                continue;
+                            }
+                            let original = character_byte_range(&source, &selection).unwrap();
+                            let original =
+                                list_line_byte_range(&source, original.start, original.end);
+                            let removing = source[original.clone()]
+                                .split('\n')
+                                .all(|line| list_content(line, format).is_some());
+                            let (listed, range) = if removing {
+                                (&source, original)
+                            } else {
+                                (
+                                    &replacement,
+                                    character_byte_range(&replacement, &new_selection).unwrap(),
+                                )
+                            };
+                            let item_starts =
+                                Parser::new_ext(listed, crate::legal_markdown::OPTIONS)
+                                    .into_offset_iter()
+                                    .filter_map(|(event, range)| {
+                                        matches!(event, Event::Start(Tag::Item))
+                                            .then_some(range.start)
+                                    })
+                                    .collect::<Vec<_>>();
+                            let mut start = range.start;
+                            for line in listed[range.clone()].split('\n') {
+                                let end = start + line.len();
+                                assert_eq!(
+                                    item_starts
+                                        .iter()
+                                        .filter(|&&position| (start..=end).contains(&position))
+                                        .count(),
+                                    1,
+                                    "{source:?} -> {replacement:?} {format:?}"
+                                );
+                                start = end + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

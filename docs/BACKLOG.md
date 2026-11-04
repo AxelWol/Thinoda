@@ -50,6 +50,10 @@ paragraphs or inside code and styling over-limit notes remain open. Caret-only
 insertion and marker removal are also rejected if either note exceeds the
 preview bounds or an existing rendered style would change. This does not
 implement selected-range formatting in board-card titles.
+Bulleted and numbered actions now also reject unsafe changes to parsed text,
+inline markup or unselected list membership, including edits inside code.
+The same preview limits and conservative-rejection caveats apply; partial
+paragraph selections can require manual source editing.
 
 **Compact Settings and recovery warning:** the previously obstructing warning
 now uses a bounded, scrollable notification strip while nonmodal Settings is
