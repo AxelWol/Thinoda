@@ -1,6 +1,6 @@
 //! Isolated span-editing experiment. This is not part of the application.
 
-use std::ops::Range;
+use std::{collections::VecDeque, ops::Range};
 
 #[derive(Clone, Debug, PartialEq)]
 struct Span<S> {
@@ -189,6 +189,258 @@ fn push_span<S: Default + PartialEq>(spans: &mut Vec<Span<S>>, range: Range<usiz
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Selection {
+    anchor: usize,
+    active: usize,
+}
+
+impl Selection {
+    fn caret(position: usize) -> Self {
+        Self {
+            anchor: position,
+            active: position,
+        }
+    }
+
+    fn ordered(self) -> Range<usize> {
+        self.anchor.min(self.active)..self.anchor.max(self.active)
+    }
+
+    fn valid(self, length: usize) -> bool {
+        self.anchor <= length && self.active <= length
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Draft<S> {
+    value: StyledText<S>,
+    selection: Selection,
+    typing_style: S,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct HistoryEntry<S> {
+    before: Draft<S>,
+    after: Draft<S>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Composition<S> {
+    before: Draft<S>,
+    range: Range<usize>,
+    style: S,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryError {
+    Edit(EditError),
+    InvalidSelection,
+    InvalidHistoryLimit,
+    CompositionActive,
+    CompositionMissing,
+    UndoUnavailable,
+    RedoUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommitOutcome {
+    NoDocumentChange,
+    Recorded,
+    RecordedAfterEviction,
+}
+
+struct DraftHistory<S> {
+    current: Draft<S>,
+    undo: VecDeque<HistoryEntry<S>>,
+    redo: Vec<HistoryEntry<S>>,
+    composition: Option<Composition<S>>,
+    limits: Limits,
+    max_entries: usize,
+}
+
+impl<S: Clone + Default + PartialEq> DraftHistory<S> {
+    fn new(
+        value: StyledText<S>,
+        selection: Selection,
+        typing_style: S,
+        limits: Limits,
+        max_entries: usize,
+    ) -> Result<Self, HistoryError> {
+        value.validate(limits).map_err(HistoryError::Edit)?;
+        if !selection.valid(value.text.chars().count()) {
+            return Err(HistoryError::InvalidSelection);
+        }
+        if max_entries == 0 {
+            return Err(HistoryError::InvalidHistoryLimit);
+        }
+        Ok(Self {
+            current: Draft {
+                value,
+                selection,
+                typing_style,
+            },
+            undo: VecDeque::new(),
+            redo: Vec::new(),
+            composition: None,
+            limits,
+            max_entries,
+        })
+    }
+
+    fn ensure_idle(&self) -> Result<(), HistoryError> {
+        if self.composition.is_some() {
+            Err(HistoryError::CompositionActive)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn set_selection(&mut self, selection: Selection) -> Result<(), HistoryError> {
+        self.ensure_idle()?;
+        if !selection.valid(self.current.value.text.chars().count()) {
+            return Err(HistoryError::InvalidSelection);
+        }
+        self.current.selection = selection;
+        Ok(())
+    }
+
+    fn record(&mut self, before: Draft<S>, after: Draft<S>) -> CommitOutcome {
+        if before.value == after.value {
+            self.current = after;
+            return CommitOutcome::NoDocumentChange;
+        }
+        let evicted = self.undo.len() == self.max_entries;
+        if evicted {
+            self.undo.pop_front();
+        }
+        self.redo.clear();
+        self.current = after.clone();
+        self.undo.push_back(HistoryEntry { before, after });
+        if evicted {
+            CommitOutcome::RecordedAfterEviction
+        } else {
+            CommitOutcome::Recorded
+        }
+    }
+
+    fn replace_selection(&mut self, inserted: &str) -> Result<CommitOutcome, HistoryError> {
+        self.ensure_idle()?;
+        let before = self.current.clone();
+        let mut after = before.clone();
+        let range = before.selection.ordered();
+        let end = range
+            .start
+            .checked_add(inserted.chars().count())
+            .ok_or(HistoryError::Edit(EditError::SizeOverflow))?;
+        after
+            .value
+            .replace(range, inserted, before.typing_style.clone(), self.limits)
+            .map_err(HistoryError::Edit)?;
+        after.selection = Selection::caret(end);
+        Ok(self.record(before, after))
+    }
+
+    fn format_selection(
+        &mut self,
+        change: impl Fn(&S) -> S,
+    ) -> Result<CommitOutcome, HistoryError> {
+        self.ensure_idle()?;
+        let range = self.current.selection.ordered();
+        if range.is_empty() {
+            self.current.typing_style = change(&self.current.typing_style);
+            return Ok(CommitOutcome::NoDocumentChange);
+        }
+        let before = self.current.clone();
+        let mut after = before.clone();
+        after
+            .value
+            .format(range, change, self.limits)
+            .map_err(HistoryError::Edit)?;
+        Ok(self.record(before, after))
+    }
+
+    fn begin_composition(&mut self) -> Result<(), HistoryError> {
+        self.ensure_idle()?;
+        self.composition = Some(Composition {
+            before: self.current.clone(),
+            range: self.current.selection.ordered(),
+            style: self.current.typing_style.clone(),
+        });
+        Ok(())
+    }
+
+    fn update_composition(&mut self, text: &str, selection: Selection) -> Result<(), HistoryError> {
+        let composition = self
+            .composition
+            .as_mut()
+            .ok_or(HistoryError::CompositionMissing)?;
+        let length = text.chars().count();
+        if !selection.valid(length) {
+            return Err(HistoryError::InvalidSelection);
+        }
+        let start = composition.range.start;
+        let end = start
+            .checked_add(length)
+            .ok_or(HistoryError::Edit(EditError::SizeOverflow))?;
+        let mut after = self.current.clone();
+        after
+            .value
+            .replace(
+                composition.range.clone(),
+                text,
+                composition.style.clone(),
+                self.limits,
+            )
+            .map_err(HistoryError::Edit)?;
+        after.selection = Selection {
+            anchor: start + selection.anchor,
+            active: start + selection.active,
+        };
+        composition.range = start..end;
+        self.current = after;
+        Ok(())
+    }
+
+    fn commit_composition(
+        &mut self,
+        text: &str,
+        selection: Selection,
+    ) -> Result<CommitOutcome, HistoryError> {
+        self.update_composition(text, selection)?;
+        let composition = self
+            .composition
+            .take()
+            .ok_or(HistoryError::CompositionMissing)?;
+        Ok(self.record(composition.before, self.current.clone()))
+    }
+
+    fn cancel_composition(&mut self) -> Result<(), HistoryError> {
+        let composition = self
+            .composition
+            .take()
+            .ok_or(HistoryError::CompositionMissing)?;
+        self.current = composition.before;
+        Ok(())
+    }
+
+    fn undo(&mut self) -> Result<(), HistoryError> {
+        self.ensure_idle()?;
+        let entry = self.undo.pop_back().ok_or(HistoryError::UndoUnavailable)?;
+        self.current = entry.before.clone();
+        self.redo.push(entry);
+        Ok(())
+    }
+
+    fn redo(&mut self) -> Result<(), HistoryError> {
+        self.ensure_idle()?;
+        let entry = self.redo.pop().ok_or(HistoryError::RedoUnavailable)?;
+        self.current = entry.after.clone();
+        self.undo.push_back(entry);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +471,435 @@ mod tests {
             }
         }
         styles
+    }
+
+    fn history(
+        text: &str,
+        spans: Vec<Span<Style>>,
+        selection: Selection,
+        typing_style: Style,
+        max_entries: usize,
+    ) -> DraftHistory<Style> {
+        DraftHistory::new(
+            StyledText::new(text.into(), spans, LIMITS).unwrap(),
+            selection,
+            typing_style,
+            LIMITS,
+            max_entries,
+        )
+        .unwrap()
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct CharacterDraft {
+        chars: Vec<char>,
+        styles: Vec<Style>,
+        selection: Selection,
+        typing_style: Style,
+    }
+
+    fn oracle_record(
+        before: CharacterDraft,
+        after: &CharacterDraft,
+        undo: &mut VecDeque<(CharacterDraft, CharacterDraft)>,
+        redo: &mut Vec<(CharacterDraft, CharacterDraft)>,
+        max_entries: usize,
+    ) -> CommitOutcome {
+        if before.chars == after.chars && before.styles == after.styles {
+            return CommitOutcome::NoDocumentChange;
+        }
+        let evicted = undo.len() == max_entries;
+        if evicted {
+            undo.pop_front();
+        }
+        redo.clear();
+        undo.push_back((before, after.clone()));
+        if evicted {
+            CommitOutcome::RecordedAfterEviction
+        } else {
+            CommitOutcome::Recorded
+        }
+    }
+
+    fn oracle_replace(
+        draft: &mut CharacterDraft,
+        range: Range<usize>,
+        inserted: &str,
+        style: &Style,
+        selection: Selection,
+    ) {
+        let chars: Vec<_> = inserted.chars().collect();
+        draft.chars.splice(range.clone(), chars.iter().copied());
+        draft
+            .styles
+            .splice(range, std::iter::repeat_n(style.clone(), chars.len()));
+        draft.selection = selection;
+    }
+
+    fn assert_draft_matches(actual: &Draft<Style>, expected: &CharacterDraft) {
+        assert_eq!(actual.value.text, expected.chars.iter().collect::<String>());
+        assert_eq!(flatten(&actual.value), expected.styles);
+        assert_eq!(actual.selection, expected.selection);
+        assert_eq!(actual.typing_style, expected.typing_style);
+        actual.value.validate(LIMITS).unwrap();
+    }
+
+    fn assert_history_matches(
+        actual: &DraftHistory<Style>,
+        current: &CharacterDraft,
+        undo: &VecDeque<(CharacterDraft, CharacterDraft)>,
+        redo: &[(CharacterDraft, CharacterDraft)],
+    ) {
+        assert_draft_matches(&actual.current, current);
+        assert_eq!(actual.undo.len(), undo.len());
+        assert_eq!(actual.redo.len(), redo.len());
+        for (entry, (before, after)) in actual.undo.iter().zip(undo) {
+            assert_draft_matches(&entry.before, before);
+            assert_draft_matches(&entry.after, after);
+        }
+        for (entry, (before, after)) in actual.redo.iter().zip(redo) {
+            assert_draft_matches(&entry.before, before);
+            assert_draft_matches(&entry.after, after);
+        }
+    }
+
+    #[test]
+    fn history_restores_unicode_styles_and_directional_selection() {
+        let mut history = history(
+            "aé🙂z",
+            vec![Span {
+                range: 1..3,
+                style: bold(true),
+            }],
+            Selection {
+                anchor: 3,
+                active: 1,
+            },
+            Style {
+                italic: Some(true),
+                ..Style::default()
+            },
+            4,
+        );
+        let before = history.current.clone();
+        assert_eq!(history.replace_selection("漢"), Ok(CommitOutcome::Recorded));
+        let after = history.current.clone();
+        assert_eq!(after.value.text, "a漢z");
+        assert_eq!(
+            flatten(&after.value),
+            vec![
+                Style::default(),
+                Style {
+                    italic: Some(true),
+                    ..Style::default()
+                },
+                Style::default()
+            ]
+        );
+        history.set_selection(Selection::caret(0)).unwrap();
+        history.undo().unwrap();
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current, after);
+
+        history.undo().unwrap();
+        assert_eq!(
+            history.replace_selection("é🙂"),
+            Ok(CommitOutcome::Recorded)
+        );
+        assert_eq!(history.current.value.text, before.value.text);
+        assert_ne!(history.current.value.spans, before.value.spans);
+        assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable));
+    }
+
+    #[test]
+    fn selected_format_and_caret_typing_style_have_distinct_history() {
+        let mut history = history(
+            "ab",
+            vec![],
+            Selection {
+                anchor: 0,
+                active: 2,
+            },
+            Style::default(),
+            4,
+        );
+        assert_eq!(
+            history.format_selection(|style| Style {
+                bold: Some(false),
+                ..style.clone()
+            }),
+            Ok(CommitOutcome::Recorded)
+        );
+        assert_eq!(flatten(&history.current.value), vec![bold(false); 2]);
+        history.set_selection(Selection::caret(1)).unwrap();
+        assert_eq!(
+            history.format_selection(|style| Style {
+                italic: Some(true),
+                ..style.clone()
+            }),
+            Ok(CommitOutcome::NoDocumentChange)
+        );
+        assert_eq!(history.undo.len(), 1);
+        let before_typing = history.current.clone();
+        history.replace_selection("🙂").unwrap();
+        assert_eq!(history.current.value.text, "a🙂b");
+        assert_eq!(
+            flatten(&history.current.value),
+            vec![
+                bold(false),
+                Style {
+                    italic: Some(true),
+                    ..Style::default()
+                },
+                bold(false)
+            ]
+        );
+        history.undo().unwrap();
+        assert_eq!(history.current, before_typing);
+        history.undo().unwrap();
+        assert_eq!(flatten(&history.current.value), vec![Style::default(); 2]);
+    }
+
+    #[test]
+    fn composition_preedits_are_one_transaction_and_cancel_preserves_redo() {
+        let mut history = history(
+            "aé🙂z",
+            vec![Span {
+                range: 1..3,
+                style: bold(true),
+            }],
+            Selection {
+                anchor: 3,
+                active: 1,
+            },
+            bold(false),
+            4,
+        );
+        let before = history.current.clone();
+        history.begin_composition().unwrap();
+        history
+            .update_composition("に", Selection::caret(1))
+            .unwrap();
+        history
+            .update_composition(
+                "日本",
+                Selection {
+                    anchor: 2,
+                    active: 0,
+                },
+            )
+            .unwrap();
+        assert_eq!(history.current.value.text, "a日本z");
+        assert_eq!(
+            history.current.selection,
+            Selection {
+                anchor: 3,
+                active: 1
+            }
+        );
+        assert_eq!(history.undo(), Err(HistoryError::CompositionActive));
+        assert_eq!(history.redo(), Err(HistoryError::CompositionActive));
+        assert_eq!(
+            history.set_selection(Selection::caret(0)),
+            Err(HistoryError::CompositionActive)
+        );
+        assert_eq!(
+            history.begin_composition(),
+            Err(HistoryError::CompositionActive)
+        );
+        assert_eq!(
+            history.format_selection(|style| style.clone()),
+            Err(HistoryError::CompositionActive)
+        );
+        assert_eq!(
+            history.replace_selection("unexpected"),
+            Err(HistoryError::CompositionActive)
+        );
+        let preview = history.current.clone();
+        let composition = history.composition.clone();
+        assert_eq!(
+            history.update_composition("x", Selection::caret(2)),
+            Err(HistoryError::InvalidSelection)
+        );
+        assert_eq!(
+            history.update_composition(&"x".repeat(4097), Selection::caret(0)),
+            Err(HistoryError::Edit(EditError::TextLimit))
+        );
+        assert_eq!(
+            history.commit_composition(&"x".repeat(4097), Selection::caret(0)),
+            Err(HistoryError::Edit(EditError::TextLimit))
+        );
+        assert_eq!(history.current, preview);
+        assert_eq!(history.composition, composition);
+        assert_eq!(
+            history.commit_composition(
+                "日本",
+                Selection {
+                    anchor: 2,
+                    active: 0
+                }
+            ),
+            Ok(CommitOutcome::Recorded)
+        );
+        assert_eq!(history.undo.len(), 1);
+        history.undo().unwrap();
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current, preview);
+        history.undo().unwrap();
+        history.begin_composition().unwrap();
+        history
+            .update_composition("漢", Selection::caret(1))
+            .unwrap();
+        history.cancel_composition().unwrap();
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current, preview);
+        assert_eq!(
+            history.cancel_composition(),
+            Err(HistoryError::CompositionMissing)
+        );
+    }
+
+    #[test]
+    fn failed_composition_span_budget_leaves_preview_and_history_unchanged() {
+        let limits = Limits {
+            text_bytes: 32,
+            spans: 1,
+        };
+        let value = StyledText::new(
+            "abc".into(),
+            vec![Span {
+                range: 0..3,
+                style: bold(true),
+            }],
+            limits,
+        )
+        .unwrap();
+        let mut history = DraftHistory::new(
+            value,
+            Selection {
+                anchor: 1,
+                active: 2,
+            },
+            bold(false),
+            limits,
+            2,
+        )
+        .unwrap();
+        let before = history.current.clone();
+        history.begin_composition().unwrap();
+        let composition = history.composition.clone();
+        assert_eq!(
+            history.update_composition("X", Selection::caret(1)),
+            Err(HistoryError::Edit(EditError::SpanLimit))
+        );
+        assert_eq!(history.current, before);
+        assert_eq!(history.composition, composition);
+        assert!(history.undo.is_empty());
+        history.cancel_composition().unwrap();
+        assert_eq!(history.current, before);
+    }
+
+    #[test]
+    fn composition_commits_explicit_final_text_instead_of_the_last_preview() {
+        let mut history = history(
+            "abcd",
+            vec![],
+            Selection {
+                anchor: 1,
+                active: 3,
+            },
+            bold(true),
+            3,
+        );
+        let before = history.current.clone();
+        history.begin_composition().unwrap();
+        history
+            .update_composition("preedit", Selection::caret(7))
+            .unwrap();
+        assert_eq!(
+            history.commit_composition("日", Selection::caret(1)),
+            Ok(CommitOutcome::Recorded)
+        );
+        assert_eq!(history.current.value.text, "a日d");
+        assert_eq!(
+            flatten(&history.current.value),
+            vec![Style::default(), bold(true), Style::default()]
+        );
+        history.undo().unwrap();
+        assert_eq!(history.current, before);
+
+        history.begin_composition().unwrap();
+        assert_eq!(
+            history.commit_composition("", Selection::caret(0)),
+            Ok(CommitOutcome::Recorded)
+        );
+        assert_eq!(history.current.value.text, "ad");
+        history.undo().unwrap();
+        assert_eq!(history.current, before);
+    }
+
+    #[test]
+    fn bounded_history_reports_eviction_and_failed_edits_keep_redo() {
+        assert!(matches!(
+            DraftHistory::new(
+                StyledText::<Style>::new(String::new(), vec![], LIMITS).unwrap(),
+                Selection::caret(0),
+                Style::default(),
+                LIMITS,
+                0
+            ),
+            Err(HistoryError::InvalidHistoryLimit)
+        ));
+        let mut history = history("", vec![], Selection::caret(0), Style::default(), 2);
+        assert_eq!(history.replace_selection("a"), Ok(CommitOutcome::Recorded));
+        assert_eq!(history.replace_selection("b"), Ok(CommitOutcome::Recorded));
+        assert_eq!(
+            history.replace_selection("c"),
+            Ok(CommitOutcome::RecordedAfterEviction)
+        );
+        history.undo().unwrap();
+        history.undo().unwrap();
+        assert_eq!(history.current.value.text, "a");
+        assert_eq!(history.undo(), Err(HistoryError::UndoUnavailable));
+        let before = history.current.clone();
+        assert_eq!(
+            history.set_selection(Selection::caret(9)),
+            Err(HistoryError::InvalidSelection)
+        );
+        assert_eq!(
+            history.replace_selection(&"x".repeat(4097)),
+            Err(HistoryError::Edit(EditError::TextLimit))
+        );
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current.value.text, "ab");
+        history.replace_selection("X").unwrap();
+        assert_eq!(history.current.value.text, "abX");
+        assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable));
+    }
+
+    #[test]
+    fn caret_changes_and_noop_edits_preserve_a_redo_branch() {
+        let mut history = history("", vec![], Selection::caret(0), Style::default(), 2);
+        history.replace_selection("abc").unwrap();
+        let after = history.current.clone();
+        history.undo().unwrap();
+        assert_eq!(
+            history.format_selection(|style| Style {
+                bold: Some(false),
+                ..style.clone()
+            }),
+            Ok(CommitOutcome::NoDocumentChange)
+        );
+        assert_eq!(
+            history.replace_selection(""),
+            Ok(CommitOutcome::NoDocumentChange)
+        );
+        history.redo().unwrap();
+        assert_eq!(history.current, after);
     }
 
     #[test]
@@ -498,6 +1179,170 @@ mod tests {
             assert_eq!(value.text, chars.iter().collect::<String>());
             assert_eq!(flatten(&value), styles);
             value.validate(LIMITS).unwrap();
+        }
+    }
+
+    #[test]
+    fn history_and_composition_match_a_per_character_oracle() {
+        let capacity = 8;
+        let mut history = history(
+            "aé🙂",
+            vec![],
+            Selection::caret(0),
+            Style::default(),
+            capacity,
+        );
+        let mut current = CharacterDraft {
+            chars: "aé🙂".chars().collect(),
+            styles: vec![Style::default(); 3],
+            selection: Selection::caret(0),
+            typing_style: Style::default(),
+        };
+        let mut undo = VecDeque::new();
+        let mut redo = Vec::new();
+        let mut seed = 0x4ea2_67af_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed as usize
+        };
+        let alphabet = ["a", "é", "🙂", "e\u{301}", "\n", ""];
+        for _ in 0..2500 {
+            if current.chars.len() > 50 {
+                let selection = Selection {
+                    anchor: 0,
+                    active: current.chars.len(),
+                };
+                history.set_selection(selection).unwrap();
+                current.selection = selection;
+            }
+            match next() % 6 {
+                0 => {
+                    let selection = Selection {
+                        anchor: next() % (current.chars.len() + 1),
+                        active: next() % (current.chars.len() + 1),
+                    };
+                    history.set_selection(selection).unwrap();
+                    current.selection = selection;
+                }
+                1 => {
+                    let before = current.clone();
+                    let range = current.selection.ordered();
+                    let text = alphabet[next() % alphabet.len()];
+                    let style = current.typing_style.clone();
+                    let selection = Selection::caret(range.start + text.chars().count());
+                    let outcome = history.replace_selection(text).unwrap();
+                    oracle_replace(&mut current, range, text, &style, selection);
+                    assert_eq!(
+                        outcome,
+                        oracle_record(before, &current, &mut undo, &mut redo, capacity)
+                    );
+                }
+                2 => {
+                    let before = current.clone();
+                    let range = current.selection.ordered();
+                    let bold_attribute = next().is_multiple_of(2);
+                    let value = match next() % 3 {
+                        0 => None,
+                        1 => Some(false),
+                        _ => Some(true),
+                    };
+                    let change = |style: &Style| {
+                        let mut style = style.clone();
+                        if bold_attribute {
+                            style.bold = value;
+                        } else {
+                            style.italic = value;
+                        }
+                        style
+                    };
+                    let outcome = history.format_selection(change).unwrap();
+                    if range.is_empty() {
+                        current.typing_style = change(&current.typing_style);
+                    } else {
+                        for style in &mut current.styles[range] {
+                            *style = change(style);
+                        }
+                    }
+                    assert_eq!(
+                        outcome,
+                        oracle_record(before, &current, &mut undo, &mut redo, capacity)
+                    );
+                }
+                3 => match undo.pop_back() {
+                    Some(entry) => {
+                        history.undo().unwrap();
+                        current = entry.0.clone();
+                        redo.push(entry);
+                    }
+                    None => assert_eq!(history.undo(), Err(HistoryError::UndoUnavailable)),
+                },
+                4 => match redo.pop() {
+                    Some(entry) => {
+                        history.redo().unwrap();
+                        current = entry.1.clone();
+                        undo.push_back(entry);
+                    }
+                    None => assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable)),
+                },
+                _ => {
+                    let before = current.clone();
+                    let mut range = current.selection.ordered();
+                    let style = current.typing_style.clone();
+                    history.begin_composition().unwrap();
+                    for _ in 0..1 + next() % 3 {
+                        let text = alphabet[next() % alphabet.len()];
+                        let length = text.chars().count();
+                        let relative = Selection {
+                            anchor: next() % (length + 1),
+                            active: next() % (length + 1),
+                        };
+                        history.update_composition(text, relative).unwrap();
+                        let start = range.start;
+                        oracle_replace(
+                            &mut current,
+                            range,
+                            text,
+                            &style,
+                            Selection {
+                                anchor: start + relative.anchor,
+                                active: start + relative.active,
+                            },
+                        );
+                        range = start..start + length;
+                        assert_draft_matches(&history.current, &current);
+                    }
+                    if next().is_multiple_of(2) {
+                        history.cancel_composition().unwrap();
+                        current = before;
+                    } else {
+                        let text = alphabet[next() % alphabet.len()];
+                        let length = text.chars().count();
+                        let relative = Selection {
+                            anchor: next() % (length + 1),
+                            active: next() % (length + 1),
+                        };
+                        let start = range.start;
+                        let outcome = history.commit_composition(text, relative).unwrap();
+                        oracle_replace(
+                            &mut current,
+                            range,
+                            text,
+                            &style,
+                            Selection {
+                                anchor: start + relative.anchor,
+                                active: start + relative.active,
+                            },
+                        );
+                        assert_eq!(
+                            outcome,
+                            oracle_record(before, &current, &mut undo, &mut redo, capacity)
+                        );
+                    }
+                }
+            }
+            assert_history_matches(&history, &current, &undo, &redo);
         }
     }
 }

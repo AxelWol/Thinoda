@@ -49,8 +49,10 @@ records the proposed model, native-version, editing, clipboard and export
 boundaries and their unresolved risks. It is design work, not an implemented
 or enabled rich-text feature. An isolated, non-application span-editing
 experiment now tests explicit Unicode-scalar operations and rejection of
-over-budget edits; it does not implement rich undo, lists, persistence or
-rendering.
+over-budget edits. A separate experimental draft history tests snapshot
+undo/redo and explicit IME transactions, but is not wired to egui or the app;
+its snapshot memory, input-event mapping, lists, persistence and rendering
+remain open.
 
 **Notes strikethrough checkpoint:** the Notes inspector and enlarged editor
 now provide a localized, reversible Markdown-source strikethrough action. It

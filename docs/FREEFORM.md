@@ -1367,11 +1367,22 @@ adapter to persisted content.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and style-run splitting/coalescing,
-including invalid ranges and budget rejection. Its randomized oracle compares
-2,500 operations with per-character styles. It is not compiled into Thinoda;
-its example limits, attribute validation, undo, IME transactions, grapheme
-behavior, paragraph lists, persistence and rendering are not production
-implementations.
+including invalid ranges and budget rejection. It now also explores snapshot
+history, directional selections, caret typing styles and explicit IME
+preedit/commit/cancel transactions. Independent randomized character-level
+oracles exercise 2,500 span operations and 2,500 mixed history/composition
+operations. It is not compiled into Thinoda. Egui event/undo integration,
+empty-commit versus cancellation, example limits, style memory and validation,
+grapheme behavior, paragraph lists, persistence and rendering are not
+production implementations.
+
+Duck check: an IME's committed text can differ from its last preview, so the
+prototype requires explicit final text and keeps failed updates atomic. It
+models an empty committed replacement separately from cancel, but does not
+decide how platform events map to either. Snapshot counts bound the number of
+entries, not their true memory use, and eviction plus caret-style inheritance
+still need product decisions and real input acceptance. A passing scalar-level
+oracle does not establish grapheme, bidirectional or egui-editor correctness.
 
 The implementation must audit `Sheet::set_title`, search/replace, FIM
 projection, template/copy paths and direct title assignments as well as canvas
