@@ -56,6 +56,9 @@ Bulleted and numbered actions now also reject unsafe changes to parsed text,
 inline markup or unselected list membership, including edits inside code.
 The same preview limits and conservative-rejection caveats apply; partial
 paragraph selections can require manual source editing.
+First-time formatting protects literal Markdown-like punctuation in plain notes,
+possibly adding escapes to the source; unsupported conversions are rejected.
+Markdown whitespace and line-break normalization remain separate limitations.
 
 **Compact Settings and recovery warning:** the previously obstructing warning
 now uses a bounded, scrollable notification strip while nonmodal Settings is

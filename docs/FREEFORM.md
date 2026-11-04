@@ -1176,10 +1176,26 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   length; tests cover escaped and unescaped runs after both ASCII and
   multibyte text rather than assuming character indices are byte indices.
 - Duck check: explicitly formatting a legacy plain note promotes the whole note
-  to Markdown, so pre-existing literal Markdown characters may acquire meaning.
-  This is the existing opt-in note contract, not a rich-text migration. The
-  source-first editor still uses character offsets rather than a grapheme/IME
-  transaction model, and formatting cannot be represented in all exports.
+  to Markdown. The action now checks that pre-existing literal punctuation
+  cannot become a link, heading, list, code or other Markdown structure. If
+  needed it escapes ASCII punctuation, remaps the scalar-indexed selection and
+  validates the intended change against the bounded parser. Unsupported
+  conversions retain the plain draft, selection and localized warning; for
+  example, leading indentation that becomes a code block can be refused.
+  Escapes may appear throughout the editable source, and applying a formatting
+  action is not a general plain-to-Markdown conversion command.
+- This check compares text with whitespace normalized, because the existing
+  Markdown projection and preview can normalize leading/trailing whitespace,
+  blank lines and soft/hard breaks. It does not promise byte-identical rendered
+  whitespace or preserve an unformatted note's original source spelling after
+  promotion; Undo restores the original plain note. The source-first editor
+  still uses character offsets rather than a grapheme/IME transaction model,
+  and formatting cannot be represented in all exports.
+- Plain-promotion tests cover literal emphasis, links, HTML-like text, headings,
+  list markers, escaped punctuation, Unicode selections and expansion limits.
+  Map, Outliner and staged enlarged-editor tests exercise draft ownership,
+  selection mapping, native save and Undo/Redo; they do not establish physical
+  IME or screen-reader behavior.
 - Duck check: list buttons previously inserted or removed markers without
   checking what Markdown would render. Formatting one line could absorb an
   unselected following line into a list, alter an existing item's numbering,
@@ -1194,8 +1210,8 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   rejected; manual Markdown source editing remains available. Creating a list
   can intentionally change paragraph and soft-break layout around the selected
   lines, even when projected text is unchanged. The comparison operates on
-  parser events and does not resolve the plain-note promotion or physical IME
-  and screen-reader limitations above.
+  parser events and does not resolve the whitespace, physical IME and
+  screen-reader limitations above.
 - The list tests include formatted and plain Notes in Map and Outliner, the
   staged enlarged editor, links and inline styles, nested lists, Unicode,
   twelve numbered items and 17,280 mixed three-line candidate operations. The

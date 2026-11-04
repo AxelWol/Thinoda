@@ -342,6 +342,52 @@ fn enlarged_notes_capture_focused_source_after_blur_and_reuse_formatting_tools()
 }
 
 #[test]
+fn enlarged_notes_format_literal_markup_without_interpreting_it() {
+    let _language = LANGUAGE.lock().unwrap();
+    let mut h = harness(ThinodaApp::headless());
+    click(&mut h, "Enlarge notes editor");
+    let source = "*literal* café";
+    text(&mut h, "Notes", source);
+    h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    click(&mut h, "Bold notes");
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .is_none()
+    );
+    click(&mut h, "Apply notes");
+    let note = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .root_topic()
+        .notes
+        .as_ref()
+        .unwrap();
+    assert!(note.is_markdown());
+    assert_eq!(
+        thinoda_core::notes::plain_text_projection(note).as_deref(),
+        Some(source)
+    );
+    let formatted = thinoda_core::notes::formatted_document(note).unwrap();
+    let runs: Vec<_> = formatted
+        .paragraphs
+        .iter()
+        .flat_map(|paragraph| &paragraph.runs)
+        .collect();
+    assert!(!runs.is_empty());
+    assert!(runs.iter().all(|run| run.style.bold && !run.style.italic));
+}
+
+#[test]
 fn enlarged_notes_strikethrough_stays_staged_until_applied() {
     let _language = LANGUAGE.lock().unwrap();
     let mut h = harness(ThinodaApp::headless());

@@ -269,19 +269,24 @@ Native save remains the complete source-preserving path.
 - Source: https://xmind.com/user-guide/note-new
 
 **Thinoda continuation (reference rechecked 2026-10-29):** source-first
-bold/italic and reversible ordered/unordered lists reuse the same Notes inspector
-in Map and Outliner, with an opt-in offline Markdown preview. An explicit
-formatting action marks the whole source as versioned Markdown; existing plain
-notes are not converted by opening, typing or previewing them. Native v4 files,
-recovery, undo and versioned clipboard retain both source and format. Older
+bold, italic, strikethrough and reversible ordered/unordered lists reuse the
+same Notes inspector in Map and Outliner, with an opt-in offline Markdown
+preview. An explicit formatting action marks the whole source as versioned
+Markdown; existing plain notes are not converted by opening, typing or
+previewing them. Native v4 files, recovery, undo and versioned clipboard
+retain both source and format. Older
 Thinoda releases cannot open native v4 files; keep a copy before using new
 formatting tools in a document that must remain readable by older versions.
 The source is still editable even when it exceeds preview/projection bounds.
 Formatting actions may be refused when the bounded Markdown parser cannot verify
 that surrounding content and list membership remain unchanged. The draft and
-selection are retained; edit the Markdown source directly when needed. A list
+selection are retained; edit the note source directly when needed. A list
 action on one line of a paragraph can be refused rather than absorbing adjacent
 unselected lines.
+When first formatting a plain note, existing literal Markdown-like punctuation
+is protected rather than interpreted as formatting. This may add backslash
+escapes throughout the editable source; an unsafe conversion is refused.
+Markdown preview and exports still normalize some whitespace and line breaks.
 This is not XMind rich-text parity: underline, a persisted block/span model,
 formatted foreign-file interchange and rendered equations are not delivered.
 XMind export retains the format only in Thinoda's private metadata and exposes

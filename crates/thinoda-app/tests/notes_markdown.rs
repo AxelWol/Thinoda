@@ -294,6 +294,232 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
 }
 
 #[test]
+fn formatting_plain_notes_preserves_literal_markup_and_selection() {
+    let source = "*literal* [link](https://example.invalid) café";
+    let start = source[..source.find("café").unwrap()].chars().count();
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
+        let doc = app.doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        doc.doc
+            .edit_sheet("Fixture", |sheet| {
+                sheet.set_notes(root, Some(source.into()))
+            })
+            .unwrap();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .focus();
+        h.run_steps(3);
+        let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+        let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(start),
+                egui::text::CCursor::new(start + 4),
+            )));
+        state.store(&h.ctx, focused);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .click();
+        h.run_steps(4);
+
+        let note = h
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .as_ref()
+            .unwrap();
+        assert!(note.is_markdown());
+        assert_eq!(
+            thinoda_core::notes::plain_text_projection(note).as_deref(),
+            Some(source)
+        );
+        let formatted = thinoda_core::notes::formatted_document(note).unwrap();
+        assert!(
+            formatted
+                .paragraphs
+                .iter()
+                .flat_map(|paragraph| &paragraph.runs)
+                .any(|run| run.text == "café" && run.style.bold)
+        );
+        let selected = egui::TextEdit::load_state(&h.ctx, focused)
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap()
+            .as_sorted_char_range();
+        assert_eq!(
+            note.chars()
+                .skip(selected.start.0)
+                .take(selected.end.0 - selected.start.0)
+                .collect::<String>(),
+            "café"
+        );
+        let saved = note.clone();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("literal-notes.thinoda");
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).unwrap().doc.sheet().root_topic().notes,
+            Some(saved.clone())
+        );
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+        let original = h
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .as_ref()
+            .unwrap();
+        assert_eq!(&**original, source);
+        assert!(!original.is_markdown());
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().root_topic().notes,
+            Some(saved)
+        );
+    }
+}
+
+#[test]
+fn formatting_plain_focused_draft_preserves_literal_markup() {
+    let source = "*literal* café";
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .focus();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .type_text(source);
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .click();
+        h.run_steps(4);
+        let note = h
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .as_ref()
+            .unwrap();
+        assert!(note.is_markdown());
+        assert_eq!(
+            thinoda_core::notes::plain_text_projection(note).as_deref(),
+            Some(source)
+        );
+        let saved = note.clone();
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .is_none()
+        );
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().root_topic().notes,
+            Some(saved)
+        );
+    }
+}
+
+#[test]
+fn formatting_plain_notes_rejects_unrepresentable_literal_blocks() {
+    let source = "    literal\ncafé";
+    let warning = "Cannot apply formatting to this selection. The formatting action was canceled.";
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
+        let doc = app.doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        doc.doc
+            .edit_sheet("Fixture", |sheet| {
+                sheet.set_notes(root, Some(source.into()))
+            })
+            .unwrap();
+        let revision = doc.doc.state_id();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .focus();
+        h.run_steps(3);
+        let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+        let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(12),
+                egui::text::CCursor::new(16),
+            )));
+        state.store(&h.ctx, focused);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .click();
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        let note = doc.doc.sheet().root_topic().notes.as_ref().unwrap();
+        assert_eq!(doc.doc.state_id(), revision);
+        assert_eq!(&**note, source);
+        assert!(!note.is_markdown());
+        assert!(h.query_by_label(t(warning)).is_some());
+        assert_eq!(h.ctx.memory(|memory| memory.focused()), Some(focused));
+        let selection = egui::TextEdit::load_state(&h.ctx, focused)
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap()
+            .as_sorted_char_range();
+        assert_eq!(selection.start.0..selection.end.0, 12..16);
+    }
+}
+
+#[test]
 fn notes_preview_is_opt_in_read_only_and_theme_aware() {
     for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
         let mut app = ThinodaApp::headless();

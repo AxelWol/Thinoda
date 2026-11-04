@@ -871,6 +871,96 @@ fn formatting_change_is_valid(
     }
 }
 
+fn markdown_represents_plain_note(source: &str, candidate: &str) -> bool {
+    let Some(projected) = thinoda_core::notes::plain_text_projection(candidate) else {
+        return false;
+    };
+    // Markdown projections normalize some paragraph and edge whitespace.
+    if source.split_whitespace().ne(projected.split_whitespace()) {
+        return false;
+    }
+    Parser::new_ext(candidate, crate::legal_markdown::OPTIONS).all(|event| {
+        matches!(
+            event,
+            Event::Text(_)
+                | Event::SoftBreak
+                | Event::HardBreak
+                | Event::Start(Tag::Paragraph)
+                | Event::End(TagEnd::Paragraph)
+        )
+    })
+}
+
+fn escaped_plain_note(
+    source: &str,
+    selection: &std::ops::Range<usize>,
+) -> Option<(String, std::ops::Range<usize>)> {
+    if source.len() > thinoda_core::notes::MAX_PROJECTION_BYTES {
+        return None;
+    }
+    let mut escaped = String::new();
+    let mut cursor = 0usize;
+    let mut start = None;
+    let mut end = None;
+    let source_chars = source.chars().count();
+    for (index, character) in source.chars().enumerate() {
+        if index == selection.start {
+            start = Some(cursor);
+        }
+        if index == selection.end {
+            end = Some(cursor);
+        }
+        if character.is_ascii_punctuation() {
+            escaped.push('\\');
+            cursor += 1;
+        }
+        escaped.push(character);
+        cursor += 1;
+        if escaped.len() > thinoda_core::notes::MAX_PROJECTION_BYTES {
+            return None;
+        }
+    }
+    if selection.start == source_chars {
+        start = Some(cursor);
+    }
+    if selection.end == source_chars {
+        end = Some(cursor);
+    }
+    Some((escaped, start?..end?))
+}
+
+fn checked_format_selection(
+    source: &str,
+    selection: std::ops::Range<usize>,
+    format: Format,
+    markdown: bool,
+) -> Option<(String, std::ops::Range<usize>)> {
+    if source.len() > thinoda_core::notes::MAX_PROJECTION_BYTES
+        || selection.start > selection.end
+        || selection.end > source.chars().count()
+    {
+        return None;
+    }
+    let attempt = |candidate: &str, selection: std::ops::Range<usize>| {
+        let (replacement, updated) = format_selection(candidate, selection.clone(), format);
+        formatting_change_is_valid(candidate, &replacement, &selection, &updated, format)
+            .then_some((replacement, updated))
+    };
+    if markdown {
+        return attempt(source, selection);
+    }
+    if markdown_represents_plain_note(source, source)
+        && let Some(result) = attempt(source, selection.clone())
+    {
+        return Some(result);
+    }
+    let (escaped, selection) = escaped_plain_note(source, &selection)?;
+    if escaped == source || !markdown_represents_plain_note(source, &escaped) {
+        return None;
+    }
+    attempt(&escaped, selection)
+}
+
 fn format_selection(
     source: &str,
     range: std::ops::Range<usize>,
@@ -1098,6 +1188,7 @@ pub(crate) fn tools(
                     &edit,
                     &pending.text,
                     &mut replacement,
+                    pending.markdown,
                 );
                 ui.add_space(8.0);
                 ui.separator();
@@ -1140,7 +1231,7 @@ pub(crate) fn tools(
         ui.data_mut(|data| data.insert_temp(request_id, (source_owner, frame)));
         ui.ctx().request_repaint();
     }
-    tools_inline(ui, response, current, done)
+    tools_inline(ui, response, current, done, markdown)
 }
 
 fn tools_inline(
@@ -1148,6 +1239,7 @@ fn tools_inline(
     response: &Response,
     current: &str,
     done: &mut Option<String>,
+    markdown: bool,
 ) -> bool {
     if crate::equations::enlarged_active(ui.ctx()) {
         return false;
@@ -1188,19 +1280,15 @@ fn tools_inline(
                         let end = source.chars().count();
                         end..end
                     });
-                let previous_selection = selection.clone();
-                let (replacement, selection) = format_selection(&source, selection, format);
-                let invalid = !formatting_change_is_valid(
+                let result = checked_format_selection(
                     &source,
-                    &replacement,
-                    &previous_selection,
-                    &selection,
+                    selection.clone(),
                     format,
+                    markdown || formatted,
                 );
-                let selection = if invalid {
-                    previous_selection
-                } else {
-                    selection
+                let (replacement, selection) = match result {
+                    Some((replacement, selection)) => (Some(replacement), selection),
+                    None => (None, selection),
                 };
                 let mut state =
                     egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
@@ -1212,14 +1300,14 @@ fn tools_inline(
                     )));
                 state.store(ui.ctx(), response.id);
                 response.request_focus();
-                if invalid {
+                let Some(replacement) = replacement else {
                     ui.data_mut(|data| {
                         data.insert_temp(response.id, source.clone());
                         data.insert_temp(feedback_id, (selection_owner, FORMATTING_UNAVAILABLE));
                     });
                     *done = None;
                     continue;
-                }
+                };
                 ui.data_mut(|data| data.remove::<(Id, &'static str)>(feedback_id));
                 source = replacement;
                 // Commit through the same conflict-checked inspector path as typing.
@@ -1332,6 +1420,189 @@ mod tests {
                     assert_ne!(crate::i18n::t_in(language, key), key, "{language:?}: {key}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn formatting_plain_notes_keeps_literal_markdown_characters() {
+        for source in [
+            "*literal* café",
+            "__literal__ café",
+            "`code` café",
+            "~~literal~~ café",
+            "[label](https://example.invalid) café",
+            "<tag> café",
+            r"\*literal\* café",
+            "# heading\ncafé",
+        ] {
+            let byte = source.find("café").unwrap();
+            let start = source[..byte].chars().count();
+            let selection = start..start + "café".chars().count();
+            for format in [Format::Bold, Format::Italic, Format::Strike] {
+                let (replacement, updated) =
+                    checked_format_selection(source, selection.clone(), format, false)
+                        .unwrap_or_else(|| panic!("{source:?}, {format:?}"));
+                assert_eq!(
+                    thinoda_core::notes::plain_text_projection(&replacement).as_deref(),
+                    Some(source),
+                    "{source:?}, {format:?}: {replacement:?}"
+                );
+                let styles: Vec<_> = Parser::new_ext(&replacement, crate::legal_markdown::OPTIONS)
+                    .filter(|event| {
+                        matches!(
+                            event,
+                            Event::Start(Tag::Strong | Tag::Emphasis | Tag::Strikethrough)
+                        )
+                    })
+                    .collect();
+                assert_eq!(styles.len(), 1, "{source:?}, {format:?}: {styles:?}");
+                assert!(
+                    matches!(
+                        (format, &styles[0]),
+                        (Format::Bold, Event::Start(Tag::Strong))
+                            | (Format::Italic, Event::Start(Tag::Emphasis))
+                            | (Format::Strike, Event::Start(Tag::Strikethrough))
+                    ),
+                    "{source:?}, {format:?}: {styles:?}"
+                );
+                let (unformatted, _) =
+                    checked_format_selection(&replacement, updated, format, true)
+                        .unwrap_or_else(|| panic!("toggle {source:?}, {format:?}"));
+                assert_eq!(
+                    thinoda_core::notes::plain_text_projection(&unformatted).as_deref(),
+                    Some(source)
+                );
+                assert!(
+                    Parser::new_ext(&unformatted, crate::legal_markdown::OPTIONS).all(|event| {
+                        !matches!(
+                            event,
+                            Event::Start(Tag::Strong | Tag::Emphasis | Tag::Strikethrough)
+                        )
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn formatting_plain_lists_keeps_literal_markers_and_bounds() {
+        let source = "- existing\n日本語";
+        for format in [Format::Bullet, Format::Numbered] {
+            let (replacement, _) =
+                checked_format_selection(source, 0..source.chars().count(), format, false).unwrap();
+            assert_eq!(
+                thinoda_core::notes::plain_text_projection(&replacement).as_deref(),
+                Some(source)
+            );
+            let document = thinoda_core::notes::formatted_document(&replacement).unwrap();
+            assert_eq!(document.paragraphs.len(), 2);
+            assert!(
+                document
+                    .paragraphs
+                    .iter()
+                    .all(|paragraph| { paragraph.list.is_some_and(|position| position.marker) })
+            );
+            assert_eq!(
+                document.lists,
+                vec![if matches!(format, Format::Numbered) {
+                    Some(1)
+                } else {
+                    None
+                }]
+            );
+        }
+        let too_many_escapes = "*".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES / 2 + 1);
+        assert!(checked_format_selection(&too_many_escapes, 0..1, Format::Bold, false).is_none());
+        assert!(checked_format_selection("café", 0..5, Format::Bold, false).is_none());
+        assert!(
+            checked_format_selection("    literal\ncafé", 12..16, Format::Bold, false).is_none()
+        );
+    }
+
+    #[test]
+    fn accepted_plain_formatting_never_interprets_literal_punctuation() {
+        let punctuation: String = (b'!'..=b'~')
+            .filter(u8::is_ascii_punctuation)
+            .map(char::from)
+            .collect();
+        let all_punctuation = format!("{punctuation} café");
+        for source in [
+            "*x*",
+            "__a__",
+            "`x`",
+            "[x](url)",
+            r"\*x\*",
+            "<tag>",
+            "🌱*x*🙂",
+            "e\u{301} *x*",
+            &all_punctuation,
+        ] {
+            let length = source.chars().count();
+            let mut accepted = [0; 3];
+            for start in 0..length {
+                for end in start + 1..=length {
+                    for (index, format) in [Format::Bold, Format::Italic, Format::Strike]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if let Some((replacement, updated)) =
+                            checked_format_selection(source, start..end, format, false)
+                        {
+                            if updated.is_empty() {
+                                continue;
+                            }
+                            assert_eq!(
+                                thinoda_core::notes::plain_text_projection(&replacement).as_deref(),
+                                Some(source),
+                                "{source:?}, {start}..{end}, {format:?}: {replacement:?}"
+                            );
+                            let document =
+                                thinoda_core::notes::formatted_document(&replacement).unwrap();
+                            let characters: Vec<_> = document
+                                .paragraphs
+                                .iter()
+                                .flat_map(|paragraph| &paragraph.runs)
+                                .flat_map(|run| {
+                                    run.text
+                                        .chars()
+                                        .map(move |character| (character, run.style))
+                                })
+                                .collect();
+                            assert_eq!(
+                                characters
+                                    .iter()
+                                    .map(|(character, _)| *character)
+                                    .collect::<String>(),
+                                source
+                            );
+                            for (index, (character, style)) in characters.iter().enumerate() {
+                                let (target, unrelated) = match format {
+                                    Format::Bold => {
+                                        (style.bold, style.italic || style.strike || style.code)
+                                    }
+                                    Format::Italic => {
+                                        (style.italic, style.bold || style.strike || style.code)
+                                    }
+                                    Format::Strike => {
+                                        (style.strike, style.bold || style.italic || style.code)
+                                    }
+                                    Format::Bullet | Format::Numbered => unreachable!(),
+                                };
+                                assert!(!unrelated, "{source:?}, {start}..{end}, {format:?}");
+                                if !character.is_whitespace() || !(start..end).contains(&index) {
+                                    assert_eq!(
+                                        target,
+                                        (start..end).contains(&index),
+                                        "{source:?}, {start}..{end}, {format:?}, index {index}"
+                                    );
+                                }
+                            }
+                            accepted[index] += 1;
+                        }
+                    }
+                }
+            }
+            assert!(accepted.into_iter().all(|count| count > 0), "{source:?}");
         }
     }
 

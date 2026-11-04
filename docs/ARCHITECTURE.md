@@ -162,6 +162,10 @@ graph TD
   original JSON strings. Unknown format versions/fields are rejected. This is a
   source envelope, not a persisted rich-text AST. Formatting toolbar actions opt
   the whole note into Markdown, while typing preserves its existing syntax.
+  When a plain note contains literal Markdown syntax, the formatting action
+  first escapes punctuation as needed and remaps the character selection; it
+  refuses promotion if the bounded parser cannot represent the literal content
+  without unintended Markdown structure. The source editor may show escapes.
   Native archives containing these envelopes use version 4, with or without
   resource blobs, and sheet clipboard uses version 3. Older archive/clipboard
   versions cannot carry formatted envelopes. Recovery and internal subtree/

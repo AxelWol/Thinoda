@@ -88,6 +88,12 @@ unselected list items, keep the draft and selection and show the existing
 localized warning. Some otherwise useful partial-line operations are rejected
 conservatively; see the [critique](FREEFORM.md#notes-strikethrough-checkpoint-and-critique).
 
+**Plain-note formatting continuation:** the first formatting action no longer
+silently interprets existing literal Markdown-like punctuation. It reuses the
+original source when safe, otherwise escapes punctuation and remaps the
+selection before validation; unsafe conversion keeps the plain draft. Markdown
+whitespace normalization and conservative rejection remain limitations.
+
 **2026-11-03 selected-connector checkpoint:** the board toolbox offers straight,
 elbow and curved routes, start/end arrows, width presets and an exact width,
 and automatic, swatch or custom color for a single selected connector. Compact
