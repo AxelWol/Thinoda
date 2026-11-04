@@ -947,66 +947,111 @@ document[0].render(scale=2).to_pil().convert("RGB").save(sys.stdout.buffer, form
 }
 
 #[test]
-fn empathy_map_exports_sections_and_prompt_cards() {
-    let wb = thinoda_core::templates::instantiate("empathy-map");
-    let sheet = wb.active();
-    for dark in [false, true] {
-        let options = ExportOptions {
-            dark,
-            ..Default::default()
-        };
-        let svg =
-            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
-                .unwrap();
-        let [x, y, w, h] = view_box(&svg);
-        for zone in &sheet.zones {
-            assert!(svg.contains(&zone.name), "missing section {}", zone.name);
-            assert!(x <= zone.frame.min.x && y <= zone.frame.min.y);
-            assert!(x + w >= zone.frame.max().x && y + h >= zone.frame.max().y);
-        }
-        for topic in sheet.content_topics() {
-            let prefix = format!("<text id=\"topic-{}-line-", topic.id.0);
-            let rendered: String = svg
-                .match_indices(&prefix)
-                .flat_map(|(start, _)| {
-                    svg[start..]
-                        .split_once('>')
-                        .unwrap()
-                        .1
-                        .split_once("</text>")
-                        .unwrap()
-                        .0
-                        .chars()
-                        .filter(|character| !character.is_whitespace())
-                })
-                .collect();
-            let expected: String = topic
-                .title
-                .chars()
-                .filter(|character| !character.is_whitespace())
-                .collect();
-            assert_eq!(rendered, expected, "missing prompt {}", topic.title);
-        }
-        let png = image::load_from_memory(
-            &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
-        )
+fn user_journey_map_native_round_trip_retains_independent_edits() {
+    use thinoda_core::board::BoardMember;
+
+    let mut document =
+        thinoda_core::Document::new(thinoda_core::templates::instantiate("user-journey-map"));
+    let original = document.workbook().clone();
+    let prompt = document
+        .sheet()
+        .content_topics()
+        .find(|topic| topic.title == "What do they do?")
         .unwrap()
-        .to_rgb8();
-        for topic in sheet.content_topics() {
-            if let Some(color) = topic.card.and_then(|card| card.color) {
-                assert!(
-                    png.pixels()
-                        .any(|pixel| pixel.0 == [color.r, color.g, color.b]),
-                    "missing sticky fill for {}",
-                    topic.title
-                );
+        .id;
+    document
+        .move_board_members(&[BoardMember::Card(prompt)], Vec2::new(340.0, 0.0))
+        .unwrap();
+    document
+        .edit_sheet("Edit journey prompt", |sheet| {
+            sheet.set_title(prompt, "Research the product")
+        })
+        .unwrap();
+    let edited = document.workbook().clone();
+    let saved = export(&edited, Format::Thinoda);
+    let restored = import_bytes(Format::Thinoda, &saved).unwrap();
+    restored.validate().unwrap();
+    assert_eq!(restored, edited);
+    assert_eq!(restored.active().zones, original.active().zones);
+    assert!(
+        restored
+            .active()
+            .zones
+            .iter()
+            .all(|zone| zone.keep_empty && zone.roots.is_empty())
+    );
+    assert!(document.undo());
+    assert!(document.undo());
+    assert_eq!(document.workbook(), &original);
+    assert!(document.redo());
+    assert!(document.redo());
+    assert_eq!(document.workbook(), &restored);
+}
+
+#[test]
+fn section_boards_export_frames_and_prompt_cards() {
+    for id in ["empathy-map", "user-journey-map"] {
+        let wb = thinoda_core::templates::instantiate(id);
+        let sheet = wb.active();
+        for dark in [false, true] {
+            let options = ExportOptions {
+                dark,
+                ..Default::default()
+            };
+            let svg = String::from_utf8(
+                export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap(),
+            )
+            .unwrap();
+            let [x, y, w, h] = view_box(&svg);
+            for zone in &sheet.zones {
+                assert!(svg.contains(&zone.name), "missing section {}", zone.name);
+                assert!(x <= zone.frame.min.x && y <= zone.frame.min.y);
+                assert!(x + w >= zone.frame.max().x && y + h >= zone.frame.max().y);
             }
+            for topic in sheet.content_topics() {
+                let prefix = format!("<text id=\"topic-{}-line-", topic.id.0);
+                let rendered: String = svg
+                    .match_indices(&prefix)
+                    .flat_map(|(start, _)| {
+                        svg[start..]
+                            .split_once('>')
+                            .unwrap()
+                            .1
+                            .split_once("</text>")
+                            .unwrap()
+                            .0
+                            .chars()
+                            .filter(|character| !character.is_whitespace())
+                    })
+                    .collect();
+                let expected: String = topic
+                    .title
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect();
+                assert_eq!(rendered, expected, "{id}: missing prompt {}", topic.title);
+            }
+            let png = image::load_from_memory(
+                &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+            )
+            .unwrap()
+            .to_rgb8();
+            for topic in sheet.content_topics() {
+                if let Some(color) = topic.card.and_then(|card| card.color) {
+                    assert!(
+                        png.pixels()
+                            .any(|pixel| pixel.0 == [color.r, color.g, color.b]),
+                        "{id}: missing sticky fill for {}",
+                        topic.title
+                    );
+                }
+            }
+            assert!(
+                export_bytes_with_consent(&wb, Format::Pdf, &options, true)
+                    .unwrap()
+                    .starts_with(b"%PDF")
+            );
         }
-        assert!(
-            export_bytes_with_consent(&wb, Format::Pdf, &options, true)
-                .unwrap()
-                .starts_with(b"%PDF")
-        );
     }
 }
 

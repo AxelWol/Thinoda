@@ -670,6 +670,30 @@ pub(crate) const BOARDS: &[BoardDef] = &[
         ],
         ..EMPTY
     },
+    BoardDef {
+        id: "user-journey-map",
+        cards: &[
+            note("Journey: person and scenario", 500.0, -70.0, 760.0),
+            note("User actions", -130.0, 130.0, 200.0),
+            note("Feelings", -130.0, 260.0, 200.0),
+            note("Opportunities", -130.0, 390.0, 200.0),
+            sticky("What do they do?", 160.0, 130.0, YELLOW),
+            sticky("What do they do?", 500.0, 130.0, YELLOW),
+            sticky("What do they do?", 840.0, 130.0, YELLOW),
+            sticky("How might they feel?", 160.0, 260.0, BLUE),
+            sticky("How might they feel?", 500.0, 260.0, BLUE),
+            sticky("How might they feel?", 840.0, 260.0, BLUE),
+            sticky("What could be improved?", 160.0, 390.0, GREEN),
+            sticky("What could be improved?", 500.0, 390.0, GREEN),
+            sticky("What could be improved?", 840.0, 390.0, GREEN),
+        ],
+        frames: &[
+            frame("Stage 1", rect(0.0, 0.0, 320.0, 470.0), TINT_BLUE, &[]),
+            frame("Stage 2", rect(340.0, 0.0, 320.0, 470.0), TINT_GREEN, &[]),
+            frame("Stage 3", rect(680.0, 0.0, 320.0, 470.0), TINT_ORANGE, &[]),
+        ],
+        ..EMPTY
+    },
 ];
 
 pub(crate) fn find(id: &str) -> Option<&'static BoardDef> {

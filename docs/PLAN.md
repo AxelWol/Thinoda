@@ -190,7 +190,7 @@ focused coverage. Failed recovery-copy cleanup is reported and retried after a
 saved document closes without discarding newer edits or changing the recovery
 manager's ownership and pending-write contracts.
 
-The Freeform implementation, fifteen board templates, responsive toolbox and
+The Freeform implementation, sixteen board templates, responsive toolbox and
 existing style controls are in place. An earlier production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
@@ -232,6 +232,8 @@ empty image cards. Selected local images are embedded in the native document;
 frames are not groups and do not define timing or slides. Focused PDF
 rasterization checks now cover its frames, notes and an embedded image; broad
 export acceptance remains open.
+User Journey Map adds three visual stages and independent action, feeling and
+opportunity prompts; it has no automatic stage membership or timeline behavior.
 A small desktop startup comparison
 of the earlier on-demand change did not establish a speedup, and eviction
 overhead is unmeasured. Board accessibility registration now uses per-pass
@@ -245,6 +247,9 @@ not a solution for large browser snapshots or non-atomic tab leases.
 The next open work remains the browser accessibility bridge, safe large-board
 recovery, export acceptance and realistic performance/device gates;
 cloud-provider work stays paused.
+An isolated AccessKit probe can round-trip one synthetic button, but it exposes
+unresolved Tab/focus ownership and a rapid-refocus text-replacement hazard. It
+is not installed in the application and does not close browser accessibility.
 
 ## Current next-value state (2026-10-30)
 
@@ -3286,6 +3291,15 @@ Visual frames do not group content or represent timed scenes or presentation
 slides. Realistic image-storage scaling, physical-device, screen-reader and
 broader export acceptance remain open.
 
+User Journey Map adds a localized person/scenario heading, three stage frames,
+row labels and nine independent prompt stickies. The frames are visual guides,
+not linked columns, grouping, or a timeline. Existing document edits, native
+save/reopen, undo/redo, gallery previews, all-language content and SVG/PNG/PDF
+generation have focused coverage. Desktop Chromium, Firefox and WebKit create
+the template and inspect its saved stages, independent cards and prompt
+positions. Long-text responsiveness, real-device and screen-reader acceptance
+remain open; see the F4 critique in FREEFORM.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3355,7 +3369,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (fifteen implemented).
+5. F4 data-driven "Boards" templates (sixteen implemented).
 6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
    with optional pen-pressure support still requiring its device spike.
 

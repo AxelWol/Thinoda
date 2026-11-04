@@ -438,6 +438,7 @@ mod tests {
             "venn-diagram",
             "empathy-map",
             "storyboard",
+            "user-journey-map",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
         }
@@ -680,6 +681,7 @@ mod tests {
             "swimlane",
             "empathy-map",
             "storyboard",
+            "user-journey-map",
         ] {
             let wb = templates::instantiate(id);
             let sheet = wb.active();

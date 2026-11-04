@@ -32,6 +32,7 @@ const PAGES: &[Page] = &[
             "Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.",
             "Empathy Map has four visual sections for what someone says, thinks, does and feels. Moving a note does not assign a category.",
             "Storyboard has three visual scenes with image cards. Select a card and choose Local Image to add a picture; frames do not group or time the scenes.",
+            "User Journey Map has three visual stages for actions, feelings and opportunities. Frames are visual guides: moving a frame does not move notes, and moving a note does not assign a stage.",
             "Use the board toolbar to add sticky notes, text cards, shapes, connectors and frames. Use the select tool to move items and the hand tool to pan. The Board menu includes grouping, locking, grid and minimap options.",
             BOARD_TOOLBAR_FALLBACK_GUIDE,
             BOARD_INK_GUIDE,

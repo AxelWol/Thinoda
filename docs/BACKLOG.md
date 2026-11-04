@@ -9,14 +9,17 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-**2026-11-03 Freeform continuation:** fifteen localized board templates now
-include Storyboard with three initially empty image cards and independent visual
-frames. The template's image upload, native persistence and undo/redo are covered
-in desktop browsers. The user-directed menu reorganization and recovery-cleanup
-warning/retry checkpoint are implemented locally; see the current plan. Browser
+**2026-11-03 Freeform continuation:** sixteen localized board templates now
+include Storyboard with three initially empty image cards and User Journey Map
+with independent visual stages and prompts. Storyboard's image upload, native
+persistence and undo/redo are covered in desktop browsers. The user-directed
+menu reorganization and recovery-cleanup warning/retry checkpoint are
+implemented locally; see the current plan. Browser
 screen-reader access, safe large-board recovery,
 realistic ink/image performance, export acceptance and physical-device checks
-remain open. Recovery failure visibility now covers document snapshot creation
+remain open. An isolated AccessKit probe identifies unresolved Tab/focus and
+rapid-refocus text-replacement hazards; it is not an application bridge.
+Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
 limitations. A separate asynchronous discovery draft remains gated by
 uncoordinated-writer and retained-history liveness blockers, with WebKit stress
@@ -2006,10 +2009,11 @@ draft remains blocked on safe bounded discovery and is not integrated.
 - [x] P3 F4 "Boards" template category: Blank canvas, Multi-root map,
   Brainstorm sticky wall, Retrospective, Kanban board, Business Model Canvas,
   Flowchart, SWOT board, Affinity diagram, Eisenhower matrix, Meeting board,
-  Swimlane, Venn diagram, Empathy Map and Storyboard (more templates listed with
-  prerequisites). Swimlane lanes, Venn intersections, Empathy sections and
-  Storyboard scenes are visual guides, not role, set or category assignments,
-  grouped or timed scenes, presentation slides or workflow automation.
+  Swimlane, Venn diagram, Empathy Map, Storyboard and User Journey Map (more
+  templates listed with prerequisites). Swimlane lanes, Venn intersections, Empathy sections and
+  Storyboard scenes and journey stages are visual guides, not role, set, category
+  or stage assignments, grouped or timed scenes, presentation slides or workflow
+  automation.
   Storyboard embeds user-selected local pictures in initially empty image cards;
   focused PDF raster checks cover its scene frames, notes and an embedded image.
   Realistic large-image storage, physical-device and broader export acceptance

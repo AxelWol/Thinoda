@@ -782,7 +782,7 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Fifteen board templates use the same validated primitives and translated
+- Sixteen board templates use the same validated primitives and translated
   creation-time strings. Affinity and Meeting Board notes can be moved among
   persistent visual frames, the Eisenhower quadrants accept user-created
   content, and Swimlane provides three role frames and editable linked shapes.
@@ -851,6 +851,18 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   focused single-page fixture, not evidence for arbitrary images, screen
   readers, physical devices, realistic image-storage scaling or broader export
   acceptance.
+- User Journey Map is a visual scaffold with three independent stage frames,
+  row labels for user actions, feelings and opportunities, and editable prompt
+  stickies. The heading identifies the person and scenario. Frames and labels
+  do not create an axis, stage membership or automatic grouping: moving or
+  resizing a frame does not carry its cards. Users must adjust the fixed-size
+  scaffold themselves for longer text or additional stages. Core and gallery
+  checks cover geometry, all ten languages, thumbnails, save/reopen and
+  undo/redo; SVG text, PNG fills and PDF generation are checked in both themes.
+  Desktop Chromium, Firefox and WebKit create the template and inspect the
+  saved archive's stages, independent cards and prompt positions. These checks
+  use synthetic input at one viewport; richer responsive layouts,
+  physical-device and screen-reader acceptance remain open.
 
 ### F5 ink checkpoint: critique
 
@@ -1665,6 +1677,7 @@ cards inside their assigned frames and catalog coverage.
 | Venn diagram | Two overlapping translucent circles with independent labels and a shared sticky; no set-membership logic |
 | Empathy map | Four visual sections and independent prompt stickies; no inferred thoughts, feelings or category membership |
 | Storyboard | Three visual scene frames with empty image cards and independent action notes; no grouping, timing or slide semantics |
+| User Journey Map | Three visual stage frames and independent prompts for user actions, feelings and opportunities; no stage membership or timeline semantics |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -1676,7 +1689,7 @@ compatibility with the topic renderer.
 | Template | Needs |
 |---|---|
 | Lean Canvas, richer Empathy map | Text-heavy responsive regions |
-| User journey map, Roadmap | Structured axes or lanes |
+| Richer journey maps, Roadmap | Structured axes or lanes |
 | Moodboard | Scalable resource storage and richer image arrangement |
 
 Existing tree templates stay unchanged.

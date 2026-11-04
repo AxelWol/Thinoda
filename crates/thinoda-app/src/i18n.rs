@@ -1352,6 +1352,17 @@ const DE: &[(&str, &str)] = &[
     ("Scene 1 action", "Handlung in Szene 1"),
     ("Scene 2 action", "Handlung in Szene 2"),
     ("Scene 3 action", "Handlung in Szene 3"),
+    ("User Journey Map", "Nutzerreisekarte"),
+    (
+        "Journey: person and scenario",
+        "Nutzerreise: Person und Szenario",
+    ),
+    ("Stage 1", "Phase 1"),
+    ("Stage 2", "Phase 2"),
+    ("Stage 3", "Phase 3"),
+    ("User actions", "Handlungen des Nutzers"),
+    ("Feelings", "Gefühle"),
+    ("What could be improved?", "Was könnte verbessert werden?"),
     (
         "Name roles and map the handoffs",
         "Rollen benennen und Übergaben darstellen",
@@ -1506,6 +1517,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Storyboard has three visual scenes with image cards. Select a card and choose Local Image to add a picture; frames do not group or time the scenes.",
         "Das Storyboard hat drei visuelle Szenen mit Bildkarten. Eine Karte auswählen und über „Lokales Bild“ ein Bild hinzufügen; Rahmen gruppieren oder zeitlich steuern die Szenen nicht.",
+    ),
+    (
+        "User Journey Map has three visual stages for actions, feelings and opportunities. Frames are visual guides: moving a frame does not move notes, and moving a note does not assign a stage.",
+        "Die Nutzerreisekarte hat drei visuelle Phasen für Handlungen, Gefühle und Chancen. Rahmen sind visuelle Hilfen: Das Verschieben eines Rahmens bewegt keine Notizen, das Verschieben einer Notiz weist keine Phase zu.",
     ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
@@ -3995,6 +4010,74 @@ mod tests {
                 }
             }
             wb.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn user_journey_map_localizes_all_stages_rows_and_prompts() {
+        use thinoda_core::{ApproxMeasure, CardKind, layout_sheet};
+
+        let rows = [
+            ("User actions", "What do they do?"),
+            ("Feelings", "How might they feel?"),
+            ("Opportunities", "What could be improved?"),
+        ];
+        let stages = ["Stage 1", "Stage 2", "Stage 3"];
+        for language in Lang::ALL {
+            let wb = thinoda_core::templates::instantiate_localized("user-journey-map", &|key| {
+                t_in(language, key).to_owned()
+            });
+            let sheet = wb.active();
+            assert_eq!(sheet.title, t_in(language, "User Journey Map"));
+            assert_eq!(sheet.content_topics().count(), 13);
+            assert_eq!(sheet.zones.len(), stages.len());
+            assert!(sheet.content_topics().any(|topic| {
+                topic.title == t_in(language, "Journey: person and scenario")
+                    && topic.card.is_some_and(|card| card.kind == CardKind::Text)
+            }));
+            let layout = layout_sheet(sheet, &ApproxMeasure, false);
+            for (zone, stage) in sheet.zones.iter().zip(stages) {
+                assert_eq!(zone.name, t_in(language, stage));
+                assert!(zone.keep_empty && zone.roots.is_empty());
+            }
+            for (label, prompt) in rows {
+                assert!(
+                    sheet.content_topics().any(|topic| {
+                        topic.title == t_in(language, label)
+                            && topic.card.is_some_and(|card| card.kind == CardKind::Text)
+                    }),
+                    "{language:?}: {label}"
+                );
+                let prompts: Vec<_> = sheet
+                    .content_topics()
+                    .filter(|topic| topic.title == t_in(language, prompt))
+                    .collect();
+                assert_eq!(prompts.len(), stages.len(), "{language:?}: {prompt}");
+                for (zone, topic) in sheet.zones.iter().zip(prompts) {
+                    assert_eq!(topic.card.unwrap().kind, CardKind::Sticky);
+                    let rect = layout.topics[&topic.id].rect;
+                    assert!(
+                        zone.frame.contains(rect.min) && zone.frame.contains(rect.max()),
+                        "{language:?}: {prompt}"
+                    );
+                }
+            }
+            wb.validate().unwrap();
+        }
+        for language in TRANSLATED {
+            for key in [
+                "User Journey Map",
+                "Journey: person and scenario",
+                "Stage 1",
+                "Stage 2",
+                "Stage 3",
+                "User actions",
+                "Feelings",
+                "What could be improved?",
+                "User Journey Map has three visual stages for actions, feelings and opportunities. Frames are visual guides: moving a frame does not move notes, and moving a note does not assign a stage.",
+            ] {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+            }
         }
     }
 

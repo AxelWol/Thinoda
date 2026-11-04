@@ -798,8 +798,17 @@ Scene 3 image|Imagem da cena 3
 Scene 1 action|Ação da cena 1
 Scene 2 action|Ação da cena 2
 Scene 3 action|Ação da cena 3
+User Journey Map|Mapa da jornada do usuário
+Journey: person and scenario|Jornada: pessoa e cenário
+Stage 1|Etapa 1
+Stage 2|Etapa 2
+Stage 3|Etapa 3
+User actions|Ações do usuário
+Feelings|Sentimentos
+What could be improved?|O que poderia ser melhorado?
 Empathy Map has four visual sections for what someone says, thinks, does and feels. Moving a note does not assign a category.|O mapa de empatia tem quatro áreas visuais para o que uma pessoa diz, pensa, faz e sente. Mover uma nota não atribui uma categoria.
 Storyboard has three visual scenes with image cards. Select a card and choose Local Image to add a picture; frames do not group or time the scenes.|O storyboard tem três cenas visuais com cartões de imagem. Selecione um cartão e escolha Imagem local para adicionar uma imagem; as molduras não agrupam nem cronometram as cenas.
+User Journey Map has three visual stages for actions, feelings and opportunities. Frames are visual guides: moving a frame does not move notes, and moving a note does not assign a stage.|O mapa da jornada do usuário tem três etapas visuais para ações, sentimentos e oportunidades. As molduras são guias visuais: mover uma moldura não move as notas e mover uma nota não atribui uma etapa.
 Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.|O diagrama de Venn tem círculos sobrepostos e rótulos independentes. Mover um círculo não move os rótulos nem atribui pertencimento a conjuntos.
 What do we need to learn?|O que precisamos aprender?
 Retrospective: team and time period|Retrospectiva: equipe e período

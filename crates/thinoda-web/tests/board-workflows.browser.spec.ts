@@ -171,6 +171,46 @@ test.describe("storyboard gallery", () => {
     });
 });
 
+test.describe("user journey map gallery", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    test("creates a rootless journey with independent prompts and stage frames", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await frames(page);
+        for (const position of [
+            { x: 220, y: 128 },
+            { x: 220, y: 225 },
+            { x: 290, y: 532 },
+            { x: 67, y: 722 },
+        ]) {
+            await canvas.click({ position });
+            await frames(page);
+        }
+
+        const saved = sheetFrom(await saveAs(page, "user-journey.thinoda"));
+        expect(saved.title).toBe("User Journey Map");
+        expect(saved.root_mode).toBe("hidden");
+        expect(saved.zones.map(zone => zone.name)).toEqual(["Stage 1", "Stage 2", "Stage 3"]);
+        expect(saved.zones.every(zone => zone.keep_empty && !zone.roots?.length)).toBe(true);
+        const cards = Object.values(saved.topics).filter(topic => topic.card);
+        expect(cards.map(card => [card.title, card.card?.kind])).toEqual([
+            ["Journey: person and scenario", "text"],
+            ["User actions", "text"],
+            ["Feelings", "text"],
+            ["Opportunities", "text"],
+            ...Array.from({ length: 3 }, () => ["What do they do?", "sticky"]),
+            ...Array.from({ length: 3 }, () => ["How might they feel?", "sticky"]),
+            ...Array.from({ length: 3 }, () => ["What could be improved?", "sticky"]),
+        ]);
+        expect(saved.floating).toEqual(cards.map(card => card.id));
+        expect(cards.slice(4).map(card => card.position)).toEqual(
+            [130, 260, 390].flatMap(y => [160, 500, 840].map(x => ({ x, y }))),
+        );
+    });
+});
+
 test.describe("meeting board gallery", () => {
     test.use({ viewport: { width: 1280, height: 800 } });
 

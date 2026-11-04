@@ -281,6 +281,7 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("venn-diagram", "Venn Diagram"),
     board_info("empathy-map", "Empathy Map"),
     board_info("storyboard", "Storyboard"),
+    board_info("user-journey-map", "User Journey Map"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -784,6 +785,7 @@ mod tests {
                 "venn-diagram",
                 "empathy-map",
                 "storyboard",
+                "user-journey-map",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
@@ -798,6 +800,7 @@ mod tests {
             ("venn-diagram", "Venn Diagram"),
             ("empathy-map", "Empathy Map"),
             ("storyboard", "Storyboard"),
+            ("user-journey-map", "User Journey Map"),
         ] {
             let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
             assert_eq!(info.name, name);
@@ -1411,6 +1414,111 @@ mod tests {
     }
 
     #[test]
+    fn user_journey_map_has_independent_rows_and_editable_stages() {
+        use crate::board::{BoardMember, CardKind};
+        use crate::geometry::Vec2;
+
+        let mut document = crate::Document::new(instantiate("user-journey-map"));
+        let original = document.workbook().clone();
+        let sheet = document.sheet();
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .map(|zone| zone.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Stage 1", "Stage 2", "Stage 3"]
+        );
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        assert!(sheet.canvas.groups.is_empty());
+        assert_eq!(sheet.content_topics().count(), 13);
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let heading = sheet
+            .content_topics()
+            .find(|topic| topic.title == "Journey: person and scenario")
+            .unwrap();
+        assert_eq!(heading.card.unwrap().kind, CardKind::Text);
+        assert!(layout.topics[&heading.id].rect.max().y < sheet.zones[0].frame.min.y);
+        let mut first_prompt = None;
+        for (row, (label, prompt)) in [
+            ("User actions", "What do they do?"),
+            ("Feelings", "How might they feel?"),
+            ("Opportunities", "What could be improved?"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let label = sheet
+                .content_topics()
+                .find(|topic| topic.title == label)
+                .unwrap();
+            assert_eq!(label.card.unwrap().kind, CardKind::Text);
+            assert!(layout.topics[&label.id].rect.max().x < sheet.zones[0].frame.min.x);
+            let prompts: Vec<_> = sheet
+                .content_topics()
+                .filter(|topic| topic.title == prompt)
+                .collect();
+            assert_eq!(prompts.len(), 3);
+            for (zone, topic) in sheet.zones.iter().zip(prompts) {
+                assert_eq!(topic.card.unwrap().kind, CardKind::Sticky);
+                let rect = layout.topics[&topic.id].rect;
+                assert!(zone.frame.contains(rect.min) && zone.frame.contains(rect.max()));
+                assert_eq!(topic.position.unwrap().y, 130.0 + row as f32 * 130.0);
+                if first_prompt.is_none() {
+                    first_prompt = Some(topic.id);
+                }
+            }
+        }
+
+        let first_prompt = first_prompt.unwrap();
+        document
+            .move_board_members(&[BoardMember::Card(first_prompt)], Vec2::new(340.0, 0.0))
+            .unwrap();
+        let moved = document.workbook().clone();
+        assert_eq!(moved.active().zones, original.active().zones);
+        assert!(
+            moved
+                .active()
+                .zones
+                .iter()
+                .all(|zone| zone.roots.is_empty())
+        );
+        let stage = moved.active().zones[0].id;
+        let frame = moved.active().zones[0].frame;
+        document.rename_zone(stage, "Discovery").unwrap();
+        document.move_zone(stage, Vec2::new(0.0, 20.0)).unwrap();
+        document
+            .resize_zone(stage, Vec2::new(320.0, 490.0))
+            .unwrap();
+        let edited = document.workbook().clone();
+        assert_eq!(edited.active().topics, moved.active().topics);
+        assert_eq!(edited.active().zones[0].name, "Discovery");
+        assert_eq!(
+            edited.active().zones[0].frame.min,
+            frame.min + Vec2::new(0.0, 20.0)
+        );
+        assert_eq!(edited.active().zones[0].frame.size, Vec2::new(320.0, 490.0));
+        assert!(document.undo());
+        assert!(document.undo());
+        assert!(document.undo());
+        assert_eq!(document.workbook(), &moved);
+        assert!(document.undo());
+        assert_eq!(document.workbook(), &original);
+        assert!(document.redo());
+        assert_eq!(document.workbook(), &moved);
+        assert!(document.redo());
+        assert!(document.redo());
+        assert!(document.redo());
+        assert_eq!(document.workbook(), &edited);
+        edited.validate().unwrap();
+    }
+
+    #[test]
     fn additional_board_templates_round_trip_with_localized_content() {
         for id in [
             "affinity-diagram",
@@ -1420,6 +1528,7 @@ mod tests {
             "venn-diagram",
             "empathy-map",
             "storyboard",
+            "user-journey-map",
         ] {
             let original = instantiate_localized(id, &|key| format!("<{key}>"));
             original.validate().unwrap();
@@ -1490,6 +1599,13 @@ mod tests {
             "Scene 1 action",
             "Scene 2 action",
             "Scene 3 action",
+            "Journey: person and scenario",
+            "Stage 1",
+            "Stage 2",
+            "Stage 3",
+            "User actions",
+            "Feelings",
+            "What could be improved?",
         ] {
             assert!(
                 strings.contains(&key),
