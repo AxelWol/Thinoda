@@ -1378,9 +1378,17 @@ production implementations.
 
 Duck check: an IME's committed text can differ from its last preview, so the
 prototype requires explicit final text and keeps failed updates atomic. It
-models an empty committed replacement separately from cancel, but does not
-decide how platform events map to either. Snapshot counts bound the number of
-entries, not their true memory use, and eviction plus caret-style inheritance
+also models surrounding-text deletions, with provisional changes grouped into
+the active composition. Egui 0.37 clears a preedit on empty preedit/commit
+after the initial preedit has already replaced selected text; the prototype's
+cancel-restores-original policy is not the same behavior. Egui saturates
+surrounding-deletion cursor arithmetic but may pass an oversized range to the
+buffer, while the prototype rejects invalid ranges. The app's synthetic egui
+characterization tests cover these operations and whole-string undo/redo; they
+do not establish real IME event sequences. The event mapping, cancellation and
+treatment of surrounding edits need explicit real-platform decisions. Snapshot
+counts bound the number of entries, not their true memory use, and eviction
+plus caret-style inheritance
 still need product decisions and real input acceptance. A passing scalar-level
 oracle does not establish grapheme, bidirectional or egui-editor correctness.
 

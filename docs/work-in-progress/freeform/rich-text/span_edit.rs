@@ -246,6 +246,7 @@ enum HistoryError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CommitOutcome {
     NoDocumentChange,
+    Provisional,
     Recorded,
     RecordedAfterEviction,
 }
@@ -402,6 +403,52 @@ impl<S: Clone + Default + PartialEq> DraftHistory<S> {
         Ok(())
     }
 
+    fn delete_surrounding(
+        &mut self,
+        before_chars: usize,
+        after_chars: usize,
+    ) -> Result<CommitOutcome, HistoryError> {
+        let range = self.composition.as_ref().map_or_else(
+            || self.current.selection.ordered(),
+            |item| item.range.clone(),
+        );
+        let start = range
+            .start
+            .checked_sub(before_chars)
+            .ok_or(HistoryError::Edit(EditError::InvalidRange))?;
+        let end = range
+            .end
+            .checked_add(after_chars)
+            .ok_or(HistoryError::Edit(EditError::SizeOverflow))?;
+        if end > self.current.value.text.chars().count() {
+            return Err(HistoryError::Edit(EditError::InvalidRange));
+        }
+        if before_chars == 0 && after_chars == 0 {
+            return Ok(CommitOutcome::NoDocumentChange);
+        }
+        let before = self.current.clone();
+        let mut after = before.clone();
+        after
+            .value
+            .replace(range.end..end, "", S::default(), self.limits)
+            .map_err(HistoryError::Edit)?;
+        after
+            .value
+            .replace(start..range.start, "", S::default(), self.limits)
+            .map_err(HistoryError::Edit)?;
+        after.selection = Selection {
+            anchor: before.selection.anchor - before_chars,
+            active: before.selection.active - before_chars,
+        };
+        if let Some(composition) = self.composition.as_mut() {
+            composition.range = start..range.end - before_chars;
+            self.current = after;
+            Ok(CommitOutcome::Provisional)
+        } else {
+            Ok(self.record(before, after))
+        }
+    }
+
     fn commit_composition(
         &mut self,
         text: &str,
@@ -534,6 +581,20 @@ mod tests {
             .styles
             .splice(range, std::iter::repeat_n(style.clone(), chars.len()));
         draft.selection = selection;
+    }
+
+    fn oracle_delete_surrounding(
+        draft: &mut CharacterDraft,
+        range: Range<usize>,
+        before: usize,
+        after: usize,
+    ) {
+        draft.chars.drain(range.end..range.end + after);
+        draft.styles.drain(range.end..range.end + after);
+        draft.chars.drain(range.start - before..range.start);
+        draft.styles.drain(range.start - before..range.start);
+        draft.selection.anchor -= before;
+        draft.selection.active -= before;
     }
 
     fn assert_draft_matches(actual: &Draft<Style>, expected: &CharacterDraft) {
@@ -839,6 +900,108 @@ mod tests {
         assert_eq!(history.current.value.text, "ad");
         history.undo().unwrap();
         assert_eq!(history.current, before);
+    }
+
+    #[test]
+    fn surrounding_ime_deletions_follow_the_composition_as_one_transaction() {
+        let mut history = history(
+            "Aé🙂xyz",
+            vec![Span {
+                range: 1..4,
+                style: bold(true),
+            }],
+            Selection {
+                anchor: 4,
+                active: 3,
+            },
+            bold(false),
+            4,
+        );
+        let before = history.current.clone();
+        history.begin_composition().unwrap();
+        history
+            .update_composition("日", Selection::caret(1))
+            .unwrap();
+        assert_eq!(
+            history.delete_surrounding(2, 1),
+            Ok(CommitOutcome::Provisional)
+        );
+        assert_eq!(history.current.value.text, "A日z");
+        assert_eq!(history.current.selection, Selection::caret(2));
+        assert_eq!(history.composition.as_ref().unwrap().range, 1..2);
+        assert!(history.undo.is_empty());
+        let preview = history.current.clone();
+        let composition = history.composition.clone();
+        assert_eq!(
+            history.delete_surrounding(2, 0),
+            Err(HistoryError::Edit(EditError::InvalidRange))
+        );
+        assert_eq!(
+            history.delete_surrounding(0, usize::MAX),
+            Err(HistoryError::Edit(EditError::SizeOverflow))
+        );
+        assert_eq!(history.current, preview);
+        assert_eq!(history.composition, composition);
+        assert_eq!(
+            history.commit_composition("本", Selection::caret(1)),
+            Ok(CommitOutcome::Recorded)
+        );
+        assert_eq!(history.current.value.text, "A本z");
+        let after = history.current.clone();
+        history.undo().unwrap();
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current, after);
+
+        history.undo().unwrap();
+        history.begin_composition().unwrap();
+        history
+            .update_composition("日", Selection::caret(1))
+            .unwrap();
+        history.delete_surrounding(2, 1).unwrap();
+        history.cancel_composition().unwrap();
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current, after);
+    }
+
+    #[test]
+    fn surrounding_deletion_without_composition_keeps_selection_and_undo() {
+        let mut history = history(
+            "abcde",
+            vec![Span {
+                range: 1..4,
+                style: bold(true),
+            }],
+            Selection {
+                anchor: 3,
+                active: 2,
+            },
+            Style::default(),
+            4,
+        );
+        let before = history.current.clone();
+        assert_eq!(
+            history.delete_surrounding(1, 1),
+            Ok(CommitOutcome::Recorded)
+        );
+        assert_eq!(history.current.value.text, "ace");
+        assert_eq!(
+            history.current.selection,
+            Selection {
+                anchor: 2,
+                active: 1
+            }
+        );
+        assert_eq!(
+            flatten(&history.current.value),
+            vec![Style::default(), bold(true), Style::default()]
+        );
+        let after = history.current.clone();
+        history.undo().unwrap();
+        assert_eq!(history.current, before);
+        history.redo().unwrap();
+        assert_eq!(history.current, after);
     }
 
     #[test]
@@ -1217,7 +1380,7 @@ mod tests {
                 history.set_selection(selection).unwrap();
                 current.selection = selection;
             }
-            match next() % 6 {
+            match next() % 7 {
                 0 => {
                     let selection = Selection {
                         anchor: next() % (current.chars.len() + 1),
@@ -1286,6 +1449,18 @@ mod tests {
                     }
                     None => assert_eq!(history.redo(), Err(HistoryError::RedoUnavailable)),
                 },
+                5 => {
+                    let before = current.clone();
+                    let range = current.selection.ordered();
+                    let left = next() % (range.start + 1);
+                    let right = next() % (current.chars.len() - range.end + 1);
+                    let outcome = history.delete_surrounding(left, right).unwrap();
+                    oracle_delete_surrounding(&mut current, range, left, right);
+                    assert_eq!(
+                        outcome,
+                        oracle_record(before, &current, &mut undo, &mut redo, capacity)
+                    );
+                }
                 _ => {
                     let before = current.clone();
                     let mut range = current.selection.ordered();
@@ -1311,6 +1486,22 @@ mod tests {
                             },
                         );
                         range = start..start + length;
+                        assert_draft_matches(&history.current, &current);
+                    }
+                    if next().is_multiple_of(2) {
+                        let left = next() % (range.start + 1);
+                        let right = next() % (current.chars.len() - range.end + 1);
+                        let outcome = history.delete_surrounding(left, right).unwrap();
+                        assert_eq!(
+                            outcome,
+                            if left == 0 && right == 0 {
+                                CommitOutcome::NoDocumentChange
+                            } else {
+                                CommitOutcome::Provisional
+                            }
+                        );
+                        oracle_delete_surrounding(&mut current, range.clone(), left, right);
+                        range = range.start - left..range.end - left;
                         assert_draft_matches(&history.current, &current);
                     }
                     if next().is_multiple_of(2) {

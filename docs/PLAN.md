@@ -51,8 +51,9 @@ or enabled rich-text feature. An isolated, non-application span-editing
 experiment now tests explicit Unicode-scalar operations and rejection of
 over-budget edits. A separate experimental draft history tests snapshot
 undo/redo and explicit IME transactions, but is not wired to egui or the app;
-its snapshot memory, input-event mapping, lists, persistence and rendering
-remain open.
+synthetic egui tests now characterize actual buffer operations, undo and
+surrounding deletion. Snapshot memory, input-event mapping, real IME behavior,
+lists, persistence and rendering remain open.
 
 **Notes strikethrough checkpoint:** the Notes inspector and enlarged editor
 now provide a localized, reversible Markdown-source strikethrough action. It

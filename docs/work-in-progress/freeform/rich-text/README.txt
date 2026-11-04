@@ -15,6 +15,8 @@ entry-count eviction, and caret-only formatting without a document undo entry.
 Explicit composition begin/update/commit/cancel groups multiple preedits into
 one document edit, uses the supplied final commit text rather than assuming
 the last preview is final, and restores the original state and redo on cancel.
+Surrounding-text deletion is modeled both inside and outside composition; the
+prototype groups it with an active composition and rolls it back on cancel.
 Failed edits and failed composition updates leave the draft and history intact.
 Two deterministic 2,500-operation suites compare the span and history behaviors
 against independent per-character models.
@@ -26,6 +28,19 @@ UTF-16 conversion and candidate-range semantics, remains unresolved. Caret
 style inheritance and undo eviction are experimental policies, not product
 decisions. Navigation and caret-only style changes keep the redo branch, whose
 stored selection and typing style are restored on redo.
+
+Local egui 0.37 source review shows that empty preedit or commit clears the
+preedit, while the initial preedit has already replaced any selected text.
+That differs from this prototype's explicit cancel-restores-original policy.
+Egui also accepts DeleteSurrounding outside a composition and saturates its
+cursor arithmetic; an oversized after-count can still reach TextBuffer as an
+out-of-bounds range. This prototype rejects out-of-bounds requests instead.
+The app's text_buffer_characterization integration tests exercise these actual
+egui operations, including plain-string undo/redo. They simulate egui events
+and do not establish which events physical IMEs send. The correct transaction
+and cancellation behavior for real platform input, including whether surrounding
+deletions survive a canceled composition, must be established before adapting
+these APIs.
 
 The history clones complete snapshots. Entry count is bounded and eviction is
 reported, but the memory occupied by styles and snapshots is not bounded; font
