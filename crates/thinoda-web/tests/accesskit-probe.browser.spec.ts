@@ -148,16 +148,165 @@ test("the native semantic button supports Space activation", async ({ page }) =>
     await expect(page.locator("#probe-debug")).toHaveAttribute("data-count", "1");
 });
 
-test("default eframe Tab handling does not enter the separate DOM button", async ({ page }) => {
+test("Tab navigation can enter the synthetic semantic button", async ({ page }) => {
     const button = await openProbe(page);
     const canvas = page.locator("#probe-canvas");
     await canvas.focus();
     await expect(canvas).toBeFocused();
+    let entered = false;
     for (let i = 0; i < 3; i++) {
         await page.keyboard.press("Tab");
         await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
-        await expect(button).not.toBeFocused();
+        if (await button.evaluate(element => document.activeElement === element)) {
+            entered = true;
+            break;
+        }
     }
+    expect(entered).toBe(true);
+    await page.keyboard.press("Space");
+    await expect(button).toHaveAccessibleName("Synthetic action 1");
+    await expect(page.locator("#probe-debug")).toHaveAttribute("data-count", "1");
+});
+
+test("Tab from the synthetic editor reaches the semantic button without changing the draft", async ({ page }) => {
+    const button = await openProbe(page);
+    const debug = page.locator("#probe-debug");
+    await focusSyntheticInput(page);
+    await page.keyboard.insertText("cafe");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+    await page.keyboard.press("Tab");
+    await expect(button).toBeFocused();
+    await expect(debug).toHaveAttribute("data-text-length", "4");
+    await button.press("Enter");
+    await expect(debug).toHaveAttribute("data-count", "1");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+});
+
+test("Shift+Tab from the synthetic button returns to the editor", async ({ page }) => {
+    const button = await openProbe(page);
+    const debug = page.locator("#probe-debug");
+    await focusSyntheticInput(page);
+    await page.keyboard.insertText("cafe");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+    await page.keyboard.press("Tab");
+    await expect(button).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.locator("input[type='text']")).toBeFocused();
+    await page.keyboard.insertText("猫");
+    await expect(debug).toHaveAttribute("data-text-probe", "continued");
+});
+
+test("immediate synthetic text reaches an unblocked editor focus request", async ({ page }) => {
+    const button = await openProbe(page);
+    const debug = page.locator("#probe-debug");
+    await focusSyntheticInput(page);
+    await page.keyboard.insertText("cafe");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+    await page.keyboard.press("Tab");
+    await expect(button).toBeFocused();
+    await page.evaluate(() => {
+        const agent = document.querySelector<HTMLInputElement>("input[type='text']")!;
+        agent.focus();
+        agent.value += "猫";
+        agent.dispatchEvent(new InputEvent("input", {
+            bubbles: true, inputType: "insertText", data: "猫",
+        }));
+    });
+    await expect(debug).toHaveAttribute("data-text-probe", "continued");
+    await expect(debug).toHaveAttribute("data-input-focused", "true");
+});
+
+test("a pending click can drop synthetic text sent during the focus return", async ({ page }) => {
+    const button = await openProbe(page);
+    const debug = page.locator("#probe-debug");
+    await focusSyntheticInput(page);
+    await page.keyboard.insertText("cafe");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+    await page.keyboard.press("Tab");
+    await expect(button).toBeFocused();
+    await page.evaluate(() => {
+        const button = document.querySelector<HTMLButtonElement>("#probe-action")!;
+        const agent = document.querySelector<HTMLInputElement>("input[type='text']")!;
+        button.click();
+        agent.focus();
+        agent.value += "猫";
+        agent.dispatchEvent(new InputEvent("input", {
+            bubbles: true, inputType: "insertText", data: "猫",
+        }));
+    });
+    await expect(debug).toHaveAttribute("data-count", "1");
+    await frames(page);
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+    await expect(debug).toHaveAttribute("data-text-length", "4");
+});
+
+test("returning through the semantic button collapses a selected text range", async ({ page }) => {
+    const button = await openProbe(page);
+    const debug = page.locator("#probe-debug");
+    await focusSyntheticInput(page);
+    await page.keyboard.insertText("cafe");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+    await expect(debug).toHaveAttribute("data-input-focused", "true");
+    await page.keyboard.press("Shift+ArrowLeft");
+    // Keep this selection test separate from the mixed-event focus hazard below.
+    await expect(debug).toHaveAttribute("data-selection", "3:4");
+    await expect(debug).toHaveAttribute("data-arrow-left-released", "true");
+    await page.keyboard.press("Tab");
+    await expect(debug).toHaveAttribute("data-input-focused", "false");
+    await expect(debug).toHaveAttribute("data-selection", "3:3");
+    // Isolate selection from the separately characterized DOM focus race.
+    await button.focus();
+    await expect(button).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.locator("input[type='text']")).toBeFocused();
+    await expect(debug).toHaveAttribute("data-input-focused", "true");
+    await expect(debug).toHaveAttribute("data-selection", "3:3");
+    await page.keyboard.insertText("猫");
+    await expect(debug).toHaveAttribute("data-text-probe", "selection-lost");
+    await expect(debug).toHaveAttribute("data-text-length", "5");
+});
+
+test("a mixed keyboard frame can leave focus on the canvas instead of the semantic button", async ({ page }) => {
+    const button = await openProbe(page);
+    const debug = page.locator("#probe-debug");
+    await focusSyntheticInput(page);
+    await page.keyboard.insertText("cafe");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+    await page.evaluate(() => {
+        const agent = document.querySelector<HTMLInputElement>("input[type='text']")!;
+        const events: Array<[string, string, number, boolean]> = [
+            ["keydown", "ArrowLeft", 37, true],
+            ["keyup", "ArrowLeft", 37, true],
+            ["keydown", "Tab", 9, false],
+            ["keyup", "Tab", 9, false],
+        ];
+        for (const [type, key, keyCode, shiftKey] of events) {
+            agent.dispatchEvent(new KeyboardEvent(type, {
+                bubbles: true, cancelable: true, key, code: key, keyCode, shiftKey,
+            }));
+        }
+    });
+    await frames(page);
+    await expect(page.locator("#probe-canvas")).toBeFocused();
+    await expect(button).not.toBeFocused();
+    await expect(debug).toHaveAttribute("data-input-focused", "false");
+    await expect(debug).toHaveAttribute("data-text-probe", "first");
+});
+
+test("a focus request is canceled if focus immediately moves elsewhere", async ({ page }) => {
+    const button = await openProbe(page);
+    const debug = page.locator("#probe-debug");
+    await focusSyntheticInput(page);
+    await page.keyboard.press("Tab");
+    await expect(button).toBeFocused();
+    await expect(debug).toHaveAttribute("data-input-focused", "false");
+    await page.evaluate(() => {
+        document.querySelector<HTMLInputElement>("input[type='text']")!.focus();
+        document.querySelector<HTMLCanvasElement>("#probe-canvas")!.focus();
+    });
+    await frames(page);
+    await expect(page.locator("#probe-canvas")).toBeFocused();
+    await expect(debug).toHaveAttribute("data-input-focused", "false");
 });
 
 test("a quick synthetic return to the canvas can select and replace text", async ({ page }) => {

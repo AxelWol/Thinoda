@@ -247,9 +247,12 @@ not a solution for large browser snapshots or non-atomic tab leases.
 The next open work remains the browser accessibility bridge, safe large-board
 recovery, export acceptance and realistic performance/device gates;
 cloud-provider work stays paused.
-An isolated AccessKit probe can round-trip one synthetic button, but it exposes
-unresolved Tab/focus ownership and a rapid-refocus text-replacement hazard. It
-is not installed in the application and does not close browser accessibility.
+An isolated AccessKit probe can round-trip one synthetic button and forward
+simple Tab transitions, but mixed events can strand focus, queued actions can
+drop immediate input, and focus changes can lose selection or interrupt IME
+composition. The rapid-refocus text-replacement hazard also remains. The
+[characterizations and critique](WEB-STARTUP.md#isolated-accesskit-feasibility-probe)
+are not installed in the application and do not close browser accessibility.
 
 ## Current next-value state (2026-10-30)
 

@@ -285,37 +285,46 @@ HTML are a separate synthetic eframe app, not an adapter installed in Thinoda.
 The normal web entry point and production shell do not load them. The probe
 allows only one nominated button and three fixed synthetic labels; it never
 mounts a document. Its egui plugin reads a completed AccessKit tree in
-`output_hook`, mirrors that button as a native DOM button, and sends a Click
-request back through `input_hook`. The button remains hidden and disabled until
-the expected node is present and the click listener is installed. Disabled,
+`output_hook`, mirrors that button as a native DOM button, and sends Click and
+synthetic text-focus requests through `input_hook`. The button remains hidden
+and disabled until the expected node and listeners are available. Disabled,
 hidden, mismatched and unrecognized nodes cannot authorize actions; detaching
 the test button revokes queued clicks. Queued actions are bounded and delivered
-at most one per frame because egui coalesces same-frame button clicks.
+at most one per frame because egui coalesces same-frame button clicks. A
+pending text-focus request is canceled if its target or browser focus changes.
+The experiment identifies eframe's text agent as the canvas's next sibling;
+that private DOM arrangement is not a stable integration contract.
 
-On Windows, isolated Playwright tests passed in headless Chromium, Firefox and
-WebKit: the synthetic name and disabled state followed egui, pointer/Enter/Space
-activation reached egui, and two rapid activations were delivered on separate
-frames. Chromium's accessibility tree also exposed the button and its disabled
-state. These tests programmatically focus the DOM button; they do **not** show
-that a keyboard or screen reader can navigate the application. In all three
-engines, three Tab presses from the canvas did not reach the separate button:
-the existing eframe web backend consumes Tab for egui's own focus navigation.
-When the button is focused, eframe reports the canvas/text-agent host as
-unfocused. In all three engines, a rapid sequence of synthetic pointer events
-returned to the same canvas position after a DOM-button activation, selected a
-word and replaced it on subsequent input. A deterministic egui test reproduces
-the cause: the intervening AccessKit click does not interrupt egui's pointer
-double-click sequence. This does not establish how often physical input reaches
-that timing, but it is a data-loss hazard to resolve. The separate
-text-resumption check deliberately waits past that interval; it is not evidence
-that selection or IME ownership is solved.
+On Windows, 16 isolated Playwright characterizations passed in each of
+headless Chromium, Firefox and WebKit, along with 12 native egui tests. The
+selection case also passed 15 repeated runs in each browser. One Chromium probe
+startup timed out under concurrent browser testing before the synthetic button
+appeared; its cause was not isolated, and a later serial run passed. These are
+not production startup measurements. The
+button's name, disabled state and activation track the synthetic widget.
+An unambiguous single Tab can now enter it, and Shift+Tab can return to the
+synthetic editor. Chromium's accessibility tree exposes the button and its
+disabled state. Those narrow checks do **not** establish keyboard or
+screen-reader access to Thinoda. Several passing tests deliberately reproduce
+unsafe behavior rather than assert a production-ready solution:
 
-The proof deliberately does not implement a general semantic tree, DOM order or
-geometry, focus synchronization, modal isolation, text selection/composition,
-localized names, board nodes, or stale-ID and hidden-ancestor handling. It also
-does not establish performance, mobile behavior or real screen-reader support.
-The bounded queue can reject excess activations. These are blockers to exposing
-the experiment in the editor, not completed accessibility gates.
+| Focus risk | Characterized outcome and remaining work |
+|---|---|
+| Mixed input | The probe suppresses DOM focus forwarding if a Tab shares a frame with another key, text, IME or pointer event. A synthetic ArrowLeft-plus-Tab frame leaves egui focus away from the editor but browser focus on the canvas, not the semantic button. Under concurrent browser stress, focus forwarding also occasionally failed after the ArrowLeft release was observed by egui; its cause has not been isolated. A conservative rejection is not a complete focus protocol. |
+| Queued actions | Immediate synthetic text reaches an unblocked text-focus request. If a click is queued ahead of that request, the same text can be dropped; a full queue also rejects focus. The browser cases reproduced the former in all three engines. Preserving ordering, target ownership and input requires a different design. |
+| Selection | After egui observes focus leaving a selected range, returning through the DOM button collapses that selection. Typing can insert beside the former selection instead of replacing it. This was reproduced in all three engines; the test verifies the selection and blur state and explicitly focuses the DOM button to isolate this case from the focus-forwarding race. Returning before egui observes the blur can produce a different outcome. |
+| Composition | A native synthetic preedit followed by focus loss and a delayed IME commit leaves the preedit in the draft as well as the committed text. This is an event-ordering characterization, not evidence about a specific real IME. Composition ownership and cancellation must be tested on actual platforms. |
+| Pointer return | A rapid synthetic pointer return to the same canvas position after a DOM activation selects and replaces a word. An egui test shows that the intervening AccessKit action does not interrupt its pointer double-click sequence. The frequency with physical input is unknown. |
+
+The proof also lacks window-blur ownership tracking, a general semantic tree,
+DOM order and geometry, modal isolation, localized names, board nodes, and
+complete stale-ID or hidden-ancestor handling. It does not establish
+performance, mobile behavior, physical input or real screen-reader support.
+Avoiding these risks by injecting pointer events, resetting egui input state or
+waiting between user actions would change interaction semantics, not solve
+them. Keep the experiment out of the editor until a design preserves text,
+selection and IME behavior under same-frame input and is verified with real
+assistive technology.
 
 From the repository root, with the locked `wasm-bindgen` version and Playwright
 browsers installed, the focused checks can be reproduced on Windows with:

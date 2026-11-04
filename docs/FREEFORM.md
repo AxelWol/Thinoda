@@ -617,6 +617,20 @@ accessibility names. Focused egui accessibility tests therefore do not close
 the browser screen-reader gate. The observed gap and required follow-up are
 recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
+### Browser focus probe checkpoint: critique
+
+- An isolated synthetic probe can forward a simple Tab into one semantic DOM
+  button and return to one text editor. It is not connected to Thinoda or real
+  document content.
+- Mixed input can strand focus, queued actions can drop immediate text, and
+  text selection or an interrupted synthetic IME composition can be altered.
+  Rapid pointer return can also select and replace a word. The
+  [browser characterization](WEB-STARTUP.md#isolated-accesskit-feasibility-probe)
+  documents the exact event ordering and its limits.
+- No production bridge should ship until the focus protocol preserves text and
+  selection through same-frame input, stale targets and composition, and real
+  browsers, physical devices and screen readers have been checked.
+
 ### F2 image-card accessibility checkpoint: critique
 
 - Image cards now retain a localized type in their accessible name even when
