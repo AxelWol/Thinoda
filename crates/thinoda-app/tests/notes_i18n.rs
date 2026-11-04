@@ -24,6 +24,7 @@ fn topic_style_and_notes_actions_have_distinct_names_in_every_language() {
         h.run_steps(3);
         assert_ne!(t("Bold"), t("Bold notes"));
         assert_ne!(t("Italic"), t("Italic notes"));
+        assert_ne!(t("Strikethrough"), t("Strikethrough notes"));
         for label in ["Bold", "Italic"] {
             assert_eq!(
                 h.query_all_by_role_and_label(Role::Button, t(label))
@@ -34,7 +35,7 @@ fn topic_style_and_notes_actions_have_distinct_names_in_every_language() {
         }
         h.get_by_role_and_label(Role::Tab, t("Data")).click();
         h.run_steps(4);
-        for label in ["Bold notes", "Italic notes"] {
+        for label in ["Bold notes", "Italic notes", "Strikethrough notes"] {
             assert_eq!(
                 h.query_all_by_role_and_label(Role::Button, t(label))
                     .count(),

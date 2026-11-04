@@ -39,6 +39,13 @@ represented as working features. Their
 persistence, accessibility and verification constraints are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).
 
+**Notes formatting:** Markdown-source strikethrough is available in the Notes
+inspector and enlarged editor, with bounded rendered-span validation and
+localized feedback instead of silently inserting ineffective markers. Applying
+one action across paragraphs or inside code, handling over-limit notes, and
+extending equivalent validation to the older bold/italic actions remain open.
+This does not implement selected-range formatting in board-card titles.
+
 **Compact Settings and recovery warning:** the previously obstructing warning
 now uses a bounded, scrollable notification strip while nonmodal Settings is
 open. The dialog remains above it, including after reopening; warning dismissal

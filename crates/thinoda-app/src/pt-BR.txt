@@ -77,6 +77,8 @@ Slide source is unavailable.|A origem do slide não está disponível.
 Click a topic to hide its subtree.|Clique em um tópico para ocultar sua subárvore.
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
+Strikethrough notes|Tachar notas
+Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.|Não é possível tachar aqui. Selecione texto em um parágrafo fora de código ou encurte a nota.
 Board export changes|Alterações na exportação do quadro
 The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.|O formato selecionado altera ou omite conteúdo do quadro. O quadro na memória permanece inalterado; salve-o como Thinoda para preservá-lo.
 Shapes omitted|Formas omitidas

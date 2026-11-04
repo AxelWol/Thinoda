@@ -1140,6 +1140,34 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   guards and verify undo/redo, save/reopen, clipboard and every supported visual
   output rather than inferring correctness from the control state alone.
 
+### Notes strikethrough checkpoint and critique
+
+- The existing Notes inspector and its staged enlarged editor add a localized
+  strikethrough action using Markdown markers and the established draft/undo
+  transaction. Repeating the action removes its markers. Bold, italic and
+  strikethrough now leave selected outer whitespace outside their delimiters;
+  a whitespace-only selection inserts an empty pair at its end for subsequent
+  typing.
+- Duck check: a pair of markers is not proof of rendered formatting. Before
+  applying a nonempty strikethrough, the action checks that the preview parser
+  actually recognizes the complete span and that the note stays within the
+  existing preview limits. Code, paragraph-spanning and over-limit selections
+  are rejected without changing the source; a localized warning retains the
+  selection and returns focus. Removing existing markers remains possible.
+  Multi-paragraph application remains open, and the older bold/italic actions
+  do not yet have this rendered-span check.
+- Duck check: explicitly formatting a legacy plain note promotes the whole note
+  to Markdown, so pre-existing literal Markdown characters may acquire meaning.
+  This is the existing opt-in note contract, not a rich-text migration. The
+  source-first editor still uses character offsets rather than a grapheme/IME
+  transaction model, and formatting cannot be represented in all exports.
+- Native egui coverage exercises Map and Outliner, focused Unicode drafts,
+  selected whitespace, rejection, undo/redo, native save/reopen, all language
+  catalogs and the enlarged editor's apply boundary. A user-authored example
+  also reaches FreeMind as a strikethrough run; existing Word, Excel and
+  FreeMind format tests cover their supported note subsets. Physical input,
+  screen readers and external Office applications remain separate acceptance.
+
 ### Graphical Shape picker checkpoint
 
 - The Shape library now presents the existing shapes as a searchable grid. Each

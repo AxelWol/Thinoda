@@ -342,6 +342,80 @@ fn enlarged_notes_capture_focused_source_after_blur_and_reuse_formatting_tools()
 }
 
 #[test]
+fn enlarged_notes_strikethrough_stays_staged_until_applied() {
+    let _language = LANGUAGE.lock().unwrap();
+    let mut h = harness(ThinodaApp::headless());
+    click(&mut h, "Enlarge notes editor");
+    text(&mut h, "Notes", "日本語 staged note");
+    h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    click(&mut h, "Strikethrough notes");
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .is_none()
+    );
+    click(&mut h, "Apply notes");
+    let note = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .root_topic()
+        .notes
+        .as_ref()
+        .unwrap();
+    assert_eq!(&**note, "~~日本語 staged note~~");
+    assert!(note.is_markdown());
+}
+
+#[test]
+fn enlarged_notes_reject_unrenderable_strikethrough_without_changing_the_draft() {
+    let _language = LANGUAGE.lock().unwrap();
+    let mut h = harness(ThinodaApp::headless());
+    click(&mut h, "Enlarge notes editor");
+    text(&mut h, "Notes", "first\n\nsecond");
+    h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    click(&mut h, "Strikethrough notes");
+    assert!(
+        h.query_by_label(t(
+            "Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note."
+        ))
+        .is_some()
+    );
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .is_none()
+    );
+    click(&mut h, "Apply notes");
+    let note = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .root_topic()
+        .notes
+        .as_ref()
+        .unwrap();
+    assert_eq!(&**note, "first\n\nsecond");
+    assert!(!note.is_markdown());
+}
+
+#[test]
 fn enlarged_editors_resize_by_pointer_without_mutating_the_document() {
     let _language = LANGUAGE.lock().unwrap();
     for equation in [false, true] {

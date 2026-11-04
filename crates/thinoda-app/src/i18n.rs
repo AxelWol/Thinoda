@@ -1860,6 +1860,11 @@ const DE: &[(&str, &str)] = &[
     ("None", "Keine"),
     ("Bold", "Fett"),
     ("Bold notes", "Notiztext fett"),
+    ("Strikethrough notes", "Notiztext durchstreichen"),
+    (
+        "Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.",
+        "Hier kann nicht durchgestrichen werden. Wählen Sie Text innerhalb eines Absatzes außerhalb von Code oder kürzen Sie die Notiz.",
+    ),
     ("Board export changes", "Änderungen beim Board-Export"),
     (
         "The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.",

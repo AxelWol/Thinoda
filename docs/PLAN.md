@@ -52,6 +52,17 @@ experiment now tests explicit Unicode-scalar operations and rejection of
 over-budget edits; it does not implement rich undo, lists, persistence or
 rendering.
 
+**Notes strikethrough checkpoint:** the Notes inspector and enlarged editor
+now provide a localized, reversible Markdown-source strikethrough action. It
+uses the existing draft, undo and save path; applying it explicitly promotes a
+plain note to Markdown. Bold, italic and strikethrough leave surrounding
+whitespace outside their markers. A nonempty strikethrough is checked against
+the bounded preview parser before committing; unsupported selections or notes
+that exceed its limits retain their source and selection and show a warning.
+Selections crossing paragraphs and code are not supported by this action.
+This is separate from the open selected-range board-card model; see the
+[critique](FREEFORM.md#notes-strikethrough-checkpoint-and-critique).
+
 **2026-11-03 selected-connector checkpoint:** the board toolbox offers straight,
 elbow and curved routes, start/end arrows, width presets and an exact width,
 and automatic, swatch or custom color for a single selected connector. Compact

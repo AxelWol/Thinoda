@@ -322,6 +322,238 @@ fn repeated_emphasis_restores_the_original_note_without_changing_topic_style() {
 }
 
 #[test]
+fn notes_strikethrough_preserves_unicode_in_both_views_save_and_undo() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
+        let doc = app.doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        let source = " café 🌱 ";
+        doc.doc
+            .edit_sheet("Fixture", |sheet| {
+                sheet.set_notes(root, Some(source.into()))
+            })
+            .unwrap();
+        let style = doc.doc.sheet().root_topic().style.clone();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    ui.ctx()
+                        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+                    app.draw(ui);
+                },
+                app,
+            );
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .focus();
+        h.run_steps(3);
+        h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+        h.run_steps(3);
+        for expected in [" ~~café 🌱~~ ", source] {
+            h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+                .click();
+            h.run_steps(4);
+            let doc = h.state().doc().unwrap();
+            let note = doc.doc.sheet().root_topic().notes.as_ref().unwrap();
+            assert_eq!(&**note, expected);
+            assert!(note.is_markdown());
+            assert_eq!(doc.doc.sheet().root_topic().style, style);
+
+            if expected != source {
+                let parsed = thinoda_core::notes::formatted_document(expected).unwrap();
+                assert!(
+                    parsed
+                        .paragraphs
+                        .iter()
+                        .flat_map(|p| &p.runs)
+                        .any(|run| { run.text == "café 🌱" && run.style.strike })
+                );
+                let bytes = thinoda_io::export_bytes(
+                    doc.doc.workbook(),
+                    thinoda_io::Format::FreeMind,
+                    &Default::default(),
+                )
+                .unwrap();
+                assert!(
+                    std::str::from_utf8(&bytes)
+                        .unwrap()
+                        .contains("<strike>café 🌱</strike>")
+                );
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("notes.thinoda");
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .save_to(&path, false)
+                    .unwrap();
+                let reopened = OpenDoc::open(&path).unwrap();
+                assert_eq!(
+                    reopened.doc.sheet().root_topic().notes,
+                    h.state().doc().unwrap().doc.sheet().root_topic().notes
+                );
+            }
+        }
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some(" ~~café 🌱~~ ")
+        );
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some(source)
+        );
+    }
+}
+
+#[test]
+fn notes_strikethrough_commits_focused_unicode_draft_as_one_undo() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .focus();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .type_text("café research");
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+            .click();
+        h.run_steps(3);
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some("~~café research~~")
+        );
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().root_topic().notes,
+            None
+        );
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some("~~café research~~")
+        );
+    }
+}
+
+#[test]
+fn notes_strikethrough_rejects_unrenderable_selection_without_editing() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
+        let doc = app.doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        let source = "first\n\nsecond";
+        doc.doc
+            .edit_sheet("Fixture", |sheet| {
+                sheet.set_notes(root, Some(source.into()))
+            })
+            .unwrap();
+        let revision = doc.doc.state_id();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .focus();
+        h.run_steps(3);
+        h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+            .click();
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(doc.doc.state_id(), revision);
+        let note = doc.doc.sheet().root_topic().notes.as_ref().unwrap();
+        assert_eq!(&**note, source);
+        assert!(!note.is_markdown());
+        let warning = t(
+            "Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.",
+        );
+        assert!(h.query_by_label(warning).is_some());
+
+        let focused = h.ctx.memory(|memory| memory.focused()).unwrap();
+        let mut state = egui::TextEdit::load_state(&h.ctx, focused).unwrap();
+        let selection = state.cursor.char_range().unwrap().as_sorted_char_range();
+        assert_eq!(selection.start.0..selection.end.0, 0..13);
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(5),
+            )));
+        state.store(&h.ctx, focused);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, t("Strikethrough notes"))
+            .click();
+        h.run_steps(4);
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some("~~first~~\n\nsecond")
+        );
+        assert!(h.query_by_label(warning).is_none());
+    }
+}
+
+#[test]
 fn preview_links_are_inert_and_excessive_nesting_keeps_the_original_note() {
     let mut app = ThinodaApp::headless();
     app.format_tab = thinoda_app::app::FormatTab::Data;

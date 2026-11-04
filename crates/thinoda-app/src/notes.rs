@@ -3,6 +3,7 @@ pub(crate) const EXPORT_SOURCE_WARNING: &str = "This format exports formatted no
 pub(crate) const EXPORT_SOURCE_REQUIRED: &str = "This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.";
 
 use egui::{Id, Response, Ui};
+use pulldown_cmark::{Event, Parser, Tag};
 
 use crate::{i18n::t, legal_markdown::Markdown};
 
@@ -13,13 +14,74 @@ pub(crate) const FREEMIND_LIMIT: &str = "FreeMind note export limit reached. The
 pub(crate) const FREEMIND_UNSUPPORTED: &str = "FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.";
 pub(crate) const EXCEL_LIMIT: &str = "Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.";
 pub(crate) const EXCEL_UNSUPPORTED: &str = "Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.";
+const STRIKE_UNAVAILABLE: &str = "Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.";
 
 #[derive(Clone, Copy)]
 enum Format {
     Bold,
     Italic,
+    Strike,
     Bullet,
     Numbered,
+}
+
+fn remove_emphasis(
+    source: &str,
+    start: usize,
+    end: usize,
+    delimiter: &str,
+) -> Option<(String, std::ops::Range<usize>)> {
+    let selected = &source[start..end];
+    if let Some(inner) = selected
+        .strip_prefix(delimiter)
+        .and_then(|text| text.strip_suffix(delimiter))
+    {
+        let first = source[..start].chars().count();
+        return Some((
+            format!("{}{}{}", &source[..start], inner, &source[end..]),
+            first..first + inner.chars().count(),
+        ));
+    }
+    if source[..start].ends_with(delimiter) && source[end..].starts_with(delimiter) {
+        let prefix = &source[..start - delimiter.len()];
+        let suffix = &source[end + delimiter.len()..];
+        let first = prefix.chars().count();
+        return Some((
+            format!("{prefix}{selected}{suffix}"),
+            first..first + selected.chars().count(),
+        ));
+    }
+    None
+}
+
+fn strikethrough_is_rendered(source: &str, selection: &std::ops::Range<usize>) -> bool {
+    if selection.is_empty() {
+        return true;
+    }
+    if !preview_allowed(source) {
+        return false;
+    }
+    let Some(first) = selection.start.checked_sub(2) else {
+        return false;
+    };
+    let Some(last) = selection.end.checked_add(2) else {
+        return false;
+    };
+    if last > source.chars().count() {
+        return false;
+    }
+    let byte_index = |index| {
+        source
+            .char_indices()
+            .nth(index)
+            .map_or(source.len(), |(byte, _)| byte)
+    };
+    let expected = byte_index(first)..byte_index(last);
+    Parser::new_ext(source, crate::legal_markdown::OPTIONS)
+        .into_offset_iter()
+        .any(|(event, range)| {
+            matches!(event, Event::Start(Tag::Strikethrough)) && range == expected
+        })
 }
 
 fn format_selection(
@@ -35,32 +97,34 @@ fn format_selection(
         .char_indices()
         .nth(range.end.max(range.start))
         .map_or(source.len(), |(byte, _)| byte);
-    if let Some(delimiter) = match format {
+    let delimiter = match format {
         Format::Bold => Some("**"),
         Format::Italic => Some("*"),
+        Format::Strike => Some("~~"),
         _ => None,
-    } {
+    };
+    let (start, end) = if let Some(delimiter) = delimiter {
+        if let Some(result) = remove_emphasis(source, start, end, delimiter) {
+            return result;
+        }
         let selected = &source[start..end];
-        let inner = selected
-            .strip_prefix(delimiter)
-            .and_then(|text| text.strip_suffix(delimiter));
-        if let Some(inner) = inner {
-            let first = source[..start].chars().count();
-            return (
-                format!("{}{}{}", &source[..start], inner, &source[end..]),
-                first..first + inner.chars().count(),
-            );
+        let after_leading = selected.trim_start_matches(char::is_whitespace);
+        let trimmed = after_leading.trim_end_matches(char::is_whitespace);
+        let (first, last) = if trimmed.is_empty() {
+            (end, end)
+        } else {
+            let first = start + selected.len() - after_leading.len();
+            (first, first + trimmed.len())
+        };
+        if (first, last) != (start, end)
+            && let Some(result) = remove_emphasis(source, first, last, delimiter)
+        {
+            return result;
         }
-        if source[..start].ends_with(delimiter) && source[end..].starts_with(delimiter) {
-            let prefix = &source[..start - delimiter.len()];
-            let suffix = &source[end + delimiter.len()..];
-            let first = prefix.chars().count();
-            return (
-                format!("{prefix}{selected}{suffix}"),
-                first..first + selected.chars().count(),
-            );
-        }
-    }
+        (first, last)
+    } else {
+        (start, end)
+    };
     let (start, end) = match format {
         Format::Bullet | Format::Numbered => {
             let start = source[..start].rfind('\n').map_or(0, |byte| byte + 1);
@@ -80,6 +144,7 @@ fn format_selection(
     let replacement = match format {
         Format::Bold => format!("**{selected}**"),
         Format::Italic => format!("*{selected}*"),
+        Format::Strike => format!("~~{selected}~~"),
         Format::Bullet | Format::Numbered => {
             let lines: Vec<_> = selected.split('\n').collect();
             let remove = lines
@@ -110,8 +175,12 @@ fn format_selection(
     };
     let start_chars = source[..start].chars().count();
     let selection = match format {
-        Format::Bold | Format::Italic => {
-            let delimiter = if matches!(format, Format::Bold) { 2 } else { 1 };
+        Format::Bold | Format::Italic | Format::Strike => {
+            let delimiter = if matches!(format, Format::Italic) {
+                1
+            } else {
+                2
+            };
             let start = start_chars + delimiter;
             start..start + selected.chars().count()
         }
@@ -311,6 +380,7 @@ fn tools_inline(
         .unwrap_or_else(|| current.to_owned());
     let selection_id = response.id.with("format-selection");
     let selection_owner = response.id.with(&source);
+    let feedback_id = response.id.with("strike-feedback");
     if response.has_focus()
         && let Some(range) = egui::TextEdit::load_state(ui.ctx(), response.id)
             .and_then(|state| state.cursor.char_range())
@@ -324,6 +394,7 @@ fn tools_inline(
         for (label, format) in [
             ("Bold notes", Format::Bold),
             ("Italic notes", Format::Italic),
+            ("Strikethrough notes", Format::Strike),
             ("Bulleted list", Format::Bullet),
             ("Numbered list", Format::Numbered),
         ] {
@@ -337,8 +408,16 @@ fn tools_inline(
                         let end = source.chars().count();
                         end..end
                     });
+                let previous_selection = selection.clone();
                 let (replacement, selection) = format_selection(&source, selection, format);
-                source = replacement;
+                let invalid_strike = matches!(format, Format::Strike)
+                    && replacement.len() > source.len()
+                    && !strikethrough_is_rendered(&replacement, &selection);
+                let selection = if invalid_strike {
+                    previous_selection
+                } else {
+                    selection
+                };
                 let mut state =
                     egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
                 state
@@ -349,6 +428,12 @@ fn tools_inline(
                     )));
                 state.store(ui.ctx(), response.id);
                 response.request_focus();
+                if invalid_strike {
+                    ui.data_mut(|data| data.insert_temp(feedback_id, selection_owner));
+                    continue;
+                }
+                ui.data_mut(|data| data.remove::<Id>(feedback_id));
+                source = replacement;
                 // Commit through the same conflict-checked inspector path as typing.
                 ui.data_mut(|data| data.insert_temp(response.id, source.clone()));
                 *done = Some(source.clone());
@@ -356,6 +441,9 @@ fn tools_inline(
             }
         }
     });
+    if ui.data(|data| data.get_temp::<Id>(feedback_id)) == Some(selection_owner) {
+        ui.colored_label(ui.visuals().warn_fg_color, t(STRIKE_UNAVAILABLE));
+    }
     ui.small(t(
         "Formatting is stored as Markdown text; other views and exports may show markup.",
     ));
@@ -447,10 +535,25 @@ mod tests {
     }
 
     #[test]
+    fn strikethrough_messages_exist_in_every_catalog() {
+        for language in crate::i18n::Lang::ALL {
+            for key in ["Strikethrough notes", STRIKE_UNAVAILABLE] {
+                if language != crate::i18n::Lang::En {
+                    assert_ne!(crate::i18n::t_in(language, key), key, "{language:?}: {key}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn formatting_uses_character_offsets_and_preserves_surrounding_source() {
         assert_eq!(
             format_selection("a café 🌱 end", 2..8, Format::Bold),
             ("a **café 🌱** end".into(), 4..10)
+        );
+        assert_eq!(
+            format_selection("a café 🌱 end", 2..8, Format::Strike),
+            ("a ~~café 🌱~~ end".into(), 4..10)
         );
         assert_eq!(
             format_selection("abc", 1..1, Format::Italic),
@@ -489,6 +592,8 @@ mod tests {
             (Format::Bold, "a café 🌱 end", 2..8),
             (Format::Italic, "日本語 note", 0..3),
             (Format::Bold, "empty", 2..2),
+            (Format::Strike, "a café 🌱 end", 2..8),
+            (Format::Strike, "empty", 2..2),
         ] {
             let (formatted, inner) = format_selection(source, selection.clone(), format);
             assert_eq!(
@@ -505,6 +610,92 @@ mod tests {
             format_selection("a *note* end", 2..8, Format::Italic),
             ("a note end".into(), 2..6)
         );
+        assert_eq!(
+            format_selection("a ~~café~~ end", 2..10, Format::Strike),
+            ("a café end".into(), 2..6)
+        );
+    }
+
+    #[test]
+    fn emphasis_preserves_outer_whitespace_and_formats_selected_text() {
+        let source = "a  café 🌱  end";
+        for format in [Format::Bold, Format::Italic, Format::Strike] {
+            let (formatted, selection) = format_selection(source, 2..10, format);
+            let document = thinoda_core::notes::formatted_document(&formatted).unwrap();
+            assert!(
+                document.paragraphs.iter().flat_map(|p| &p.runs).any(|run| {
+                    run.text == "café 🌱"
+                        && match format {
+                            Format::Bold => run.style.bold,
+                            Format::Italic => run.style.italic,
+                            Format::Strike => run.style.strike,
+                            _ => false,
+                        }
+                }),
+                "{formatted:?}: {document:?}"
+            );
+            assert_eq!(format_selection(&formatted, selection, format).0, source);
+        }
+    }
+
+    #[test]
+    fn emphasis_handles_whitespace_only_and_wrapped_whitespace_selections() {
+        for (format, source, selection) in [
+            (Format::Bold, "a  **café**  b", 2..12),
+            (Format::Italic, "a  *café*  b", 2..10),
+            (Format::Strike, "a  ~~café~~  b", 2..12),
+        ] {
+            assert_eq!(format_selection(source, selection, format).0, "a  café  b");
+        }
+        for format in [Format::Bold, Format::Italic, Format::Strike] {
+            let (formatted, selection) = format_selection("a  b", 1..3, format);
+            assert_eq!(format_selection(&formatted, selection, format).0, "a  b");
+        }
+        assert_eq!(
+            format_selection("a ~~  ~~ b", 4..6, Format::Strike).0,
+            "a    b"
+        );
+    }
+
+    #[test]
+    fn strike_validation_requires_a_bounded_rendered_span() {
+        for (source, selection) in [
+            ("café 🌱", 0..6),
+            ("before **café** after", 7..15),
+            ("line one\nline two", 0..17),
+        ] {
+            let (formatted, inner) = format_selection(source, selection, Format::Strike);
+            assert!(
+                strikethrough_is_rendered(&formatted, &inner),
+                "{formatted:?}"
+            );
+        }
+        for (source, selection) in [
+            ("first\n\nsecond", 0..13),
+            ("`code`", 1..5),
+            ("~~~\ncode\n~~~", 4..8),
+        ] {
+            let (formatted, inner) = format_selection(source, selection, Format::Strike);
+            assert!(
+                !strikethrough_is_rendered(&formatted, &inner),
+                "{formatted:?}"
+            );
+        }
+        let large = "x".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES + 1);
+        let (formatted, inner) = format_selection(&large, 0..1, Format::Strike);
+        assert!(!strikethrough_is_rendered(&formatted, &inner));
+        let many_events = format!("{}target", "**x** ".repeat(700));
+        let last = many_events.chars().count();
+        let (formatted, inner) = format_selection(&many_events, last - 6..last, Format::Strike);
+        assert!(!strikethrough_is_rendered(&formatted, &inner));
+        let deep = format!(
+            "{}target",
+            "> ".repeat(thinoda_core::notes::MAX_PROJECTION_DEPTH)
+        );
+        let last = deep.chars().count();
+        let (formatted, inner) = format_selection(&deep, last - 6..last, Format::Strike);
+        assert!(!strikethrough_is_rendered(&formatted, &inner));
+        assert!(strikethrough_is_rendered("~~~~", &(2..2)));
     }
 
     #[test]
