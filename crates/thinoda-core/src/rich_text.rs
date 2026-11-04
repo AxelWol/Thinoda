@@ -201,6 +201,84 @@ impl InlineText {
         Ok(())
     }
 
+    /// Replaces a Unicode-scalar range and shifts or preserves surrounding styles.
+    ///
+    /// The replacement style is explicit; callers decide caret-style inheritance
+    /// and must expand ranges to grapheme boundaries. Edits that change paragraph
+    /// boundaries are rejected while list metadata exists.
+    pub fn replace_range(
+        &self,
+        text: &str,
+        range: Range<usize>,
+        replacement: &str,
+        replacement_style: &InlineTextStyle,
+    ) -> Result<(String, Self), String> {
+        self.validate(text)?;
+        let char_count = text.chars().count();
+        if range.start > range.end || range.end > char_count {
+            return Err("inline text replacement has an invalid range".into());
+        }
+
+        let start_byte = scalar_byte_index(text, range.start);
+        let end_byte = scalar_byte_index(text, range.end);
+        let replaced = &text[start_byte..end_byte];
+        if !self.paragraphs.is_empty() && (replaced.contains('\n') || replacement.contains('\n')) {
+            return Err("inline text replacement cannot change listed paragraphs".into());
+        }
+
+        let replacement_chars = replacement.chars().count();
+        let inserted_end = range
+            .start
+            .checked_add(replacement_chars)
+            .ok_or_else(|| "inline text replacement range is too large".to_owned())?;
+        let byte_capacity = start_byte
+            .checked_add(replacement.len())
+            .and_then(|bytes| bytes.checked_add(text.len() - end_byte))
+            .ok_or_else(|| "inline text replacement is too large".to_owned())?;
+        let mut updated_text = String::with_capacity(byte_capacity);
+        updated_text.push_str(&text[..start_byte]);
+        updated_text.push_str(replacement);
+        updated_text.push_str(&text[end_byte..]);
+
+        let mut runs = Vec::new();
+        for run in &self.runs {
+            if (run.start as usize) < range.start {
+                push_coalesced_run(
+                    &mut runs,
+                    run.start as usize,
+                    (run.end as usize).min(range.start),
+                    run.style.clone(),
+                )?;
+            }
+        }
+        if replacement_chars > 0 && !replacement_style.is_empty() {
+            push_coalesced_run(
+                &mut runs,
+                range.start,
+                inserted_end,
+                replacement_style.clone(),
+            )?;
+        }
+        for run in &self.runs {
+            if (run.end as usize) > range.end {
+                let start = inserted_end
+                    .checked_add((run.start as usize).max(range.end) - range.end)
+                    .ok_or_else(|| "inline text replacement range is too large".to_owned())?;
+                let end = inserted_end
+                    .checked_add(run.end as usize - range.end)
+                    .ok_or_else(|| "inline text replacement range is too large".to_owned())?;
+                push_coalesced_run(&mut runs, start, end, run.style.clone())?;
+            }
+        }
+
+        let updated = Self {
+            runs,
+            paragraphs: self.paragraphs.clone(),
+        };
+        updated.validate(&updated_text)?;
+        Ok((updated_text, updated))
+    }
+
     /// Estimates heap bytes retained with a document-history snapshot.
     pub fn estimated_heap_bytes(&self) -> usize {
         self.runs
@@ -215,6 +293,12 @@ impl InlineText {
             + self.runs.capacity() * std::mem::size_of::<InlineTextRun>()
             + self.paragraphs.capacity() * std::mem::size_of::<InlineParagraph>()
     }
+}
+
+fn scalar_byte_index(text: &str, index: usize) -> usize {
+    text.char_indices()
+        .nth(index)
+        .map_or(text.len(), |(byte, _)| byte)
 }
 
 fn push_coalesced_run(
@@ -341,6 +425,125 @@ mod tests {
                 .is_err()
         );
         assert_eq!(rich, before);
+    }
+
+    #[test]
+    fn replacement_preserves_and_shifts_unicode_style_runs() {
+        let text = "a🙂e\u{301}z";
+        let rich = InlineText {
+            runs: vec![
+                InlineTextRun {
+                    start: 1,
+                    end: 4,
+                    style: bold(),
+                },
+                InlineTextRun {
+                    start: 4,
+                    end: 5,
+                    style: InlineTextStyle {
+                        underline: Some(true),
+                        ..InlineTextStyle::default()
+                    },
+                },
+            ],
+            paragraphs: Vec::new(),
+        };
+        let inserted_style = InlineTextStyle {
+            bold: Some(false),
+            italic: Some(true),
+            ..InlineTextStyle::default()
+        };
+
+        let (updated_text, updated) = rich
+            .replace_range(text, 2..4, "漢字", &inserted_style)
+            .unwrap();
+
+        assert_eq!(updated_text, "a🙂漢字z");
+        assert_eq!(
+            updated.runs,
+            vec![
+                InlineTextRun {
+                    start: 1,
+                    end: 2,
+                    style: bold(),
+                },
+                InlineTextRun {
+                    start: 2,
+                    end: 4,
+                    style: inserted_style,
+                },
+                InlineTextRun {
+                    start: 4,
+                    end: 5,
+                    style: InlineTextStyle {
+                        underline: Some(true),
+                        ..InlineTextStyle::default()
+                    },
+                },
+            ]
+        );
+        updated.validate(&updated_text).unwrap();
+        rich.validate(text).unwrap();
+    }
+
+    #[test]
+    fn replacement_coalesces_matching_runs_after_deletion() {
+        let text = "abcdef";
+        let rich = InlineText {
+            runs: vec![
+                InlineTextRun {
+                    start: 0,
+                    end: 2,
+                    style: bold(),
+                },
+                InlineTextRun {
+                    start: 4,
+                    end: 6,
+                    style: bold(),
+                },
+            ],
+            paragraphs: Vec::new(),
+        };
+
+        let (updated_text, updated) = rich
+            .replace_range(text, 2..4, "", &InlineTextStyle::default())
+            .unwrap();
+
+        assert_eq!(updated_text, "abef");
+        assert_eq!(
+            updated.runs,
+            vec![InlineTextRun {
+                start: 0,
+                end: 4,
+                style: bold(),
+            }]
+        );
+    }
+
+    #[test]
+    fn replacement_rejects_list_boundary_changes_but_allows_in_paragraph_edits() {
+        let rich = InlineText {
+            runs: Vec::new(),
+            paragraphs: vec![InlineParagraph {
+                index: 1,
+                list: ListKind::Bulleted,
+            }],
+        };
+
+        assert!(
+            rich.replace_range("one\ntwo", 3..4, "", &InlineTextStyle::default())
+                .is_err()
+        );
+        assert!(
+            rich.replace_range("one\ntwo", 4..4, "\n", &InlineTextStyle::default())
+                .is_err()
+        );
+
+        let (updated_text, updated) = rich
+            .replace_range("one\ntwo", 4..7, "second", &InlineTextStyle::default())
+            .unwrap();
+        assert_eq!(updated_text, "one\nsecond");
+        assert_eq!(updated.paragraphs, rich.paragraphs);
     }
 
     #[test]

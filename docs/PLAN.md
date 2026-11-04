@@ -47,9 +47,11 @@ open gates; integrated cloud providers remain paused.
 
 The [selected-range and list contract](FREEFORM.md#selected-range-text-and-lists-bounded-model-foundation-controls-disabled)
 now has a bounded core representation for Sticky/Text card titles, validation,
-history-memory accounting, native v8 gating and non-native export-loss
-reporting. No editor controls are enabled: rich-aware undo/IME, grapheme-aware
-selection, list editing, clipboard behavior, accessibility and mixed-style
+history-memory accounting, native v8 gating, non-native export-loss reporting,
+and atomic scalar-range replacement that preserves surrounding style runs.
+Replacement rejects paragraph-boundary changes while list metadata exists.
+No editor controls are enabled: rich-aware undo/IME, grapheme-aware selection,
+list editing, clipboard behavior, accessibility and mixed-style
 measurement/rendering remain open. An isolated, non-application span-editing
 experiment still tests broader Unicode-scalar operations and rejection of
 over-budget edits. A separate experimental draft history tests snapshot

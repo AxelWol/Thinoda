@@ -1515,11 +1515,22 @@ history, directional selections, caret typing styles and explicit IME
 preedit/commit/cancel transactions. Independent randomized character-level
 oracles exercise 2,500 span operations and 2,500 mixed history/composition
 operations; a further 10,000 operations exercise changing history budgets.
-That experiment is not compiled into Thinoda. Production now includes only the
-bounded sparse-style/list model, range style updates, validation, history-memory
-accounting, and native/export loss gates. Egui event/undo integration,
-empty-commit versus cancellation, grapheme behavior, paragraph-list editing,
-clipboard, rendering and accessibility are not production implementations.
+That experiment is not compiled into Thinoda. Production now also has an atomic
+scalar-range replacement primitive that preserves and shifts unaffected style
+runs. It refuses to change paragraph boundaries while list metadata exists.
+The bounded sparse-style/list model, range style updates, validation,
+history-memory accounting, and native/export loss gates are production code.
+Egui event/undo integration, empty-commit versus cancellation, grapheme
+behavior, paragraph-list editing, clipboard, rendering and accessibility are
+not production implementations.
+
+Duck check: the replacement primitive is a pure candidate operation, so a
+failed range, style, or list-boundary check cannot partially change the source.
+It preserves scalar-indexed runs, but it does not choose the typing style or
+make scalar boundaries grapheme-safe; those remain editor responsibilities.
+When list metadata exists, edits touching or inserting a newline are rejected
+rather than guessing how list membership should propagate. This improves the
+core safety boundary but does not make the current plain-text editor rich-aware.
 
 Duck check: an IME's committed text can differ from its last preview, so the
 prototype requires explicit final text and keeps failed updates atomic. It
