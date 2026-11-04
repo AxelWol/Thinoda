@@ -694,6 +694,25 @@ pub(crate) const BOARDS: &[BoardDef] = &[
         ],
         ..EMPTY
     },
+    BoardDef {
+        id: "moodboard",
+        cards: &[
+            note(
+                "Select an image card, then choose Local Image",
+                520.0,
+                -70.0,
+                780.0,
+            ),
+            image("Image 1", 180.0, 110.0),
+            image("Image 2", 520.0, 110.0),
+            image("Image 3", 860.0, 110.0),
+            image("Image 4", 180.0, 320.0),
+            image("Image 5", 520.0, 320.0),
+            image("Image 6", 860.0, 320.0),
+            sticky("Ideas", 520.0, 490.0, YELLOW),
+        ],
+        ..EMPTY
+    },
 ];
 
 pub(crate) fn find(id: &str) -> Option<&'static BoardDef> {

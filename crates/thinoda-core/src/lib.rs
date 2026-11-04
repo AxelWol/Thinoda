@@ -53,6 +53,7 @@ pub use model::{
     MIN_ZONE_SIZE, Presentation, PresentationScope, PresentationSlide, PresentationSource,
     Relationship, RelationshipId, Sheet, SlideFrame, SlideId, Structure, Subtree, Summary,
     SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle, Workbook, Zone, ZoneId,
+    automatic_zone_color,
 };
 pub use outline::OutlineNode;
 pub use presentation::{ResolvedPresentationSlide, resolve_presentation_slide};

@@ -12,15 +12,22 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 6;
+pub const NATIVE_FORMAT_VERSION: u64 = 7;
 
 /// Lowest native format version able to represent `book`.
 ///
-/// 2 is the base format, 3 adds embedded resources, 4 formatted notes, 5 FIM documents
-/// and 6 Freeform board semantics. Workbooks without newer content keep the version
-/// (and bytes) they had before the newer feature existed.
+/// 2 is the base format, 3 adds embedded resources, 4 formatted notes, 5 FIM documents,
+/// 6 Freeform board semantics and 7 independent Zone background colors. Workbooks
+/// without newer content keep the version (and bytes) they had before the feature existed.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.sheets.iter().any(uses_board_semantics) {
+    if book.sheets.iter().any(|sheet| {
+        sheet
+            .zones
+            .iter()
+            .any(|zone| zone.background_color.is_some())
+    }) {
+        7
+    } else if book.sheets.iter().any(uses_board_semantics) {
         6
     } else if book.sheets.iter().any(|sheet| sheet.fim.is_some()) {
         5

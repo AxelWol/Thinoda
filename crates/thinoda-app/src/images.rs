@@ -517,6 +517,73 @@ mod tests {
     }
 
     #[test]
+    fn moodboard_image_uploads_fill_only_selected_cards_and_undo_independently() {
+        let mut app = ThinodaApp::headless();
+        app.new_doc(thinoda_core::templates::instantiate("moodboard"));
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let mut states = vec![before];
+        for (request_id, title, color) in [(42, "Image 2", 100), (43, "Image 5", 180)] {
+            let doc = app.doc_mut().unwrap();
+            let id = doc
+                .doc
+                .sheet()
+                .content_topics()
+                .find(|topic| topic.title == title)
+                .unwrap()
+                .id;
+            doc.view.select_only(id);
+            let request = ImageRequest::capture(doc, request_id).unwrap();
+            assert!(app.command_available(&crate::app::Cmd::LocalImage));
+            app.image_request = Some(request);
+            let bytes = encoded(color);
+            app.complete_image_upload(
+                request_id,
+                files::ImageUpload {
+                    name: format!("{title}.png"),
+                    bytes: bytes.clone(),
+                },
+            );
+            assert!(app.image_request.is_none());
+            let doc = app.doc().unwrap();
+            let sheet = doc.doc.sheet();
+            let topic = sheet.topic(id).unwrap();
+            assert_eq!(topic.title, title);
+            assert_eq!(topic.card.unwrap().kind, CardKind::Image);
+            assert_eq!(
+                sheet
+                    .resources
+                    .get(topic.image.as_deref().unwrap())
+                    .unwrap()
+                    .bytes(),
+                bytes.as_slice()
+            );
+            assert_eq!(sheet.floating.len(), 8);
+            assert_eq!(sheet.resources.entries.len(), states.len());
+            for other in sheet
+                .content_topics()
+                .filter(|topic| topic.card.is_some_and(|card| card.kind == CardKind::Image))
+            {
+                assert_eq!(
+                    other.image.is_some(),
+                    other.title == "Image 2" || (request_id == 43 && other.title == "Image 5"),
+                    "{}",
+                    other.title
+                );
+            }
+            states.push(doc.doc.workbook().clone());
+        }
+        let doc = app.doc_mut().unwrap();
+        assert!(doc.doc.undo());
+        assert_eq!(doc.doc.workbook(), &states[1]);
+        assert!(doc.doc.undo());
+        assert_eq!(doc.doc.workbook(), &states[0]);
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.workbook(), &states[1]);
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.workbook(), &states[2]);
+    }
+
+    #[test]
     fn browser_image_upload_inserts_large_jpeg_without_persistent_staging() {
         let bytes = large_jpeg();
         let mut app = rootless_app();

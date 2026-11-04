@@ -54,6 +54,42 @@ fn zone_drafts_apply_frame_and_content_atomically_with_one_undo() {
 }
 
 #[test]
+fn zone_drafts_apply_independent_colors_as_one_undoable_change() {
+    let (mut app, ctx, _) = setup();
+    let initial = app.doc().unwrap().doc.workbook().clone();
+    let mut editor = draft(&mut app, &ctx, None);
+    editor.frame_color = Some(thinoda_core::Color::rgb(20, 80, 180));
+    editor.background_color = Some(thinoda_core::Color::rgb(240, 220, 180));
+    app.apply_zone_draft(&editor).unwrap();
+
+    let doc = app.doc_mut().unwrap();
+    let zone = &doc.doc.sheet().zones[0];
+    assert_eq!(zone.color, editor.frame_color);
+    assert_eq!(zone.background_color, editor.background_color);
+    assert!(doc.doc.undo());
+    assert_eq!(doc.doc.workbook(), &initial);
+    assert!(doc.doc.redo());
+    assert_eq!(
+        doc.doc.sheet().zones[0].background_color,
+        editor.background_color
+    );
+}
+
+#[test]
+fn zone_editor_exposes_separate_frame_and_background_color_controls() {
+    let (app, _, _) = setup();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(700.0, 700.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::CreateZone);
+    h.run_steps(3);
+
+    assert!(h.query_by_label("Frame color").is_some());
+    assert!(h.query_by_label("Background color").is_some());
+}
+
+#[test]
 fn invalid_and_stale_zone_drafts_never_partially_apply() {
     let (mut app, ctx, topic) = setup();
     let editor = draft(&mut app, &ctx, None);

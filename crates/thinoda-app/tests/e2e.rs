@@ -1728,7 +1728,7 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
         .iter()
         .filter(|t| t.category == TemplateCategory::Boards)
         .collect();
-    assert_eq!(boards.len(), 16);
+    assert_eq!(boards.len(), 17);
     for template in &boards {
         h.get_by_role_and_label(Role::Button, template.name);
     }
@@ -1747,6 +1747,7 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
         ("Empathy Map", &["Says", "Thinks", "Does", "Feels"][..]),
         ("Storyboard", &["Scene 1", "Scene 2", "Scene 3"][..]),
         ("User Journey Map", &["Stage 1", "Stage 2", "Stage 3"][..]),
+        ("Moodboard", &[][..]),
     ] {
         h.state_mut().exec(&ctx, Cmd::Home);
         h.state_mut().template_category = Some(TemplateCategory::Boards);
@@ -1769,6 +1770,17 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
             assert!(sheet.canvas.objects.iter().all(|object| {
                 object.band == thinoda_core::board::Band::Below && object.style.opacity == 0.55
             }));
+        }
+        if name == "Moodboard" {
+            assert_eq!(
+                sheet
+                    .content_topics()
+                    .filter(|topic| topic
+                        .card
+                        .is_some_and(|card| card.kind == thinoda_core::CardKind::Image))
+                    .count(),
+                6
+            );
         }
         assert!(
             sheet

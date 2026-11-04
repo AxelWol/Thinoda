@@ -190,7 +190,34 @@ focused coverage. Failed recovery-copy cleanup is reported and retried after a
 saved document closes without discarding newer edits or changing the recovery
 manager's ownership and pending-write contracts.
 
-The Freeform implementation, sixteen board templates, responsive toolbox and
+**Next user-directed context-menu change:** move the board tool commands from
+the Board context submenu into a separate Tools submenu between Arrange and AI.
+Preserve the other Board commands, the first-level main Board menu, command
+availability and localized short-window access.
+
+**Completed user-directed Zone-color change:** the Zone editor now controls
+frame and background colors independently. New Zones receive a deterministic
+eight-color accent cycle; template-declared colors still take precedence, so
+starter-board layouts keep their designed palettes. Older Zones without a
+background color retain their former fill behavior. The optional independent
+background field is native format v7; workbooks not using it still write v2-v6
+as before, and older manifests cannot silently claim to contain the new field.
+Canvas, template previews, SVG and PowerPoint use the separate colors, and
+title contrast is checked in both themes.
+
+**Zone-color rubber-duck critique:** the v7 boundary is required because a v6
+reader would otherwise discard the new background meaning; the v6 writer path
+is retained for unchanged documents. A finite deterministic palette repeats
+after eight additions, so large boards can reuse accents, but the localized
+custom color picker remains available. An absent background intentionally
+means “follow the frame color” for legacy compatibility; alpha in the picker
+can express a transparent fill. Template colors are explicit and must not be
+overwritten by the creation palette. Tests cover palette cycling, legacy JSON
+defaults, one-undo color edits, native-version rejection/round-trip, renderer
+contrast in light/dark themes, and localization; physical-device acceptance
+remains a separate host gate.
+
+The Freeform implementation, seventeen board templates, responsive toolbox and
 existing style controls are in place. An earlier production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
@@ -234,6 +261,8 @@ rasterization checks now cover its frames, notes and an embedded image; broad
 export acceptance remains open.
 User Journey Map adds three visual stages and independent action, feeling and
 opportunity prompts; it has no automatic stage membership or timeline behavior.
+Moodboard adds six independent, initially empty image cards and an ideas note;
+it reuses local image insertion without automatic collage layout.
 A small desktop startup comparison
 of the earlier on-demand change did not establish a speedup, and eviction
 overhead is unmeasured. Board accessibility registration now uses per-pass
@@ -3308,6 +3337,17 @@ the template and inspect its saved stages, independent cards and prompt
 positions. Long-text responsiveness, real-device and screen-reader acceptance
 remain open; see the F4 critique in FREEFORM.
 
+Moodboard adds six localized, independent image-card placeholders and an ideas
+note. Users select a card and choose Local Image to embed a picture. Existing
+card moves and image uploads are independently undoable; cards do not reflow
+into an automatic collage. Native tests cover localization, two-image
+save/reopen and visual exports. Desktop Chromium, Firefox and WebKit create
+the template, upload an image, inspect the saved archive, undo and redo the
+upload, and reopen the saved document through the browser file-input path.
+The starter does not complete scalable image storage or richer arrangement,
+and device and broader export acceptance remain open; see the F4 critique in
+FREEFORM.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3377,7 +3417,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (sixteen implemented).
+5. F4 data-driven "Boards" templates (seventeen implemented).
 6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
    with optional pen-pressure support still requiring its device spike.
 

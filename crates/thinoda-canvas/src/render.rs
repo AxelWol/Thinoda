@@ -197,15 +197,17 @@ pub(crate) fn paint_map_scene(
             } else {
                 Color32::from_gray(85)
             };
-            let fill_opacity = if zone.color.is_some() { 0.16 } else { 0.04 };
+            let fill_tint = zone.background_color.or(zone.color);
+            let fill_color = fill_tint.map_or(color, color32);
+            let fill_opacity = if fill_tint.is_some() { 0.16 } else { 0.04 };
             painter.rect(
                 rect,
                 4.0,
-                color.gamma_multiply(fill_opacity),
+                fill_color.gamma_multiply(fill_opacity),
                 Stroke::new(if selected { 2.0 } else { 1.0 }, color),
                 StrokeKind::Inside,
             );
-            let title_color = zone_title_color(sheet, bg, color, fill_opacity);
+            let title_color = zone_title_color(sheet, bg, fill_color, fill_opacity);
             painter.with_clip_rect(rect.shrink(4.0)).text(
                 rect.left_top() + vec2(8.0, 6.0),
                 egui::Align2::LEFT_TOP,
@@ -2049,7 +2051,14 @@ mod tests {
     fn kanban_zone_titles_have_contrast_in_both_themes_without_changing_tint_or_clip() {
         use thinoda_core::{ApproxMeasure, templates};
 
-        let workbook = templates::instantiate("kanban-board");
+        let mut workbook = templates::instantiate("kanban-board");
+        workbook
+            .active_mut()
+            .zones
+            .iter_mut()
+            .find(|zone| zone.name == "Done")
+            .expect("Kanban template has a Done frame")
+            .background_color = Some(Color::rgb(245, 220, 180));
         let sheet = workbook.active();
         let layout = thinoda_core::layout_sheet(sheet, &ApproxMeasure, false);
         let zone = sheet
@@ -2058,6 +2067,10 @@ mod tests {
             .find(|zone| zone.name == "Done")
             .expect("Kanban template has a Done frame");
         let zone_color = color32(zone.color.expect("template frame has a custom tint"));
+        let fill_color = color32(
+            zone.background_color
+                .expect("frame has a separate background tint"),
+        );
         let zone_rect = Xf {
             origin: Pos2::ZERO,
             zoom: 1.0,
@@ -2069,7 +2082,7 @@ mod tests {
         for dark in [false, true] {
             let background = sheet_background(sheet, dark);
             let fill_opacity = 0.16;
-            let label_color = zone_title_color(sheet, background, zone_color, fill_opacity);
+            let label_color = zone_title_color(sheet, background, fill_color, fill_opacity);
             let mut output = ctx.run_pass(
                 egui::RawInput {
                     screen_rect: Some(screen),
@@ -2103,7 +2116,7 @@ mod tests {
                 .expect("Done frame title is painted");
             assert_eq!(title.1.fallback_color, label_color);
             assert_eq!(title.0.clip_rect, zone_rect.shrink(4.0));
-            let composited_fill = core_color32(zone_color.gamma_multiply(fill_opacity))
+            let composited_fill = core_color32(fill_color.gamma_multiply(fill_opacity))
                 .over(core_color32(background));
             assert!(
                 core_color32(label_color).contrast_on(composited_fill) >= 4.5,
@@ -2118,7 +2131,7 @@ mod tests {
                     _ => None,
                 })
                 .expect("Done frame background is painted");
-            assert_eq!(frame.fill, zone_color.gamma_multiply(fill_opacity));
+            assert_eq!(frame.fill, fill_color.gamma_multiply(fill_opacity));
             assert_eq!(frame.stroke.color, zone_color);
             let tint = zone.color.expect("template frame has a custom tint");
             let previous_tint = Color::rgba(tint.r, tint.g, tint.b, 0x30);
@@ -2327,6 +2340,7 @@ mod tests {
             roots: vec![],
             keep_empty: true,
             color: None,
+            background_color: None,
             clip: true,
         });
         assert!(label_bounds(&sheet).is_none());
@@ -3391,6 +3405,7 @@ mod tests {
             roots: vec![],
             keep_empty: true,
             color: None,
+            background_color: None,
             clip: true,
         });
         let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
@@ -3790,6 +3805,7 @@ mod tests {
                 roots: vec![root],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
             Zone {
@@ -3799,6 +3815,7 @@ mod tests {
                 roots: vec![a],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
             Zone {
@@ -3808,6 +3825,7 @@ mod tests {
                 roots: vec![b],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
             Zone {
@@ -3817,6 +3835,7 @@ mod tests {
                 roots: vec![summary_topic],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
         ];
@@ -4117,6 +4136,7 @@ mod tests {
             roots: vec![sheet.root],
             keep_empty: false,
             color: Some(Color::rgb(50, 210, 130)),
+            background_color: None,
             clip: true,
         };
         sheet.zones.push(zone);

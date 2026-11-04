@@ -171,6 +171,101 @@ test.describe("storyboard gallery", () => {
     });
 });
 
+test.describe("moodboard gallery", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    test("persists an uploaded image through undo, redo and reopen", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await frames(page);
+        for (const position of [
+            { x: 220, y: 128 },
+            { x: 220, y: 225 },
+            { x: 465, y: 532 },
+            { x: 67, y: 722 },
+        ]) {
+            await canvas.click({ position });
+            await frames(page);
+        }
+
+        const manifest = (zip: Buffer): { resources: { id: string; name: string; media_type: string; size: number }[] } =>
+            JSON.parse(zipEntry(zip, "manifest.json").toString("utf8"));
+        const baseline = await saveAs(page, "moodboard-baseline.thinoda");
+        const initial = sheetFrom(baseline);
+        const images = Object.values(initial.topics).filter(topic => topic.card?.kind === "image");
+        expect(initial.title).toBe("Moodboard");
+        expect(initial.root_mode).toBe("hidden");
+        expect(initial.zones).toEqual([]);
+        expect(images.map(image => image.title)).toEqual(
+            Array.from({ length: 6 }, (_, index) => `Image ${index + 1}`),
+        );
+        expect(images.every(image => !image.image)).toBe(true);
+        expect(manifest(baseline).resources).toHaveLength(0);
+
+        const fixture = await page.evaluate(() => {
+            const image = document.createElement("canvas");
+            image.width = image.height = 64;
+            const context = image.getContext("2d");
+            if (!context) throw new Error("Cannot create the image fixture");
+            context.fillStyle = "#12c478";
+            context.fillRect(0, 0, 64, 64);
+            return image.toDataURL("image/png").split(",")[1];
+        });
+        const bytes = Buffer.from(fixture, "base64");
+        await canvas.click({ position: { x: 235, y: 320 } });
+        await frames(page);
+        const pending = page.waitForEvent("filechooser");
+        await command(page, "Local Image");
+        await (await pending).setFiles({ name: "inspiration.png", mimeType: "image/png", buffer: bytes });
+        await page.waitForTimeout(500);
+
+        const uploaded = await saveAs(page, "moodboard-upload.thinoda");
+        const updated = sheetFrom(uploaded);
+        const resources = manifest(uploaded).resources;
+        expect(resources).toHaveLength(1);
+        expect(resources[0]).toMatchObject({
+            name: "inspiration.png",
+            media_type: "image/png",
+            size: bytes.length,
+        });
+        expect(updated.topics[String(images[0].id)].image).toBe(`thinoda-resource:${resources[0].id}`);
+        expect(images.slice(1).every(image => !updated.topics[String(image.id)].image)).toBe(true);
+        expect(zipEntry(uploaded, `resources/${resources[0].id}`)).toEqual(bytes);
+
+        await page.keyboard.press("Control+z");
+        await frames(page);
+        const undone = await saveAs(page, "moodboard-undone.thinoda");
+        expect(sheetFrom(undone)).toEqual(initial);
+        expect(manifest(undone).resources).toHaveLength(0);
+
+        await page.keyboard.press("Control+Shift+z");
+        await frames(page);
+        const redone = await saveAs(page, "moodboard-redone.thinoda");
+        expect(sheetFrom(redone)).toEqual(updated);
+        expect(manifest(redone).resources).toEqual(resources);
+        expect(zipEntry(redone, `resources/${resources[0].id}`)).toEqual(bytes);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        await page.evaluate(() => {
+            Object.defineProperty(window, "showOpenFilePicker", { configurable: true, value: undefined });
+        });
+        const reopen = page.waitForEvent("filechooser");
+        await command(page, "Open");
+        await (await reopen).setFiles({
+            name: "moodboard-redone.thinoda",
+            mimeType: "application/octet-stream",
+            buffer: redone,
+        });
+        await page.waitForTimeout(1_000);
+        const reopened = await saveAs(page, "moodboard-reopened.thinoda");
+        expect(sheetFrom(reopened)).toEqual(updated);
+        expect(manifest(reopened).resources).toEqual(resources);
+        expect(zipEntry(reopened, `resources/${resources[0].id}`)).toEqual(bytes);
+    });
+});
+
 test.describe("user journey map gallery", () => {
     test.use({ viewport: { width: 1280, height: 800 } });
 

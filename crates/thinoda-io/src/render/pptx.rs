@@ -348,7 +348,7 @@ pub(crate) fn editable_slide(
     for zone in &resolved.zones {
         let id = draw.id();
         let color = zone.color.unwrap_or(Color::rgb(0x5D, 0x7A, 0x91));
-        let fill = Color::rgba(color.r, color.g, color.b, 20);
+        let fill = super::zone_export_fill(zone);
         let title_color = super::frame_title_color(color, fill, page, has_board_semantics);
         draw.shape(
             id,

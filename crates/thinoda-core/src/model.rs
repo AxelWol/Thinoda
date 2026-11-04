@@ -479,12 +479,31 @@ pub struct Zone {
     /// Keep a freeform frame even when it contains no floating topics.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep_empty: bool,
-    /// Frame fill colour; `None` uses the theme.
+    /// Frame outline colour; `None` uses the theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
+    /// Explicit frame fill colour; absent values preserve the legacy fill from `color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<Color>,
     /// Clip content to the frame when rendering.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clip: bool,
+}
+
+const ZONE_PALETTE: [Color; 8] = [
+    Color::rgb(0x2E, 0x7C, 0xF6),
+    Color::rgb(0x00, 0xA8, 0x9D),
+    Color::rgb(0x2B, 0xB6, 0x73),
+    Color::rgb(0xF5, 0xA6, 0x23),
+    Color::rgb(0xE8, 0x45, 0x5C),
+    Color::rgb(0xA3, 0x5B, 0xE0),
+    Color::rgb(0x5B, 0x6B, 0xE0),
+    Color::rgb(0x6A, 0x7A, 0x89),
+];
+
+/// Deterministic accent used for a newly created Zone at the given board position.
+pub fn automatic_zone_color(position: usize) -> Color {
+    ZONE_PALETTE[position % ZONE_PALETTE.len()]
 }
 
 /// Origin and size in sheet coordinates for a presentation slide.
@@ -1449,13 +1468,15 @@ impl Sheet {
             }
         }
         let id = self.alloc_zone_id();
+        let color = automatic_zone_color(self.zones.len());
         self.zones.push(Zone {
             id,
             name: name.trim().to_string(),
             frame,
             roots,
             keep_empty,
-            color: None,
+            color: Some(color),
+            background_color: None,
             clip: false,
         });
         Ok(id)

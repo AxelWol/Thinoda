@@ -3016,6 +3016,7 @@ mod alignment_tests {
             roots: vec![],
             keep_empty: true,
             color: None,
+            background_color: None,
             clip: true,
         });
 
@@ -3077,6 +3078,7 @@ mod alignment_tests {
                 roots: vec![],
                 keep_empty: true,
                 color: None,
+                background_color: None,
                 clip: true,
             },
             Zone {
@@ -3089,6 +3091,7 @@ mod alignment_tests {
                 roots: vec![],
                 keep_empty: true,
                 color: None,
+                background_color: None,
                 clip: true,
             },
         ]);

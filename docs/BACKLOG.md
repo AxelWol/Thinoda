@@ -9,10 +9,13 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-**2026-11-03 Freeform continuation:** sixteen localized board templates now
+**2026-11-03 Freeform continuation:** seventeen localized board templates now
 include Storyboard with three initially empty image cards and User Journey Map
-with independent visual stages and prompts. Storyboard's image upload, native
-persistence and undo/redo are covered in desktop browsers. The user-directed
+with independent visual stages and prompts. Moodboard supplies six independent
+image placeholders and an ideas note without automatic collage layout.
+Storyboard and Moodboard image upload, native persistence and undo/redo are
+covered in desktop browsers; Moodboard also reopens through the browser
+file-input path. The user-directed
 menu reorganization and recovery-cleanup warning/retry checkpoint are
 implemented locally; see the current plan. Browser
 screen-reader access, safe large-board recovery,
@@ -29,6 +32,14 @@ timeouts and a rejected synthetic Blob fixture; it is not production recovery.
 Integrated cloud providers stay
 disabled and paused until publisher registrations are complete; see
 [FREEFORM.md](FREEFORM.md) for phase critiques.
+
+**Next user request:** move the board tools to a context-menu Tools submenu
+between Arrange and AI, retaining other Board actions. The Zone-color request
+is implemented locally: new Zones use a deterministic accent cycle, template
+frames retain their explicit palette, and the editor separates frame and
+background colors. Native v7 carries independent backgrounds while older Zone
+data keeps its previous fill semantics; previews and exports use both colors.
+See the completed design and critique in [PLAN.md](PLAN.md).
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout
@@ -2011,13 +2022,16 @@ draft remains blocked on safe bounded discovery and is not integrated.
 - [x] P3 F4 "Boards" template category: Blank canvas, Multi-root map,
   Brainstorm sticky wall, Retrospective, Kanban board, Business Model Canvas,
   Flowchart, SWOT board, Affinity diagram, Eisenhower matrix, Meeting board,
-  Swimlane, Venn diagram, Empathy Map, Storyboard and User Journey Map (more
+  Swimlane, Venn diagram, Empathy Map, Storyboard, User Journey Map and
+  Moodboard (more
   templates listed with prerequisites). Swimlane lanes, Venn intersections, Empathy sections and
   Storyboard scenes and journey stages are visual guides, not role, set, category
   or stage assignments, grouped or timed scenes, presentation slides or workflow
   automation.
   Storyboard embeds user-selected local pictures in initially empty image cards;
   focused PDF raster checks cover its scene frames, notes and an embedded image.
+  Moodboard reuses that image workflow without automatic arrangement; scalable
+  image storage and richer arrangement are still future work.
   Realistic large-image storage, physical-device and broader export acceptance
   remain open.
 - P3 F5 freehand ink (implemented; realistic performance gate open): pen,

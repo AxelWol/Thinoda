@@ -1224,6 +1224,9 @@ const DE: &[(&str, &str)] = &[
     ("Region height", "Bereichshöhe"),
     ("Frame thickness", "Rahmenstärke"),
     ("Frame color", "Rahmenfarbe"),
+    ("Background color", "Hintergrundfarbe"),
+    ("Use theme default", "Themenstandard verwenden"),
+    ("Use frame color", "Rahmenfarbe verwenden"),
     ("Copy image", "Bild kopieren"),
     ("Save PNG…", "PNG speichern…"),
     (
@@ -1352,6 +1355,13 @@ const DE: &[(&str, &str)] = &[
     ("Scene 1 action", "Handlung in Szene 1"),
     ("Scene 2 action", "Handlung in Szene 2"),
     ("Scene 3 action", "Handlung in Szene 3"),
+    ("Moodboard", "Stimmungsboard"),
+    ("Image 1", "Bild 1"),
+    ("Image 2", "Bild 2"),
+    ("Image 3", "Bild 3"),
+    ("Image 4", "Bild 4"),
+    ("Image 5", "Bild 5"),
+    ("Image 6", "Bild 6"),
     ("User Journey Map", "Nutzerreisekarte"),
     (
         "Journey: person and scenario",
@@ -1517,6 +1527,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Storyboard has three visual scenes with image cards. Select a card and choose Local Image to add a picture; frames do not group or time the scenes.",
         "Das Storyboard hat drei visuelle Szenen mit Bildkarten. Eine Karte auswählen und über „Lokales Bild“ ein Bild hinzufügen; Rahmen gruppieren oder zeitlich steuern die Szenen nicht.",
+    ),
+    (
+        "Moodboard has six independent image cards and an ideas note. Select a card and choose Local Image to add a picture; cards do not arrange themselves automatically.",
+        "Das Stimmungsboard enthält sechs unabhängige Bildkarten und eine Ideennotiz. Eine Karte auswählen und über „Lokales Bild“ ein Bild hinzufügen; die Karten ordnen sich nicht automatisch an.",
     ),
     (
         "User Journey Map has three visual stages for actions, feelings and opportunities. Frames are visual guides: moving a frame does not move notes, and moving a note does not assign a stage.",
@@ -4010,6 +4024,51 @@ mod tests {
                 }
             }
             wb.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn moodboard_localizes_independent_nonoverlapping_cards() {
+        use thinoda_core::{ApproxMeasure, CardKind, layout_sheet};
+
+        let images = [
+            "Image 1", "Image 2", "Image 3", "Image 4", "Image 5", "Image 6",
+        ];
+        let help = "Moodboard has six independent image cards and an ideas note. Select a card and choose Local Image to add a picture; cards do not arrange themselves automatically.";
+        for language in Lang::ALL {
+            let wb = thinoda_core::templates::instantiate_localized("moodboard", &|key| {
+                t_in(language, key).to_owned()
+            });
+            let sheet = wb.active();
+            assert_eq!(sheet.title, t_in(language, "Moodboard"));
+            assert_eq!(sheet.content_topics().count(), 8);
+            assert!(sheet.zones.is_empty());
+            assert!(sheet.resources.is_empty());
+            assert!(sheet.content_topics().any(|topic| {
+                topic.title == t_in(language, "Ideas")
+                    && topic.card.is_some_and(|card| card.kind == CardKind::Sticky)
+            }));
+            let layout = layout_sheet(sheet, &ApproxMeasure, false);
+            let mut rects = Vec::new();
+            for key in images {
+                let topic = sheet
+                    .content_topics()
+                    .find(|topic| topic.title == t_in(language, key))
+                    .unwrap_or_else(|| panic!("{language:?}: {key}"));
+                assert_eq!(topic.card.unwrap().kind, CardKind::Image);
+                assert!(topic.image.is_none());
+                let rect = layout.topics[&topic.id].rect;
+                assert!(
+                    rects.iter().all(|other| !rect.intersects(other)),
+                    "{language:?}: {key}"
+                );
+                rects.push(rect);
+            }
+            wb.validate().unwrap();
+        }
+        for language in TRANSLATED {
+            assert_ne!(t_in(language, "Moodboard"), "Moodboard", "{language:?}");
+            assert_ne!(t_in(language, help), help, "{language:?}");
         }
     }
 

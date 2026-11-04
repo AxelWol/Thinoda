@@ -7,10 +7,12 @@ impl Sheet {
             || !self.canvas.is_empty()
             || !self.board.is_default()
             || self.topics.values().any(|topic| topic.card.is_some())
-            || self
-                .zones
-                .iter()
-                .any(|zone| zone.color.is_some() || zone.clip || zone.keep_empty)
+            || self.zones.iter().any(|zone| {
+                zone.color.is_some()
+                    || zone.background_color.is_some()
+                    || zone.clip
+                    || zone.keep_empty
+            })
             || self
                 .presentation
                 .slides
@@ -22,6 +24,7 @@ impl Sheet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Color, Rect, Vec2};
 
     #[test]
     fn plain_sheet_does_not_use_board_semantics() {
@@ -38,5 +41,20 @@ mod tests {
         let mut gridded = Sheet::new("Map", "Root");
         gridded.board.grid = crate::GridKind::Dots;
         assert!(gridded.uses_board_semantics());
+    }
+
+    #[test]
+    fn independent_zone_background_is_board_semantics() {
+        let mut sheet = Sheet::new("Map", "Root");
+        sheet
+            .create_board_frame(
+                "Frame",
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+            )
+            .unwrap();
+        sheet.zones[0].color = None;
+        sheet.zones[0].background_color = Some(Color::rgb(10, 20, 30));
+
+        assert!(sheet.uses_board_semantics());
     }
 }

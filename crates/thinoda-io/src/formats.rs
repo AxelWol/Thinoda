@@ -75,6 +75,18 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "freeform board content requires native format version 6".into(),
             ));
         }
+        if version < 7
+            && book.sheets.iter().any(|sheet| {
+                sheet
+                    .zones
+                    .iter()
+                    .any(|zone| zone.background_color.is_some())
+            })
+        {
+            return Err(IoError::Invalid(
+                "independent Zone background colors require native format version 7".into(),
+            ));
+        }
         Ok(book)
     } else {
         Ok(serde_json::from_slice(bytes)?)

@@ -4275,6 +4275,7 @@ mod tests {
                 roots: vec![root],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
             thinoda_core::Zone {
@@ -4284,6 +4285,7 @@ mod tests {
                 roots: vec![a],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
             thinoda_core::Zone {
@@ -4293,6 +4295,7 @@ mod tests {
                 roots: vec![b],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
             thinoda_core::Zone {
@@ -4302,6 +4305,7 @@ mod tests {
                 roots: vec![summary_topic],
                 keep_empty: false,
                 color: None,
+                background_color: None,
                 clip: true,
             },
         ];

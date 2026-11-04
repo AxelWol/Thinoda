@@ -83,7 +83,10 @@ fn sample(dark: bool, language: Lang, id: &'static str) -> Arc<Sample> {
 fn is_board(sheet: &Sheet) -> bool {
     sheet.root_mode == SheetRootMode::Hidden
         || !sheet.canvas.objects.is_empty()
-        || sheet.zones.iter().any(|zone| zone.color.is_some())
+        || sheet
+            .zones
+            .iter()
+            .any(|zone| zone.color.is_some() || zone.background_color.is_some())
 }
 
 /// Thumbnail of a board: tinted frames, shapes and connectors around the topic layer.
@@ -132,14 +135,23 @@ fn paint_board_thumbnail(
     }
     for zone in &sheet.zones {
         let r = xf.rect(zone.frame);
-        let fill = zone.color.map_or(ink.gamma_multiply(0.04), color32);
-        painter.rect(r, 2.0, fill, Stroke::new(0.5, ink), StrokeKind::Inside);
+        let frame = zone.color.map_or(ink, color32);
+        let fill = zone
+            .background_color
+            .or(zone.color)
+            .map_or(ink.gamma_multiply(0.04), |color| {
+                color32(color).gamma_multiply(0.16)
+            });
+        let title_color = color32(thinoda_core::Color::highest_contrast_on(
+            crate::ui::to_color(fill).over(background),
+        ));
+        painter.rect(r, 2.0, fill, Stroke::new(0.5, frame), StrokeKind::Inside);
         painter.with_clip_rect(r.shrink(1.0)).text(
             r.left_top() + vec2(3.0, 2.0),
             egui::Align2::LEFT_TOP,
             &zone.name,
             egui::FontId::proportional((14.0 * zoom).clamp(5.0, 9.0)),
-            ink,
+            title_color,
         );
     }
     thinoda_canvas::paint_map(
@@ -439,6 +451,7 @@ mod tests {
             "empathy-map",
             "storyboard",
             "user-journey-map",
+            "moodboard",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
         }
@@ -562,6 +575,7 @@ mod tests {
         zone.clip = true;
         zone.color = Some(Color::rgba(100, 40, 180, 110));
         let frame_color = color32(zone.color.unwrap());
+        let frame_fill = frame_color.gamma_multiply(0.16);
 
         let connector_colors = [Color::rgb(230, 25, 150), Color::rgb(25, 210, 170)];
         let ink_colors = [Color::rgb(200, 80, 15), Color::rgb(90, 45, 230)];
@@ -640,7 +654,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .filter_map(|(index, shape)| {
-                    matches!(&shape.shape, egui::Shape::Rect(frame) if frame.fill == frame_color)
+                    matches!(&shape.shape, egui::Shape::Rect(frame) if frame.fill == frame_fill)
                         .then_some(index)
                 })
                 .collect();
@@ -693,7 +707,8 @@ mod tests {
                 });
                 output.textures_delta.clear();
                 for zone in &sheet.zones {
-                    let fill = color32(zone.color.unwrap());
+                    let fill =
+                        color32(zone.background_color.or(zone.color).unwrap()).gamma_multiply(0.16);
                     let matches: Vec<_> = output
                         .shapes
                         .iter()

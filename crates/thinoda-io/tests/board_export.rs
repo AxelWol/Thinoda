@@ -150,6 +150,36 @@ fn board_workbooks_write_native_v6_and_round_trip() {
 }
 
 #[test]
+fn independent_zone_background_colors_require_native_v7() {
+    let mut wb = central();
+    add_zone(
+        &mut wb.sheets[0],
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 100.0)),
+    );
+    wb.sheets[0].zones[0].background_color = Some(Color::rgb(240, 220, 180));
+    assert_eq!(required_native_version(&wb), 7);
+
+    let bytes = export_bytes(&wb, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(manifest_version(&bytes), 7);
+    assert_eq!(import_bytes(Format::Thinoda, &bytes).unwrap(), wb);
+
+    let content = serde_json::to_vec(&wb).unwrap();
+    let bytes = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":6,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("independent Zone background colors require native format version 7")
+    );
+}
+
+#[test]
 fn localized_board_templates_round_trip_in_native_v6() {
     use thinoda_core::templates::{TEMPLATES, TemplateCategory, instantiate_localized};
 
@@ -217,6 +247,13 @@ fn legacy_v6_hidden_anchor_title_round_trips_without_becoming_board_content() {
     let frame = Rect::from_min_size(Vec2::new(-300.0, -200.0), Vec2::new(800.0, 600.0));
     let sheet = restored.active_mut();
     let zone = sheet.create_zone("Ideas", vec![branch], frame).unwrap();
+    let zone_style = sheet
+        .zones
+        .iter_mut()
+        .find(|candidate| candidate.id == zone)
+        .unwrap();
+    zone_style.color = Some(Color::rgb(0xAA, 0x11, 0x22));
+    zone_style.background_color = Some(Color::rgb(0x11, 0x22, 0xAA));
     for source in [
         PresentationSource::Branch(branch),
         PresentationSource::Zone(zone),
@@ -249,6 +286,10 @@ fn legacy_v6_hidden_anchor_title_round_trips_without_becoming_board_content() {
             String::from_utf8(entry(&mixed_pptx, &format!("ppt/slides/slide{index}.xml"))).unwrap();
         assert!(slide.contains("Idea"), "editable slide {index}");
         assert!(!slide.contains(ANCHOR), "editable slide {index}");
+        if index == 3 {
+            assert!(slide.contains("val=\"1122AA\""), "separate frame fill");
+            assert!(slide.contains("val=\"AA1122\""), "frame outline");
+        }
     }
 
     restored.active_mut().show_central_topic();
@@ -374,6 +415,7 @@ fn central_workbooks_keep_their_previous_native_version_and_bytes() {
         &mut zoned.sheets[0],
         Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
     );
+    zoned.sheets[0].zones[0].color = None;
     assert_eq!(required_native_version(&zoned), 2);
 }
 
@@ -396,7 +438,7 @@ fn board_data_under_older_manifests_is_rejected() {
     let bytes = zip_with(&[
         (
             "manifest.json",
-            br#"{"format":"thinoda","version":7,"resources":[]}"#,
+            br#"{"format":"thinoda","version":8,"resources":[]}"#,
         ),
         ("content.json", &content),
     ]);
@@ -692,6 +734,12 @@ fn svg_paints_the_board_scene() {
         .find(|z| z.id == zone)
         .unwrap()
         .color = Some(Color::rgb(0xAA, 0x11, 0x22));
+    wb.sheets[0]
+        .zones
+        .iter_mut()
+        .find(|z| z.id == zone)
+        .unwrap()
+        .background_color = Some(Color::rgb(0x11, 0x22, 0xAA));
     let svg = String::from_utf8(export(&wb, Format::Svg)).unwrap();
     assert!(!svg.contains(ANCHOR), "hidden anchor painted");
     // Shape fill, label, ink highlighter alpha, connector label, sticky card.
@@ -705,6 +753,22 @@ fn svg_paints_the_board_scene() {
     assert!(svg.contains("Sticky note"));
     assert!(svg.contains(&format!("id=\"object-{}\"", far.0)));
     assert!(svg.contains("stroke=\"#AA1122\""), "zone color");
+    assert!(
+        svg.contains("fill=\"#1122AA29\""),
+        "separate zone background"
+    );
+    let mut transparent = wb.clone();
+    transparent.sheets[0]
+        .zones
+        .iter_mut()
+        .find(|candidate| candidate.id == zone)
+        .unwrap()
+        .background_color = Some(Color::rgba(0x11, 0x22, 0xAA, 0));
+    let transparent_svg = String::from_utf8(export(&transparent, Format::Svg)).unwrap();
+    assert!(
+        transparent_svg.contains("fill=\"#1122AA00\""),
+        "transparent Zone backgrounds remain transparent in SVG"
+    );
     // Bounds include far objects and the zone.
     let [x, y, w, h] = view_box(&svg);
     assert!(x + w >= 3050.0 && y + h >= 2050.0, "{x} {y} {w} {h}");
@@ -808,6 +872,62 @@ fn storyboard_image_card_round_trips_and_exports_its_embedded_image() {
         .unwrap()
         .to_rgb8();
         assert!(png.pixels().any(|pixel| pixel.0 == [18, 196, 120]));
+        assert!(
+            export_bytes_with_consent(&wb, Format::Pdf, &options, true)
+                .unwrap()
+                .starts_with(b"%PDF")
+        );
+    }
+}
+
+#[test]
+fn moodboard_round_trips_two_images_and_exports_them_in_both_themes() {
+    let mut wb = thinoda_core::templates::instantiate("moodboard");
+    let sheet = wb.active_mut();
+    let mut originals = Vec::new();
+    for (title, color) in [("Image 2", [18, 196, 120]), ("Image 5", [221, 80, 145])] {
+        let id = sheet
+            .content_topics()
+            .find(|topic| topic.title == title)
+            .unwrap()
+            .id;
+        let source = image::RgbImage::from_pixel(8, 8, image::Rgb(color));
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let bytes = encoded.into_inner();
+        let resource = Resource::new(&format!("{title}.png"), "image/png", bytes.clone()).unwrap();
+        thinoda_core::images::set_image(sheet, id, Some((resource, Vec2::new(120.0, 100.0))))
+            .unwrap();
+        originals.push((id, bytes, color));
+    }
+    wb.validate().unwrap();
+    let native = export(&wb, Format::Thinoda);
+    let restored = import_bytes(Format::Thinoda, &native).unwrap();
+    assert_eq!(restored, wb);
+    for (id, bytes, _) in &originals {
+        let sheet = restored.active();
+        let reference = sheet.topic(*id).unwrap().image.as_deref().unwrap();
+        assert_eq!(sheet.resources.get(reference).unwrap().bytes(), bytes);
+    }
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let svg =
+            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
+                .unwrap();
+        assert_eq!(svg.matches("data:image/png;base64,").count(), 2);
+        let png = image::load_from_memory(
+            &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        for (_, _, color) in &originals {
+            assert!(png.pixels().any(|pixel| pixel.0 == *color), "{color:?}");
+        }
         assert!(
             export_bytes_with_consent(&wb, Format::Pdf, &options, true)
                 .unwrap()

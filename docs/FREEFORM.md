@@ -50,7 +50,7 @@ research; implementation progress is tracked in the status and roadmap above.
 | Building block | Where | Use for boards |
 |---|---|---|
 | Floating topics with a stored position (`Topic.position`, `Sheet.floating`) | `model.rs` | Basis for sticky notes, text cards and image cards |
-| Zones: named frame rectangle plus `roots` of floating trees | `model.rs` `Zone` | Closest existing "frame/area" and multi-root construct |
+| Zones: named frame rectangle plus `roots` of floating trees, frame outline and optional independent fill | `model.rs` `Zone` | Closest existing "frame/area" and multi-root construct; separate fills require native v7 |
 | Relationships with cubic control points (topic to topic only) | `model.rs` `Relationship` | Routing code for free connectors |
 | Boundaries, summaries | `model.rs` | Unchanged |
 | Topic shapes (rounded rect, rect, ellipse, capsule, diamond, underline, none), line styles | `model.rs` | Card shapes |
@@ -206,7 +206,7 @@ semantics. Therefore:
 | Object | Model | Why |
 |---|---|---|
 | Sticky note, text card, image card, link card | **Floating topic** with `TopicPresentation::Card { kind }` (colour, fixed size, optional rotation) | Reuses text editing, rich notes, resources, search, export, AI, a11y |
-| Frame / area | **Zone** extended with persistent empty frames, `clip` and frame colour | Zones already own floating trees and are Pitch sources; freeform frames can also start empty |
+| Frame / area | **Zone** extended with persistent empty frames, `clip`, automatic accent outline and optional independent background | Zones already own floating trees and are Pitch sources; freeform frames can also start empty |
 | Shape | New `CanvasObject::Shape` | No text tree semantics; may carry a short label |
 | Ink stroke | New `CanvasObject::Ink` | Point data, not text |
 | Free connector | New `CanvasObject::Connector` with `Endpoint::{Topic(id), Object(id), Point(pos)}` | Generalises relationships without changing existing ones |
@@ -839,7 +839,7 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Sixteen board templates use the same validated primitives and translated
+- Seventeen board templates use the same validated primitives and translated
   creation-time strings. Affinity and Meeting Board notes can be moved among
   persistent visual frames, the Eisenhower quadrants accept user-created
   content, and Swimlane provides three role frames and editable linked shapes.
@@ -920,6 +920,20 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   saved archive's stages, independent cards and prompt positions. These checks
   use synthetic input at one viewport; richer responsive layouts,
   physical-device and screen-reader acceptance remain open.
+- Moodboard is a bounded starter with six independent, initially empty image
+  cards, one ideas sticky and an instruction card. It reuses Local Image rather
+  than introducing a second resource or persistence path. Moving one card does
+  not rearrange others, and there is no automatic collage, image cropping or
+  image-search service. Native tests cover all-language content, independent
+  movement, two distinct uploads with separate undo/redo, native save/reopen,
+  SVG embedding, PNG image colors and PDF generation in both themes. PDF content
+  and real-image workloads are not established by a file signature. Desktop
+  Chromium, Firefox and WebKit create the starter, upload one generated image,
+  inspect the saved archive, undo/redo, and reopen it via the browser file-input
+  path. These checks do not establish File System Access handle behavior.
+  Fixed-size placeholders are not a responsive collage; scalable storage,
+  richer image arrangement, physical devices, screen readers and broad export
+  acceptance remain open.
 
 ### F5 ink checkpoint: critique
 
@@ -1735,6 +1749,7 @@ cards inside their assigned frames and catalog coverage.
 | Empathy map | Four visual sections and independent prompt stickies; no inferred thoughts, feelings or category membership |
 | Storyboard | Three visual scene frames with empty image cards and independent action notes; no grouping, timing or slide semantics |
 | User Journey Map | Three visual stage frames and independent prompts for user actions, feelings and opportunities; no stage membership or timeline semantics |
+| Moodboard starter | Six independent empty image cards and an ideas note; no automatic collage layout |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -1747,7 +1762,7 @@ compatibility with the topic renderer.
 |---|---|
 | Lean Canvas, richer Empathy map | Text-heavy responsive regions |
 | Richer journey maps, Roadmap | Structured axes or lanes |
-| Moodboard | Scalable resource storage and richer image arrangement |
+| Richer Moodboard | Scalable resource storage and richer image arrangement |
 
 Existing tree templates stay unchanged.
 

@@ -282,6 +282,7 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("empathy-map", "Empathy Map"),
     board_info("storyboard", "Storyboard"),
     board_info("user-journey-map", "User Journey Map"),
+    board_info("moodboard", "Moodboard"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -786,6 +787,7 @@ mod tests {
                 "empathy-map",
                 "storyboard",
                 "user-journey-map",
+                "moodboard",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
@@ -801,6 +803,7 @@ mod tests {
             ("empathy-map", "Empathy Map"),
             ("storyboard", "Storyboard"),
             ("user-journey-map", "User Journey Map"),
+            ("moodboard", "Moodboard"),
         ] {
             let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
             assert_eq!(info.name, name);
@@ -1414,6 +1417,56 @@ mod tests {
     }
 
     #[test]
+    fn moodboard_has_independent_empty_image_cards_and_an_ideas_note() {
+        use crate::board::{BoardMember, CardKind};
+        use crate::geometry::Vec2;
+
+        let mut document = crate::Document::new(instantiate("moodboard"));
+        let original = document.workbook().clone();
+        let sheet = document.sheet();
+        assert!(sheet.zones.is_empty());
+        assert!(sheet.canvas.groups.is_empty());
+        assert!(sheet.resources.is_empty());
+        assert_eq!(sheet.content_topics().count(), 8);
+        let images: Vec<_> = sheet
+            .content_topics()
+            .filter(|topic| topic.card.is_some_and(|card| card.kind == CardKind::Image))
+            .collect();
+        assert_eq!(images.len(), 6);
+        for (index, topic) in images.iter().enumerate() {
+            assert_eq!(topic.title, format!("Image {}", index + 1));
+            assert!(topic.image.is_none());
+            assert_eq!(
+                topic.position,
+                Some(Vec2::new(
+                    180.0 + (index % 3) as f32 * 340.0,
+                    110.0 + (index / 3) as f32 * 210.0,
+                ))
+            );
+        }
+        assert!(sheet.content_topics().any(|topic| {
+            topic.title == "Ideas" && topic.card.is_some_and(|card| card.kind == CardKind::Sticky)
+        }));
+        let moved = images[0].id;
+        let other_positions: Vec<_> = images[1..]
+            .iter()
+            .map(|topic| (topic.id, topic.position))
+            .collect();
+        document
+            .move_board_members(&[BoardMember::Card(moved)], Vec2::new(40.0, 30.0))
+            .unwrap();
+        for (id, position) in other_positions {
+            assert_eq!(document.sheet().topic(id).unwrap().position, position);
+        }
+        let edited = document.workbook().clone();
+        assert!(document.undo());
+        assert_eq!(document.workbook(), &original);
+        assert!(document.redo());
+        assert_eq!(document.workbook(), &edited);
+        edited.validate().unwrap();
+    }
+
+    #[test]
     fn user_journey_map_has_independent_rows_and_editable_stages() {
         use crate::board::{BoardMember, CardKind};
         use crate::geometry::Vec2;
@@ -1529,6 +1582,7 @@ mod tests {
             "empathy-map",
             "storyboard",
             "user-journey-map",
+            "moodboard",
         ] {
             let original = instantiate_localized(id, &|key| format!("<{key}>"));
             original.validate().unwrap();

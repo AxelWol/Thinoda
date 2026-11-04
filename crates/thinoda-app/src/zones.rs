@@ -1,7 +1,7 @@
 //! Zone drafts retain their source identity; applying a frame also moves its content.
 
 use egui::Context;
-use thinoda_core::{Rect, TopicId, ZoneId};
+use thinoda_core::{Color, Rect, TopicId, ZoneId};
 use thinoda_ui::widgets;
 
 use crate::{app::ThinodaApp, i18n::t};
@@ -25,6 +25,8 @@ struct ZoneEditor {
     name: String,
     roots: Vec<TopicId>,
     frame: Rect,
+    frame_color: Option<Color>,
+    background_color: Option<Color>,
     error: Option<String>,
     composing: bool,
 }
@@ -39,6 +41,36 @@ impl ZoneState {
     pub(crate) fn editing(&self) -> bool {
         self.editor.is_some()
     }
+}
+
+fn default_zone_frame_color(dark: bool) -> Color {
+    let value = if dark { 170 } else { 85 };
+    Color::rgb(value, value, value)
+}
+
+fn zone_color_row(
+    ui: &mut egui::Ui,
+    label: &'static str,
+    color: &mut Option<Color>,
+    fallback: Color,
+    reset_label: &'static str,
+) {
+    let touch = widgets::touch_activation_allowed(ui.ctx());
+    ui.horizontal_wrapped(|ui| {
+        let label = ui.label(t(label));
+        let mut value = thinoda_canvas::color32(color.unwrap_or(fallback));
+        if ui
+            .color_edit_button_srgba(&mut value)
+            .labelled_by(label.id)
+            .changed()
+            && touch
+        {
+            *color = Some(crate::ui::to_color(value));
+        }
+        if color.is_some() && ui.button(t(reset_label)).clicked() && touch {
+            *color = None;
+        }
+    });
 }
 
 impl ThinodaApp {
@@ -61,12 +93,18 @@ impl ThinodaApp {
             self.toasts.error(error);
             return;
         }
-        let (name, roots, frame) = if let Some(id) = id {
+        let (name, roots, frame, frame_color, background_color) = if let Some(id) = id {
             let Some(zone) = doc.doc.sheet().zones.iter().find(|zone| zone.id == id) else {
                 self.toasts.warning(t("The document changed. Try again."));
                 return;
             };
-            (zone.name.clone(), zone.roots.clone(), zone.frame)
+            (
+                zone.name.clone(),
+                zone.roots.clone(),
+                zone.frame,
+                zone.color,
+                zone.background_color,
+            )
         } else {
             let roots = doc.view.selection.clone();
             if roots.is_empty()
@@ -85,7 +123,15 @@ impl ThinodaApp {
             let mut frame = bounds.expand(24.0);
             frame.size.x = frame.size.x.max(100.0);
             frame.size.y = frame.size.y.max(100.0);
-            (t("Zone").to_string(), roots, frame)
+            (
+                t("Zone").to_string(),
+                roots,
+                frame,
+                Some(thinoda_core::automatic_zone_color(
+                    doc.doc.sheet().zones.len(),
+                )),
+                None,
+            )
         };
         self.zones.editor = Some(ZoneEditor {
             owner: ZoneOwner {
@@ -99,6 +145,8 @@ impl ThinodaApp {
             name,
             roots,
             frame,
+            frame_color,
+            background_color,
             error: None,
             composing: false,
         });
@@ -138,13 +186,39 @@ impl ThinodaApp {
                     sheet
                         .resize_zone(id, editor.frame.size)
                         .map_err(thinoda_core::EditError::Invalid)?;
+                    let zone = sheet
+                        .zones
+                        .iter_mut()
+                        .find(|zone| zone.id == id)
+                        .ok_or_else(|| {
+                            thinoda_core::EditError::Invalid(
+                                t("The document changed. Try again.").into(),
+                            )
+                        })?;
+                    zone.color = editor.frame_color;
+                    zone.background_color = editor.background_color;
                     Ok(())
                 })
                 .map_err(|error| error.to_string())
         } else {
             doc.doc
-                .create_zone(&editor.name, editor.roots.clone(), editor.frame)
-                .map(|_| ())
+                .edit_sheet("Create Zone", |sheet| {
+                    let id = sheet
+                        .create_zone(&editor.name, editor.roots.clone(), editor.frame)
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    let zone = sheet
+                        .zones
+                        .iter_mut()
+                        .find(|zone| zone.id == id)
+                        .ok_or_else(|| {
+                            thinoda_core::EditError::Invalid(
+                                t("The document changed. Try again.").into(),
+                            )
+                        })?;
+                    zone.color = editor.frame_color;
+                    zone.background_color = editor.background_color;
+                    Ok(())
+                })
                 .map_err(|error| error.to_string())
         }
     }
@@ -299,7 +373,7 @@ impl ThinodaApp {
             .modal(true)
             .close_on_backdrop(true)
             .default_width(420.0)
-            .default_height(420.0)
+            .default_height(500.0)
             .min_size(egui::vec2(300.0, 240.0))
             .scroll(false)
             .show(ctx, |ui| {
@@ -338,6 +412,22 @@ impl ThinodaApp {
                                 *value = draft;
                             }
                         }
+                        let default_frame = default_zone_frame_color(ui.visuals().dark_mode);
+                        let background_fallback = editor.frame_color.unwrap_or(default_frame);
+                        zone_color_row(
+                            ui,
+                            "Frame color",
+                            &mut editor.frame_color,
+                            default_frame,
+                            "Use theme default",
+                        );
+                        zone_color_row(
+                            ui,
+                            "Background color",
+                            &mut editor.background_color,
+                            background_fallback,
+                            "Use frame color",
+                        );
                         ui.label(t(
                             "Moving a Zone moves its topics. Minimum size is 100 × 100.",
                         ));

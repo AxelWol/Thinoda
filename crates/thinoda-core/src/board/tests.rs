@@ -41,6 +41,7 @@ fn legacy_sheet_json_round_trips_byte_identically() {
     let f = s.add_floating("F", Vec2::new(10.0, 20.0));
     s.create_zone("Zone", vec![f], rect(0.0, 0.0, 100.0, 100.0))
         .unwrap();
+    s.zones[0].color = None;
     s.add_presentation_slide(
         "Slide",
         PresentationSource::Branch(a),
@@ -82,6 +83,42 @@ fn old_json_without_board_fields_loads_with_defaults() {
 }
 
 #[test]
+fn newly_created_zones_cycle_stable_accent_colors() {
+    let mut sheet = Sheet::new("Board", "Root");
+    let frame = rect(0.0, 0.0, 100.0, 100.0);
+    sheet.create_board_frame("First", frame).unwrap();
+    sheet.create_board_frame("Second", frame).unwrap();
+
+    assert_eq!(sheet.zones[0].color, Some(crate::automatic_zone_color(0)));
+    assert_eq!(sheet.zones[1].color, Some(crate::automatic_zone_color(1)));
+    assert_ne!(sheet.zones[0].color, sheet.zones[1].color);
+    assert!(
+        sheet
+            .zones
+            .iter()
+            .all(|zone| zone.background_color.is_none())
+    );
+}
+
+#[test]
+fn old_zone_json_defaults_independent_background_color() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet
+        .create_board_frame("Frame", rect(0.0, 0.0, 100.0, 100.0))
+        .unwrap();
+    sheet.zones[0].background_color = Some(Color::rgb(10, 20, 30));
+    let mut value = serde_json::to_value(&sheet).unwrap();
+    value["zones"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("background_color");
+
+    let back: Sheet = serde_json::from_value(value).unwrap();
+    assert_eq!(back.zones[0].background_color, None);
+    assert_eq!(back.zones[0].color, sheet.zones[0].color);
+}
+
+#[test]
 fn board_sheet_round_trips() {
     let (mut s, a, _, card) = board();
     s.board = BoardSettings {
@@ -94,6 +131,7 @@ fn board_sheet_round_trips() {
         .create_zone("Frame", vec![a], rect(200.0, 100.0, 300.0, 300.0))
         .unwrap();
     s.zones[0].color = Some(Color::rgb(200, 220, 255));
+    s.zones[0].background_color = Some(Color::rgb(240, 230, 220));
     s.zones[0].clip = true;
     let shape = s
         .add_canvas_object(CanvasObject::shape(

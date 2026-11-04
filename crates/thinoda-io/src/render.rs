@@ -35,6 +35,20 @@ fn frame_title_color(tint: Color, fill: Color, background: Color, board: bool) -
     }
 }
 
+pub(super) fn zone_export_fill(zone: &thinoda_core::Zone) -> Color {
+    if let Some(fill) = zone.background_color {
+        Color::rgba(
+            fill.r,
+            fill.g,
+            fill.b,
+            (f32::from(fill.a) * 0.16).round() as u8,
+        )
+    } else {
+        let tint = zone.color.unwrap_or(Color::rgb(0x5D, 0x7A, 0x91));
+        Color::rgba(tint.r, tint.g, tint.b, 20)
+    }
+}
+
 fn xy(p: Vec2) -> String {
     format!("{:.2},{:.2}", p.x, p.y)
 }
@@ -557,7 +571,7 @@ fn svg_layout_with_fonts(
     for zone in zones {
         let r = zone.frame;
         let color = zone.color.unwrap_or(Color::rgb(0x5D, 0x7A, 0x91));
-        let fill = Color::rgba(color.r, color.g, color.b, 20);
+        let fill = zone_export_fill(zone);
         let title_color = frame_title_color(color, fill, bg, scene_options.has_board_semantics);
         out.push_str(&format!(
             "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"4\" fill=\"{}\" stroke=\"{}\"/>",
