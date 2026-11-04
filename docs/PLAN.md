@@ -240,6 +240,11 @@ overhead is unmeasured. Board accessibility registration now uses per-pass
 indexes without dropping targets or changing reading order. Matched native CPU
 and headless software-rendered browser comparisons show improvement on the
 10,000-stroke placeholder fixture, but do not close the performance gate.
+An opt-in mixed-board fixture now exercises 50 distinct embedded PNGs as well
+as 1,000 or 10,000 strokes through browser load and save. Resource bytes,
+references and complete stroke geometry/style are checked, but representative
+image workloads, measured memory, recovery and hardware/device performance
+remain open.
 Recovery availability warnings now also cover native background-write and
 worker failures and document snapshot-preparation failures on both platforms.
 An active warning waits for queued retries to finish; this is failure visibility,

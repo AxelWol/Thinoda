@@ -17,9 +17,10 @@ menu reorganization and recovery-cleanup warning/retry checkpoint are
 implemented locally; see the current plan. Browser
 screen-reader access, safe large-board recovery,
 realistic ink/image performance, export acceptance and physical-device checks
-remain open. An isolated AccessKit probe identifies mixed-event focus, dropped
-input, selection/IME and rapid-refocus text-replacement hazards; it is not an
-application bridge.
+remain open. An opt-in synthetic 50-image/ink fixture verifies browser save
+round trips, but does not close those gates. An isolated AccessKit probe
+identifies mixed-event focus, dropped input, selection/IME and rapid-refocus
+text-replacement hazards; it is not an application bridge.
 Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
 limitations. A separate asynchronous discovery draft remains gated by

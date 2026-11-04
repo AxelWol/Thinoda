@@ -3,43 +3,29 @@
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 const { readFile, writeFile } = require("node:fs/promises");
-const { join } = require("node:path");
-const { inflateRawSync } = require("node:zlib");
+const { basename, dirname, join, resolve } = require("node:path");
 const { chromium } = require("@playwright/test");
+const { IMAGE_HEIGHT, IMAGE_WIDTH, assertRoundTrip, validateBoard } = require("./board-fixture.cjs");
+const { decodeImages, markerPixels, waitForMarker } = require("./board-browser.cjs");
 
-const [fixtures, baseline, candidate, output] = process.argv.slice(2);
-if (!fixtures || !baseline || !candidate || !output) {
-    throw new Error("Usage: node compare-board-frames.cjs FIXTURES BASELINE_URL CANDIDATE_URL OUTPUT_JSON");
+const args = process.argv.slice(2);
+const embeddedImages = args.length === 5 && args[4] === "--embedded-images";
+if (args.length !== (embeddedImages ? 5 : 4)) {
+    throw new Error("Usage: node compare-board-frames.cjs FIXTURES BASELINE_URL CANDIDATE_URL OUTPUT_JSON [--embedded-images]");
 }
+const [fixtures, baseline, candidate, output] = args;
 
-function entry(zip, name) {
-    const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-    assert(end >= 0, "missing ZIP directory");
-    const count = zip.readUInt16LE(end + 10);
-    let offset = zip.readUInt32LE(end + 16);
-    for (let i = 0; i < count; i++) {
-        assert.equal(zip.readUInt32LE(offset), 0x02014b50);
-        const method = zip.readUInt16LE(offset + 10);
-        const size = zip.readUInt32LE(offset + 20);
-        const nameLength = zip.readUInt16LE(offset + 28);
-        const extraLength = zip.readUInt16LE(offset + 30);
-        const commentLength = zip.readUInt16LE(offset + 32);
-        const localOffset = zip.readUInt32LE(offset + 42);
-        if (zip.toString("utf8", offset + 46, offset + 46 + nameLength) === name) {
-            assert.equal(zip.readUInt32LE(localOffset), 0x04034b50);
-            const start = localOffset + 30 + zip.readUInt16LE(localOffset + 26)
-                + zip.readUInt16LE(localOffset + 28);
-            const bytes = zip.subarray(start, start + size);
-            if (method === 0) return bytes;
-            if (method === 8) return inflateRawSync(bytes);
-            throw new Error(`Unsupported ZIP compression method ${method}`);
-        }
-        offset += 46 + nameLength + extraLength + commentLength;
+if (embeddedImages) {
+    for (const url of [baseline, candidate]) {
+        const parsed = new URL(url);
+        assert(["http:", "https:"].includes(parsed.protocol)
+            && ["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname),
+        "embedded-image benchmarks require loopback URLs");
     }
-    throw new Error(`Missing ZIP entry ${name}`);
 }
 
-async function run(browser, url, strokes, runNumber) {
+async function run(browser, url, fixturePath, expected, runNumber) {
+    const strokes = expected.strokes;
     const context = await browser.newContext({
         viewport: { width: 1252, height: 900 },
         deviceScaleFactor: 1,
@@ -57,23 +43,23 @@ async function run(browser, url, strokes, runNumber) {
         await page.goto(url, { waitUntil: "load", timeout: 120_000 });
         await page.locator("#loading").waitFor({ state: "hidden", timeout: 120_000 });
         const canvas = page.locator("#thinoda_canvas");
-        await canvas.drop({ files: join(fixtures, `board-${strokes}.thinoda`) });
+        await canvas.drop({ files: fixturePath });
         await page.waitForTimeout(3_000);
+        if (embeddedImages) await waitForMarker(page);
         await page.evaluate(() => { window.prompt = () => "performance-check.thinoda"; });
         const pending = page.waitForEvent("download", { timeout: 120_000 });
         await canvas.focus();
         await page.keyboard.press("Control+Shift+s");
         const download = await pending;
+        assert.equal(download.suggestedFilename(), "performance-check.thinoda");
         const saved = await readFile(await download.path());
-        const sheet = JSON.parse(entry(saved, "content.json").toString("utf8")).sheets[0];
-        assert.equal(sheet.title, `Performance ${strokes}`);
-        assert.equal(sheet.root_mode, "hidden");
-        assert.equal(sheet.canvas.objects.length, strokes);
-        assert(sheet.canvas.objects.every(object => object.kind?.ink?.points?.length === 64));
-        assert.equal(Object.values(sheet.topics).filter(topic => topic.card?.kind === "image").length, 50);
+        const actual = validateBoard(saved, { strokes, embeddedImages: expected.embeddedImages });
+        assertRoundTrip(expected, actual);
         await page.mouse.move(550, 420);
         await page.waitForTimeout(500);
         const before = await page.screenshot();
+        const visibleMarkerPixels = embeddedImages ? await markerPixels(page, before) : null;
+        if (embeddedImages) assert(visibleMarkerPixels >= 30, "embedded image marker is not visible on the board");
         const raw = await page.evaluate(async () => {
             const canvas = document.querySelector("#thinoda_canvas");
             if (!(canvas instanceof HTMLCanvasElement)) throw new Error("Missing canvas");
@@ -99,6 +85,7 @@ async function run(browser, url, strokes, runNumber) {
         const after = await page.screenshot();
         const sorted = [...raw].sort((a, b) => a - b);
         const hash = data => createHash("sha256").update(data).digest("hex");
+        const browserDecodedImages = embeddedImages ? await decodeImages(page, actual) : 0;
         const browserInfo = await page.evaluate(() => {
             const gl = document.createElement("canvas").getContext("webgl");
             const extension = gl?.getExtension("WEBGL_debug_renderer_info");
@@ -120,6 +107,21 @@ async function run(browser, url, strokes, runNumber) {
             max_ms: sorted.at(-1),
             pixelsChanged: hash(before) !== hash(after),
             intervals_ms: raw,
+            fixture: {
+                file: basename(fixturePath),
+                mode: embeddedImages ? "embedded-png" : "placeholders",
+                sha256: expected.archiveSha256,
+                archiveBytes: expected.archiveBytes,
+                imageCards: expected.imageCards,
+                embeddedResources: expected.embeddedResources,
+                encodedImageBytes: expected.encodedImageBytes,
+                imageDimensions: embeddedImages ? [IMAGE_WIDTH, IMAGE_HEIGHT] : null,
+                nominalRgbaBytes: expected.nominalRgbaBytes,
+                savedSha256: actual.archiveSha256,
+                savedArchiveBytes: actual.archiveBytes,
+                browserDecodedImages,
+                visibleMarkerPixels,
+            },
         };
         assert(result.pixelsChanged, "wheel sequence did not visibly change the canvas");
         console.log(JSON.stringify({ ...result, intervals_ms: undefined }));
@@ -133,20 +135,43 @@ async function run(browser, url, strokes, runNumber) {
     const browser = await chromium.launch({
         headless: true,
         args: ["--enable-unsafe-swiftshader"],
+        downloadsPath: dirname(resolve(output)),
     });
     const results = [];
+    const recordedAtUtc = new Date().toISOString();
     try {
         for (const strokes of [1000, 10000]) {
+            const suffix = embeddedImages ? "-embedded" : "";
+            const fixturePath = join(fixtures, `board-${strokes}${suffix}.thinoda`);
+            const expected = validateBoard(await readFile(fixturePath), { strokes, embeddedImages });
             for (const [runNumber, versions] of [
                 [1, ["baseline", "candidate"]],
                 [2, ["candidate", "baseline"]],
             ]) {
                 for (const version of versions) {
                     const url = version === "baseline" ? baseline : candidate;
-                    const result = await run(browser, url, strokes, runNumber);
+                    const result = await run(browser, url, fixturePath, expected, runNumber);
                     results.push({ version, ...result });
                     await writeFile(output, JSON.stringify({
+                        recordedAtUtc,
                         browser: browser.version(),
+                        methodology: {
+                            viewport: [1252, 900],
+                            serviceWorkers: "blocked",
+                            samples: "70 requestAnimationFrame intervals after 10 warmup intervals, with synthetic wheel events",
+                            resourceValidation: "native ZIP and PNG checks; saved references, metadata and bytes match the source",
+                            strokeValidation: "ordered IDs and f32-exact geometry, pressure and style fingerprints match the source",
+                            comparison: baseline === candidate
+                                ? "same URL: smoke and characterization only, not an optimization comparison"
+                                : "separate baseline and candidate URLs",
+                            limitations: [
+                                "nominalRgbaBytes is arithmetic, not measured memory",
+                                "browser decoding is independent of Thinoda; visible marker pixels prove only that some image content was painted",
+                                "screenshot differences may include UI changes and are not proof of wheel movement",
+                                "animation-frame intervals are not GPU presentation or input-to-display latency",
+                                "no physical-device, screen-reader, quota-recovery or F5 acceptance is established",
+                            ],
+                        },
                         results,
                     }, null, 2));
                 }

@@ -442,15 +442,58 @@ still lacks numerical budgets and representative devices, so it is not closed.
 Detailed samples and artifact hashes are in
 [board-accessibility-index-2026-11-03.json](benchmarks/board-accessibility-index-2026-11-03.json).
 
+#### Embedded ink/image fixture checkpoint: critique
+
+The browser benchmark can now opt into 50 distinct synthetic 256 × 192 PNG
+resources on the existing 1,000- and 10,000-stroke boards. The measured fixture
+contained 1,340,248 encoded image bytes; 9,830,400 bytes of RGBA pixels is an
+arithmetic estimate, not a memory measurement. Default placeholder archives
+remain byte-for-byte identical to the committed generator. After browser save,
+the fixture checks every resource's ID, bytes and metadata, image-card
+references and layout, and each stroke's ordered ID, f32 geometry, pressure
+and style. Negative tests reject changed resources and stroke data.
+
+Four browser checks passed separately in headless Chromium, Firefox and WebKit:
+both placeholder and embedded fixtures at each stroke count loaded and saved.
+The browser independently decoded all 50 saved PNGs, and a screenshot marker
+showed that some image pixels appeared on the board. Neither check proves that
+Thinoda painted every image. Browser recovery, memory, accessibility and
+physical input were not measured.
+
+As a harness smoke test, two interleaved pairs used the **same** release build
+for both URLs, headless Chromium 156 and SwiftShader. Each run recorded 70
+animation-frame intervals after warmup while dispatching synthetic wheel
+events. For the embedded fixtures, per-run p50/p95 ranges were 53.7–60.9 /
+61.0–73.1 ms at 1,000 strokes and 204.8–248.2 / 229.5–272.5 ms at 10,000.
+These noisy same-build samples do not demonstrate an improvement, GPU
+presentation time, input latency or a pass against the undefined F5 budgets.
+The screenshots, browser decoding and saved archive checks have different
+scopes; none substitutes for representative photos, larger image payloads,
+hardware-GPU tests or real-device acceptance.
+
+The tested Wasm SHA-256 was
+`e862f968ddac41465649d119a5a2313deb65f19e1b1406f82ce5e41a0d6cfc46`.
+It was built from uncommitted User Journey Map work atop `9c4bacc`, later
+committed as `f2ab3f6`; an exact match to that commit was not established.
+Raw [embedded](benchmarks/board-embedded-smoke-2026-11-04.json) and
+[placeholder](benchmarks/board-placeholder-smoke-2026-11-04.json) samples
+retain the fixture hashes and limitations.
+
 For a repeat, the ignored native test is
 `cargo test --release -p thinoda-canvas --lib measure_large_board_canvas_pass -- --ignored --nocapture`.
 Generate browser fixtures with
 `python crates\thinoda-web\tests\benchmarks\make-board-fixtures.py crates\thinoda-web\tests\fixtures\affinity-diagram.thinoda <fixture-directory>`,
 then serve baseline and candidate release builds locally and run
 `node crates\thinoda-web\tests\benchmarks\compare-board-frames.cjs <fixture-directory> <baseline-url> <candidate-url> <output-json>`.
-The browser harness blocks service workers and cross-origin requests. Use
-matching toolchains, a quiet machine and the same benchmark test in both native
-builds; neither harness replaces device or assistive-technology testing.
+Add `--embedded-images` to both commands for embedded resources. To run the
+separate browser round-trip checks against a locally served release build, set
+`THINODA_WEB_URL` to its loopback URL and `THINODA_BENCH_BROWSER` to `chromium`,
+`firefox` or `webkit`, then run
+`node crates\thinoda-web\node_modules\@playwright\test\cli.js test --config crates\thinoda-web\tests\benchmarks\board-embedded.playwright.config.cjs`.
+The fixture unit and compatibility tests also run in CI. The browser harnesses
+block service workers and cross-origin requests. Use matching toolchains, a
+quiet machine and the same benchmark test in both native builds; neither
+harness replaces device or assistive-technology testing.
 
 ### 5.5 Input devices
 

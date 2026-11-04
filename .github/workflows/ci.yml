@@ -177,6 +177,10 @@ jobs:
       - name: Install browser test dependencies
         working-directory: crates/thinoda-web
         run: npm ci
+      - name: Test mixed-board benchmark fixtures
+        run: |
+          node --test crates/thinoda-web/tests/benchmarks/board-fixture.test.cjs crates/thinoda-web/tests/benchmarks/board-browser-config.test.cjs
+          python3 -B crates/thinoda-web/tests/benchmarks/test-placeholder-compatibility.py -v
       - name: Install Chromium
         working-directory: crates/thinoda-web
         run: npx playwright install --with-deps chromium
