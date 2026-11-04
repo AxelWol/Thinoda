@@ -9,8 +9,14 @@ uncoordinated writer can invalidate a resumable scan. Rust compilation and
 application-level recovery tests have not been completed. Do not integrate the
 draft until these safety blockers and the documented startup and rescue limits
 have been resolved and independently verified.
-The relocated standalone harness passed 57 Chromium storage checks; that does
-not verify application integration or resolve the blockers.
+The standalone harness passes 73 storage checks in each of Chromium and
+Firefox. WebKit has separate fixture and stress failures documented in
+recovery/README.txt. These results do not verify application integration or
+resolve the blockers.
+
+rich-text/ explores explicit Unicode-scalar span operations in a standalone
+prototype. It is not an application feature and has no model, persistence,
+editor, clipboard or export integration; see rich-text/README.txt.
 
 toolbar-overlap.patch.gz preserves the historical placement candidate. An
 adapted and tested implementation now lives in the application; the archive
