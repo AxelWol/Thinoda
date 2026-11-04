@@ -536,6 +536,7 @@ fn style_shortcuts_and_context_actions_share_availability() {
     let d = h.state().doc().unwrap();
     let root_rect = d.view.selected_topic_rect(&d.doc).unwrap();
     right_click_at(&mut h, root_rect.center());
+    open_context_styles(&mut h);
     assert!(
         h.get_by_role_and_label(Role::Button, "Paste Style")
             .accesskit_node()
@@ -576,6 +577,7 @@ fn style_shortcuts_and_context_actions_share_availability() {
     let d = h.state().doc().unwrap();
     let rect = d.view.selected_topic_rect(&d.doc).unwrap();
     right_click_at(&mut h, rect.center());
+    open_context_styles(&mut h);
     h.get_by_role_and_label(Role::Button, "Reset Style").click();
     h.run_steps(3);
     h.state_mut().doc_mut().unwrap().view.selection.clear();
@@ -678,6 +680,7 @@ fn indent_outdent_context_commands_are_single_undo_steps() {
     let d = h.state().doc().unwrap();
     let point = d.view.selected_topic_rect(&d.doc).unwrap().center();
     right_click_at(&mut h, point);
+    open_context_styles(&mut h);
     h.get_by_role_and_label(Role::Button, "Indent").click();
     h.run_steps(3);
     assert_eq!(
@@ -2382,6 +2385,13 @@ fn right_click_at(h: &mut Harness<'static, ThinodaApp>, pos: egui::Pos2) {
             modifiers: egui::Modifiers::NONE,
         });
     }
+    h.run_steps(3);
+}
+
+fn open_context_styles(h: &mut Harness<'static, ThinodaApp>) {
+    menu_action(h, "Styles").scroll_to_me();
+    h.run_steps(4);
+    menu_action(h, "Styles").click();
     h.run_steps(3);
 }
 

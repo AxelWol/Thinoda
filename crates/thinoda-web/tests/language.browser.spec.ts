@@ -72,12 +72,13 @@ test.describe("changing a saved language preference", () => {
         await expect(alert).toHaveText(english);
 
         await command(page, "Settings");
-        // Egui positions the dialog and its popup over subsequent frames.
+        // Egui's web controls are not yet exposed in the browser accessibility
+        // tree. These coordinates use the fixed viewport and browser scale.
         await page.waitForTimeout(500);
-        await page.mouse.click(795, 674);
+        await page.mouse.click(795, 542);
         await frames(page);
         await page.waitForTimeout(500);
-        await page.mouse.click(780, 531);
+        await page.mouse.click(795, 640);
         await expect(root).toHaveAttribute("lang", "de");
         await expect(alert).toHaveAttribute("lang", "en");
         await expect(alert).toHaveText(english);

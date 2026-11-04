@@ -248,7 +248,16 @@ struct EditState {
     original: String,
     select_all: bool,
     focus_requested: bool,
+    focus_retry_after: Option<(egui::ViewportId, u64)>,
     ime_composing: bool,
+    companion_cursor: Option<(String, Option<egui::text::CCursorRange>)>,
+}
+
+/// An existing title edit that may be resumed after its text was committed.
+#[derive(Debug, Clone)]
+pub struct TitleEditContinuation {
+    edit: EditState,
+    serial: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -339,6 +348,8 @@ pub struct MapView {
     pub dark: bool,
     pub accent: Color32,
     editing: Option<EditState>,
+    title_edit_serial: u64,
+    title_companion_frame: Option<((egui::ViewportId, u64), bool)>,
     title_error: Option<String>,
     drag: Drag,
     image_resize: Option<image_resize::Gesture>,
@@ -394,6 +405,8 @@ impl Default for MapView {
             dark: false,
             accent: Color32::from_rgb(0x2E, 0x7C, 0xF6),
             editing: None,
+            title_edit_serial: 0,
+            title_companion_frame: None,
             title_error: None,
             drag: Drag::None,
             image_resize: None,
@@ -792,13 +805,16 @@ impl MapView {
             return;
         }
         let Some(t) = sheet.topic(id) else { return };
+        self.title_edit_serial = self.title_edit_serial.wrapping_add(1);
         self.editing = Some(EditState {
             topic: id,
             text: t.title.clone(),
             original: t.title.clone(),
             select_all,
             focus_requested: false,
+            focus_retry_after: None,
             ime_composing: false,
+            companion_cursor: None,
         });
         self.pending_reveal = Some(id);
     }
@@ -822,6 +838,65 @@ impl MapView {
 
     pub fn editing_topic(&self) -> Option<TopicId> {
         self.editing.as_ref().map(|e| e.topic)
+    }
+
+    /// Identifies this view's current title-edit session.
+    pub fn title_edit_serial(&self) -> Option<u64> {
+        self.editing.as_ref().map(|_| self.title_edit_serial)
+    }
+
+    /// Captures the current title-edit session without committing or replacing it.
+    pub fn capture_title_edit_continuation(&self) -> Option<TitleEditContinuation> {
+        self.editing.clone().map(|edit| TitleEditContinuation {
+            edit,
+            serial: self.title_edit_serial,
+        })
+    }
+
+    /// Resumes the same edit only if its text was committed unchanged.
+    pub fn resume_title_edit_after_commit(
+        &mut self,
+        doc: &Document,
+        mut continuation: TitleEditContinuation,
+    ) -> bool {
+        if self.editing.is_some()
+            || self.title_edit_serial != continuation.serial
+            || !board_input::topic_is_unlocked(doc.sheet(), continuation.edit.topic)
+            || !doc
+                .sheet()
+                .topic(continuation.edit.topic)
+                .is_some_and(|topic| topic.title == continuation.edit.text)
+        {
+            return false;
+        }
+        continuation.edit.original = continuation.edit.text.clone();
+        self.editing = Some(continuation.edit);
+        self.title_error = None;
+        true
+    }
+
+    /// Retain the title draft while a host-owned companion control has focus.
+    pub fn retain_title_draft_this_frame(&mut self, ctx: &egui::Context, refocus: bool) {
+        if self.editing.is_some() {
+            let frame = (ctx.viewport_id(), ctx.cumulative_frame_nr());
+            let already_refocusing = self
+                .title_companion_frame
+                .is_some_and(|(previous, requested)| previous == frame && requested);
+            self.title_companion_frame = Some((frame, refocus || already_refocusing));
+        }
+    }
+
+    /// Include current-frame IME events, which may precede the editor's update.
+    pub fn title_ime_active(&self, ctx: &egui::Context) -> bool {
+        self.editing.as_ref().is_some_and(|edit| {
+            edit.ime_composing
+                || ctx.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Ime(_)))
+                })
+        })
     }
 
     /// Begin editing the text label of an unlocked shape or connector.
@@ -2650,24 +2725,90 @@ fn show_editor(
     );
     let color = color32(style.text_color);
     let edit_id = MapCanvas::title_editor_id();
+    let companion = view
+        .title_companion_frame
+        .filter(|(frame, _)| *frame == (ui.ctx().viewport_id(), ui.ctx().cumulative_frame_nr()));
+    let ime_active = view.title_ime_active(ui.ctx());
+    let pending_before_outside_pointer = text_card
+        && !ime_active
+        && !out.minimap_blocks_keyboard
+        && ui.memory(|memory| memory.had_focus_last_frame(edit_id))
+        && ui.input(|input| {
+            let mut pending = false;
+            input.events.iter().any(|event| match event {
+                egui::Event::Text(_) | egui::Event::Paste(_) | egui::Event::Cut => {
+                    pending = true;
+                    false
+                }
+                egui::Event::Key {
+                    key: Key::Backspace | Key::Delete,
+                    pressed: true,
+                    ..
+                } => {
+                    pending = true;
+                    false
+                }
+                egui::Event::PointerButton { pos, .. } => pending && !r.contains(*pos),
+                _ => false,
+            })
+        });
+    let previous_focus = ui.memory(|memory| memory.focused());
+    if pending_before_outside_pointer && previous_focus != Some(edit_id) {
+        ui.memory_mut(|memory| memory.request_focus(edit_id));
+    }
 
-    if !out.minimap_blocks_keyboard {
+    if !out.minimap_blocks_keyboard && ui.memory(|memory| memory.has_focus(edit_id)) {
         view.protect_title_ime(ui.ctx(), edit_id);
     }
     // Enter commits, Shift+Enter inserts a line break, Tab commits and adds a child.
-    let (enter, tab, esc) = if out.minimap_blocks_keyboard {
-        (false, false, false)
-    } else {
-        ui.input_mut(|i| {
-            (
-                i.consume_key(Modifiers::NONE, Key::Enter),
-                i.consume_key(Modifiers::NONE, Key::Tab),
-                i.consume_key(Modifiers::NONE, Key::Escape),
-            )
-        })
-    };
+    let (enter, tab, esc) =
+        if out.minimap_blocks_keyboard || !ui.memory(|memory| memory.has_focus(edit_id)) {
+            (false, false, false)
+        } else {
+            ui.input_mut(|i| {
+                let mut enter = false;
+                i.events.retain(|event| {
+                    let plain_enter = matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::Enter,
+                            pressed: true,
+                            modifiers,
+                            ..
+                        } if modifiers.matches_exact(Modifiers::NONE)
+                    );
+                    enter |= plain_enter;
+                    !plain_enter
+                });
+                (
+                    enter,
+                    i.consume_key(Modifiers::NONE, Key::Tab),
+                    i.consume_key(Modifiers::NONE, Key::Escape),
+                )
+            })
+        };
     // Text queued with a finish key must reach the editor before the commit.
     let edit = view.editing.as_mut().unwrap();
+    if let Some((viewport, frame)) = edit.focus_retry_after
+        && (viewport != ui.ctx().viewport_id() || frame < ui.ctx().cumulative_frame_nr())
+    {
+        edit.focus_retry_after = None;
+        if viewport == ui.ctx().viewport_id()
+            && companion.is_none()
+            && !out.minimap_blocks_keyboard
+            && ui.memory(|memory| memory.focused().is_none())
+            && ui.input(|input| {
+                input.focused && !input.pointer.any_pressed() && !input.pointer.any_released()
+            })
+        {
+            ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
+    }
+    if companion.is_some() && !ime_active && edit.focus_requested && edit.companion_cursor.is_none()
+    {
+        edit.companion_cursor = TextEdit::load_state(ui.ctx(), edit_id)
+            .map(|state| (edit.text.clone(), state.cursor.char_range()));
+    }
     let align = match style.align {
         thinoda_core::TextAlign::Left => egui::Align::LEFT,
         thinoda_core::TextAlign::Right => egui::Align::RIGHT,
@@ -2724,7 +2865,25 @@ fn show_editor(
     }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
     let bold_underlay = (text_card && style.bold).then(|| child.painter().add(egui::Shape::Noop));
+    let pointer = pending_before_outside_pointer
+        .then(|| ui.input_mut(|input| std::mem::take(&mut input.pointer)));
     let output = te.show(&mut child);
+    if let Some(pointer) = pointer {
+        ui.input_mut(|input| input.pointer = pointer);
+        ui.memory_mut(|memory| {
+            if let Some(previous) = previous_focus {
+                memory.request_focus(previous);
+            } else {
+                memory.surrender_focus(edit_id);
+            }
+            if companion.is_none() {
+                memory.surrender_focus(edit_id);
+            }
+        });
+        if companion.is_some() && output.response.changed() {
+            edit.companion_cursor = Some((edit.text.clone(), output.state.cursor.char_range()));
+        }
+    }
     if let Some(index) = bold_underlay {
         // Keep selection and IME visuals above the unselected faux-bold copy.
         let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
@@ -2740,6 +2899,28 @@ fn show_editor(
     output.response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Topic title")
     });
+    if companion.is_some_and(|(_, refocus)| refocus) && !(enter || tab || esc) {
+        ui.memory_mut(|memory| memory.request_focus(edit_id));
+    }
+    let refocused = companion.is_some_and(|(_, refocus)| refocus)
+        || (companion.is_none() && ui.memory(|memory| memory.has_focus(edit_id)));
+    if refocused
+        && !ime_active
+        && let Some((saved_text, cursor)) = edit.companion_cursor.take()
+    {
+        let clicked_editor = ui.input(|input| {
+            input.pointer.any_pressed()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|pos| r.contains(pos))
+        });
+        if saved_text == edit.text && !clicked_editor {
+            let mut state = output.state.clone();
+            state.cursor.set_char_range(cursor);
+            state.store(ui.ctx(), edit_id);
+        }
+    }
     if enter || tab || esc {
         view.commit_edit(doc);
         if view.editing_topic().is_some() {
@@ -2752,6 +2933,11 @@ fn show_editor(
         }
     } else if !edit.focus_requested && !out.minimap_blocks_keyboard {
         edit.focus_requested = true;
+        if ui.input(|input| input.pointer.any_pressed() || input.pointer.any_released()) {
+            // egui may clear focus at the end of the creation click's pass.
+            edit.focus_retry_after = Some((ui.ctx().viewport_id(), ui.ctx().cumulative_frame_nr()));
+            ui.ctx().request_repaint();
+        }
         ui.memory_mut(|m| m.request_focus(edit_id));
         if edit.select_all {
             let n = edit.text.chars().count();
@@ -2773,8 +2959,29 @@ fn show_editor(
                 )));
             state.store(ui.ctx(), edit_id);
         }
-    } else if output.response.lost_focus() {
+    } else if companion.is_none()
+        && (output.response.lost_focus()
+            || (text_card
+                && ui.is_enabled()
+                && edit.focus_requested
+                && !out.minimap_blocks_keyboard
+                && ui.memory(|memory| {
+                    memory
+                        .focused()
+                        .is_none_or(|focused| focused == MapCanvas::id())
+                })))
+    {
         view.commit_edit(doc);
+        if view.editing_topic().is_some()
+            && !out.minimap_blocks_keyboard
+            && ui.memory(|memory| {
+                memory
+                    .focused()
+                    .is_none_or(|focused| focused == MapCanvas::id() || focused == edit_id)
+            })
+        {
+            ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
     }
 }
 
@@ -2993,6 +3200,38 @@ mod tests {
     }
 
     #[test]
+    fn title_edit_continuation_preserves_session_and_rejects_stale_owners() {
+        let sheet = Sheet::new("Map", "Original");
+        let root = sheet.root;
+        let mut doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.begin_edit(doc.sheet(), root, false);
+        view.set_editing_text("Saved");
+        let continuation = view.capture_title_edit_continuation().unwrap();
+        assert!(view.try_commit_edit(&mut doc).unwrap());
+        assert!(view.resume_title_edit_after_commit(&doc, continuation.clone()));
+        assert_eq!(view.editing_text(), Some("Saved"));
+        assert!(!view.has_title_changes());
+        view.set_editing_text("Later");
+        assert!(view.try_commit_edit(&mut doc).unwrap());
+        assert!(!view.resume_title_edit_after_commit(&doc, continuation));
+
+        view.begin_edit(doc.sheet(), root, false);
+        let continuation = view.capture_title_edit_continuation().unwrap();
+        view.try_commit_edit(&mut doc).unwrap();
+        doc.edit_sheet("Change title", |sheet| sheet.set_title(root, "External"))
+            .unwrap();
+        assert!(!view.resume_title_edit_after_commit(&doc, continuation));
+
+        view.begin_edit(doc.sheet(), root, false);
+        let continuation = view.capture_title_edit_continuation().unwrap();
+        view.try_commit_edit(&mut doc).unwrap();
+        view.begin_edit(doc.sheet(), root, false);
+        view.cancel_edit();
+        assert!(!view.resume_title_edit_after_commit(&doc, continuation));
+    }
+
+    #[test]
     fn modal_snapshot_retains_the_canvas_automatic_stroke() {
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
@@ -3079,7 +3318,9 @@ mod tests {
             original: String::new(),
             select_all: false,
             focus_requested: false,
+            focus_retry_after: None,
             ime_composing: false,
+            companion_cursor: None,
         });
         Harness::builder()
             .with_size(vec2(900.0, 600.0))

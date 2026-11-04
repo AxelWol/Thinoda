@@ -20,15 +20,14 @@ commands and document semantics. Deliver in independently verified slices:
    tooltips, selection feedback, keyboard navigation and scrolling are retained.
    Native egui tests and light/dark GPU previews cover narrow and short windows;
    real assistive technology and physical touch remain acceptance work.
-2. **Partial locally:** selected sticky notes have explicitly labeled whole-card
-   bold, italic, underline, strikethrough, alignment, font, size and color
-   controls. Lists and selected-range formatting remain open and require a
-   document-model extension.
-3. **Partial locally:** text cards use the same whole-card controls and supported
-   visual/export styles. Both card types show their existing whole-card styles in
-   the active title editor, but the controls cannot yet change styles during a
-   draft. Define ownership, migration, undo, clipboard, accessibility and export
-   behavior before enabling live or selected-range formatting.
+2. **Partial locally:** sticky notes have explicitly labeled whole-card bold,
+   italic, underline, strikethrough, alignment, font, size and color controls,
+   including while their titles are being edited. Lists and selected-range
+   formatting remain open and require a document-model extension.
+3. **Partial locally:** text cards use the same whole-card controls while selected
+   or editing and retain supported visual/export styles. Define ownership,
+   migration, undo, clipboard, accessibility and export behavior before adding
+   selected-range formatting or lists.
 4. **Implemented locally:** selected connectors expose the existing route,
    endpoint arrows, width and color. The controls respect locked objects,
    active gestures and revision-bound edit transactions; SVG and editable
@@ -44,6 +43,14 @@ accessible names and keyboard navigation, and test selection ownership,
 undo/redo, native save/reopen and visual/export parity where behavior changes.
 The browser accessibility bridge and physical-device acceptance remain separate
 open gates; integrated cloud providers remain paused.
+
+The [next selected-range and list contract](FREEFORM.md#next-selected-range-text-and-lists-design-only)
+records the proposed model, native-version, editing, clipboard and export
+boundaries and their unresolved risks. It is design work, not an implemented
+or enabled rich-text feature. An isolated, non-application span-editing
+experiment now tests explicit Unicode-scalar operations and rejection of
+over-budget edits; it does not implement rich undo, lists, persistence or
+rendering.
 
 **2026-11-03 selected-connector checkpoint:** the board toolbox offers straight,
 elbow and curved routes, start/end arrows, width presets and an exact width,
@@ -86,15 +93,41 @@ canvas gestures and inspector drafts disable the strip without shifting the
 canvas; stale, locked and changed document/selection owners cannot be edited.
 SVG-derived exports now carry italic, underline, strikethrough and alignment;
 editable PowerPoint text respects alignment. See the [critique](FREEFORM.md)
-for export-font and active-editor limits.
+for export-font and selected-range limits.
 
 **2026-11-03 styled card-title checkpoint:** the whole-card strip now exposes
 strikethrough. Sticky-note and text-card drafts retain their resolved font,
 color, alignment and existing text decorations while editing, without changing
 the plain-text document model. The floating insert toolbar is temporarily hidden
 when it would cover the editor or its bounds are not yet known. See the
-[critique](FREEFORM.md) for selection-rendering limits and the still-open live
-formatting, device and accessibility gates.
+[critique](FREEFORM.md) for selection-rendering limits and the device and
+accessibility gates.
+
+**2026-11-03 active card-title formatting checkpoint:** whole-card controls now
+work during sticky-note and text-card title drafts without committing the draft.
+Alt+F10 moves between the title and formatting controls; ordinary selection and
+IME ownership are preserved. Style and title edits remain separate undo steps.
+Font-size changes apply live: Escape exits the numeric editor but does not undo
+an already applied value. Viewport-scoped input ordering protects rapid
+keyboard/pointer transitions and pending input before save or window close,
+including immediate native document windows. A save captures only the input
+before its command and resumes the same title draft for later queued typing.
+Deferred tab-close commands retain the target document and window rather than
+reusing a stale tab index. See the [rubber-duck
+critique](FREEFORM.md) for verification and remaining limitations.
+Pointer-created card titles also receive a guarded one-shot focus retry after
+the creation click; ordinary topic drafts keep their existing modal behavior.
+Conflicting retained drafts no longer reclaim the minimap or another editor's
+keyboard and IME input.
+
+**2026-11-04 compact Settings notification checkpoint:** while nonmodal
+Settings is open, notifications occupy a bounded, scrollable strip below the
+dialog rather than covering its controls. Focused notification buttons scroll
+into view; modal dialogs retain their existing notification layering. The
+previously failing alignment-preference and language-selector tests pass, and
+the new focused matrix covers all eleven language settings, both themes and
+three window sizes. See the [critique](FREEFORM.md) for the layout trade-off
+and remaining accessibility and device gates.
 
 **2026-11-03 photo-orientation implementation:** bounded previews and visual
 exports apply all eight EXIF rotations/mirrors while native documents and
@@ -3232,9 +3265,12 @@ synchronous path can also download a listed unreadable record as
 lossless UTF-16LE storage data without changing the original; this is not a
 native document or a repair mechanism. The browser may silently cancel the
 download, and records that could not be listed remain inaccessible to this
-action. The separate asynchronous recovery draft is not integrated because its
-bounded discovery can miss uncoordinated writes or remain gated by retained
-tombstones.
+action. The separate asynchronous recovery draft now streams retained history
+and audits claims, but stays deliberately gated and unintegrated: an
+uncoordinated writer can still change storage after the audit, and retained
+history can exhaust the deadline. Desktop WebKit also timed out in its draft
+stress tests and rejected a synthetic Blob fixture before a separate rescue
+test could run; see [FREEFORM.md](FREEFORM.md) for the critique.
 Desktop Chromium, Firefox and WebKit also exercise an actual localStorage quota
 failure with a large image: the previous snapshot survives and a full native
 download remains available. Recovery of the oversized unsaved board itself is

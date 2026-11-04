@@ -1,6 +1,6 @@
 //! Explicit external-change resolution. Background checks never read placeholders.
 
-use crate::{ThinodaApp, doc::LoadedWorkbook, i18n::t};
+use crate::{ThinodaApp, doc::LoadedWorkbook, i18n::t, ui::CardOpenOrder};
 #[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
 use std::{path::PathBuf, sync::mpsc};
@@ -504,7 +504,7 @@ impl ThinodaApp {
                 if compare {
                     self.compare_file(&key, &path);
                 } else {
-                    self.request_open(&path);
+                    self.request_open_from_ui(ctx, &path, CardOpenOrder::AfterQueuedInput);
                 }
             } else if response.close_requested {
                 self.cloud_changes.copies = None;

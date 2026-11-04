@@ -1,7 +1,7 @@
 //! Non-blocking toast notifications, stacked at the bottom-center of the screen.
 
 use crate::tokens::{Palette, Tokens};
-use egui::{Align2, Context, CornerRadius, Id, Margin, Order, RichText, Stroke};
+use egui::{Align2, Context, CornerRadius, Id, Margin, Order, Rect, RichText, Stroke, pos2};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +104,29 @@ impl Toasts {
 
     /// Keep notifications below modal controls instead of intercepting their clicks.
     pub fn show_with_modal(&mut self, ctx: &Context, modal_open: bool) {
+        self.show_at_bottom(ctx, modal_open, None);
+    }
+
+    /// Reserve a bounded, scrollable strip when a nonmodal dialog needs unobscured controls.
+    pub fn bottom_strip(&self, ctx: &Context) -> Option<Rect> {
+        if self.items.is_empty() {
+            return None;
+        }
+        let content = ctx.content_rect();
+        let gap = 8.0_f32.min(content.height() / 4.0);
+        let height = (content.height() * 0.3).min(128.0);
+        Some(Rect::from_min_max(
+            pos2(content.left(), content.bottom() - gap - height),
+            pos2(content.right(), content.bottom() - gap),
+        ))
+    }
+
+    /// Show notifications in the strip returned by [`Self::bottom_strip`].
+    pub fn show_in_bottom_strip(&mut self, ctx: &Context, strip: Rect) {
+        self.show_at_bottom(ctx, false, Some(strip));
+    }
+
+    fn show_at_bottom(&mut self, ctx: &Context, modal_open: bool, strip: Option<Rect>) {
         if self.items.is_empty() {
             return;
         }
@@ -117,41 +140,61 @@ impl Toasts {
             } else {
                 Order::Tooltip
             })
-            .anchor(Align2::CENTER_BOTTOM, [0.0, -36.0])
+            .anchor(
+                Align2::CENTER_BOTTOM,
+                [
+                    0.0,
+                    strip.map_or(-36.0, |rect| rect.bottom() - ctx.content_rect().bottom()),
+                ],
+            )
             .interactable(true)
             .show(ctx, |ui| {
                 ui.set_max_width((ctx.content_rect().width() - 24.0).max(1.0));
-                for t in &self.items {
-                    let (icon, color) = match t.kind {
-                        ToastKind::Info => (crate::icons::INFO, p.accent),
-                        ToastKind::Success => (crate::icons::CHECK, p.success),
-                        ToastKind::Warning => (crate::icons::WARNING, p.warning),
-                        ToastKind::Error => (crate::icons::ERROR, p.danger),
-                    };
-                    crate::widgets::card(ui)
-                        .inner_margin(Margin::symmetric(12, 8))
-                        .stroke(Stroke::new(1.0, color.gamma_multiply(0.6)))
-                        .corner_radius(CornerRadius::same(Tokens::RADIUS_L))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(icon).color(color));
-                                ui.scope(|ui| {
-                                    ui.set_max_width((ui.available_width() - 40.0).max(1.0));
-                                    ui.add(
-                                        egui::Label::new(RichText::new(&t.text).color(p.text))
-                                            .wrap(),
-                                    );
+                let mut contents = |ui: &mut egui::Ui| {
+                    for t in &self.items {
+                        let (icon, color) = match t.kind {
+                            ToastKind::Info => (crate::icons::INFO, p.accent),
+                            ToastKind::Success => (crate::icons::CHECK, p.success),
+                            ToastKind::Warning => (crate::icons::WARNING, p.warning),
+                            ToastKind::Error => (crate::icons::ERROR, p.danger),
+                        };
+                        crate::widgets::card(ui)
+                            .inner_margin(Margin::symmetric(12, 8))
+                            .stroke(Stroke::new(1.0, color.gamma_multiply(0.6)))
+                            .corner_radius(CornerRadius::same(Tokens::RADIUS_L))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(icon).color(color));
+                                    ui.scope(|ui| {
+                                        ui.set_max_width((ui.available_width() - 40.0).max(1.0));
+                                        ui.add(
+                                            egui::Label::new(RichText::new(&t.text).color(p.text))
+                                                .wrap(),
+                                        );
+                                    });
+                                    let response = ui
+                                        .small_button(crate::icons::CLOSE)
+                                        .on_hover_text("Dismiss");
+                                    if strip.is_some() && response.gained_focus() {
+                                        response.scroll_to_me(Some(egui::Align::Center));
+                                    }
+                                    if response.clicked() {
+                                        dismiss = Some(t.id);
+                                    }
                                 });
-                                if ui
-                                    .small_button(crate::icons::CLOSE)
-                                    .on_hover_text("Dismiss")
-                                    .clicked()
-                                {
-                                    dismiss = Some(t.id);
-                                }
                             });
-                        });
-                    ui.add_space(6.0);
+                        ui.add_space(6.0);
+                    }
+                };
+                if let Some(strip) = strip {
+                    egui::ScrollArea::vertical()
+                        .id_salt("thinoda_toast_strip")
+                        .max_height(strip.height())
+                        .min_scrolled_height(0.0)
+                        .auto_shrink([true, true])
+                        .show(ui, &mut contents);
+                } else {
+                    contents(ui);
                 }
             });
         if let Some(id) = dismiss {

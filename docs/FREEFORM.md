@@ -130,8 +130,8 @@ with the reason.
 | Lock / unlock | Adapt | Locked objects ignore drag and delete |
 | Align and distribute | Adapt | Selection-wide |
 | Duplicate (Alt-drag, Alt-arrow) | Fits | Copy/paste with ID remapping |
-| Copy and paste style | Fits | Copy/Paste Style exists for topics (`style.copy`, `style.paste`); extend to objects |
-| Find and replace across text | Fits | Extend search to canvas object text and alt text |
+| Copy and paste style | Fits | Implemented for topics/cards and, within the same object kind, shapes, connectors and ink; locked selections remain protected |
+| Find and replace across text | Fits | Implemented for topic titles, shape/connector labels and canvas descriptions; notes and labels are search-only |
 | Undo / redo | Fits | With a byte budget (5.4) |
 | Keyboard shortcuts (lock, group, z-order) | Adapt | Use the shared command model (R13) |
 
@@ -993,6 +993,30 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   snapshots, real devices and concurrent-tab races remain separate acceptance
   work. The asynchronous recovery draft is not integrated.
 
+### Experimental asynchronous recovery discovery
+
+- The isolated draft in `docs/work-in-progress/freeform/recovery` now scans
+  retained history in pages and audits session/document stores before and after
+  claiming previews. Opaque or changed records are not discarded or returned as
+  verified previews and produce warnings. The draft always retains a
+  coordination warning, so its draft adapter cannot enable editing on the
+  strength of the audit alone.
+- Duck check: an atomic snapshot is not a write barrier. An old or
+  uncoordinated same-origin writer can still insert a record after the final
+  audit and before its result is used. Retained tombstones and empty sessions
+  also still require complete inspection; the deadline can be exhausted on
+  every retry. A resumable cursor is not safe without revalidation against
+  independent writes. Do not integrate or migrate this draft until these
+  safety and liveness boundaries have a verified solution.
+- Its standalone JavaScript harness passed 73 checks each in desktop Chromium
+  and Firefox. Desktop WebKit passed 13 focused checks but timed out on the
+  retained-history stress cases. A separate malformed-record rescue test
+  cannot reach rescue: WebKit rejects the synthetic IndexedDB Blob fixture.
+  The harness surfaces that write error rather than hanging on the abort.
+  The Rust/app draft, physical Safari/iPad, quota/eviction and real multi-tab
+  acceptance are not established. Production continues to use the existing
+  synchronous recovery path.
+
 ### Recovery failure visibility checkpoint: critique
 
 - Failed draft preparation, serialization or queueing no longer only reach the
@@ -1137,8 +1161,9 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   reachable from the contextual topic toolbar and canvas context menu, names its
   scope in every supported language, and scrolls horizontally in narrow windows.
   Custom colors remain available through the existing Text color control. This
-  does not add selected-range formatting, lists or formatting while editing a
-  title; the title editor still owns its draft and IME input.
+  did not add selected-range formatting or lists. The subsequent active-title
+  checkpoint below enables these whole-card controls during title editing
+  without surrendering the draft or IME input.
 - Duck check: a dock can reduce the canvas enough for the floating insert
   toolbar to obscure a selected card. While formatting is open, its insert and
   marker commands move into an accessible overflow instead; the regular toolbar
@@ -1165,7 +1190,8 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   card title drafts now display their resolved font family, size, color,
   alignment, italic, underline and strikethrough. Bold uses the same offset
   copy as canvas painting. The document still stores plain titles and one
-  whole-card style; formatting controls are not active during a title draft.
+  whole-card style. Controls during a title draft are covered by the subsequent
+  active-title checkpoint below.
 - Duck check: painting the text-edit galley twice also paints its selection
   backgrounds twice. The bold copy is instead laid out without selection and
   painted beneath the editor's normal text, selection and IME feedback, clipped
@@ -1187,6 +1213,170 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   compact toolbar overlap and window/UI-scale changes. GPU-rendered selected
   and unselected drafts were inspected in light/dark wide and compact views.
   Real IME, touch, screen readers and physical-device acceptance remain open.
+
+### Active card-title formatting checkpoint and rubber-duck critique
+
+- Sticky-note and text-card title drafts keep their resolved appearance while
+  the docked whole-card formatting controls change bold, italic, underline,
+  strikethrough, alignment, family, size or color. The document still stores
+  plain text plus a single card style: selections are not separately styled and
+  list editing is not implemented. Alt+F10 transfers keyboard focus between
+  the title and the strip; pointer actions and popup controls retain the draft.
+- Duck check: formatting must not overwrite a different card, a conflicting
+  draft or an unfinished gesture. Controls revalidate the document instance,
+  sheet, root, topic, revision, selection and locks at the transaction boundary;
+  pending inspector/ink edits, IME composition and canvas gestures disable
+  unsafe actions. The saved caret/selection is restored only to the same edit
+  session, while a deliberate new editor click takes precedence. Style edits
+  are independently undoable from the eventual title commit.
+- Duck check: applying a numeric size on every accepted edit changes Escape
+  semantics. The value is applied live, and Escape leaves the numeric editor
+  without rolling back an already applied change; Undo reverses it. Save and
+  close process pending title or size input before operating on the document.
+  A save captures only the preceding input. When later typing is already queued,
+  the title editor resumes its caret and selection only if the same document,
+  sheet, topic, edit session and committed title still match; later edits remain
+  dirty and are not included in the earlier save.
+- Duck check: egui can receive text, focus-changing keys, pointer events and a
+  close request in one batch, or repeat a discarded layout pass. Input is split
+  at focus transitions and queued per viewport, preserving touch packets and
+  event order. An egui input plugin covers immediate native document windows;
+  the backend close hook also prevents closing before queued child-window input
+  and drafts are handled. Recreated viewports, repeated passes, hidden-root
+  repaints and backend logic-only calls have regression coverage. This queue is
+  transient and is not a substitute for crash recovery of an uncommitted draft.
+- Duck check: a deferred tab-close index can point to another document after
+  another window closes or moves a tab. Both deferred command paths now capture
+  the original document instance and owning viewport, resolve its current index
+  at execution, and warn rather than closing a replacement or moved target.
+  Tests cover earlier-tab removal, target removal and target movement.
+- Duck check: a pointer-created card can lose the focus requested during the
+  creation click when egui finishes that pass. A single retry is scoped to the
+  same viewport and a later frame, and runs only while the window has focus,
+  no new pointer transition occurred, and no formatting companion or minimap
+  owns interaction. Repeated layout passes and immediately following text are
+  covered; a subsequent pointer action is not stolen. Ordinary topic drafts
+  continue to use their existing modal-focus behavior.
+- Duck check: a conflicting title cannot be committed, but retaining its draft
+  must not trap focus or consume another control's keys or IME composition.
+  The minimap and unrelated editors keep focus, and a failed commit is not
+  retried every frame while another control owns focus. Returning to the canvas
+  still restores the conflicting editor for correction.
+- Focused native tests exercise 92 card-formatting/input cases, including
+  selection restoration, Unicode/IME events, touch cancellation, stale owners,
+  separate undo, save and close races, compact layouts and immediate viewports.
+  The 159 board cases and 372 canvas cases also pass (two canvas cases are
+  ignored), as do strict native and WebAssembly Clippy checks including the
+  default-off cloud feature. A fresh production build passed all 69 configured
+  Chromium browser cases; the 13 card-formatting, mixed-export and language
+  cases also passed in desktop Firefox and WebKit. Card-formatting tests inspect
+  the downloaded native archives. These are synthetic inputs: physical IME,
+  AltGr keyboards and touch, screen-reader operation, real iPad behavior and
+  broader external Office/export acceptance remain open. The browser
+  accessibility bridge is still incomplete. Direct programmatic
+  `open_path`/`request_open` calls do not participate in the UI event-ordering
+  wrapper.
+
+### Next: selected-range text and lists (design only)
+
+The current title is a `String`, the existing text style applies to the whole
+topic, and the editor keeps a separate string draft. Layout's `TextMeasure`
+receives a string and one font, while visual export caches shaped text by that
+same single style. Adding a few toolbar buttons would therefore misrepresent
+the feature: a rich selection must survive editing, layout, save and export.
+
+Proposed implementation contract, subject to the checks below:
+
+1. Keep the existing plain title as the text source and add bounded,
+   versioned inline-style spans and paragraph/list metadata. Style offsets
+   refer to Unicode scalar positions, matching the editor's character cursor,
+   not UTF-8 bytes or browser UTF-16 offsets. Validate ordering, bounds,
+   overlapping attributes, font values and paragraph boundaries before any
+   imported or pasted data becomes editable. Inherited and explicitly disabled
+   styles must remain distinguishable.
+2. Introduce a new native format version only when rich content is present;
+   older documents and their native output remain unchanged. Reject a newer
+   version and inconsistent version/content pairs rather than opening a
+   document that an older reader could silently strip. Extend recovery, copies
+   and versioned internal clipboard payloads with the same validation.
+   Legacy unversioned JSON is also accepted by the current native importer;
+   rich fields in that path need an explicit version policy rather than
+   bypassing the archive-manifest check.
+3. Keep whole-card formatting explicitly separate from selected-text styling.
+   Bind selection, pending input and composition to the same document, topic,
+   revision, edit session and viewport. Preserve formatting through insertion,
+   deletion, paste, undo/redo and save/close ordering; do not infer edits from a
+   single before/after string diff, which is ambiguous for repeated text or
+   multiple edits. Lists need explicit paragraph semantics rather than merely
+   painting a bullet.
+4. Measure and render mixed fonts, sizes and decorations together in the canvas
+   and export paths, including wrapping, clipping and rotation. Extend export
+   preflight and clipboard fallbacks so unsupported formatting or list
+   structure is reported, not silently discarded. Editable PowerPoint requires
+   real text runs and paragraph properties; SVG-derived PDF and raster output
+   need the same visual layout, not a plain-text substitute.
+
+Rubber-duck blockers: egui's existing text undo stores plain text, so rich
+draft undo and IME updates need a coherent edit-operation history rather than
+parallel, unsynchronized strings and spans. Character offsets alone do not
+guarantee sensible grapheme-cluster selection or bidirectional text behavior.
+Mixed-style measurement changes layout and cache keys, and every title-writing
+path—not just the canvas editor—must preserve or explicitly replace formatting.
+Clipboard HTML may be sanitized, and external applications may accept only plain
+text. Specify and test caret-only formatting, list editing, accessibility and
+lossy-format consent before exposing these controls. Native and browser
+screen-reader, real IME and physical-device acceptance remain separate gates.
+No selected-range or list controls are enabled by this proposal.
+
+An editor prototype can investigate egui 0.37's `TextBuffer` interface: typing,
+paste and IME invoke character-indexed insert/delete operations, which avoids
+guessing edits from a final string. It is not a complete solution: egui's
+built-in undo/redo calls `replace_with` on a plain-string snapshot, IME
+preedit repeatedly deletes and reinserts a composition, and default
+backspace/delete operate on individual scalar values. A rich-aware history,
+composition transaction and grapheme policy must be verified before wiring the
+adapter to persisted content.
+
+The standalone experiment under `work-in-progress/freeform/rich-text` exercises
+explicit scalar-indexed replacements and style-run splitting/coalescing,
+including invalid ranges and budget rejection. Its randomized oracle compares
+2,500 operations with per-character styles. It is not compiled into Thinoda;
+its example limits, attribute validation, undo, IME transactions, grapheme
+behavior, paragraph lists, persistence and rendering are not production
+implementations.
+
+The implementation must audit `Sheet::set_title`, search/replace, FIM
+projection, template/copy paths and direct title assignments as well as canvas
+editing. These paths currently operate on plain strings; adding a span field
+without defining their behavior would leave stale offsets or silently lose
+formatting. The native JSON fallback and the versioned archive must both be
+covered by malformed-content and backward-compatibility tests.
+
+
+### Compact Settings notification checkpoint and rubber-duck critique
+
+- The previous committed source can place a persistent recovery warning over a
+  Settings switch in a 320×240 window. While nonmodal Settings is open, the
+  dialog now reserves space for a bottom notification strip instead. Notices
+  remain accessible by scrolling and dismissible; a modal dialog continues to
+  use the existing behind-modal layer rather than covering its controls.
+- Duck check: a fixed reservation also shortens Settings for a single transient
+  notice. The strip takes at most 30% of the window height, capped at 128
+  points, and both the dialog and a stack of notices can scroll. A focused
+  dismiss button scrolls into view; this avoids hiding a recovery warning to
+  make room. It is not a general collision-avoidance system for every overlay.
+- The original alignment-preference and language-selector regressions pass
+  without weakening their assertions. Native interaction tests cover all eleven
+  language settings, light and dark themes, 240×200, 320×240 and 1000×700
+  windows, warning dismissal, and a Settings-to-shortcuts modal transition.
+  Stacked notices are also exercised with keyboard Tab and Enter. These tests
+  do not establish physical-device or screen-reader acceptance, and the web
+  accessibility bridge remains incomplete. The Chromium harness forces a
+  consistent device scale so its fixed canvas coordinates are not distorted
+  by a mismatch between emulated and host pixel ratios.
+- The final Windows x64 `cargo xtask ci` passed with live AI disabled and tests
+  serialized. Strict default and opt-in WebAssembly Clippy and opt-in native
+  app Clippy also passed. This does not substitute for other native hosts.
 
 ### Selected-connector checkpoint and critique
 

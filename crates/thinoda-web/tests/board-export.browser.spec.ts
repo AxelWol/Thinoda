@@ -279,7 +279,7 @@ test("mixed rootless board SVG, PNG and JPEG exports require consent and preserv
     expect(svg.connectorPath).toMatchObject({
         d: expect.stringMatching(/^M .+ L /),
         fill: "none",
-        stroke: expect.stringMatching(/^#[0-9a-f]{6}([0-9a-f]{2})?$/i),
+        stroke: expect.stringMatching(/^#2e7cf6$/i),
     });
     expect(svg.inkPath).toMatchObject({
         d: expect.stringMatching(/^M .+ L /),
@@ -555,6 +555,13 @@ async function inspectRasterScene(
             const i = (y * canvas.width + x) * 4;
             return pixels[i] < 80 && pixels[i + 1] < 80 && pixels[i + 2] < 80;
         };
+        const automaticConnector = (x: number, y: number) => {
+            const i = (y * canvas.width + x) * 4;
+            const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
+            const tolerance = jpegExport ? 85 : 20;
+            return Math.abs(r - 46) <= tolerance && Math.abs(g - 124) <= tolerance
+                && Math.abs(b - 246) <= tolerance && b - r >= 80 && b - g >= 40;
+        };
         const labelPixels = warnings.map((bounds) => {
             let count = 0;
             for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -571,7 +578,7 @@ async function inspectRasterScene(
             for (let y = Math.max(warnings[0].minY, warnings[1].minY);
                 y <= Math.min(warnings[0].maxY, warnings[1].maxY); y++) {
                 for (let x = warnings[0].maxX + 1; x < warnings[1].minX; x++) {
-                    if (dark(x, y)) connectorPixels++;
+                    if (automaticConnector(x, y)) connectorPixels++;
                 }
             }
         }
@@ -585,8 +592,7 @@ async function inspectRasterScene(
                     if (x + dx < 0 || x + dx >= canvas.width || y + dy < 0 || y + dy >= canvas.height) {
                         continue;
                     }
-                    const i = ((y + dy) * canvas.width + x + dx) * 4;
-                    if (pixels[i] < 110 && pixels[i + 1] < 125 && pixels[i + 2] < 145) return true;
+                    if (automaticConnector(x + dx, y + dy)) return true;
                 }
             }
             return false;

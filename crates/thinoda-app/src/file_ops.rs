@@ -333,8 +333,9 @@ impl ThinodaApp {
         self.file_ops.gate.set(paused);
     }
 
-    /// Opens `path` for a UI request: queued behind the busy indicator unless file work
-    /// runs inline. Already open or queued files are not opened twice.
+    /// Opens `path`, queued behind the busy indicator unless file work runs inline.
+    /// Already open or queued files are not opened twice. UI event producers should
+    /// dispatch `Cmd::OpenPath` through `exec` to order pending card input first.
     pub fn request_open(&mut self, path: &Path) {
         if self.file_ops.inline() {
             self.open_path(path);
@@ -443,6 +444,10 @@ impl ThinodaApp {
 
     /// Starts requested work and applies finished results; called once per frame.
     pub(crate) fn poll_file_ops(&mut self, ctx: &Context) {
+        if crate::ui::card_text_input_has_pending_events(ctx, self.current_viewport) {
+            ctx.request_repaint_of(self.current_viewport);
+            return;
+        }
         let mode = self.file_ops.mode;
         let gate = self.file_ops.gate.clone();
         let mut may_block = self.file_ops.may_block(ctx);

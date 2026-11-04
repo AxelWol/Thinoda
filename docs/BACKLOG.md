@@ -18,18 +18,33 @@ screen-reader access, safe large-board recovery,
 realistic ink/image performance, export acceptance and physical-device checks
 remain open. Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
-limitations. Integrated cloud providers stay disabled and paused until publisher
-registrations are complete; see [FREEFORM.md](FREEFORM.md) for phase critiques.
+limitations. A separate asynchronous discovery draft remains gated by
+uncoordinated-writer and retained-history liveness blockers, with WebKit stress
+timeouts and a rejected synthetic Blob fixture; it is not production recovery.
+Integrated cloud providers stay
+disabled and paused until publisher registrations are complete; see
+[FREEFORM.md](FREEFORM.md) for phase critiques.
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout
 coverage. Sticky-note and text-card controls now format the whole card, their
-title editors show existing whole-card styles, and selected connectors expose
-their existing route, arrows, width and color. Changing styles during an active
-title draft, selected-range formatting and lists remain open. Additional brushes
-are not represented as working features. Their
+title editors show and can change those styles without committing the draft,
+and selected connectors expose their existing route, arrows, width and color.
+Save and window transitions preserve the order of queued card input, and
+deferred tab closures bind to their intended document and window.
+Conflicting drafts retain their text without taking focus or keyboard and IME
+input from the minimap and other editors.
+Selected-range formatting and lists remain open. Additional brushes are not
+represented as working features. Their
 persistence, accessibility and verification constraints are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).
+
+**Compact Settings and recovery warning:** the previously obstructing warning
+now uses a bounded, scrollable notification strip while nonmodal Settings is
+open. The dialog remains above it, including after reopening; warning dismissal
+and keyboard focus remain available. Native coverage includes all language
+settings, both themes and compact sizes. Physical-device and browser
+screen-reader acceptance remain open; see the [critique](FREEFORM.md).
 
 **Board export appearance:** GUI visual exports, Pitch and print now share the
 canvas's automatic connector and unstyled-shape stroke, without changing stored

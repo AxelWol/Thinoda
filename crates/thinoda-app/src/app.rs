@@ -26,6 +26,7 @@ use crate::{
     doc::{OpenDoc, is_native},
     files,
     i18n::{self, t},
+    ui::CardOpenOrder,
 };
 
 /// Save dialog filters for map documents.
@@ -738,6 +739,8 @@ impl ThinodaApp {
         self.mode = CenterMode::Map;
     }
 
+    /// Opens a path synchronously. UI event producers should dispatch `Cmd::OpenPath`
+    /// through `exec` so pending card input is ordered before the open.
     pub fn open_path(&mut self, path: &Path) {
         if self.activate_open_path(path) {
             return;
@@ -849,6 +852,9 @@ impl ThinodaApp {
     // ----- commands --------------------------------------------------------------------------
 
     pub fn exec(&mut self, ctx: &Context, cmd: Cmd) {
+        if self.defer_card_text_command(ctx, &cmd) {
+            return;
+        }
         if let Cmd::Canvas(action) = &cmd
             && self.block_fim_canvas_during_gesture(ctx, action)
         {
@@ -1056,16 +1062,18 @@ impl ThinodaApp {
                         if let Some(dir) = f.parent() {
                             self.settings.last_open_dir = Some(dir.to_path_buf());
                         }
-                        self.request_open(&f);
+                        self.request_open_from_ui(ctx, &f, CardOpenOrder::CurrentInput);
                     }
                 }
             }
-            Cmd::OpenPath(p) => self.request_open(&p),
+            Cmd::OpenPath(p) => {
+                self.request_open_from_ui(ctx, &p, CardOpenOrder::CurrentInput);
+            }
             Cmd::Save => {
-                self.save_active(false);
+                self.save_card_with_pending_input(ctx, false);
             }
             Cmd::SaveAs => {
-                self.save_active(true);
+                self.save_card_with_pending_input(ctx, true);
             }
             Cmd::SaveAll => {
                 self.begin_save_all(ctx, None);
@@ -1102,7 +1110,7 @@ impl ThinodaApp {
                 )
                 .unwrap_or_default()
                 {
-                    self.request_open(&f);
+                    self.request_open_from_ui(ctx, &f, CardOpenOrder::CurrentInput);
                 }
             }
             Cmd::MergeFiles => {
@@ -3019,7 +3027,7 @@ impl ThinodaApp {
             match picked.purpose {
                 files::Purpose::Open | files::Purpose::Import => {
                     for path in &picked.paths {
-                        self.request_open(path);
+                        self.request_open_from_ui(ctx, path, CardOpenOrder::AfterQueuedInput);
                     }
                 }
                 files::Purpose::Dropped => {
@@ -3032,7 +3040,7 @@ impl ThinodaApp {
                                     .error(format!("{}: {error}", t("Could not open")));
                             }
                         } else {
-                            self.request_open(path);
+                            self.request_open_from_ui(ctx, path, CardOpenOrder::AfterQueuedInput);
                         }
                     }
                     for upload in picked.dropped_uploads {
@@ -3040,7 +3048,13 @@ impl ThinodaApp {
                             files::DroppedUpload::Image(image) => {
                                 self.finish_dropped_image_upload(picked.image_owner.clone(), image);
                             }
-                            files::DroppedUpload::Document(path) => self.request_open(&path),
+                            files::DroppedUpload::Document(path) => {
+                                self.request_open_from_ui(
+                                    ctx,
+                                    &path,
+                                    CardOpenOrder::AfterQueuedInput,
+                                );
+                            }
                         }
                     }
                 }
@@ -3172,7 +3186,7 @@ impl ThinodaApp {
                 .unwrap_or_default();
             if !paths.is_empty() {
                 for p in paths {
-                    self.request_open(&p);
+                    self.request_open_from_ui(ctx, &p, CardOpenOrder::AfterQueuedInput);
                 }
                 ctx.send_viewport_cmd(ViewportCommand::Focus);
             }
@@ -3223,6 +3237,8 @@ impl ThinodaApp {
     pub fn handle_close_request(&mut self, ctx: &Context) {
         if ctx.input(|i| i.viewport().close_requested()) {
             let viewport = ctx.viewport_id();
+            let synthetic_card_close =
+                viewport == egui::ViewportId::ROOT && crate::ui::take_synthetic_card_close(ctx);
             let pending = self.docs.iter().enumerate().find_map(|(index, doc)| {
                 let owner = self
                     .document_windows
@@ -3294,6 +3310,10 @@ impl ThinodaApp {
             let intent = approved.or(pending).unwrap_or(CloseIntent::Window);
             if was_approved || !self.any_dirty() {
                 self.shutdown();
+                if synthetic_card_close {
+                    crate::ui::authorize_synthetic_card_close(ctx);
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                }
             } else {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
                 self.dialogs.close = Some(intent);
@@ -3535,7 +3555,7 @@ impl ThinodaApp {
             if crate::images::is_supported_image_path(&path) {
                 self.finish_dropped_image(owner, &path);
             } else {
-                self.request_open(&path);
+                self.request_open_from_ui(ctx, &path, CardOpenOrder::AfterQueuedInput);
             }
         }
     }

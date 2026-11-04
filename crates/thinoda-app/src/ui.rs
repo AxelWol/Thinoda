@@ -38,6 +38,87 @@ struct CardTextTarget {
     revision: u64,
 }
 
+#[derive(Clone, Copy)]
+struct CardTitleRestore {
+    instance: u64,
+    sheet: usize,
+    root: TopicId,
+    topic: TopicId,
+    serial: u64,
+    frame: u64,
+}
+
+#[derive(Clone)]
+struct CardTextFocusAfterEditor {
+    target: CardTextTarget,
+    serial: u64,
+    control: egui::Id,
+    frame: u64,
+}
+
+#[derive(Clone)]
+struct DeferredCardTextCommand {
+    instance: u64,
+    sheet: usize,
+    root: TopicId,
+    command: CapturedCardTextCommand,
+}
+
+#[derive(Clone)]
+enum CapturedCardTextCommand {
+    Command(Cmd),
+    CloseTab(Option<(u64, egui::ViewportId)>),
+}
+
+#[derive(Clone)]
+struct DeferredCardTextOperation {
+    origin: egui::ViewportId,
+    not_before_root_frame: u64,
+    action: DeferredCardTextAction,
+}
+
+// A command is already ordered in the current input batch; an asynchronous
+// result must wait for input queued before it arrived.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CardOpenOrder {
+    CurrentInput,
+    AfterQueuedInput,
+}
+
+#[derive(Clone)]
+enum DeferredCardTextAction {
+    Open {
+        path: std::path::PathBuf,
+        target_instance: Option<u64>,
+        order: CardOpenOrder,
+    },
+    SaveAll,
+    Command {
+        instance: u64,
+        sheet: usize,
+        root: TopicId,
+        command: CapturedCardTextCommand,
+    },
+}
+
+#[derive(Clone, Default)]
+struct DeferredCardTextInput {
+    events: Vec<egui::Event>,
+    close_after_frame: Option<u64>,
+}
+
+pub(crate) struct CardTextInputPlugin;
+
+impl egui::Plugin for CardTextInputPlugin {
+    fn debug_name(&self) -> &'static str {
+        "card text input ordering"
+    }
+
+    fn input_hook(&mut self, ctx: &Context, input: &mut egui::RawInput) {
+        prepare_card_text_input(ctx, input);
+    }
+}
+
 enum CardTextChange {
     Bold(bool),
     Italic(bool),
@@ -80,11 +161,324 @@ fn card_text_slot(viewport: egui::ViewportId) -> egui::Id {
     egui::Id::unique(("thinoda_card_text_target", viewport))
 }
 
+fn card_text_input_is_action(event: &egui::Event) -> bool {
+    !matches!(
+        event,
+        egui::Event::ModifiersChanged(_)
+            | egui::Event::PointerMoved(_)
+            | egui::Event::Key { pressed: false, .. }
+            | egui::Event::Key {
+                key: Key::AltLeft
+                    | Key::AltRight
+                    | Key::ControlLeft
+                    | Key::ControlRight
+                    | Key::ShiftLeft
+                    | Key::ShiftRight
+                    | Key::SuperLeft
+                    | Key::SuperRight,
+                ..
+            }
+    )
+}
+
+fn card_text_input_is_keyboard_action(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::Text(_)
+            | egui::Event::Paste(_)
+            | egui::Event::Cut
+            | egui::Event::Copy
+            | egui::Event::Ime(_)
+            | egui::Event::Key { pressed: true, .. }
+    ) && card_text_input_is_action(event)
+}
+
+fn card_text_pointer_packet(events: &[egui::Event], index: usize) -> (usize, usize) {
+    let companion = |event: &egui::Event| {
+        matches!(
+            event,
+            egui::Event::Touch { .. }
+                | egui::Event::PointerMoved(_)
+                | egui::Event::PointerGone
+                | egui::Event::MouseMoved(_)
+        )
+    };
+    let mut start = index;
+    while start > 0 && companion(&events[start - 1]) {
+        start -= 1;
+    }
+    let mut end = index + 1;
+    while end < events.len() && companion(&events[end]) {
+        end += 1;
+    }
+    (start, end)
+}
+
+fn card_text_shortcut_start(events: &[egui::Event], index: usize, modifiers: Modifiers) -> usize {
+    let mut start = index;
+    while start > 0 {
+        let part_of_chord = match &events[start - 1] {
+            egui::Event::ModifiersChanged(current) => current.matches_exact(modifiers),
+            egui::Event::Key {
+                key, pressed: true, ..
+            } => match key {
+                Key::AltLeft | Key::AltRight => modifiers.alt,
+                Key::ControlLeft | Key::ControlRight => modifiers.ctrl,
+                Key::ShiftLeft | Key::ShiftRight => modifiers.shift,
+                Key::SuperLeft | Key::SuperRight => modifiers.mac_cmd || modifiers.command,
+                _ => false,
+            },
+            _ => false,
+        };
+        if !part_of_chord {
+            break;
+        }
+        start -= 1;
+    }
+    start
+}
+
+fn card_text_input_split(events: &[egui::Event]) -> Option<usize> {
+    for (index, event) in events.iter().enumerate() {
+        let formatting_shortcut = matches!(
+            event,
+            egui::Event::Key {
+                key: Key::F10,
+                pressed: true,
+                modifiers,
+                ..
+            } if modifiers.matches_logically(Modifiers::ALT)
+        );
+        let command_shortcut = matches!(
+            event,
+            egui::Event::Key {
+                pressed: true,
+                modifiers,
+                ..
+            } if (modifiers.command || modifiers.ctrl || modifiers.mac_cmd)
+                && card_text_input_is_action(event)
+        );
+        let keyboard_transition = formatting_shortcut
+            || command_shortcut
+            || matches!(
+                event,
+                egui::Event::Key {
+                    key: Key::Tab,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.matches_exact(Modifiers::NONE)
+                    || modifiers.matches_exact(Modifiers::SHIFT)
+            )
+            || matches!(
+                event,
+                egui::Event::Key {
+                    key: Key::Enter | Key::Escape,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.matches_exact(Modifiers::NONE)
+            );
+        let pointer_transition = matches!(event, egui::Event::PointerButton { .. });
+        if keyboard_transition {
+            if events[..index].iter().any(card_text_input_is_action) {
+                let start = if let egui::Event::Key { modifiers, .. } = event
+                    && (formatting_shortcut || command_shortcut)
+                {
+                    card_text_shortcut_start(events, index, *modifiers)
+                } else {
+                    index
+                };
+                return Some(start);
+            }
+            if events[index + 1..].iter().any(card_text_input_is_action) {
+                return Some(index + 1);
+            }
+        } else if pointer_transition {
+            let (start, end) = card_text_pointer_packet(events, index);
+            if events[..start]
+                .iter()
+                .any(card_text_input_is_keyboard_action)
+            {
+                return Some(start);
+            }
+            if events[end..].iter().any(card_text_input_is_keyboard_action) {
+                return Some(end);
+            }
+        }
+    }
+    None
+}
+
+fn card_text_input_needs_repaint(ctx: &Context, viewport: egui::ViewportId) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<DeferredCardTextInput>(card_text_slot(viewport).with("deferred_input"))
+            .is_some()
+    })
+}
+
+fn card_text_input_in_scope(ctx: &Context, viewport: egui::ViewportId) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<bool>(card_text_slot(viewport).with("input_scope"))
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) fn card_text_input_has_pending_events(
+    ctx: &Context,
+    viewport: egui::ViewportId,
+) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<DeferredCardTextInput>(card_text_slot(viewport).with("deferred_input"))
+            .is_some_and(|input| !input.events.is_empty())
+    })
+}
+
+fn request_card_text_input_repaint(ctx: &Context, viewport: egui::ViewportId) {
+    ctx.request_repaint_of(viewport);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+        ctx.send_viewport_cmd_to(
+            egui::ViewportId::ROOT,
+            egui::ViewportCommand::RequestPaintWhileHidden,
+        );
+    }
+}
+
+pub(crate) fn take_synthetic_card_close(ctx: &Context) -> bool {
+    let slot = card_text_slot(egui::ViewportId::ROOT).with("synthetic_close");
+    ctx.data_mut(|data| {
+        let synthetic = data.get_temp::<bool>(slot).unwrap_or(false);
+        data.remove::<bool>(slot);
+        synthetic
+    })
+}
+
+pub(crate) fn authorize_synthetic_card_close(ctx: &Context) {
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            card_text_slot(egui::ViewportId::ROOT).with("authorized_close"),
+            true,
+        );
+    });
+}
+
+fn prepare_card_text_input(ctx: &Context, input: &mut egui::RawInput) {
+    let viewport = input.viewport_id;
+    let slot = card_text_slot(viewport);
+    if ctx.viewport_for(viewport, |state| state.output.num_completed_passes) == 0 {
+        ctx.data_mut(|data| data.remove::<u64>(slot.with("after_editor")));
+    }
+    let eligible = card_text_input_in_scope(ctx, viewport);
+    let pending =
+        ctx.data(|data| data.get_temp::<DeferredCardTextInput>(slot.with("deferred_input")));
+    if !eligible && pending.is_none() {
+        return;
+    }
+
+    if ctx.viewport_for(viewport, |state| state.output.num_completed_passes) > 0 {
+        return;
+    }
+    let frame = ctx.cumulative_frame_nr_for(viewport);
+    let mut deferred = pending.unwrap_or_default();
+    ctx.data_mut(|data| data.remove::<DeferredCardTextInput>(slot.with("deferred_input")));
+    if !deferred.events.is_empty() {
+        deferred.events.append(&mut input.events);
+        input.events = std::mem::take(&mut deferred.events);
+    }
+
+    if eligible && let Some(split) = card_text_input_split(&input.events) {
+        deferred.events = input.events.split_off(split);
+    }
+
+    let has_actions = input.events.iter().any(card_text_input_is_action);
+    let close = input.viewport().close_requested();
+    if close
+        && (eligible || !deferred.events.is_empty() || deferred.close_after_frame.is_some())
+        && (has_actions || !deferred.events.is_empty())
+    {
+        deferred.close_after_frame.get_or_insert(frame + 1);
+        if let Some(viewport) = input.viewports.get_mut(&viewport) {
+            viewport
+                .events
+                .retain(|event| *event != egui::ViewportEvent::Close);
+        }
+    }
+    let child_has_pending_input = viewport == egui::ViewportId::ROOT
+        && ctx.data(|data| {
+            data.get_temp::<Vec<egui::ViewportId>>(slot.with("document_viewports"))
+                .unwrap_or_default()
+                .iter()
+                .any(|child| {
+                    data.get_temp::<DeferredCardTextInput>(
+                        card_text_slot(*child).with("deferred_input"),
+                    )
+                    .is_some()
+                })
+        });
+    let operations_pending = ctx.data(|data| {
+        data.get_temp::<Vec<DeferredCardTextOperation>>(
+            card_text_slot(egui::ViewportId::ROOT).with("deferred_operations"),
+        )
+        .is_some_and(|operations| {
+            operations
+                .iter()
+                .any(|operation| viewport == egui::ViewportId::ROOT || operation.origin == viewport)
+        })
+    });
+    if deferred
+        .close_after_frame
+        .is_some_and(|earliest| frame >= earliest)
+        && !has_actions
+        && deferred.events.is_empty()
+        && !child_has_pending_input
+        && !operations_pending
+    {
+        if let Some(viewport) = input.viewports.get_mut(&viewport)
+            && !viewport.close_requested()
+        {
+            viewport.events.push(egui::ViewportEvent::Close);
+        }
+        deferred.close_after_frame = None;
+        if viewport == egui::ViewportId::ROOT {
+            ctx.data_mut(|data| data.insert_temp(slot.with("synthetic_close"), true));
+        }
+    }
+    if !deferred.events.is_empty() || deferred.close_after_frame.is_some() {
+        ctx.data_mut(|data| data.insert_temp(slot.with("deferred_input"), deferred));
+        request_card_text_input_repaint(ctx, viewport);
+    }
+}
+
 fn card_text_label() -> &'static str {
     t("Format whole card text")
 }
 
 fn card_text_icon(ui: &mut Ui, icon: &str, label: &str, selected: bool, focus: bool) -> bool {
+    card_text_icon_response(ui, icon, label, selected, focus).0
+}
+
+fn card_text_owned_icon(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    focus: bool,
+    owned: &mut Vec<egui::Id>,
+) -> bool {
+    let (activated, id) = card_text_icon_response(ui, icon, label, selected, focus);
+    owned.push(id);
+    activated
+}
+
+fn card_text_icon_response(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    focus: bool,
+) -> (bool, egui::Id) {
     let response = widgets::icon_button(ui, icon, label, selected);
     if focus {
         response.request_focus();
@@ -98,11 +492,14 @@ fn card_text_icon(ui: &mut Ui, icon: &str, label: &str, selected: bool, focus: b
             input.consume_key(Modifiers::NONE, Key::Enter)
                 || input.consume_key(Modifiers::NONE, Key::Space)
         });
-    ui.is_enabled()
-        && ((widgets::touch_activation_allowed(ui.ctx()) && response.clicked()) || keyboard)
+    (
+        ui.is_enabled()
+            && ((widgets::touch_activation_allowed(ui.ctx()) && response.clicked()) || keyboard),
+        response.id,
+    )
 }
 
-fn card_text_swatch(ui: &mut Ui, color: Color, selected: bool) -> bool {
+fn card_text_swatch(ui: &mut Ui, color: Color, selected: bool, owned: &mut Vec<egui::Id>) -> bool {
     let value = from_color(color);
     let hex = if color.a == 255 {
         format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
@@ -115,6 +512,7 @@ fn card_text_swatch(ui: &mut Ui, color: Color, selected: bool) -> bool {
     let label = format!("{} {hex}", t("Text Color"));
     let palette = Palette::of_ui(ui);
     let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    owned.push(response.id);
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::ColorWell, ui.is_enabled(), selected, &label)
     });
@@ -967,7 +1365,7 @@ pub(crate) fn font_selector(
     value: &mut Option<String>,
     default_label: &str,
 ) -> egui::Response {
-    font_choice(ui, fonts, value, default_label, true)
+    font_choice(ui, fonts, value, default_label, true, None)
 }
 
 fn font_choice(
@@ -976,8 +1374,9 @@ fn font_choice(
     value: &mut Option<String>,
     default_label: &str,
     generic_monospace: bool,
+    mut owned: Option<&mut Vec<egui::Id>>,
 ) -> egui::Response {
-    egui::ComboBox::from_id_salt("font_family")
+    let response = egui::ComboBox::from_id_salt("font_family")
         .selected_text(match value.as_deref() {
             None => default_label,
             Some("monospace") => t("Monospace"),
@@ -986,15 +1385,28 @@ fn font_choice(
         .width(ui.available_width())
         .truncate()
         .show_ui(ui, |ui| {
-            ui.selectable_value(value, None, default_label);
+            let response = ui.selectable_value(value, None, default_label);
+            if let Some(owned) = owned.as_deref_mut() {
+                owned.push(response.id);
+            }
             if generic_monospace {
-                ui.selectable_value(value, Some("monospace".into()), t("Monospace"));
+                let response = ui.selectable_value(value, Some("monospace".into()), t("Monospace"));
+                if let Some(owned) = owned.as_deref_mut() {
+                    owned.push(response.id);
+                }
             }
             for name in fonts.names() {
-                ui.selectable_value(value, Some(name.clone()), name);
+                let response = ui.selectable_value(value, Some(name.clone()), name);
+                if let Some(owned) = owned.as_deref_mut() {
+                    owned.push(response.id);
+                }
             }
         })
-        .response
+        .response;
+    if let Some(owned) = owned {
+        owned.push(response.id);
+    }
+    response
 }
 
 /// Swatch colors offered in the format panel (XMind-like palette).
@@ -1063,6 +1475,371 @@ pub(crate) fn structure_label(s: Structure) -> &'static str {
 }
 
 impl ThinodaApp {
+    fn capture_card_text_command(&self, command: &Cmd) -> CapturedCardTextCommand {
+        match command {
+            Cmd::CloseTab(index) => {
+                CapturedCardTextCommand::CloseTab(self.docs.get(*index).map(|doc| {
+                    let owner = self
+                        .document_windows
+                        .get(&doc.key)
+                        .copied()
+                        .unwrap_or(egui::ViewportId::ROOT);
+                    (doc.doc.instance_id(), owner)
+                }))
+            }
+            command => CapturedCardTextCommand::Command(command.clone()),
+        }
+    }
+
+    fn resolve_card_text_command(&self, command: CapturedCardTextCommand) -> Option<Cmd> {
+        match command {
+            CapturedCardTextCommand::Command(command) => Some(command),
+            CapturedCardTextCommand::CloseTab(Some((instance, owner))) => self
+                .docs
+                .iter()
+                .position(|doc| {
+                    doc.doc.instance_id() == instance
+                        && self
+                            .document_windows
+                            .get(&doc.key)
+                            .copied()
+                            .unwrap_or(egui::ViewportId::ROOT)
+                            == owner
+                })
+                .map(Cmd::CloseTab),
+            CapturedCardTextCommand::CloseTab(None) => None,
+        }
+    }
+
+    pub(crate) fn request_open_from_ui(
+        &mut self,
+        ctx: &Context,
+        path: &std::path::Path,
+        order: CardOpenOrder,
+    ) {
+        let target = self
+            .docs
+            .iter()
+            .find(|doc| doc.path.as_deref() == Some(path));
+        let target_viewport = target
+            .and_then(|doc| self.document_windows.get(&doc.key).copied())
+            .unwrap_or(egui::ViewportId::ROOT);
+        let force = target.is_some()
+            && target_viewport != self.current_viewport
+            && card_text_input_in_scope(ctx, target_viewport);
+        let operation = DeferredCardTextOperation {
+            origin: self.current_viewport,
+            not_before_root_frame: ctx
+                .cumulative_frame_nr_for(egui::ViewportId::ROOT)
+                .saturating_add(1),
+            action: DeferredCardTextAction::Open {
+                path: path.to_owned(),
+                target_instance: target.map(|doc| doc.doc.instance_id()),
+                order,
+            },
+        };
+        if !self.queue_card_text_operation(ctx, operation, force) {
+            self.perform_card_text_open(ctx, path);
+        }
+    }
+
+    fn queue_card_text_operation(
+        &self,
+        ctx: &Context,
+        operation: DeferredCardTextOperation,
+        force: bool,
+    ) -> bool {
+        let slot = card_text_slot(egui::ViewportId::ROOT).with("deferred_operations");
+        let already_waiting = ctx.data(|data| {
+            data.get_temp::<Vec<DeferredCardTextOperation>>(slot)
+                .is_some_and(|operations| {
+                    operations
+                        .iter()
+                        .any(|item| item.origin == operation.origin)
+                })
+        });
+        if force || already_waiting || self.card_text_operation_blocked(ctx, &operation) {
+            ctx.data_mut(|data| {
+                let mut operations = data
+                    .get_temp::<Vec<DeferredCardTextOperation>>(slot)
+                    .unwrap_or_default();
+                operations.push(operation);
+                data.insert_temp(slot, operations);
+            });
+            request_card_text_input_repaint(ctx, self.current_viewport);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn card_text_operation_blocked(
+        &self,
+        ctx: &Context,
+        operation: &DeferredCardTextOperation,
+    ) -> bool {
+        match &operation.action {
+            DeferredCardTextAction::Open { path, order, .. } => {
+                if *order == CardOpenOrder::AfterQueuedInput
+                    && card_text_input_has_pending_events(ctx, operation.origin)
+                {
+                    return true;
+                }
+                self.docs
+                    .iter()
+                    .find(|doc| doc.path.as_deref() == Some(path.as_path()))
+                    .is_some_and(|doc| {
+                        let owner = self
+                            .document_windows
+                            .get(&doc.key)
+                            .copied()
+                            .unwrap_or(egui::ViewportId::ROOT);
+                        owner != operation.origin && card_text_input_has_pending_events(ctx, owner)
+                    })
+            }
+            DeferredCardTextAction::SaveAll => std::iter::once(egui::ViewportId::ROOT)
+                .chain(self.document_windows.values().copied())
+                .any(|viewport| {
+                    viewport != operation.origin
+                        && card_text_input_has_pending_events(ctx, viewport)
+                }),
+            DeferredCardTextAction::Command { command, .. } => {
+                card_text_input_has_pending_events(ctx, operation.origin)
+                    || (matches!(command, CapturedCardTextCommand::Command(Cmd::SaveAll))
+                        && std::iter::once(egui::ViewportId::ROOT)
+                            .chain(self.document_windows.values().copied())
+                            .any(|viewport| {
+                                viewport != operation.origin
+                                    && card_text_input_has_pending_events(ctx, viewport)
+                            }))
+            }
+        }
+    }
+
+    fn perform_card_text_open(&mut self, ctx: &Context, path: &std::path::Path) {
+        let previous = self
+            .docs
+            .iter()
+            .find(|doc| doc.path.as_deref() == Some(path))
+            .and_then(|doc| self.document_windows.get(&doc.key).copied());
+        self.request_open(path);
+        if let Some(viewport) = previous
+            && !self
+                .document_windows
+                .values()
+                .any(|owner| *owner == viewport)
+        {
+            let slot = card_text_slot(viewport).with("deferred_input");
+            ctx.data_mut(|data| {
+                if data
+                    .get_temp::<DeferredCardTextInput>(slot)
+                    .is_some_and(|pending| pending.events.is_empty())
+                {
+                    data.remove::<DeferredCardTextInput>(slot);
+                }
+            });
+        }
+    }
+
+    fn finish_deferred_card_text_operations(&mut self, ctx: &Context) {
+        let slot = card_text_slot(egui::ViewportId::ROOT).with("deferred_operations");
+        let operations = ctx.data_mut(|data| {
+            let operations = data
+                .get_temp::<Vec<DeferredCardTextOperation>>(slot)
+                .unwrap_or_default();
+            data.remove::<Vec<DeferredCardTextOperation>>(slot);
+            operations
+        });
+        let mut remaining = Vec::new();
+        let mut origin_blocked = false;
+        for operation in operations {
+            if self.current_viewport == egui::ViewportId::ROOT
+                && operation.origin != egui::ViewportId::ROOT
+                && !self
+                    .document_windows
+                    .values()
+                    .any(|owner| *owner == operation.origin)
+            {
+                match &operation.action {
+                    DeferredCardTextAction::Open { path, .. } => {
+                        self.toasts
+                            .warning(format!("{}: {}", t("Could not open"), path.display()))
+                    }
+                    DeferredCardTextAction::SaveAll | DeferredCardTextAction::Command { .. } => {
+                        self.toasts.warning(t("Not possible here"))
+                    }
+                };
+                continue;
+            }
+            if operation.origin != self.current_viewport {
+                remaining.push(operation);
+                continue;
+            }
+            if origin_blocked
+                || ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
+                    < operation.not_before_root_frame
+                || self.card_text_operation_blocked(ctx, &operation)
+            {
+                origin_blocked = true;
+                remaining.push(operation);
+            } else {
+                match operation.action {
+                    DeferredCardTextAction::Open {
+                        path,
+                        target_instance,
+                        ..
+                    } => {
+                        let target_changed = target_instance.is_some_and(|instance| {
+                            !self.docs.iter().any(|doc| {
+                                doc.path.as_deref() == Some(path.as_path())
+                                    && doc.doc.instance_id() == instance
+                            })
+                        });
+                        if target_changed {
+                            self.toasts.warning(format!(
+                                "{}: {}",
+                                t("Could not open"),
+                                path.display()
+                            ));
+                        } else {
+                            self.perform_card_text_open(ctx, &path);
+                        }
+                    }
+                    DeferredCardTextAction::SaveAll => {
+                        let executing = slot.with("executing");
+                        ctx.data_mut(|data| data.insert_temp(executing, true));
+                        self.exec(ctx, Cmd::SaveAll);
+                        ctx.data_mut(|data| data.remove::<bool>(executing));
+                    }
+                    DeferredCardTextAction::Command {
+                        instance,
+                        sheet,
+                        root,
+                        command,
+                    } => {
+                        if self.doc().is_some_and(|doc| {
+                            doc.doc.instance_id() == instance
+                                && doc.doc.active_index() == sheet
+                                && doc.doc.sheet().root == root
+                        }) && let Some(command) = self.resolve_card_text_command(command)
+                        {
+                            let executing = slot.with("executing");
+                            ctx.data_mut(|data| data.insert_temp(executing, true));
+                            self.exec(ctx, command);
+                            ctx.data_mut(|data| data.remove::<bool>(executing));
+                        } else {
+                            self.toasts.warning(t("Not possible here"));
+                        }
+                    }
+                }
+                let added = ctx.data_mut(|data| {
+                    let added = data
+                        .get_temp::<Vec<DeferredCardTextOperation>>(slot)
+                        .unwrap_or_default();
+                    data.remove::<Vec<DeferredCardTextOperation>>(slot);
+                    added
+                });
+                origin_blocked |= added
+                    .iter()
+                    .any(|item| item.origin == self.current_viewport);
+                remaining.extend(added);
+                ctx.request_repaint();
+            }
+        }
+        if !remaining.is_empty() {
+            ctx.data_mut(|data| data.insert_temp(slot, remaining));
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
+        }
+    }
+
+    pub(crate) fn prepare_card_text_input(&self, ctx: &Context, input: &mut egui::RawInput) {
+        let viewport = input.viewport_id;
+        self.mark_card_text_input_scope(ctx, viewport);
+        if viewport != egui::ViewportId::ROOT {
+            return;
+        }
+        let slot = card_text_slot(viewport);
+        let mut children: Vec<_> = self.document_windows.values().copied().collect();
+        children.sort_unstable();
+        children.dedup();
+        for &child in &children {
+            self.mark_card_text_input_scope(ctx, child);
+        }
+        ctx.data_mut(|data| data.insert_temp(slot.with("document_viewports"), children.clone()));
+        if !input.viewport().close_requested() {
+            return;
+        }
+        let authorized = ctx.data_mut(|data| {
+            let authorized = data
+                .get_temp::<bool>(slot.with("authorized_close"))
+                .unwrap_or(false);
+            data.remove::<bool>(slot.with("authorized_close"));
+            authorized
+        });
+        if authorized {
+            return;
+        }
+        let scoped_or_pending = std::iter::once(viewport).chain(children).any(|id| {
+            let slot = card_text_slot(id);
+            ctx.data(|data| {
+                data.get_temp::<bool>(slot.with("input_scope"))
+                    .unwrap_or(false)
+                    || data
+                        .get_temp::<DeferredCardTextInput>(slot.with("deferred_input"))
+                        .is_some()
+            })
+        });
+        if scoped_or_pending {
+            ctx.input_for(viewport, |_| ());
+            let frame = ctx.cumulative_frame_nr_for(viewport);
+            ctx.data_mut(|data| {
+                let mut deferred = data
+                    .get_temp::<DeferredCardTextInput>(slot.with("deferred_input"))
+                    .unwrap_or_default();
+                deferred.close_after_frame.get_or_insert(frame + 1);
+                data.insert_temp(slot.with("deferred_input"), deferred);
+            });
+            if let Some(info) = input.viewports.get_mut(&viewport) {
+                info.events
+                    .retain(|event| *event != egui::ViewportEvent::Close);
+            }
+            request_card_text_input_repaint(ctx, viewport);
+        }
+    }
+
+    fn mark_card_text_input_scope(&self, ctx: &Context, viewport: egui::ViewportId) {
+        let visible = self.visible_document_indices(viewport);
+        let active = self
+            .window_active_documents
+            .get(&viewport)
+            .and_then(|key| self.docs.iter().position(|doc| &doc.key == key))
+            .filter(|index| visible.contains(index))
+            .or_else(|| visible.contains(&self.active).then_some(self.active))
+            .or_else(|| visible.first().copied());
+        let eligible = active
+            .and_then(|index| self.docs.get(index))
+            .is_some_and(|doc| {
+                let topic = doc.view.editing_topic().or_else(|| {
+                    (doc.view.selection.len() == 1
+                        && doc.view.board_selection.is_empty()
+                        && doc.view.selected_object.is_none()
+                        && doc.view.relationship_from.is_none())
+                    .then(|| doc.view.primary())
+                    .flatten()
+                });
+                topic.is_some_and(|id| {
+                    doc.doc
+                        .sheet()
+                        .topic(id)
+                        .and_then(|topic| topic.card)
+                        .is_some_and(|card| matches!(card.kind, CardKind::Sticky | CardKind::Text))
+                })
+            });
+        ctx.data_mut(|data| {
+            data.insert_temp(card_text_slot(viewport).with("input_scope"), eligible)
+        });
+    }
+
     pub(crate) fn ribbon_active(&self) -> bool {
         #[cfg(target_os = "windows")]
         return self.desktop_ribbon;
@@ -1090,6 +1867,11 @@ impl ThinodaApp {
         let previous_viewport = self.current_viewport;
         self.current_viewport = viewport;
         self.activate_document_window(viewport);
+        self.mark_card_text_input_scope(&ctx, viewport);
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|data| {
+            data.insert_temp(card_text_slot(viewport).with("before_editor"), frame);
+        });
         let visible_doc_before_chrome = self.doc().map(|doc| doc.key.clone());
         self.guard_table_draft(&ctx);
         self.prepare_keymap(&ctx);
@@ -1364,6 +2146,8 @@ impl ThinodaApp {
                     self.map(ui);
                 }
             });
+        self.finish_card_text_focus_handoff(&ctx);
+        self.finish_deferred_card_text_commands(&ctx);
 
         let (board_toolbar, editing_toolbar) = if show_doc
             && self.mode == CenterMode::Map
@@ -1446,7 +2230,15 @@ impl ThinodaApp {
         }
         self.legal_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
-            self.toasts.show_with_modal(&ctx, self.any_modal_open());
+            let modal_open = self.any_modal_open();
+            if self.dialogs.settings
+                && !modal_open
+                && let Some(strip) = self.toasts.bottom_strip(&ctx)
+            {
+                self.toasts.show_in_bottom_strip(&ctx, strip);
+            } else {
+                self.toasts.show_with_modal(&ctx, modal_open);
+            }
         }
         if let Some(d) = self.doc() {
             self.capture_map_shot(&ctx, d.view.canvas_rect());
@@ -1480,6 +2272,11 @@ impl ThinodaApp {
             if !returned_home {
                 self.active = previous_active;
             }
+        }
+        self.finish_deferred_card_text_operations(&ctx);
+        self.mark_card_text_input_scope(&ctx, viewport);
+        if card_text_input_needs_repaint(&ctx, viewport) {
+            request_card_text_input_repaint(&ctx, viewport);
         }
         self.current_viewport = previous_viewport;
     }
@@ -1525,6 +2322,7 @@ impl ThinodaApp {
             self.drawing_document_window = true;
             self.window_active_documents
                 .insert(viewport, active_key.clone());
+            self.mark_card_text_input_scope(ctx, viewport);
             ctx.show_viewport_immediate(viewport, builder, |ui, _class| {
                 self.activate_document_window(viewport);
                 #[cfg(target_os = "macos")]
@@ -2260,12 +3058,14 @@ impl ThinodaApp {
             || !view.board_selection.is_empty()
             || view.selected_object.is_some()
             || view.relationship_from.is_some()
-            || view.editing_topic().is_some()
             || view.editing_board_object().is_some()
         {
             return None;
         }
         let id = view.primary()?;
+        if view.editing_topic().is_some_and(|editing| editing != id) {
+            return None;
+        }
         let sheet = doc.doc.sheet();
         let card = sheet.topic(id)?.card?;
         if !matches!(card.kind, CardKind::Sticky | CardKind::Text)
@@ -2281,6 +3081,11 @@ impl ThinodaApp {
             && !view.has_active_canvas_gesture()
             && !doc.has_inspector_changes()
             && doc.fim_edit.is_none()
+            && view.title_draft().is_none_or(|(topic, original, _)| {
+                sheet
+                    .topic(topic)
+                    .is_some_and(|item| item.title == original)
+            })
             && doc.ensure_no_pending_ink().is_ok();
         Some((
             CardTextTarget {
@@ -2332,14 +3137,295 @@ impl ThinodaApp {
         }
     }
 
+    pub(crate) fn save_card_with_pending_input(&mut self, ctx: &Context, save_as: bool) -> bool {
+        let viewport = self.current_viewport;
+        let continuation = card_text_input_has_pending_events(ctx, viewport)
+            .then(|| self.card_text_target())
+            .flatten()
+            .and_then(|(target, _)| {
+                self.doc()
+                    .and_then(|doc| doc.view.capture_title_edit_continuation())
+                    .map(|edit| (target, edit))
+            });
+        let saved = self.save_active(save_as);
+        if let Some((target, edit)) = continuation {
+            let resumed = self.doc_mut().is_some_and(|doc| {
+                doc.doc.instance_id() == target.instance
+                    && doc.doc.active_index() == target.sheet
+                    && doc.doc.sheet().root == target.root
+                    && doc.view.resume_title_edit_after_commit(&doc.doc, edit)
+            });
+            if resumed && let Some((current, _)) = self.card_text_target() {
+                let slot = card_text_slot(viewport);
+                ctx.data_mut(|data| {
+                    if data.get_temp::<CardTextTarget>(slot).as_ref() == Some(&target) {
+                        data.insert_temp(slot, current);
+                    }
+                });
+            }
+        }
+        saved
+    }
+
+    pub(crate) fn defer_card_text_command(&self, ctx: &Context, command: &Cmd) -> bool {
+        let executing = card_text_slot(egui::ViewportId::ROOT)
+            .with("deferred_operations")
+            .with("executing");
+        let is_executing = ctx
+            .data(|data| data.get_temp::<bool>(executing))
+            .unwrap_or(false);
+        let slot = card_text_slot(self.current_viewport);
+        let frame = ctx.cumulative_frame_nr();
+        let before_editor = ctx.data(|data| data.get_temp::<u64>(slot.with("before_editor")));
+        let after_editor = ctx.data(|data| data.get_temp::<u64>(slot.with("after_editor")));
+        let in_first_pass = ctx.viewport_for(self.current_viewport, |state| {
+            state.output.num_completed_passes == 0
+        });
+        if !is_executing
+            && before_editor != Some(frame)
+            && after_editor != Some(frame)
+            && in_first_pass
+            && (card_text_input_has_pending_events(ctx, self.current_viewport)
+                || (card_text_input_in_scope(ctx, self.current_viewport)
+                    && ctx.input(|input| input.events.iter().any(card_text_input_is_action))))
+            && let Some(doc) = self.doc()
+            && self.queue_card_text_operation(
+                ctx,
+                DeferredCardTextOperation {
+                    origin: self.current_viewport,
+                    not_before_root_frame: ctx
+                        .cumulative_frame_nr_for(egui::ViewportId::ROOT)
+                        .saturating_add(u64::from(matches!(command, Cmd::SaveAll))),
+                    action: DeferredCardTextAction::Command {
+                        instance: doc.doc.instance_id(),
+                        sheet: doc.doc.active_index(),
+                        root: doc.doc.sheet().root,
+                        command: self.capture_card_text_command(command),
+                    },
+                },
+                true,
+            )
+        {
+            return true;
+        }
+        if matches!(command, Cmd::SaveAll)
+            && !is_executing
+            && self.queue_card_text_operation(
+                ctx,
+                DeferredCardTextOperation {
+                    origin: self.current_viewport,
+                    not_before_root_frame: ctx
+                        .cumulative_frame_nr_for(egui::ViewportId::ROOT)
+                        .saturating_add(1),
+                    action: DeferredCardTextAction::SaveAll,
+                },
+                std::iter::once(egui::ViewportId::ROOT)
+                    .chain(self.document_windows.values().copied())
+                    .any(|viewport| {
+                        viewport != self.current_viewport && card_text_input_in_scope(ctx, viewport)
+                    }),
+            )
+        {
+            return true;
+        }
+        if before_editor != Some(frame)
+            || !ctx.text_edit_focused()
+            || !ctx.input(|input| {
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Cut
+                            | egui::Event::Ime(_)
+                            | egui::Event::Key {
+                                key: Key::Backspace | Key::Delete,
+                                pressed: true,
+                                ..
+                            }
+                    )
+                })
+            })
+        {
+            return false;
+        }
+        let Some((target, _)) = self.card_text_target() else {
+            return false;
+        };
+        let focused = ctx.memory(|memory| memory.focused());
+        let title_editing = self
+            .doc()
+            .is_some_and(|doc| doc.view.editing_topic() == Some(target.topic))
+            && focused == Some(MapCanvas::title_editor_id());
+        let size_editing = ctx.data(|data| {
+            data.get_temp::<bool>(slot.with("size_editing"))
+                .unwrap_or(false)
+                && focused.is_some()
+                && data.get_temp::<egui::Id>(slot.with("size_focus")) == focused
+        });
+        if !title_editing && !size_editing {
+            return false;
+        }
+        ctx.data_mut(|data| {
+            let mut pending = data
+                .get_temp::<Vec<DeferredCardTextCommand>>(slot.with("deferred_commands"))
+                .unwrap_or_default();
+            pending.push(DeferredCardTextCommand {
+                instance: target.instance,
+                sheet: target.sheet,
+                root: target.root,
+                command: self.capture_card_text_command(command),
+            });
+            data.insert_temp(slot.with("deferred_commands"), pending);
+        });
+        true
+    }
+
+    fn finish_deferred_card_text_commands(&mut self, ctx: &Context) {
+        let slot = card_text_slot(self.current_viewport);
+        let frame = ctx.cumulative_frame_nr();
+        let pending = ctx.data_mut(|data| {
+            data.remove::<u64>(slot.with("before_editor"));
+            data.insert_temp(slot.with("after_editor"), frame);
+            let pending = data
+                .get_temp::<Vec<DeferredCardTextCommand>>(slot.with("deferred_commands"))
+                .unwrap_or_default();
+            data.remove::<Vec<DeferredCardTextCommand>>(slot.with("deferred_commands"));
+            pending
+        });
+        for deferred in pending {
+            if self.doc().is_some_and(|doc| {
+                doc.doc.instance_id() == deferred.instance
+                    && doc.doc.active_index() == deferred.sheet
+                    && doc.doc.sheet().root == deferred.root
+            }) && let Some(command) = self.resolve_card_text_command(deferred.command)
+            {
+                self.exec(ctx, command);
+            } else {
+                self.toasts.warning(t("Not possible here"));
+            }
+        }
+    }
+
+    fn finish_card_text_focus_handoff(&self, ctx: &Context) {
+        let slot = card_text_slot(self.current_viewport);
+        let pending = ctx.data_mut(|data| {
+            let pending =
+                data.get_temp::<CardTextFocusAfterEditor>(slot.with("focus_after_editor"));
+            data.remove::<CardTextFocusAfterEditor>(slot.with("focus_after_editor"));
+            pending
+        });
+        let Some(pending) = pending else { return };
+        let same_edit = self.doc().is_some_and(|doc| {
+            doc.view.editing_topic() == Some(pending.target.topic)
+                && doc.view.title_edit_serial() == Some(pending.serial)
+                && !doc.view.title_ime_active(ctx)
+        });
+        if pending.frame == ctx.cumulative_frame_nr()
+            && same_edit
+            && self
+                .card_text_target()
+                .is_some_and(|(target, enabled)| enabled && target == pending.target)
+            && ctx.memory(|memory| memory.has_focus(MapCanvas::title_editor_id()))
+            && !ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released())
+        {
+            ctx.memory_mut(|memory| memory.request_focus(pending.control));
+            ctx.request_repaint();
+        }
+    }
+
     fn card_text_toolbar(&mut self, ui: &mut Ui) -> bool {
         let ctx = ui.ctx().clone();
         let viewport = self.current_viewport;
         let slot = card_text_slot(viewport);
+        if let Some(restore) =
+            ctx.data(|data| data.get_temp::<CardTitleRestore>(slot.with("restore_title")))
+            && restore.frame < ctx.cumulative_frame_nr()
+        {
+            ctx.data_mut(|data| data.remove::<CardTitleRestore>(slot.with("restore_title")));
+            let same_edit = self.doc().is_some_and(|doc| {
+                doc.doc.instance_id() == restore.instance
+                    && doc.doc.active_index() == restore.sheet
+                    && doc.doc.sheet().root == restore.root
+                    && doc.view.editing_topic() == Some(restore.topic)
+                    && doc.view.title_edit_serial() == Some(restore.serial)
+            });
+            let focus = ctx.memory(|memory| memory.focused());
+            let pointer_event =
+                ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released());
+            if same_edit
+                && restore.frame.saturating_add(1) == ctx.cumulative_frame_nr()
+                && !pointer_event
+                && focus.is_none_or(|id| id == MapCanvas::title_editor_id())
+            {
+                ctx.memory_mut(|memory| memory.request_focus(MapCanvas::title_editor_id()));
+                if let Some(doc) = self.doc_mut() {
+                    doc.view.retain_title_draft_this_frame(&ctx, true);
+                }
+            }
+        }
+        if let Some((current, true)) = self.card_text_target()
+            && let Some(serial) = self.doc().and_then(|doc| doc.view.title_edit_serial())
+        {
+            let edit = (
+                current.instance,
+                current.sheet,
+                current.root,
+                current.topic,
+                serial,
+            );
+            let seen = ctx.data(|data| {
+                data.get_temp::<(u64, usize, TopicId, TopicId, u64)>(slot.with("title_edit"))
+            });
+            if seen != Some(edit) {
+                ctx.data_mut(|data| data.insert_temp(slot.with("title_edit"), edit));
+                if ctx.data(|data| data.get_temp::<CardTextTarget>(slot).is_none()) {
+                    Self::open_card_text_toolbar(&ctx, viewport, current);
+                    ctx.data_mut(|data| data.insert_temp(slot.with("focus"), false));
+                }
+            }
+        }
+        let owned_before = ctx
+            .data(|data| data.get_temp::<Vec<egui::Id>>(slot.with("owned_focus")))
+            .unwrap_or_default();
+        let focus = ctx.memory(|memory| memory.focused());
+        let editor_focused = focus == Some(MapCanvas::title_editor_id());
+        let toolbar_focused = focus.is_some_and(|id| owned_before.contains(&id))
+            || (focus.is_none()
+                && ctx.memory(|memory| {
+                    owned_before
+                        .iter()
+                        .any(|id| memory.had_focus_last_frame(*id))
+                }));
+        let mut focus_toolbar_after_editor = None;
+        let mut focus_editor_after_toolbar = false;
+        if let Some((current, true)) = self.card_text_target()
+            && self.doc().is_some_and(|doc| {
+                doc.view.editing_topic() == Some(current.topic) && !doc.view.title_ime_active(&ctx)
+            })
+            && !egui::Popup::is_any_open(&ctx)
+            && (editor_focused
+                || (toolbar_focused
+                    && !ctx.text_edit_focused()
+                    && ctx
+                        .data(|data| data.get_temp::<CardTextTarget>(slot))
+                        .as_ref()
+                        == Some(&current)))
+            && ctx.input_mut(|input| input.consume_key(Modifiers::ALT, Key::F10))
+        {
+            if editor_focused {
+                focus_toolbar_after_editor =
+                    self.doc().and_then(|doc| doc.view.title_edit_serial());
+                Self::open_card_text_toolbar(&ctx, viewport, current);
+                ctx.data_mut(|data| data.insert_temp(slot.with("focus"), false));
+            } else {
+                focus_editor_after_toolbar = true;
+            }
+        }
         let Some(target) = ctx.data(|data| data.get_temp::<CardTextTarget>(slot)) else {
             return false;
         };
-        let Some((current, enabled)) = self.card_text_target() else {
+        let Some((current, mut enabled)) = self.card_text_target() else {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
             return false;
         };
@@ -2347,17 +3433,46 @@ impl ThinodaApp {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
             return false;
         }
+        let title_active = self
+            .doc()
+            .is_some_and(|doc| doc.view.editing_topic() == Some(target.topic));
+        let ime_active = title_active
+            && self
+                .doc()
+                .is_some_and(|doc| doc.view.title_ime_active(&ctx));
+        enabled &= !ime_active;
         let size_was_editing = ctx
             .data(|data| data.get_temp::<bool>(slot.with("size_editing")))
             .unwrap_or(false);
+        let size_rect = ctx.data(|data| data.get_temp::<egui::Rect>(slot.with("size_rect")));
+        let pending_size_input = size_was_editing
+            && ctx.input(|input| {
+                (input.pointer.any_pressed() || input.pointer.any_released())
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|pos| size_rect.is_some_and(|rect| !rect.contains(pos)))
+                    && input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Text(_) | egui::Event::Paste(_)))
+            });
+        let size_focus = ctx.data(|data| data.get_temp::<egui::Id>(slot.with("size_focus")));
         if enabled
             && !egui::Popup::is_any_open(&ctx)
             && !ctx.text_edit_focused()
             && !size_was_editing
+            && (!title_active || toolbar_focused)
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
-            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+            ctx.memory_mut(|memory| {
+                memory.request_focus(if title_active {
+                    MapCanvas::title_editor_id()
+                } else {
+                    MapCanvas::id()
+                });
+            });
             return false;
         }
 
@@ -2376,10 +3491,18 @@ impl ThinodaApp {
             focus
         });
         let mut change = None;
+        let mut size_change = None;
         let mut close = false;
         let mut command = None;
+        let mut font_popup = None;
+        let mut size_is_editing = false;
+        let mut owned_focus = Vec::new();
+        let mut bold_control = None;
+        let popup_was_open = ctx
+            .data(|data| data.get_temp::<bool>(slot.with("font_popup")))
+            .unwrap_or(false);
         let palette = Palette::of(&ctx);
-        egui::Panel::top(egui::Id::unique(("thinoda_card_text_toolbar", viewport)))
+        let panel = egui::Panel::top(egui::Id::unique(("thinoda_card_text_toolbar", viewport)))
             .exact_size(48.0)
             .frame(
                 egui::Frame::new()
@@ -2398,15 +3521,24 @@ impl ThinodaApp {
                         ),
                         |ui| {
                             ui.horizontal_centered(|ui| {
-                                close = card_text_icon(ui, icons::CLOSE, t("Close"), false, false);
-                                guarded_menu_button(
+                                close = card_text_owned_icon(
                                     ui,
-                                    format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
-                                    |ui| self.formatting_insert_actions(ui, &mut command),
-                                )
-                                .response
-                                .accessible_name(t("More insert actions"))
-                                .on_hover_text(t("More insert actions"));
+                                    icons::CLOSE,
+                                    t("Close"),
+                                    false,
+                                    false,
+                                    &mut owned_focus,
+                                );
+                                ui.add_enabled_ui(!title_active, |ui| {
+                                    guarded_menu_button(
+                                        ui,
+                                        format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
+                                        |ui| self.formatting_insert_actions(ui, &mut command),
+                                    )
+                                    .response
+                                    .accessible_name(t("More insert actions"))
+                                    .on_hover_text(t("More insert actions"));
+                                });
                                 let width = ui.available_width().max(0.0);
                                 egui::ScrollArea::horizontal()
                                     .id_salt("card_text_controls")
@@ -2420,7 +3552,11 @@ impl ThinodaApp {
                                     .auto_shrink([false, false])
                                     .show(ui, |ui| {
                                         ui.horizontal_centered(|ui| {
-                                            ui.label(RichText::new(t("Whole-card text")).small());
+                                            ui.label(RichText::new(t("Whole-card text")).small())
+                                                .on_hover_text(format!(
+                                                    "{} · Alt+F10",
+                                                    card_text_label()
+                                                ));
                                             for (icon, label, on, next, focus) in [
                                                 (
                                                     icons::BOLD,
@@ -2453,7 +3589,18 @@ impl ThinodaApp {
                                                     false,
                                                 ),
                                             ] {
-                                                if card_text_icon(ui, icon, t(label), on, focus) {
+                                                let activated = card_text_owned_icon(
+                                                    ui,
+                                                    icon,
+                                                    t(label),
+                                                    on,
+                                                    focus,
+                                                    &mut owned_focus,
+                                                );
+                                                if label == "Bold" {
+                                                    bold_control = owned_focus.last().copied();
+                                                }
+                                                if activated {
                                                     change = Some(next);
                                                 }
                                             }
@@ -2475,12 +3622,13 @@ impl ThinodaApp {
                                                     "Align Right",
                                                 ),
                                             ] {
-                                                if card_text_icon(
+                                                if card_text_owned_icon(
                                                     ui,
                                                     icon,
                                                     t(label),
                                                     resolved.align == align,
                                                     false,
+                                                    &mut owned_focus,
                                                 ) && resolved.align != align
                                                 {
                                                     change = Some(CardTextChange::Align(align));
@@ -2493,13 +3641,19 @@ impl ThinodaApp {
                                                 Layout::left_to_right(Align::Center),
                                                 |ui| {
                                                     ui.set_max_width(120.0);
-                                                    let response = font_selector(
+                                                    let response = font_choice(
                                                         ui,
                                                         &mut self.fonts,
                                                         &mut family,
                                                         t("Auto"),
+                                                        true,
+                                                        Some(&mut owned_focus),
                                                     )
                                                     .accessible_name(t("Font Family"));
+                                                    font_popup = Some((
+                                                        response.id,
+                                                        egui::ComboBox::is_open(&ctx, response.id),
+                                                    ));
                                                     if response.gained_focus() {
                                                         response.scroll_to_me(None);
                                                     }
@@ -2511,28 +3665,78 @@ impl ThinodaApp {
                                                 change = Some(CardTextChange::Family(family));
                                             }
                                             let mut size = resolved.font_size;
+                                            let previous_focus =
+                                                ctx.memory(|memory| memory.focused());
+                                            if pending_size_input
+                                                && let Some(id) = size_focus
+                                                && previous_focus != Some(id)
+                                            {
+                                                ctx.memory_mut(|memory| memory.request_focus(id));
+                                            }
                                             let (response, commit) = touch_numeric_value(
                                                 ui,
                                                 &mut size,
                                                 "card-text-size",
                                                 Some(numeric_owner),
                                                 |ui, value| {
-                                                    ui.add_sized(
-                                                        vec2(62.0, Tokens::ICON_BUTTON),
-                                                        egui::DragValue::new(value)
-                                                            .range(6.0..=96.0)
-                                                            .speed(0.5),
-                                                    )
-                                                    .accessible_name(t("Font Size"))
+                                                    let pointer = pending_size_input.then(|| {
+                                                        ctx.input_mut(|input| {
+                                                            std::mem::take(&mut input.pointer)
+                                                        })
+                                                    });
+                                                    let response = ui
+                                                        .add_sized(
+                                                            vec2(62.0, Tokens::ICON_BUTTON),
+                                                            egui::DragValue::new(value)
+                                                                .range(6.0..=96.0)
+                                                                .speed(0.5),
+                                                        )
+                                                        .accessible_name(t("Font Size"));
+                                                    if let Some(pointer) = pointer {
+                                                        ctx.input_mut(|input| {
+                                                            input.pointer = pointer
+                                                        });
+                                                    }
+                                                    response
                                                 },
                                             );
-                                            let size_is_editing =
+                                            if pending_size_input
+                                                && let Some(id) = size_focus
+                                                && previous_focus != Some(id)
+                                            {
+                                                ctx.memory_mut(|memory| {
+                                                    if let Some(previous) = previous_focus {
+                                                        memory.request_focus(previous);
+                                                    } else {
+                                                        memory.surrender_focus(id);
+                                                    }
+                                                });
+                                            }
+                                            owned_focus.push(response.id);
+                                            size_is_editing =
                                                 response.has_focus() && ctx.text_edit_focused();
+                                            let focused = ctx.memory(|memory| memory.focused());
                                             ctx.data_mut(|data| {
                                                 data.insert_temp(
                                                     slot.with("size_editing"),
                                                     size_is_editing,
                                                 );
+                                                data.insert_temp(
+                                                    slot.with("size_rect"),
+                                                    response.rect,
+                                                );
+                                                if size_is_editing {
+                                                    if let Some(focused) = focused {
+                                                        data.insert_temp(
+                                                            slot.with("size_focus"),
+                                                            focused,
+                                                        );
+                                                    }
+                                                } else {
+                                                    data.remove::<egui::Id>(
+                                                        slot.with("size_focus"),
+                                                    );
+                                                }
                                             });
                                             if response.gained_focus() {
                                                 response.scroll_to_me(None);
@@ -2549,7 +3753,7 @@ impl ThinodaApp {
                                                 && size != resolved.font_size
                                                 && size.is_finite()
                                             {
-                                                change = Some(CardTextChange::Size(size));
+                                                size_change = Some(CardTextChange::Size(size));
                                             }
                                             widgets::vdivider(ui);
                                             ui.label(t("Text Color"));
@@ -2563,6 +3767,7 @@ impl ThinodaApp {
                                                     t("Text Color"),
                                                     t("Auto")
                                                 ));
+                                            owned_focus.push(auto.id);
                                             if auto.gained_focus() {
                                                 auto.scroll_to_me(None);
                                             }
@@ -2579,8 +3784,12 @@ impl ThinodaApp {
                                                 .into_iter()
                                                 .chain(SWATCHES.iter().copied().map(to_color))
                                             {
-                                                if card_text_swatch(ui, color, color == text_color)
-                                                {
+                                                if card_text_swatch(
+                                                    ui,
+                                                    color,
+                                                    color == text_color,
+                                                    &mut owned_focus,
+                                                ) {
                                                     change =
                                                         Some(CardTextChange::Color(Some(color)));
                                                 }
@@ -2593,13 +3802,114 @@ impl ThinodaApp {
                     );
                 });
             });
+        let popup_open = font_popup.is_some_and(|(_, open)| open);
+        let popup_rect =
+            font_popup.and_then(|(id, _)| ctx.memory(|memory| memory.area_rect(id.with("popup"))));
+        ctx.data_mut(|data| data.insert_temp(slot.with("font_popup"), popup_open));
+        let (pointer_event, pointer_released) = ctx.input(|input| {
+            let released = input.pointer.any_released();
+            (
+                (input.pointer.any_pressed() || released)
+                    .then(|| input.pointer.interact_pos())
+                    .flatten(),
+                released,
+            )
+        });
+        let panel_rect = panel.response.rect;
+        let pointer_in_companion = pointer_event.is_some_and(|pos| {
+            panel_rect.contains(pos)
+                || ((popup_open || popup_was_open)
+                    && popup_rect.is_some_and(|rect| rect.contains(pos)))
+        });
+        if title_active && ime_active && pointer_in_companion {
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::title_editor_id()));
+        }
+        ctx.data_mut(|data| data.insert_temp(slot.with("owned_focus"), owned_focus.clone()));
+        let focus = ctx.memory(|memory| memory.focused());
+        let focused_in_companion = focus.is_some_and(|id| owned_focus.contains(&id));
+        let has_change = size_change.is_some() || change.is_some();
+        let keyboard_finish = pointer_event.is_none()
+            && ((size_was_editing && !size_is_editing && focus.is_none())
+                || (has_change && (focus.is_none() || (popup_was_open && !popup_open))));
+        let refocus = ime_active
+            || keyboard_finish
+            || (pointer_released && (has_change || close || (!popup_open && !size_is_editing)));
+        if title_active
+            && if pointer_event.is_some() {
+                pointer_in_companion
+            } else {
+                focused_in_companion || (popup_open && focus.is_none()) || keyboard_finish
+            }
+            && let Some(doc) = self.doc_mut()
+        {
+            doc.view.retain_title_draft_this_frame(&ctx, refocus);
+            if (pointer_released || keyboard_finish)
+                && refocus
+                && let Some(serial) = doc.view.title_edit_serial()
+            {
+                let frame = ctx.cumulative_frame_nr();
+                ctx.data_mut(|data| {
+                    data.insert_temp(
+                        slot.with("restore_title"),
+                        CardTitleRestore {
+                            instance: target.instance,
+                            sheet: target.sheet,
+                            root: target.root,
+                            topic: target.topic,
+                            serial,
+                            frame,
+                        },
+                    );
+                });
+                ctx.request_repaint();
+            }
+        }
+        let mut updated_target = target.clone();
+        let mut changed = false;
+        for change in size_change.into_iter().chain(change) {
+            let Some(updated) = self.apply_card_text_change(&updated_target, change) else {
+                break;
+            };
+            updated_target = updated;
+            changed = true;
+        }
         if close {
             ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
-            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
-        } else if let Some(change) = change
-            && let Some(updated) = self.apply_card_text_change(&target, change)
+            ctx.memory_mut(|memory| {
+                memory.request_focus(if title_active {
+                    MapCanvas::title_editor_id()
+                } else {
+                    MapCanvas::id()
+                });
+            });
+        } else if changed {
+            ctx.data_mut(|data| data.insert_temp(slot, updated_target.clone()));
+            if title_active && ctx.input(|input| input.pointer.any_released()) {
+                ctx.memory_mut(|memory| memory.request_focus(MapCanvas::title_editor_id()));
+            }
+        }
+        if focus_editor_after_toolbar && title_active && !close {
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::title_editor_id()));
+            if let Some(doc) = self.doc_mut() {
+                doc.view.retain_title_draft_this_frame(&ctx, true);
+            }
+        }
+        if let Some(serial) = focus_toolbar_after_editor
+            && let Some(control) = bold_control
+            && !close
         {
-            ctx.data_mut(|data| data.insert_temp(slot, updated));
+            let frame = ctx.cumulative_frame_nr();
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    slot.with("focus_after_editor"),
+                    CardTextFocusAfterEditor {
+                        target: updated_target,
+                        serial,
+                        control,
+                        frame,
+                    },
+                );
+            });
         }
         if let Some(command) = command {
             self.exec(&ctx, command);
@@ -6561,7 +7871,12 @@ impl ThinodaApp {
         let mut credentials_saved = false;
         let mut open_shortcuts = false;
         let mut open_calendar = false;
-        let bounds = Dialog::bounds(ctx);
+        let mut bounds = Dialog::bounds(ctx);
+        if !self.any_modal_open()
+            && let Some(strip) = self.toasts.bottom_strip(ctx)
+        {
+            bounds.max.y = bounds.max.y.min((strip.top() - 4.0).max(bounds.top()));
+        }
         const CONTENT_WIDTH: f32 = 440.0;
         let style = ctx.global_style();
         let frame = egui::Frame::window(&style);
@@ -6575,6 +7890,7 @@ impl ThinodaApp {
             .enabled(!self.dialogs.shortcuts)
             .min_size(egui::Vec2::ZERO)
             .default_width(default_width)
+            .constrain_to(bounds)
             .hscroll(true)
             .show(ctx, |ui| {
                 if !ui.is_enabled() {
@@ -6750,6 +8066,7 @@ impl ThinodaApp {
                                     &mut self.settings.default_cjk_font,
                                     t("Auto"),
                                     false,
+                                    None,
                                 )
                                 .labelled_by(label.id)
                                 .on_hover_text(selected);

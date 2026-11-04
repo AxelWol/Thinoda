@@ -5,8 +5,8 @@ use thinoda_canvas::{
     minimap::{DEFAULT_MINIMAP_SIZE, bottom_right_rect},
 };
 use thinoda_core::{
-    CanvasObject, CanvasObjectId, Document, ShapeKind, Sheet, SheetRootMode, TopicId, Vec2,
-    Workbook,
+    CanvasObject, CanvasObjectId, Card, CardKind, Document, EditError, ShapeKind, Sheet,
+    SheetRootMode, TopicId, Vec2, Workbook,
 };
 
 struct CanvasState {
@@ -20,6 +20,7 @@ struct CanvasState {
     preblocks_keyboard: bool,
     minimap_blocks_pointer: bool,
     errors: Vec<String>,
+    external_text: Option<String>,
 }
 
 fn canvas_harness() -> Harness<'static, CanvasState> {
@@ -43,9 +44,14 @@ fn canvas_harness() -> Harness<'static, CanvasState> {
         .build_ui_state(
             |ui, state: &mut CanvasState| {
                 let _ = ui.button("Before canvas");
+                let reserved = if state.external_text.is_some() {
+                    64.0
+                } else {
+                    32.0
+                };
                 let size = vec2(
                     ui.available_width(),
-                    (ui.available_height() - 32.0).max(0.0),
+                    (ui.available_height() - reserved).max(0.0),
                 );
                 ui.allocate_ui(size, |ui| {
                     ui.add_enabled_ui(state.enabled, |ui| {
@@ -66,6 +72,10 @@ fn canvas_harness() -> Harness<'static, CanvasState> {
                     });
                 });
                 let _ = ui.button("After canvas");
+                if let Some(text) = &mut state.external_text {
+                    ui.add(egui::TextEdit::multiline(text).desired_rows(1))
+                        .accessible_name("External editor");
+                }
             },
             CanvasState {
                 doc: Document::new(Workbook::new(sheet)),
@@ -78,6 +88,7 @@ fn canvas_harness() -> Harness<'static, CanvasState> {
                 preblocks_keyboard: false,
                 minimap_blocks_pointer: false,
                 errors: Vec::new(),
+                external_text: None,
             },
         );
     harness.run_steps(4);
@@ -380,11 +391,120 @@ fn a_retained_title_draft_does_not_intercept_minimap_keyboard_navigation() {
     let before = h.state().doc.workbook().clone();
     let minimap_id = MapCanvas::id().with("minimap");
     assert_eq!(h.ctx.memory(|memory| memory.focused()), Some(minimap_id));
+    h.state_mut().view.take_title_error();
+    h.run_steps(3);
+    assert!(
+        h.state_mut().view.take_title_error().is_none(),
+        "A retained draft must not retry its failed commit every frame"
+    );
     h.key_press(Key::Tab);
     h.run_steps(2);
     assert_ne!(h.ctx.memory(|memory| memory.focused()), Some(minimap_id));
     assert_eq!(h.state().view.editing_text(), Some("Unsaved draft"));
     assert_eq!(h.state().doc.workbook(), &before);
+}
+
+#[test]
+fn conflicting_card_titles_preserve_focus_on_other_controls() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        for target in ["Board navigator", "After canvas"] {
+            let mut h = canvas_harness();
+            let card = h
+                .state_mut()
+                .doc
+                .edit_sheet("Add card", |sheet| {
+                    sheet
+                        .add_card(
+                            "Original",
+                            Vec2::ZERO,
+                            Card::new(kind, Vec2::new(180.0, 120.0)),
+                        )
+                        .map_err(EditError::Invalid)
+                })
+                .unwrap();
+            {
+                let state = h.state_mut();
+                state.view.begin_edit(state.doc.sheet(), card, false);
+            }
+            h.run_steps(2);
+            h.state_mut().view.set_editing_text("Unsaved draft");
+            h.state_mut()
+                .doc
+                .edit_sheet("Concurrent title", |sheet| {
+                    sheet.set_title(card, "Externally changed")
+                })
+                .unwrap();
+            h.run_steps(2);
+            h.get_by_label(target).focus();
+            h.run_steps(2);
+            assert!(h.get_by_label(target).is_focused(), "{kind:?}: {target}");
+            assert_eq!(h.state().view.editing_text(), Some("Unsaved draft"));
+            h.state_mut().view.take_title_error();
+            h.run_steps(3);
+            assert!(
+                h.state_mut().view.take_title_error().is_none(),
+                "{kind:?}: a retained draft repeatedly reported a failed commit"
+            );
+            assert!(h.get_by_label(target).is_focused(), "{kind:?}: {target}");
+            assert_eq!(h.state().view.editing_text(), Some("Unsaved draft"));
+            h.key_press(Key::Enter);
+            h.run_steps(2);
+            assert!(h.get_by_label(target).is_focused(), "{kind:?}: {target}");
+            assert_eq!(h.state().view.editing_text(), Some("Unsaved draft"));
+            assert!(
+                h.state_mut().view.take_title_error().is_none(),
+                "{kind:?}: an unfocused draft intercepted another control's Enter key"
+            );
+        }
+    }
+}
+
+#[test]
+fn composition_in_another_editor_does_not_reclaim_a_conflicting_title() {
+    let mut h = canvas_harness();
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    let card = h
+        .state_mut()
+        .doc
+        .edit_sheet("Add card", |sheet| {
+            sheet
+                .add_card(
+                    "Original",
+                    Vec2::ZERO,
+                    Card::new(CardKind::Text, Vec2::new(180.0, 120.0)),
+                )
+                .map_err(EditError::Invalid)
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        state.view.begin_edit(state.doc.sheet(), card, false);
+    }
+    h.run_steps(2);
+    h.state_mut().view.set_editing_text("Unsaved draft");
+    h.state_mut()
+        .doc
+        .edit_sheet("Concurrent title", |sheet| {
+            sheet.set_title(card, "Externally changed")
+        })
+        .unwrap();
+    h.state_mut().external_text = Some(String::new());
+    h.run_steps(2);
+    h.get_by_label("External editor").focus();
+    h.run_steps(2);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "candidate".into(),
+        active_range_chars: None,
+    }));
+    h.key_press(Key::Enter);
+    h.run_steps(1);
+    assert!(h.get_by_label("External editor").is_focused());
+    assert_eq!(h.state().view.editing_text(), Some("Unsaved draft"));
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("日本".into())));
+    h.run_steps(2);
+    assert!(h.state().external_text.as_deref().unwrap().contains("日本"));
+    assert_eq!(h.state().view.editing_text(), Some("Unsaved draft"));
 }
 
 #[test]

@@ -5,6 +5,7 @@ const { defineConfig } = require("@playwright/test");
 module.exports = defineConfig({
     testDir: "./tests",
     testMatch: [
+        "board-card-format.browser.spec.ts",
         "board-clipboard.browser.spec.ts",
         "board-export.browser.spec.ts",
         "board-minimap.browser.spec.ts",
@@ -25,7 +26,7 @@ module.exports = defineConfig({
         locale: "en-US",
         launchOptions: {
             executablePath: process.env.THINODA_BROWSER_EXECUTABLE || undefined,
-            args: ["--enable-unsafe-swiftshader"],
+            args: ["--enable-unsafe-swiftshader", "--force-device-scale-factor=1"],
         },
     },
     webServer: process.env.THINODA_WEB_URL ? undefined : {

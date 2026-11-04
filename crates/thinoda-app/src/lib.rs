@@ -60,6 +60,7 @@ pub use app::{Startup, ThinodaApp, start_services};
 /// Shared egui context setup for the desktop and web entry points.
 pub fn install_context(ctx: &egui::Context) {
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
+    ctx.add_plugin(ui::CardTextInputPlugin);
     thinoda_ui::fonts::install_fallbacks(ctx);
     #[cfg(target_arch = "wasm32")]
     board_clipboard::install_web_event_capture();
@@ -71,6 +72,13 @@ pub static UNSAVED_CHANGES: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 impl eframe::App for ThinodaApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if ctx.plugin_opt::<ui::CardTextInputPlugin>().is_none() {
+            ctx.add_plugin(ui::CardTextInputPlugin);
+        }
+        self.prepare_card_text_input(ctx, input);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Production lifecycle only: headless draw tests must never start live networking.
         self.updates.poll(ui.ctx(), self.services.paths.is_some());

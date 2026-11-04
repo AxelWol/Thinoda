@@ -176,6 +176,7 @@ pub struct Dialog<'a> {
     enabled: bool,
     open: Option<&'a mut bool>,
     maximized: Option<bool>,
+    constrain_rect: Option<Rect>,
 }
 
 impl<'a> Dialog<'a> {
@@ -197,6 +198,7 @@ impl<'a> Dialog<'a> {
             enabled: true,
             open: None,
             maximized: None,
+            constrain_rect: None,
         }
     }
 
@@ -285,6 +287,12 @@ impl<'a> Dialog<'a> {
         self
     }
 
+    /// Constrain the dialog to a smaller part of the app window.
+    pub fn constrain_to(mut self, bounds: Rect) -> Self {
+        self.constrain_rect = Some(bounds);
+        self
+    }
+
     /// The area dialogs are constrained to.
     pub fn bounds(ctx: &Context) -> Rect {
         let content = ctx.content_rect();
@@ -302,7 +310,10 @@ impl<'a> Dialog<'a> {
         let default_labels = DialogLabels::default();
         let labels = self.labels.unwrap_or(&default_labels);
         let touch_allowed = crate::widgets::touch_activation_allowed(ctx);
-        let bounds = Self::bounds(ctx);
+        let bounds = self.constrain_rect.map_or_else(
+            || Self::bounds(ctx),
+            |rect| Self::bounds(ctx).intersect(rect),
+        );
         let mut state = DialogState::load(ctx, self.id);
         if let Some(maximized) = self.maximized
             && maximized != state.maximized
@@ -783,6 +794,31 @@ mod tests {
             rect.height() > 300.0,
             "long content should use the available height: {rect:?}"
         );
+    }
+
+    #[test]
+    fn constrained_dialog_respects_reserved_space_when_maximized() {
+        let ctx = Context::default();
+        let requested = Rect::from_min_max(Pos2::ZERO, Pos2::new(320.0, 130.0));
+        let mut last = None;
+        for _ in 0..4 {
+            run(&ctx, input(vec2(320.0, 240.0)), |ctx| {
+                last = Dialog::new(Id::unique("constrained-dialog"), "Settings")
+                    .min_size(Vec2::ZERO)
+                    .constrain_to(requested)
+                    .maximized(true)
+                    .show(ctx, |ui| {
+                        for line in 0..20 {
+                            ui.label(format!("Line {line}"));
+                        }
+                    })
+                    .rect;
+            });
+        }
+        let bounds = requested.intersect(Dialog::bounds(&ctx));
+        let rect = last.expect("dialog rect");
+        assert!(bounds.expand(1.0).contains_rect(rect), "{rect:?}");
+        assert!((rect.height() - bounds.height()).abs() < 2.0, "{rect:?}");
     }
 
     #[test]
