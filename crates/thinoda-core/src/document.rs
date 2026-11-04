@@ -182,6 +182,7 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
                     attachment.resource.len() + attachment.name.len()
                 })
                 + t.style.font_family.as_ref().map_or(0, String::len)
+                + t.inline_text.estimated_heap_bytes()
         })
         .sum();
     let objects: usize = sheet

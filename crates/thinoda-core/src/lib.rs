@@ -31,6 +31,7 @@ pub mod outline;
 pub mod presentation;
 pub mod quick_styles;
 pub mod resources;
+pub mod rich_text;
 pub mod scene;
 pub mod schedule;
 pub mod search;
@@ -57,6 +58,11 @@ pub use model::{
 };
 pub use outline::OutlineNode;
 pub use presentation::{ResolvedPresentationSlide, resolve_presentation_slide};
+pub use rich_text::{
+    InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
+    MAX_INLINE_FONT_FAMILY_BYTES, MAX_INLINE_FONT_SIZE, MAX_INLINE_TEXT_CHARS,
+    MAX_INLINE_TEXT_PARAGRAPHS, MAX_INLINE_TEXT_RUNS, MIN_INLINE_FONT_SIZE,
+};
 pub use scene::{
     Scene, SceneBand, SceneHit, SceneId, SceneItem, build_scene, connector_path, topic_clip_zone,
 };

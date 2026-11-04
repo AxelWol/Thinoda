@@ -1445,31 +1445,32 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   `open_path`/`request_open` calls do not participate in the UI event-ordering
   wrapper.
 
-### Next: selected-range text and lists (design only)
+### Selected-range text and lists: bounded model foundation; controls disabled
 
-The current title is a `String`, the existing text style applies to the whole
-topic, and the editor keeps a separate string draft. Layout's `TextMeasure`
-receives a string and one font, while visual export caches shaped text by that
-same single style. Adding a few toolbar buttons would therefore misrepresent
-the feature: a rich selection must survive editing, layout, save and export.
+The title remains a `String`, with a separate bounded `InlineText` value for
+Sticky/Text cards. The editor keeps a separate string draft; layout's
+`TextMeasure` receives a string and one font, while visual export caches shaped
+text by that same single style. The core model now validates sparse inline
+overrides and paragraph list metadata, but toolbar controls remain disabled:
+a rich selection still must survive editing, layout, save and export.
 
-Proposed implementation contract, subject to the checks below:
+Implementation contract and remaining work:
 
-1. Keep the existing plain title as the text source and add bounded,
-   versioned inline-style spans and paragraph/list metadata. Style offsets
-   refer to Unicode scalar positions, matching the editor's character cursor,
-   not UTF-8 bytes or browser UTF-16 offsets. Validate ordering, bounds,
-   overlapping attributes, font values and paragraph boundaries before any
-   imported or pasted data becomes editable. Inherited and explicitly disabled
-   styles must remain distinguishable.
-2. Introduce a new native format version only when rich content is present;
-   older documents and their native output remain unchanged. Reject a newer
-   version and inconsistent version/content pairs rather than opening a
-   document that an older reader could silently strip. Extend recovery, copies
-   and versioned internal clipboard payloads with the same validation.
-   Legacy unversioned JSON is also accepted by the current native importer;
-   rich fields in that path need an explicit version policy rather than
-   bypassing the archive-manifest check.
+1. Keep the existing plain title as the text source. The core model now stores
+   bounded sparse inline overrides and bulleted/numbered paragraph metadata
+   (without nesting or checklists).
+   Style offsets are Unicode scalar positions, never UTF-8 byte offsets or
+   browser UTF-16 offsets. Validation limits formatted titles to 10,000
+   characters, 1,024 runs and 1,024 list paragraphs; font families are limited
+   to 128 bytes and sizes to 6–256 points. `None` inherits whole-card style,
+   while `Some(false)` explicitly disables a property.
+2. Native format v8 is required only when inline content is present; older
+   documents retain their previous version. The importer rejects inline data
+   in pre-v8 archives and legacy unversioned JSON. Non-native export preflight
+   reports inline formatting/list loss. Until rich-aware editing is complete,
+   plain title edits and search/replace reject affected cards without changing
+   the title or formatting. Clipboard/recovery propagation and external format
+   fidelity remain open.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,
@@ -1487,14 +1488,16 @@ Proposed implementation contract, subject to the checks below:
 Rubber-duck blockers: egui's existing text undo stores plain text, so rich
 draft undo and IME updates need a coherent edit-operation history rather than
 parallel, unsynchronized strings and spans. Character offsets alone do not
-guarantee sensible grapheme-cluster selection or bidirectional text behavior.
-Mixed-style measurement changes layout and cache keys, and every title-writing
-path—not just the canvas editor—must preserve or explicitly replace formatting.
-Clipboard HTML may be sanitized, and external applications may accept only plain
-text. Specify and test caret-only formatting, list editing, accessibility and
-lossy-format consent before exposing these controls. Native and browser
-screen-reader, real IME and physical-device acceptance remain separate gates.
-No selected-range or list controls are enabled by this proposal.
+guarantee sensible grapheme-cluster selection or bidirectional text behavior;
+the model range operation currently relies on its caller to supply an
+appropriate range. Mixed-style measurement changes layout and cache keys, and
+every title-writing path—not just the canvas editor—must preserve or explicitly
+replace formatting. Clipboard HTML may be sanitized, and external applications
+may accept only plain text. Specify and test caret-only formatting, list
+editing, accessibility and lossy-format consent before exposing these controls.
+Native and browser screen-reader, real IME and physical-device acceptance
+remain separate gates. The model foundation is implemented, but no
+selected-range or list controls are enabled.
 
 An editor prototype can investigate egui 0.37's `TextBuffer` interface: typing,
 paste and IME invoke character-indexed insert/delete operations, which avoids
@@ -1506,16 +1509,17 @@ composition transaction and grapheme policy must be verified before wiring the
 adapter to persisted content.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
-explicit scalar-indexed replacements and style-run splitting/coalescing,
+explicit scalar-indexed replacements and broader style-run operations,
 including invalid ranges and budget rejection. It now also explores snapshot
 history, directional selections, caret typing styles and explicit IME
 preedit/commit/cancel transactions. Independent randomized character-level
 oracles exercise 2,500 span operations and 2,500 mixed history/composition
 operations; a further 10,000 operations exercise changing history budgets.
-It is not compiled into Thinoda. Egui event/undo integration,
-empty-commit versus cancellation, example limits, style memory and validation,
-grapheme behavior, paragraph lists, persistence and rendering are not
-production implementations.
+That experiment is not compiled into Thinoda. Production now includes only the
+bounded sparse-style/list model, range style updates, validation, history-memory
+accounting, and native/export loss gates. Egui event/undo integration,
+empty-commit versus cancellation, grapheme behavior, paragraph-list editing,
+clipboard, rendering and accessibility are not production implementations.
 
 Duck check: an IME's committed text can differ from its last preview, so the
 prototype requires explicit final text and keeps failed updates atomic. It

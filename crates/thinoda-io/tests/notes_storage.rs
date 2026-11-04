@@ -1,6 +1,6 @@
 use std::io::{Cursor, Read, Write};
 use thinoda_core::{Workbook, notes::NoteContent, resources::Resource};
-use thinoda_io::{Format, IoError, export_bytes, import_bytes};
+use thinoda_io::{Format, export_bytes, import_bytes};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 fn entry(bytes: &[u8], name: &str) -> Vec<u8> {
@@ -97,7 +97,7 @@ fn formatted_notes_cannot_masquerade_as_an_older_native_version() {
     book.active_mut()
         .set_markdown_notes(root, Some("**source**".into()))
         .unwrap();
-    for version in [2, 3, 7] {
+    for version in [2, 3] {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         for (name, value) in [
             (
@@ -115,15 +115,11 @@ fn formatted_notes_cannot_masquerade_as_an_older_native_version() {
         }
         let bytes = writer.finish().unwrap().into_inner();
         let error = import_bytes(Format::Thinoda, &bytes).unwrap_err();
-        if version == 7 {
-            assert!(matches!(error, IoError::NewerVersion(_)));
-        } else {
-            assert!(
-                error
-                    .to_string()
-                    .contains("formatted notes require native format version 4")
-            );
-        }
+        assert!(
+            error
+                .to_string()
+                .contains("formatted notes require native format version 4")
+        );
     }
 }
 

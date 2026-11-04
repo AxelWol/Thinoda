@@ -399,6 +399,12 @@ pub fn replace_in_titles(
         let mut title = topic.title.clone();
         let matches = replace_text(&mut title, needle, replacement, opts);
         if matches > 0 {
+            if !topic.inline_text.is_empty() {
+                return Err(
+                    "Formatted card titles cannot be changed until rich-text editing is supported"
+                        .into(),
+                );
+            }
             if let Some(member) = sheet.board_member_for_topic(*id) {
                 sheet.require_unlocked_board_selection(&[member])?;
             }
@@ -667,6 +673,42 @@ mod tests {
             )
             .is_err()
         );
+        assert_eq!(sheet, before);
+    }
+
+    #[test]
+    fn title_replacement_rejects_formatted_cards_without_partial_changes() {
+        use crate::{Card, CardKind, Vec2};
+
+        let mut sheet = Sheet::new("Board", "Needle root");
+        let root = sheet.root;
+        let card = sheet.add_floating("Needle card", Vec2::new(0.0, 100.0));
+        sheet
+            .set_topic_card(
+                card,
+                Some(Card::new(CardKind::Sticky, Vec2::new(100.0, 80.0))),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .update_range("Needle card", 0..6, |style| style.bold = Some(true))
+            .unwrap();
+        let before = sheet.clone();
+
+        assert!(
+            replace_in_titles(
+                &mut sheet,
+                &[root, card],
+                "needle",
+                "Goal",
+                &SearchOptions::default(),
+            )
+            .is_err()
+        );
+        assert_eq!(sheet, before);
+        assert!(sheet.set_title(card, "Changed").is_err());
         assert_eq!(sheet, before);
     }
 

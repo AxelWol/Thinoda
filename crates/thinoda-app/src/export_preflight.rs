@@ -162,6 +162,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     *count,
                     "Camera image metadata or color profiles may be omitted",
                 ),
+                ExportLoss::InlineTextDropped(count) => {
+                    (*count, "Inline card text and list formatting omitted")
+                }
                 ExportLoss::BoardSettingsDropped => {
                     return t("Board grid and snapping settings omitted").to_owned();
                 }

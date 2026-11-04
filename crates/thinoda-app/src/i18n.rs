@@ -413,6 +413,14 @@ const DE: &[(&str, &str)] = &[
         "Speichern Sie Boards als .thinoda, um Karten, Formen, Verbindungslinien, Rahmen und Board-Einstellungen zu erhalten. Andere Formate können Board-Inhalte verändern oder auslassen; beachten Sie die Exportwarnungen.",
     ),
     (
+        "Inline card text and list formatting omitted",
+        "Formatierung und Listen im Kartentext ausgelassen",
+    ),
+    (
+        "Formatted card titles cannot be changed until rich-text editing is supported",
+        "Formatierte Kartentitel können erst geändert werden, wenn die Rich-Text-Bearbeitung unterstützt wird.",
+    ),
+    (
         "Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.",
         "Das Beschneiden durch Rahmen wirkt nur visuell und ist keine sichere Schwärzung. Inhalte außerhalb eines Rahmens können in gespeicherten Dateien oder Exporten erhalten bleiben; manche Exportformate wenden die Beschneidung nicht an.",
     ),
@@ -4456,6 +4464,7 @@ mod tests {
             "Summary topic trees omitted",
             "Relationships omitted",
             "Boundaries omitted",
+            "Inline card text and list formatting omitted",
         ];
         for key in outline_export_losses {
             assert!(
@@ -4467,6 +4476,18 @@ mod tests {
             );
         }
         keys.extend(outline_export_losses);
+        let formatted_title_errors =
+            ["Formatted card titles cannot be changed until rich-text editing is supported"];
+        for key in formatted_title_errors {
+            assert!(
+                include_str!("pt-BR.txt")
+                    .lines()
+                    .filter_map(|line| line.split_once('|'))
+                    .any(|(entry, text)| entry == key && !text.trim().is_empty()),
+                "Missing explicit Brazilian Portuguese translation: {key}"
+            );
+        }
+        keys.extend(formatted_title_errors);
         keys.extend(thinoda_core::templates::board_strings());
         keys.extend(crate::help::translation_keys());
         let kanban = thinoda_core::templates::instantiate_localized("kanban-board", &|s| {

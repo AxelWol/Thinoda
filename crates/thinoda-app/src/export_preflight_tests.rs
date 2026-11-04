@@ -26,6 +26,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::CardsDropped(14),
         ExportLoss::OrientedImageMetadataDropped(15),
         ExportLoss::BoardSettingsDropped,
+        ExportLoss::InlineTextDropped(16),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -40,6 +41,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     for (line, count) in lines.iter().take(14).zip(2..=15) {
         assert!(line.starts_with(&format!("{count} — ")), "{line}");
     }
+    assert!(lines[15].starts_with("16 — "), "{}", lines[15]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),

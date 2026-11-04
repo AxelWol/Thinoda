@@ -3008,7 +3008,15 @@ impl ThinodaApp {
         for doc in &mut self.docs {
             if let Some(error) = doc.view.take_title_error() {
                 log::warn!("title commit: {error}");
-                self.toasts.error(error);
+                let message = if error
+                    == "Formatted card titles cannot be changed until rich-text editing is supported"
+                {
+                    t("Formatted card titles cannot be changed until rich-text editing is supported")
+                        .to_owned()
+                } else {
+                    error
+                };
+                self.toasts.error(message);
             }
         }
         let dt = self.last_frame.elapsed().as_secs_f32();
@@ -3871,9 +3879,19 @@ impl ThinodaApp {
         });
         match res {
             Ok(n) => self.toasts.info(format!("{} × {n}", t("Replace"))),
-            Err(e) => self
-                .toasts
-                .error(format!("{}: {e}", t("Not possible here"))),
+            Err(e) => {
+                let error = e.to_string();
+                let error = if error
+                    == "Formatted card titles cannot be changed until rich-text editing is supported"
+                {
+                    t("Formatted card titles cannot be changed until rich-text editing is supported")
+                        .to_owned()
+                } else {
+                    error
+                };
+                self.toasts
+                    .error(format!("{}: {error}", t("Not possible here")))
+            }
         };
         self.update_search();
     }
@@ -5308,6 +5326,51 @@ mod tests {
         app.search.facets.notes_only = true;
         app.update_search();
         assert!(app.search.canvas_hits.is_empty());
+    }
+
+    #[test]
+    fn replace_all_rejects_formatted_titles_without_cross_sheet_partial_changes() {
+        use thinoda_core::{Card, CardKind, Sheet, Vec2};
+
+        let mut app = ThinodaApp::headless();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_book("Formatted title search fixture", |book| {
+                let first = &mut book.sheets[0];
+                first.set_title(first.root, "Needle topic")?;
+
+                let mut second = Sheet::new("Other", "Anchor");
+                let id = second
+                    .add_card(
+                        "Needle card",
+                        Vec2::new(100.0, 100.0),
+                        Card::new(CardKind::Sticky, Vec2::new(140.0, 80.0)),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                second
+                    .topic_mut(id)
+                    .unwrap()
+                    .inline_text
+                    .update_range("Needle card", 0..6, |style| style.bold = Some(true))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                book.sheets.push(second);
+                Ok(())
+            })
+            .unwrap();
+
+        app.search.open = true;
+        app.search.query = "needle".into();
+        app.search.replace = "Goal".into();
+        app.search.all_sheets = true;
+        app.update_search();
+        let before = app.doc().unwrap().doc.workbook().clone();
+
+        app.replace_all();
+
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert_eq!(app.search.hits.len(), 2);
+        assert_eq!(app.search.canvas_hits.len(), 0);
     }
 
     #[test]

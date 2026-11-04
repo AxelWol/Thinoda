@@ -2,10 +2,12 @@ _Last updated: 2026-11-04 06:35:42 UTC (non-binding repository metadata)._ <!-- 
 
 # Web first-start performance: concept and critique
 
-Status: **investigation and implementation in progress**. A user reports that
-a clean-cache launch on iPad Safari or Edge can take about two minutes. This is
-a report from a real device, not yet a reproducible measurement in this
-workspace. The goal is to make the app usable sooner, not merely to show a
+Status: **desktop diagnosis, implementation and browser verification complete;
+real-device acceptance remains open**. A user reports that a clean-cache
+launch on iPad Safari or Edge can take about two minutes. This is a report from
+a real device, not yet a reproducible measurement in this workspace. The
+desktop work improves the measured cold path, but does not establish an iPad
+speedup. The goal is to make the app usable sooner, not merely to show a
 spinner sooner.
 
 ## Scope and measurement

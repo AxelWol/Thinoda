@@ -522,6 +522,13 @@ impl Sheet {
 
     pub fn set_title(&mut self, id: TopicId, title: &str) -> EditResult<()> {
         self.require(id)?;
+        let topic = self.topic(id).unwrap();
+        if topic.title != title && !topic.inline_text.is_empty() {
+            return Err(EditError::Invalid(
+                "Formatted card titles cannot be changed until rich-text editing is supported"
+                    .into(),
+            ));
+        }
         self.topic_mut(id).unwrap().title = title.to_string();
         Ok(())
     }

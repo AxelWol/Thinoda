@@ -180,6 +180,67 @@ fn independent_zone_background_colors_require_native_v7() {
 }
 
 #[test]
+fn inline_card_text_requires_native_v8_and_reports_non_native_loss() {
+    let mut wb = central();
+    let id = wb.sheets[0]
+        .add_card(
+            "Card title",
+            Vec2::new(120.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(180.0, 120.0)),
+        )
+        .unwrap();
+    wb.sheets[0]
+        .add_card(
+            "Unformatted card",
+            Vec2::new(360.0, 100.0),
+            Card::new(CardKind::Sticky, Vec2::new(180.0, 120.0)),
+        )
+        .unwrap();
+    wb.sheets[0]
+        .topics
+        .get_mut(&id)
+        .unwrap()
+        .inline_text
+        .update_range("Card title", 0..4, |style| style.bold = Some(true))
+        .unwrap();
+    wb.validate().unwrap();
+    assert_eq!(required_native_version(&wb), 8);
+
+    let bytes = export_bytes(&wb, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(manifest_version(&bytes), 8);
+    assert_eq!(import_bytes(Format::Thinoda, &bytes).unwrap(), wb);
+
+    let content = serde_json::to_vec(&wb).unwrap();
+    let old_archive = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":7,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &old_archive)
+            .unwrap_err()
+            .to_string()
+            .contains("inline card text requires native format version 8")
+    );
+    assert!(
+        import_bytes(Format::Thinoda, &content)
+            .unwrap_err()
+            .to_string()
+            .contains("inline card text requires a versioned native archive")
+    );
+    assert!(
+        export_losses(&wb, Format::PlainText, &ExportOptions::default())
+            .contains(&ExportLoss::InlineTextDropped(1))
+    );
+    assert!(
+        export_losses(&wb, Format::Svg, &ExportOptions::default())
+            .contains(&ExportLoss::InlineTextDropped(1))
+    );
+}
+
+#[test]
 fn localized_board_templates_round_trip_in_native_v6() {
     use thinoda_core::templates::{TEMPLATES, TemplateCategory, instantiate_localized};
 
@@ -438,7 +499,7 @@ fn board_data_under_older_manifests_is_rejected() {
     let bytes = zip_with(&[
         (
             "manifest.json",
-            br#"{"format":"thinoda","version":8,"resources":[]}"#,
+            br#"{"format":"thinoda","version":9,"resources":[]}"#,
         ),
         ("content.json", &content),
     ]);

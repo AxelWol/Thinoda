@@ -23,11 +23,12 @@ commands and document semantics. Deliver in independently verified slices:
 2. **Partial locally:** sticky notes have explicitly labeled whole-card bold,
    italic, underline, strikethrough, alignment, font, size and color controls,
    including while their titles are being edited. Lists and selected-range
-   formatting remain open and require a document-model extension.
+   formatting remain open. A bounded inline-text model now exists, but it is not
+   connected to the editor or rendering paths.
 3. **Partial locally:** text cards use the same whole-card controls while selected
    or editing and retain supported visual/export styles. Define ownership,
-   migration, undo, clipboard, accessibility and export behavior before adding
-   selected-range formatting or lists.
+   rich-aware undo/IME, clipboard, accessibility and mixed-style rendering before
+   enabling selected-range formatting or lists.
 4. **Implemented locally:** selected connectors expose the existing route,
    endpoint arrows, width and color. The controls respect locked objects,
    active gestures and revision-bound edit transactions; SVG and editable
@@ -44,20 +45,20 @@ undo/redo, native save/reopen and visual/export parity where behavior changes.
 The browser accessibility bridge and physical-device acceptance remain separate
 open gates; integrated cloud providers remain paused.
 
-The [next selected-range and list contract](FREEFORM.md#next-selected-range-text-and-lists-design-only)
-records the proposed model, native-version, editing, clipboard and export
-boundaries and their unresolved risks. It is design work, not an implemented
-or enabled rich-text feature. An isolated, non-application span-editing
-experiment now tests explicit Unicode-scalar operations and rejection of
+The [selected-range and list contract](FREEFORM.md#selected-range-text-and-lists-bounded-model-foundation-controls-disabled)
+now has a bounded core representation for Sticky/Text card titles, validation,
+history-memory accounting, native v8 gating and non-native export-loss
+reporting. No editor controls are enabled: rich-aware undo/IME, grapheme-aware
+selection, list editing, clipboard behavior, accessibility and mixed-style
+measurement/rendering remain open. An isolated, non-application span-editing
+experiment still tests broader Unicode-scalar operations and rejection of
 over-budget edits. A separate experimental draft history tests snapshot
 undo/redo and explicit IME transactions, but is not wired to egui or the app;
-synthetic egui tests now characterize actual buffer operations, undo and
-surrounding deletion. The isolated history experiment now estimates retained
-snapshot bytes and reports eviction or over-budget retention. A test-only egui
-frame guard restores a rejected draft but can discard earlier input and expose
-transient widget state, so it is not an acceptable production adapter.
-Hard/peak memory limits, input-event mapping, real IME behavior, lists,
-persistence and rendering remain open.
+synthetic egui tests characterize actual buffer operations, undo and
+surrounding deletion. A test-only egui frame guard restores a rejected draft
+but can discard earlier input and expose transient widget state, so it is not
+an acceptable production adapter. Hard/peak memory limits, input-event mapping
+and real IME behavior remain open.
 
 **Notes strikethrough checkpoint:** the Notes inspector and enlarged editor
 now provide a localized, reversible Markdown-source strikethrough action. It
@@ -288,6 +289,31 @@ drop immediate input, and focus changes can lose selection or interrupt IME
 composition. The rapid-refocus text-replacement hazard also remains. The
 [characterizations and critique](WEB-STARTUP.md#isolated-accesskit-feasibility-probe)
 are not installed in the application and do not close browser accessibility.
+
+### Checklist reconciliation from the supplied status screenshots
+
+Implementation status is separate from device and release acceptance; a locally
+implemented feature is not treated as fully validated.
+
+| Checklist item | Status | Remaining gate |
+|---|---|---|
+| F5 ink | 🟡 Implemented locally | Define measurable budgets and representative hardware; realistic GPU/browser, touch/pen and accessibility acceptance |
+| F6 scenes | 🟡 Implemented locally | Final scene/PDF/PowerPoint and cross-platform acceptance; optional pressure device spike |
+| F1/F2 board UI | 🟡 Implemented locally | Broader integration, browser accessibility/screen-reader and physical-device acceptance |
+| Selected-range text and lists | 🟡 Bounded model and safety gates implemented | Rich-aware editing/history/IME, measurement/rendering, clipboard and accessibility remain; controls stay disabled |
+| Profile browser archive loading | ✅ Recorded | The mixed-resource Wasm profile is retained; archive-import timing showed no material change |
+| Durable browser recovery | ⬜ Open | The asynchronous draft remains unintegrated until same-origin writer races, bounded discovery and rescue behavior are safe |
+| Validate large browser boards | 🟡 Partial | Synthetic 50-image/10,000-stroke save round-trips exist; representative resources, measured memory, quota/recovery and device acceptance remain |
+| Diagnose first-start web latency | 🟡 Desktop diagnosis complete | The service-worker duplicate-Wasm request was isolated; the reported iPad delay is not reproduced on a physical iPad |
+| Critique web-startup concept | ✅ Complete | The trade-offs and failure modes are documented in [WEB-STARTUP.md](WEB-STARTUP.md) |
+| Optimize first-start web loading | 🟡 Desktop implementation complete | The measured desktop cold-start change does not establish an iPad improvement |
+| Validate web first start | 🟡 Desktop browsers covered | Actual iPad Safari/Edge, representative-network and physical screen-reader acceptance remain |
+| Prevent toolbar occlusion | ✅ Complete locally | Safe placement and no-safe-space fallback have focused regressions |
+| Final integration | ⬜ Open | Re-run the integrated native/Wasm/browser matrix after the remaining acceptance gates |
+| Publish reviewed checkpoints | ⬜ Open | Publish a reviewed, tested checkpoint without claiming the open workstreams complete |
+| Add Moodboard starter | ✅ Complete locally | Six independent image cards and an ideas note; richer collage behavior remains out of scope |
+| Move board tools to context menu | ✅ Complete locally | Tools are in the scrollable canvas context-menu submenu |
+| Add editable and automatic Zone colors | ✅ Complete locally | Independent frame/background colors and deterministic new-Zone accents preserve legacy behavior |
 
 ## Current next-value state (2026-10-30)
 
