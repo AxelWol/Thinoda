@@ -190,10 +190,11 @@ focused coverage. Failed recovery-copy cleanup is reported and retried after a
 saved document closes without discarding newer edits or changing the recovery
 manager's ownership and pending-write contracts.
 
-**Next user-directed context-menu change:** move the board tool commands from
-the Board context submenu into a separate Tools submenu between Arrange and AI.
-Preserve the other Board commands, the first-level main Board menu, command
-availability and localized short-window access.
+**Completed user-directed context-menu change:** the canvas context menu now
+places board-tool commands in a scrollable Tools submenu between Arrange and AI.
+The Board submenu retains non-tool commands, the first-level main Board menu
+remains unchanged, and each command keeps the existing availability and dispatch
+rules. A short-viewport interaction test verifies Tools and Pen stay reachable.
 
 **Completed user-directed Zone-color change:** the Zone editor now controls
 frame and background colors independently. New Zones receive a deterministic

@@ -5,7 +5,7 @@ use egui_kittest::{
     kittest::{NodeT, Queryable},
 };
 use thinoda_core::{
-    CanvasObject, Card, Rect as BoardRect, Vec2,
+    CanvasObject, Card, Rect as BoardRect, Sheet, Vec2, Workbook,
     board::{BoardMember, ShapeKind},
 };
 
@@ -3702,6 +3702,68 @@ fn canvas_context_menu_opens_the_toolbar_even_when_topic_toolbar_is_disabled() {
     h.get_by_role_and_label(Role::Button, "Bold").click();
     h.run_steps(3);
     assert_eq!(style(&h, id).bold, Some(true));
+}
+
+#[test]
+fn canvas_tools_submenu_remains_scrollable_in_a_short_viewport() {
+    let mut app = ThinodaApp::headless();
+    app.settings.ai.enabled = false;
+    app.new_doc(Workbook::new(Sheet::new("Board", "Root")));
+    let root = app.doc().unwrap().doc.sheet().root;
+    app.doc_mut().unwrap().view.select_only(root);
+    let mut h = harness(app, vec2(520.0, 320.0));
+    let pos = {
+        let doc = h.state().doc().unwrap();
+        doc.view.selected_topic_rect(&doc.doc).unwrap().center()
+    };
+    h.event(egui::Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+    }
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "Tools")
+        .scroll_to_me();
+    h.run_steps(3);
+    assert!(
+        h.ctx
+            .content_rect()
+            .contains_rect(h.get_by_role_and_label(Role::Button, "Tools").rect())
+    );
+    h.get_by_role_and_label(Role::Button, "Tools").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.query_all_by_role_and_label(Role::Button, "Pen").count(),
+        2,
+        "the submenu and toolbox both expose Pen"
+    );
+    h.query_all_by_role_and_label(Role::Button, "Pen")
+        .next()
+        .unwrap()
+        .scroll_to_me();
+    h.run_steps(3);
+    assert!(
+        h.ctx.content_rect().contains_rect(
+            h.query_all_by_role_and_label(Role::Button, "Pen")
+                .next()
+                .unwrap()
+                .rect()
+        )
+    );
+    h.query_all_by_role_and_label(Role::Button, "Pen")
+        .next()
+        .unwrap()
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().view.board_tool,
+        thinoda_canvas::BoardTool::Pen
+    );
 }
 
 #[test]

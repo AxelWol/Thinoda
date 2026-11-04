@@ -4454,7 +4454,7 @@ impl ThinodaApp {
             }
         });
         menu_button(ui, t("Board"), |ui| {
-            for (command, label) in Self::board_menu_commands() {
+            for (command, label) in Self::context_board_commands() {
                 let available = self.command_available(&command);
                 item(ui, t(label), command, available);
             }
@@ -4462,6 +4462,12 @@ impl ThinodaApp {
         menu_button(ui, t("Arrange"), |ui| {
             for (action, label) in Self::arrangement_commands() {
                 let command = Cmd::Canvas(action);
+                let available = self.command_available(&command);
+                item(ui, t(label), command, available);
+            }
+        });
+        menu_button(ui, t("Tools"), |ui| {
+            for (command, label) in Self::board_tool_commands() {
                 let available = self.command_available(&command);
                 item(ui, t(label), command, available);
             }

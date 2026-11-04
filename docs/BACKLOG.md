@@ -33,13 +33,12 @@ Integrated cloud providers stay
 disabled and paused until publisher registrations are complete; see
 [FREEFORM.md](FREEFORM.md) for phase critiques.
 
-**Next user request:** move the board tools to a context-menu Tools submenu
-between Arrange and AI, retaining other Board actions. The Zone-color request
-is implemented locally: new Zones use a deterministic accent cycle, template
-frames retain their explicit palette, and the editor separates frame and
-background colors. Native v7 carries independent backgrounds while older Zone
-data keeps its previous fill semantics; previews and exports use both colors.
-See the completed design and critique in [PLAN.md](PLAN.md).
+**Completed user requests:** board tools are available from a scrollable canvas
+context-menu Tools submenu between Arrange and AI, while other Board actions
+and the first-level Board menu remain unchanged. The Zone editor exposes separate
+frame/background colors and uses a deterministic accent cycle for new Zones;
+template frames keep their explicit palettes and older Zone data retains its
+previous fill semantics. See the completed design and critique in [PLAN.md](PLAN.md).
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout
@@ -979,7 +978,7 @@ dependencies before improving existing offline workflows.
 
 - User screenshot (2026-10-20): the German topic context menu is taller than the
   app window. **Delivered:** all application-defined context-menu roots and nested
-  Select/Arrange/AI menus use shared viewport-height scrolling/focus behavior,
+  Select/Arrange/Tools/AI menus use shared viewport-height scrolling/focus behavior,
   retaining direct command access with semantic separators. The regression matrix
   covers short/edge viewports, shipped locales, themes and 100/150/200% scaling;
   existing command/symbol/quick-style tests pass. Planning and finished-step reviews
