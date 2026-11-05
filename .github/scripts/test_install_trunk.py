@@ -1,8 +1,11 @@
 """Offline fixtures for verified CI tool installation; no binary is executed."""
 
 import hashlib
+import http.client
 import io
 from pathlib import Path
+import socket
+import ssl
 import tarfile
 import tempfile
 import unittest
@@ -15,6 +18,17 @@ import install_trunk
 class Download(io.BytesIO):
     def geturl(self):
         return install_trunk.URL
+
+
+class InterruptedDownload(Download):
+    def __init__(self, content, error):
+        super().__init__(content)
+        self.error = error
+
+    def read(self, size=-1):
+        if self.tell() == 0:
+            return super().read(8)
+        raise self.error
 
 
 def archive(name="trunk", kind=tarfile.REGTYPE):
@@ -89,6 +103,104 @@ class InstallTrunkTests(unittest.TestCase):
                 with self.assertRaises(urllib.error.URLError):
                     install_trunk.install(destination)
             self.assertFalse(destination.exists())
+
+    def test_transient_http_error_is_retried_with_checksum_verification(self):
+        content = archive()
+        error = urllib.error.HTTPError(install_trunk.URL, 504, "Gateway Timeout", {}, None)
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "bin"
+            with patch.object(install_trunk, "SHA256", hashlib.sha256(content).hexdigest()), \
+                    patch.object(install_trunk.urllib.request, "urlopen",
+                                 side_effect=[error, Download(content)]) as request, \
+                    patch.object(install_trunk.time, "sleep") as sleep, \
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                install_trunk.install(destination)
+            self.assertEqual((destination / "trunk").read_bytes(), b"fixture")
+            self.assertEqual(request.call_count, 2)
+            sleep.assert_called_once_with(install_trunk.DOWNLOAD_RETRY_DELAYS[0])
+            self.assertIn("504", stderr.getvalue())
+
+    def test_interrupted_download_restarts_with_a_fresh_file_and_digest(self):
+        content = archive()
+        for error in [TimeoutError("fixture timeout"), ConnectionResetError("fixture reset"),
+                      http.client.IncompleteRead(b"partial", 10)]:
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary:
+                destination = Path(temporary) / "bin"
+                with patch.object(install_trunk, "SHA256", hashlib.sha256(content).hexdigest()), \
+                        patch.object(install_trunk.urllib.request, "urlopen",
+                                     side_effect=[InterruptedDownload(b"old-data", error),
+                                                  Download(content)]) as request, \
+                        patch.object(install_trunk.time, "sleep"):
+                    install_trunk.install(destination)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual((destination / "trunk").read_bytes(), b"fixture")
+
+    def test_checksum_failure_after_retry_does_not_replace_existing_binary(self):
+        error = urllib.error.HTTPError(install_trunk.URL, 504, "Gateway Timeout", {}, None)
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary)
+            (destination / "trunk").write_bytes(b"existing")
+            with patch.object(install_trunk.urllib.request, "urlopen",
+                              side_effect=[error, Download(b"untrusted")]) as request, \
+                    patch.object(install_trunk.time, "sleep") as sleep:
+                with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                    install_trunk.install(destination)
+            self.assertEqual(request.call_count, 2)
+            sleep.assert_called_once()
+            self.assertEqual((destination / "trunk").read_bytes(), b"existing")
+
+    def test_transient_errors_stop_after_bounded_retries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary)
+            (destination / "trunk").write_bytes(b"existing")
+            error = urllib.error.HTTPError(install_trunk.URL, 503, "Unavailable", {}, None)
+            with patch.object(install_trunk.urllib.request, "urlopen", side_effect=error) as request, \
+                    patch.object(install_trunk.time, "sleep") as sleep:
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    install_trunk.install(destination)
+            self.assertIs(raised.exception, error)
+            self.assertEqual(request.call_count, len(install_trunk.DOWNLOAD_RETRY_DELAYS) + 1)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list],
+                             list(install_trunk.DOWNLOAD_RETRY_DELAYS))
+            self.assertEqual((destination / "trunk").read_bytes(), b"existing")
+
+    def test_permanent_http_and_certificate_errors_are_not_retried(self):
+        errors = [
+            urllib.error.HTTPError(install_trunk.URL, 403, "Forbidden", {}, None),
+            urllib.error.HTTPError(install_trunk.URL, 404, "Not Found", {}, None),
+            urllib.error.URLError(ssl.SSLError("certificate verification failed")),
+        ]
+        for error in errors:
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary:
+                destination = Path(temporary) / "bin"
+                with patch.object(install_trunk.urllib.request, "urlopen", side_effect=error) as request, \
+                        patch.object(install_trunk.time, "sleep") as sleep:
+                    with self.assertRaises(type(error)):
+                        install_trunk.install(destination)
+                request.assert_called_once()
+                sleep.assert_not_called()
+                self.assertFalse(destination.exists())
+
+    def test_transient_wrapped_transport_errors_are_recognized(self):
+        errors = [
+            urllib.error.URLError(TimeoutError("fixture timeout")),
+            urllib.error.URLError(ConnectionResetError("fixture reset")),
+            urllib.error.URLError(socket.gaierror(socket.EAI_AGAIN, "temporary DNS failure")),
+        ]
+        for error in errors:
+            with self.subTest(error=error):
+                self.assertTrue(install_trunk.is_transient_download_error(error))
+        self.assertFalse(install_trunk.is_transient_download_error(
+            urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "unknown host"))
+        ))
+
+    def test_transient_http_statuses_are_recognized(self):
+        for status in (408, 429, 500, 502, 503, 504):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError(install_trunk.URL, status, "fixture", {}, None)
+                self.assertTrue(install_trunk.is_transient_download_error(error))
+        error = urllib.error.HTTPError(install_trunk.URL, 501, "fixture", {}, None)
+        self.assertFalse(install_trunk.is_transient_download_error(error))
 
     def test_non_https_final_download_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

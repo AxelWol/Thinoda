@@ -220,7 +220,7 @@ fn object_item(
     };
     let bounds = geometry_bounds(&geometry)?;
     let clip = match &object.kind {
-        CanvasObjectKind::Connector(_) => clip_at(sheet, bounds.center()),
+        CanvasObjectKind::Connector(_) => object_clip_at(sheet, object.id, bounds.center()),
         _ => object_clip_rect(sheet, object),
     };
     Some(SceneItem {
@@ -263,14 +263,22 @@ pub fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<Rect> {
     topic_clip_zone(sheet, topic).map(|(_, rect)| rect)
 }
 
-/// Clipping from the first frame containing the stored object rectangle's center.
+/// Explicit ownership controls clipping, falling back to spatial containment for
+/// unassigned objects.
 /// Connector paths are resolved by [`build_scene`], which clips using their actual
 /// rendered bounds instead of their potentially stale stored rectangle.
 pub fn object_clip_rect(sheet: &Sheet, object: &CanvasObject) -> Option<Rect> {
-    clip_at(sheet, object.rect.center())
+    object_clip_at(sheet, object.id, object.rect.center())
 }
 
-fn clip_at(sheet: &Sheet, center: Vec2) -> Option<Rect> {
+pub fn object_clip_at(sheet: &Sheet, object: CanvasObjectId, center: Vec2) -> Option<Rect> {
+    if let Some(zone) = sheet
+        .zones
+        .iter()
+        .find(|zone| zone.objects.contains(&object))
+    {
+        return zone.clip.then_some(zone.frame);
+    }
     sheet
         .zones
         .iter()

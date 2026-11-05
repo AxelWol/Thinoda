@@ -277,11 +277,16 @@ fn native_archive_roundtrips_every_model_field() {
 }
 #[test]
 fn native_rejects_newer_major_version() {
-    let manifest = br#"{"format":"thinoda","version":9}"#;
-    let bytes = zip_with(&[("manifest.json", manifest)]);
+    let newer = thinoda_io::NATIVE_FORMAT_VERSION + 1;
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": newer,
+    }))
+    .unwrap();
+    let bytes = zip_with(&[("manifest.json", &manifest)]);
     assert!(matches!(
         import_bytes(Format::Thinoda, &bytes),
-        Err(thinoda_io::IoError::NewerVersion(_))
+        Err(thinoda_io::IoError::NewerVersion(version)) if version == newer.to_string()
     ));
 }
 

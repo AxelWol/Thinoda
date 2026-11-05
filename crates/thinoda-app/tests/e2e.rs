@@ -2486,6 +2486,10 @@ fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_dis
                     "Deletes the summary topic and its children, not the covered branches.",
                 );
             }
+            if matches!(object, ObjectSelection::Zone(_)) {
+                menu_action(&h, "Zone").click();
+                h.run_steps(3);
+            }
             h.get_by_role_and_label(Role::Button, label).click();
             h.run_steps(3);
             assert!(!object.exists(h.state().doc().unwrap().doc.sheet()));

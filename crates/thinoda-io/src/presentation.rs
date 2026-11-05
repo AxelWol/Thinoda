@@ -299,6 +299,13 @@ fn scene_connector_visible(
     resolved: &ResolvedPresentationSlide,
     object: &thinoda_core::CanvasObject,
 ) -> bool {
+    let object_visible = |id| {
+        resolved.permitted_objects.contains(&id)
+            || !sheet.zones.iter().any(|zone| zone.objects.contains(&id))
+    };
+    if !object_visible(object.id) {
+        return false;
+    }
     let CanvasObjectKind::Connector(connector) = &object.kind else {
         return true;
     };
@@ -306,6 +313,7 @@ fn scene_connector_visible(
         .into_iter()
         .all(|endpoint| match endpoint {
             Endpoint::Topic(id) => resolved.scene_topic_visible(sheet, id),
+            Endpoint::Object(id) => object_visible(id),
             _ => true,
         })
 }

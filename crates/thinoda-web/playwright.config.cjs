@@ -24,6 +24,7 @@ module.exports = defineConfig({
         browserName: "chromium",
         headless: true,
         locale: "en-US",
+        trace: "retain-on-failure",
         launchOptions: {
             executablePath: process.env.THINODA_BROWSER_EXECUTABLE || undefined,
             args: ["--enable-unsafe-swiftshader", "--force-device-scale-factor=1"],

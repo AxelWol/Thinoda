@@ -9,12 +9,22 @@ on:
         description: "Existing tag (e.g. v0.1.0) to build and publish; empty = artifacts only"
         required: false
         default: ""
+      replace_assets:
+        description: "Replace existing release assets whose contents differ"
+        type: boolean
+        required: false
+        default: false
   workflow_call:
     inputs:
       tag:
         description: "Release tag to build and publish"
         required: true
         type: string
+      replace_assets:
+        description: "Replace existing release assets whose contents differ"
+        required: false
+        default: false
+        type: boolean
     secrets:
       WINGET_TOKEN:
         required: false
@@ -37,7 +47,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -158,16 +168,15 @@ jobs:
           path: dist
           pattern: thinoda-*
           merge-multiple: true
-      # Creates the release (or updates the one created by release-please) and
-      # attaches every installer and checksum manifest as a download.
-      - uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: dist/*
-          generate_release_notes: true
-          draft: false
-          make_latest: true
-          fail_on_unmatched_files: true
+      - name: Verify and publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          REPLACE_ASSETS: ${{ inputs.replace_assets }}
+        run: |
+          args=()
+          if [[ "$REPLACE_ASSETS" == "true" ]]; then args+=(--replace-existing); fi
+          python .github/scripts/publish_release.py --tag "$RELEASE_TAG" "${args[@]}"
 
   winget:
     needs: publish

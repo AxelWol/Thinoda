@@ -123,6 +123,11 @@ class WorkflowContractTests(unittest.TestCase):
         publish = job(source, "publish")
         self.assertIn("EXPECTED_COMMIT: ${{ needs.verify.outputs.commit }}", publish)
         self.assertIn("Release tag changed during packaging", publish)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", publish)
+        self.assertIn("publish_release.py --tag", publish)
+        self.assertIn("REPLACE_ASSETS: ${{ inputs.replace_assets }}", publish)
+        self.assertIn("group: release-${{ inputs.tag || github.ref_name }}", source)
+        self.assertNotIn("softprops/action-gh-release", publish)
 
     def test_web_tool_download_is_verified_without_elevated_extraction(self):
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -149,6 +154,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("npx playwright install --with-deps chromium", web)
         self.assertLess(web.index("trunk build"), web.index("npm run test:browser"))
         self.assertLess(web.index("npm run test:browser"), web.index("actions/upload-artifact"))
+
+    def test_web_ci_retains_browser_failure_diagnostics(self):
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        web = job(source, "web")
+        self.assertIn("id: browser_tests", web)
+        self.assertIn("failure() && steps.browser_tests.outcome == 'failure'", web)
+        self.assertIn("name: thinoda-web-test-results-${{ github.run_attempt }}", web)
+        self.assertIn("path: crates/thinoda-web/test-results", web)
+        config = (ROOT / "crates" / "thinoda-web" / "playwright.config.cjs").read_text()
+        self.assertIn('trace: "retain-on-failure"', config)
 
     def test_published_builds_keep_integrated_cloud_services_opt_in(self):
         feature = "integrated-cloud-services"
@@ -269,7 +284,7 @@ class WorkflowContractTests(unittest.TestCase):
             "actions/setup-node@v7", "actions/setup-dotnet@v5", "actions/upload-artifact@v7",
             "actions/download-artifact@v8", "actions/deploy-pages@v5",
             "actions/upload-pages-artifact@v5", "Swatinem/rust-cache@v2",
-            "softprops/action-gh-release@v3", "googleapis/release-please-action@v5",
+            "googleapis/release-please-action@v5",
             "dtolnay/rust-toolchain@stable", "dtolnay/rust-toolchain@nightly",
             "vedantmgoyal9/winget-releaser@v2",
         }

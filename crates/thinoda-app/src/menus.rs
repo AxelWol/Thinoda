@@ -38,6 +38,17 @@ fn items(commands: impl IntoIterator<Item = (&'static str, Cmd)>) -> Vec<MenuEnt
 }
 
 impl ThinodaApp {
+    pub(crate) fn zone_menu_commands() -> Vec<(Cmd, &'static str)> {
+        vec![
+            (Cmd::CreateZone, "Create Zone"),
+            (Cmd::AddToZone, "Add to Zone…"),
+            (Cmd::RemoveFromZone, "Remove from Zone"),
+            (Cmd::EditZone, "Edit Zone"),
+            (Cmd::RemoveZone, "Remove Zone"),
+            (Cmd::Zones, "Manage Zones"),
+        ]
+    }
+
     pub(crate) fn board_menu_commands() -> Vec<(Cmd, &'static str)> {
         Self::board_commands()
             .into_iter()
@@ -241,7 +252,6 @@ impl ThinodaApp {
                 ("Boundary", Cmd::Canvas(Action::AddBoundary)),
                 ("To-Do", Cmd::Canvas(Action::ToggleTodo)),
                 ("Task Planning", Cmd::TaskPlanning),
-                ("Create Zone", Cmd::CreateZone),
                 ("Notes", Cmd::EditField(FocusField::Notes)),
                 ("Hyperlink", Cmd::EditField(FocusField::Hyperlink)),
                 ("Labels", Cmd::Labels),
@@ -268,10 +278,13 @@ impl ThinodaApp {
                 ).into()),
                 MenuEntry::Separator,
                 item("Work Calendar", Cmd::WorkCalendar),
-                item("Zones", Cmd::Zones),
                 item("Edit FIM node", Cmd::EditFimNode),
             ]),
             submenu("Board", Self::board_menu_commands()
+                .into_iter()
+                .map(|(command, label)| item(label, command))
+                .collect()),
+            submenu("Zone", Self::zone_menu_commands()
                 .into_iter()
                 .map(|(command, label)| item(label, command))
                 .collect()),

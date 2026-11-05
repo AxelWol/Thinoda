@@ -50,6 +50,9 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::Attachment => (I::NEW_FILE, Some(I::ADD), T::Create),
         Cmd::SaveAttachment => (I::SAVE_AS, None, T::File),
         Cmd::CreateZone => (I::ZONES, Some(I::ADD), T::Create),
+        Cmd::AddToZone => (I::ZONES, Some(I::ARROW_RIGHT), T::Edit),
+        Cmd::RemoveFromZone => (I::ZONES, Some(I::REMOVE), T::Edit),
+        Cmd::RemoveZone => (I::ZONES, Some(I::TRASH), T::Danger),
         Cmd::BoardTool(tool) => return board_tool_glyph(*tool),
         Cmd::BoardAction(action) => match action {
             thinoda_canvas::BoardAction::Move(_) => (I::MOVE_UP, None, T::Edit),

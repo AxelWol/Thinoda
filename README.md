@@ -990,7 +990,7 @@ Versions follow [Semantic Versioning](https://semver.org) and are automated by
    the version in `Cargo.toml` and `Cargo.lock` and adds the entries to
    [CHANGELOG.md](CHANGELOG.md).
 3. Merging the release PR tags `vX.Y.Z` and creates the GitHub release. It then
-   runs the release workflow to build and test all five targets and attach the
+   runs the release workflow to build and test all six targets and attach the
    installers and checksums.
 
 One-time repository setting: **Settings > Actions > General > Allow GitHub
@@ -1002,14 +1002,19 @@ another commit to get CI checks.
 Pushing a `v*` tag manually also runs the release workflow, which builds every
 package and publishes a GitHub release.
 To rebuild and publish an existing tag, use **Actions > Release > Run workflow**
-and enter the tag.
+and enter the tag. Existing release notes are preserved and matching assets are
+reused. If rebuilt assets differ, select **Replace existing release assets whose
+contents differ** to explicitly replace them; otherwise publication stops without
+overwriting them.
 The workflow uses native Windows x64/ARM64, macOS Apple silicon/Intel and Ubuntu
-22.04 x64 runners, testing each target before packaging with cargo-packager 0.11.8.
+22.04 x64/24.04 ARM64 runners, testing each target before packaging with
+cargo-packager 0.11.8.
 Running it without a tag produces artifacts only.
 Downloads have target-specific filenames and SHA-256 manifests; macOS `.app`
 bundles are provided as `.app.tar.gz` to preserve permissions and symlinks, alongside
-the `.dmg`. Workflow artifacts are retained for 30 days. Releases are published only
-after all five builds succeed, with the installers attached as release assets.
+the `.dmg`. Workflow artifacts are retained for 30 days. Installers are attached
+only after all six builds succeed and every installer matches its checksum manifest;
+a Release Please release can appear before its downloads are ready.
 Windows installers are not configured with production code-signing certificates.
 macOS releases require these repository Actions secrets (also forwarded by Release Please):
 

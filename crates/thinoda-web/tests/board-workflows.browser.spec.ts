@@ -250,6 +250,16 @@ test.describe("moodboard gallery", () => {
         await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
         await page.evaluate(() => {
             Object.defineProperty(window, "showOpenFilePicker", { configurable: true, value: undefined });
+            const read = File.prototype.arrayBuffer;
+            let delayUpload = true;
+            File.prototype.arrayBuffer = async function (this: File) {
+                if (delayUpload && this.name === "moodboard-redone.thinoda") {
+                    delayUpload = false;
+                    Reflect.set(window, "__moodboardUploadDelayed", true);
+                    await new Promise(resolve => setTimeout(resolve, 3_000));
+                }
+                return read.call(this);
+            };
         });
         const reopen = page.waitForEvent("filechooser");
         await command(page, "Open");
@@ -258,7 +268,14 @@ test.describe("moodboard gallery", () => {
             mimeType: "application/octet-stream",
             buffer: redone,
         });
-        await page.waitForTimeout(1_000);
+        // The picker returns before storage, parsing, and rendering finish.
+        // Wait for the distinctive uploaded image rather than racing Save As.
+        await expect.poll(async () => {
+            const screenshot = await page.screenshot({ clip: { x: 210, y: 282, width: 54, height: 54 } });
+            const [image] = await colorBounds(page, screenshot, [[18, 196, 120]], 6);
+            return image.count;
+        }, { timeout: 30_000 }).toBeGreaterThan(1_000);
+        expect(await page.evaluate(() => Reflect.get(window, "__moodboardUploadDelayed"))).toBe(true);
         const reopened = await saveAs(page, "moodboard-reopened.thinoda");
         expect(sheetFrom(reopened)).toEqual(updated);
         expect(manifest(reopened).resources).toEqual(resources);

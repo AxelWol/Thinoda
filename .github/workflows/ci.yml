@@ -193,8 +193,17 @@ jobs:
         working-directory: crates/thinoda-web
         run: npx playwright install --with-deps chromium
       - name: Test production startup and board workflows
+        id: browser_tests
         working-directory: crates/thinoda-web
         run: npm run test:browser
+      - name: Upload browser failure diagnostics
+        if: ${{ failure() && steps.browser_tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: thinoda-web-test-results-${{ github.run_attempt }}
+          path: crates/thinoda-web/test-results
+          if-no-files-found: warn
+          retention-days: 7
       - uses: actions/upload-artifact@v7
         with:
           name: thinoda-web

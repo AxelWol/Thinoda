@@ -2924,6 +2924,21 @@ const DE: &[(&str, &str)] = &[
     ("Zone", "Zone"),
     ("Zones", "Zonen"),
     ("Create Zone", "Zone erstellen"),
+    ("Add to Zone…", "Zur Zone hinzufügen…"),
+    ("Remove from Zone", "Aus Zone entfernen"),
+    ("Manage Zones", "Zonen verwalten"),
+    (
+        "Select floating topics or board objects.",
+        "Schwebende Themen oder Board-Objekte auswählen.",
+    ),
+    (
+        "Choose a Zone. Items stay in place; existing memberships are transferred.",
+        "Eine Zone auswählen. Elemente bleiben an ihrer Position; bestehende Zuordnungen werden übertragen.",
+    ),
+    (
+        "Zones group floating topics and board objects. Removing a Zone keeps its contents.",
+        "Zonen gruppieren schwebende Themen und Board-Objekte. Beim Entfernen einer Zone bleiben ihre Inhalte erhalten.",
+    ),
     ("Edit Zone", "Zone bearbeiten"),
     ("Remove Zone", "Zone entfernen"),
     ("Name", "Name"),

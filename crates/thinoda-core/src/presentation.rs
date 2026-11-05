@@ -15,6 +15,8 @@ pub struct ResolvedPresentationSlide {
     pub zones: Vec<Zone>,
     /// Topics permitted by source, visibility and depth before collapsed layout filtering.
     pub permitted_topics: HashSet<TopicId>,
+    /// Explicit Zone objects for source-only slides, or all objects in contextual views.
+    pub permitted_objects: HashSet<crate::CanvasObjectId>,
 }
 
 impl ResolvedPresentationSlide {
@@ -117,6 +119,26 @@ pub fn resolve_presentation_slide(
         .filter(|id| sheet.contains(**id))
         .flat_map(|id| sheet.owned_subtree_ids(*id))
         .collect();
+    let permitted_objects: HashSet<_> = if slide.source == PresentationSource::Viewport
+        || slide.scope == PresentationScope::Context
+    {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|object| object.id)
+            .collect()
+    } else if let PresentationSource::Zone(id) = slide.source {
+        sheet
+            .zones
+            .iter()
+            .find(|zone| zone.id == id)
+            .into_iter()
+            .flat_map(|zone| zone.objects.iter().copied())
+            .collect()
+    } else {
+        HashSet::new()
+    };
     // Include detached summary trees through ownership, counting their root as
     // one level below the owning parent. Iterative traversal avoids stack limits.
     let mut depths = HashMap::new();
@@ -204,6 +226,13 @@ pub fn resolve_presentation_slide(
         .zones
         .iter()
         .filter(|zone| {
+            if zone
+                .objects
+                .iter()
+                .any(|id| !permitted_objects.contains(id))
+            {
+                return false;
+            }
             if zone.roots.is_empty() {
                 zone.keep_empty
                     && (slide.scope == PresentationScope::Context
@@ -217,8 +246,6 @@ pub fn resolve_presentation_slide(
         })
         .cloned()
         .collect();
-    let include_objects =
-        slide.source == PresentationSource::Viewport || slide.scope == PresentationScope::Context;
     let zone_ids: HashSet<_> = zones.iter().map(|zone| zone.id).collect();
     let scene = build_scene(sheet, &filtered);
     let mut bounds = scene
@@ -227,7 +254,7 @@ pub fn resolve_presentation_slide(
         .filter(|item| match item.id {
             SceneId::Topic(id) => included.contains(&id),
             SceneId::Zone(id) => zone_ids.contains(&id),
-            SceneId::Object(_) => include_objects,
+            SceneId::Object(id) => permitted_objects.contains(&id),
         })
         .filter_map(|item| item.visible_bounds())
         .reduce(|a, b| a.union(&b));
@@ -394,6 +421,7 @@ pub fn resolve_presentation_slide(
         frame,
         zones,
         permitted_topics: permitted,
+        permitted_objects,
     })
 }
 

@@ -763,6 +763,7 @@ fn duplicate_frame(
         .roots
         .iter()
         .filter_map(|id| doc.sheet().board_member_for_topic(*id))
+        .chain(frame.objects.iter().copied().map(BoardMember::Object))
         .collect();
     let expanded = if members.is_empty() {
         Vec::new()
@@ -780,12 +781,12 @@ fn duplicate_frame(
         ));
     }
 
-    let payload = if frame.roots.is_empty() {
+    let payload = if frame.roots.is_empty() && frame.objects.is_empty() {
         None
     } else {
         let layout = view.layout_for(doc);
         Some(
-            clipboard::copy_board_selection(doc.sheet(), &layout, &frame.roots, &[])
+            clipboard::copy_board_selection(doc.sheet(), &layout, &frame.roots, &frame.objects)
                 .map_err(EditError::Invalid)?
                 .ok_or_else(|| EditError::Invalid("frame contents could not be copied".into()))?,
         )
@@ -793,6 +794,7 @@ fn duplicate_frame(
     let new_id =
         doc.edit_sheet("Duplicate board frame", |sheet| {
             let mut roots = Vec::new();
+            let mut objects = Vec::new();
             if let Some(payload) = &payload {
                 let pasted = clipboard::paste_board_selection(sheet, payload, delta)
                     .map_err(EditError::Invalid)?;
@@ -806,15 +808,25 @@ fn duplicate_frame(
                         EditError::Invalid("copied frame root is missing".into())
                     })?);
                 }
+                let source_objects: Vec<_> = payload.source_object_ids().collect();
+                for object in &frame.objects {
+                    let index = source_objects
+                        .iter()
+                        .position(|id| id == object)
+                        .ok_or_else(|| EditError::Invalid("frame object was not copied".into()))?;
+                    objects.push(*pasted.objects.get(index).ok_or_else(|| {
+                        EditError::Invalid("copied frame object is missing".into())
+                    })?);
+                }
             }
             let translated = frame.frame.translate(delta);
             let id = if frame.keep_empty {
                 let id = sheet
                     .create_board_frame(&frame.name, translated)
                     .map_err(EditError::Invalid)?;
-                if !roots.is_empty() {
+                if !roots.is_empty() || !objects.is_empty() {
                     sheet
-                        .set_zone_roots(id, roots)
+                        .set_zone_members(id, roots, objects)
                         .map_err(EditError::Invalid)?;
                 }
                 id
@@ -829,6 +841,7 @@ fn duplicate_frame(
                 .find(|zone| zone.id == id)
                 .expect("new frame exists");
             copied.color = frame.color;
+            copied.background_color = frame.background_color;
             copied.clip = frame.clip;
             Ok(id)
         })?;
