@@ -102,6 +102,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           TARGET: ${{ inputs.target }}
+          # UI tests share the process-wide language and cannot run concurrently.
+          RUST_TEST_THREADS: "1"
         shell: bash
         run: |
           if [[ "$TARGET" == "x86_64-unknown-linux-gnu" && "$RELEASE_TAG" == "v0.17.0" ]]; then

@@ -66,6 +66,8 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     env:
+      # UI tests share the process-wide language and cannot run concurrently.
+      RUST_TEST_THREADS: "1"
       THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID }}
       THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI }}
       THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID }}

@@ -5,9 +5,9 @@ use std::sync::{Arc, OnceLock};
 
 /// System fonts plus embedded fallbacks, loaded once per process.
 ///
-/// Browsers do not expose system font files, so the web build renders text with
-/// the fonts that egui embeds. Native exports also retain these text fallbacks:
-/// the first system face may be a bitmap emoji or icon font.
+/// Browsers do not expose system font files, so the web build uses egui's
+/// embedded fonts and bundled italic faces. Native exports retain these text
+/// fallbacks too: the first system face may be a bitmap emoji or icon font.
 pub fn database() -> Arc<Database> {
     static DB: OnceLock<Arc<Database>> = OnceLock::new();
     DB.get_or_init(|| Arc::new(build(!cfg!(target_arch = "wasm32"))))
@@ -20,7 +20,9 @@ pub(crate) fn build(system: bool) -> Database {
         db.load_system_fonts();
     }
     db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+    db.load_font_data(include_bytes!("../assets/fonts/Ubuntu-LightItalic.ttf").to_vec());
     db.load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
+    db.load_font_data(include_bytes!("../assets/fonts/Hack-Italic.ttf").to_vec());
     configure_generic_families(&mut db);
     db
 }
@@ -73,6 +75,57 @@ mod tests {
                 ..Query::default()
             };
             assert!(db.query(&query).is_some(), "{family:?}");
+        }
+    }
+
+    #[test]
+    fn embedded_fallbacks_render_italic_without_system_fonts() {
+        use resvg::usvg::fontdb::{Family, Query, Style};
+
+        let db = Arc::new(build(false));
+        for (family, css_family) in [
+            (Family::SansSerif, "sans-serif"),
+            (Family::Monospace, "monospace"),
+        ] {
+            let face = db
+                .query(&Query {
+                    families: &[family],
+                    style: Style::Italic,
+                    ..Query::default()
+                })
+                .and_then(|id| db.face(id))
+                .unwrap();
+            assert_eq!(face.style, Style::Italic, "{css_family}");
+
+            let render = |style| {
+                let source = format!(
+                    r#"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60"><text x="5" y="35" font-family="{css_family}" font-size="22" font-style="{style}">Visible formatting</text></svg>"#
+                );
+                let tree = resvg::usvg::Tree::from_str(
+                    &source,
+                    &resvg::usvg::Options {
+                        fontdb: db.clone(),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                let mut pixmap = resvg::tiny_skia::Pixmap::new(240, 60).unwrap();
+                resvg::render(
+                    &tree,
+                    resvg::tiny_skia::Transform::identity(),
+                    &mut pixmap.as_mut(),
+                );
+                let outlined = tree.to_string(&resvg::usvg::WriteOptions::default());
+                let pdf_tree =
+                    svg2pdf::usvg::Tree::from_str(&outlined, &Default::default()).unwrap();
+                let pdf =
+                    svg2pdf::to_pdf(&pdf_tree, Default::default(), Default::default()).unwrap();
+                (pixmap.data().to_vec(), pdf)
+            };
+            let normal = render("normal");
+            let italic = render("italic");
+            assert_ne!(normal.0, italic.0, "{css_family} raster");
+            assert_ne!(normal.1, italic.1, "{css_family} PDF");
         }
     }
 

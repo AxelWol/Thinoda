@@ -1648,6 +1648,8 @@ mod tests {
                 Rect::from_min_size(Vec2::new(190.0, 40.0), Vec2::new(180.0, 120.0)),
             )
             .unwrap();
+        // Legacy files carry no zone colour; new zones get an automatic accent.
+        sheet.zones[0].color = None;
         assert!(!sheet.uses_board_semantics());
         let fontdb = Arc::new(crate::fonts::build(false));
         let actual = svg_sheet_with_fonts(

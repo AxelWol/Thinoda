@@ -63,6 +63,15 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("cargo clippy --locked --workspace --all-targets -- -D warnings", native)
         self.assertIn("cargo test --locked --workspace", native)
 
+    def test_native_ui_tests_are_serialized_in_ci_and_packaging(self):
+        ci = job((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"), "test")
+        self.assertIn('      RUST_TEST_THREADS: "1"\n', ci)
+
+        packaging = job((WORKFLOWS / "package-target.yml").read_text(encoding="utf-8"), "package")
+        test_step = packaging.split("      - name: Test on the native target\n", 1)[1]
+        test_step = test_step.split("\n      - name:", 1)[0]
+        self.assertIn('          RUST_TEST_THREADS: "1"\n', test_step)
+
     def test_office_sdk_validation_gates_web_publication(self):
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         office = job(source, "office")

@@ -605,6 +605,8 @@ fn filtered_presentation_keeps_the_source_sheets_board_summary_semantics() {
         .unwrap();
     let frame = rect(-500.0, -500.0, 1600.0, 1000.0);
     let zone = sheet.create_zone("Zone", vec![branch], frame).unwrap();
+    // Keep the connector as the only feature enabling board semantics.
+    sheet.zones[0].color = None;
     for source in [
         PresentationSource::Branch(branch),
         PresentationSource::Zone(zone),

@@ -1,0 +1,12 @@
+These unmodified font files provide italic export fallbacks when system fonts
+are unavailable.
+
+Hack-Italic.ttf, version 3.003
+Copyright 2018 Source Foundry Authors; see Hack-LICENSE.txt.
+Source: https://github.com/source-foundry/Hack/blob/b47d21f808fbf4784565feccde2213ef2af924b3/build/ttf/Hack-Italic.ttf
+Git blob: d26198a321a5ce0f2a9c26d0f96e02eaa5f461b4
+
+Ubuntu-LightItalic.ttf
+Copyright 2011 Canonical Ltd.; see Ubuntu-LICENCE.txt.
+Source: https://github.com/google/fonts/blob/a50de97857f6626d6628c91e6a34c12ee8a16ede/ufl/ubuntu/Ubuntu-LightItalic.ttf
+Git blob: 0295cbbeba02b2d237dc96a7fff38309364c468c
