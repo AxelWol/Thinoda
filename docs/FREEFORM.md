@@ -1346,10 +1346,12 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - SVG output now includes italic and text decorations and positions each line
   according to the existing alignment; the editable PowerPoint path also writes
   paragraph alignment. Native round-trips, SVG and PowerPoint XML, PNG/JPEG
-  pixels, and rasterized PDF output are covered. Font shaping still measures
-  the non-italic face and exported viewers may substitute fonts, so exact
-  italic geometry and cross-host rendering are not claimed. Physical touch,
-  screen readers and external Office acceptance remain open.
+  pixels, and rasterized PDF output are covered. Bundled Ubuntu and Hack italic
+  faces provide raster and PDF fallbacks when system fonts are unavailable.
+  Font shaping still measures the non-italic face and exported viewers may
+  substitute fonts, so exact italic geometry and cross-host rendering are not
+  claimed. Physical touch, screen readers and external Office acceptance remain
+  open.
 
 ### Styled card-title checkpoint and critique
 

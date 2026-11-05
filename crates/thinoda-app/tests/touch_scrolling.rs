@@ -549,17 +549,45 @@ fn masked_copy_consent_expires_when_its_source_changes() {
     }
 }
 
+fn settings_control_center(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) -> egui::Pos2 {
+    h.get_by_role_and_label(role, label).scroll_to_me();
+    h.run_steps(8);
+    let rect = h.get_by_role_and_label(role, label).rect();
+    let dialog = h
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_settings")))
+        .expect("Settings area");
+    assert!(
+        h.ctx.content_rect().contains_rect(rect) && dialog.contains_rect(rect),
+        "{label}: {rect:?} outside Settings {dialog:?}"
+    );
+    assert_eq!(
+        h.ctx.layer_id_at(rect.center()),
+        Some(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::unique("thinoda_settings")
+        )),
+        "{label} is obscured"
+    );
+    rect.center()
+}
+
 #[test]
 fn rejected_settings_actions_preserve_profile_and_network_drafts() {
     use thinoda_app::app::SettingsTab;
     use thinoda_platform::Paths;
 
-    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+    for (theme, height) in [
+        (ThemeMode::Light, 360.0),
+        (ThemeMode::Dark, 360.0),
+        (ThemeMode::Light, 900.0),
+        (ThemeMode::Dark, 900.0),
+    ] {
         let root = tempfile::tempdir().unwrap();
         let paths = Paths::from_root(root.path());
         paths.ensure().unwrap();
         let mut h = harness(theme, 1.0);
-        h.set_size(vec2(1000.0, 900.0));
+        h.set_size(vec2(1000.0, height));
         h.state_mut().services.paths = Some(paths.clone());
         h.state_mut().save_settings();
         let ctx = h.ctx.clone();
@@ -569,7 +597,7 @@ fn rejected_settings_actions_preserve_profile_and_network_drafts() {
         let persisted = Settings::load(&paths).unwrap();
         for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
             for label in ["Autosave", "Keep backup on save", "Confirm before deleting"] {
-                let pos = h.get_by_role_and_label(Role::Switch, label).rect().center();
+                let pos = settings_control_center(&mut h, Role::Switch, label);
                 rejected_tap(&mut h, pos, contacts, cancel);
                 assert_eq!(h.state().settings, original, "{label}");
                 assert_eq!(Settings::load(&paths).unwrap(), persisted, "{label}");
@@ -580,12 +608,13 @@ fn rejected_settings_actions_preserve_profile_and_network_drafts() {
                 (Role::Tab, "Cloud"),
                 (Role::Button, "Keyboard Shortcuts"),
             ] {
-                let pos = h.get_by_role_and_label(role, label).rect().center();
+                let pos = settings_control_center(&mut h, role, label);
                 rejected_tap(&mut h, pos, contacts, cancel);
                 assert_eq!(h.state().dialogs.settings_tab, SettingsTab::General);
                 assert!(!h.state().dialogs.shortcuts);
             }
         }
+        settings_control_center(&mut h, Role::Switch, "Autosave");
         h.get_by_role_and_label(Role::Switch, "Autosave").click();
         h.run_steps(4);
         assert_ne!(h.state().settings.autosave, original.autosave);
@@ -593,12 +622,14 @@ fn rejected_settings_actions_preserve_profile_and_network_drafts() {
             Settings::load(&paths).unwrap().autosave,
             h.state().settings.autosave
         );
+        settings_control_center(&mut h, Role::Tab, "AI Assistant");
         h.get_by_role_and_label(Role::Tab, "AI Assistant").click();
         h.run_steps(4);
+        assert_eq!(h.state().dialogs.settings_tab, SettingsTab::Ai);
         h.state_mut().ai.api_key_draft = Some("local-test-draft".into());
         for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
             for label in ["Save API Key", "Clear", "Test Connection"] {
-                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                let pos = settings_control_center(&mut h, Role::Button, label);
                 rejected_tap(&mut h, pos, contacts, cancel);
                 assert_eq!(
                     h.state().ai.api_key_draft.as_deref(),

@@ -16,6 +16,18 @@ from docs_stamp import preserve_stamp, strip_stamp
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ROOT_PACKAGE = "thinoda-app"
+FONT_LICENSE_DIR = ROOT / "crates" / "thinoda-io" / "assets" / "fonts"
+FONT_LICENSES = (
+    "The export renderer also embeds unmodified Hack Italic and Ubuntu Light "
+    "Italic fallbacks. Their sources and versions are recorded in "
+    "`crates/thinoda-io/assets/fonts/FONTS.txt`.\n\n"
+    "### Hack Italic\n\n```text\n"
+    + (FONT_LICENSE_DIR / "Hack-LICENSE.txt").read_text(encoding="utf-8").strip()
+    + "\n```\n\n### Ubuntu Light Italic\n\n"
+    "Copyright 2011 Canonical Ltd.\n\n```text\n"
+    + (FONT_LICENSE_DIR / "Ubuntu-LICENCE.txt").read_text(encoding="utf-8").strip()
+    + "\n```"
+)
 
 HEADER = """# Third-party notices
 
@@ -47,6 +59,8 @@ The user interface embeds egui's default fonts (crate `epaint_default_fonts`):
 It also embeds a subset of Google Material Symbols Outlined (crate `thinoda-ui`,
 `assets/icons/ThinodaMaterialSymbols.ttf`; Apache License 2.0, see `assets/icons/LICENSE`)
 as its icon font.
+
+{FONT_LICENSES}
 
 ## Embedded W3C schemas
 
@@ -131,7 +145,7 @@ LGPL/MPL licensing:
 [Cairo copying notices](https://gitlab.freedesktop.org/cairo/cairo/-/blob/master/COPYING).
 
 ## Rust crates
-"""
+""".replace("{FONT_LICENSES}", FONT_LICENSES)
 
 
 def cargo_metadata() -> dict:
@@ -141,6 +155,7 @@ def cargo_metadata() -> dict:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout
     return json.loads(out)
 
