@@ -27,6 +27,15 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.22.1](https://github.com/AxelWol/Thinoda/compare/v0.22.0...v0.22.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* restore CI and release validation ([1314aa6](https://github.com/AxelWol/Thinoda/commit/1314aa6229a871fb84a8d469a14c40b0ba6e135a))
+* restore italic exports and reliable settings tests ([0da5468](https://github.com/AxelWol/Thinoda/commit/0da546847acff633d715534be9d23d453e17ab5c))
+* restore native CI and release validation ([9c4d43f](https://github.com/AxelWol/Thinoda/commit/9c4d43fb0badd952494e5561bc757fa1d587a8f6))
+
 ## [0.22.0](https://github.com/AxelWol/Thinoda/compare/v0.21.0...v0.22.0) (2026-11-04)
 
 
