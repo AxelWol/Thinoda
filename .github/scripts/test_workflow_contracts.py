@@ -123,6 +123,11 @@ class WorkflowContractTests(unittest.TestCase):
         publish = job(source, "publish")
         self.assertIn("EXPECTED_COMMIT: ${{ needs.verify.outputs.commit }}", publish)
         self.assertIn("Release tag changed during packaging", publish)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", publish)
+        self.assertIn("publish_release.py --tag", publish)
+        self.assertIn("REPLACE_ASSETS: ${{ inputs.replace_assets }}", publish)
+        self.assertIn("group: release-${{ inputs.tag || github.ref_name }}", source)
+        self.assertNotIn("softprops/action-gh-release", publish)
 
     def test_web_tool_download_is_verified_without_elevated_extraction(self):
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -269,7 +274,7 @@ class WorkflowContractTests(unittest.TestCase):
             "actions/setup-node@v7", "actions/setup-dotnet@v5", "actions/upload-artifact@v7",
             "actions/download-artifact@v8", "actions/deploy-pages@v5",
             "actions/upload-pages-artifact@v5", "Swatinem/rust-cache@v2",
-            "softprops/action-gh-release@v3", "googleapis/release-please-action@v5",
+            "googleapis/release-please-action@v5",
             "dtolnay/rust-toolchain@stable", "dtolnay/rust-toolchain@nightly",
             "vedantmgoyal9/winget-releaser@v2",
         }
