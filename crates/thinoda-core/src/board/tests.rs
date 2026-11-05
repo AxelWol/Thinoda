@@ -35,6 +35,219 @@ fn board() -> (Sheet, TopicId, TopicId, TopicId) {
 // ---- serde ------------------------------------------------------------------------------
 
 #[test]
+fn zone_membership_transfers_mixed_members_and_retains_empty_zones_with_undo() {
+    let (mut sheet, first, second, card) = board();
+    let object = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(20.0, 30.0, 80.0, 60.0),
+        ))
+        .unwrap();
+    let source = sheet
+        .create_zone("Source", vec![first], rect(0.0, 0.0, 400.0, 400.0))
+        .unwrap();
+    let target = sheet
+        .create_zone("Target", vec![second], rect(500.0, 0.0, 400.0, 400.0))
+        .unwrap();
+    sheet
+        .set_zone_members(source, vec![first, card], vec![object])
+        .unwrap();
+    sheet.zones[0].keep_empty = false;
+    let before = sheet.clone();
+    let mut doc = Document::new(crate::Workbook::new(sheet));
+    doc.set_zone_members(target, vec![first, card], vec![object])
+        .unwrap();
+    let source_zone = doc
+        .sheet()
+        .zones
+        .iter()
+        .find(|zone| zone.id == source)
+        .unwrap();
+    assert!(
+        source_zone.keep_empty && source_zone.roots.is_empty() && source_zone.objects.is_empty()
+    );
+    assert_eq!(doc.sheet().canvas, before.canvas);
+    assert_eq!(doc.sheet().topics, before.topics);
+    assert_eq!(doc.sheet().zones[1].frame, before.zones[1].frame);
+    doc.sheet().validate().unwrap();
+    assert!(doc.undo());
+    assert_eq!(doc.sheet(), &before);
+    assert!(doc.redo());
+    doc.set_zone_members(target, vec![], vec![]).unwrap();
+    assert!(
+        doc.sheet()
+            .zones
+            .iter()
+            .all(|zone| zone.keep_empty && zone.roots.is_empty() && zone.objects.is_empty())
+    );
+    doc.sheet().validate().unwrap();
+}
+
+#[test]
+fn zone_membership_rejects_duplicate_and_dangling_objects_atomically() {
+    let (mut sheet, root, _, _) = board();
+    let object = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 80.0, 60.0),
+        ))
+        .unwrap();
+    let one = sheet
+        .create_zone("One", vec![root], rect(0.0, 0.0, 200.0, 200.0))
+        .unwrap();
+    let two = sheet
+        .create_board_frame("Two", rect(300.0, 0.0, 200.0, 200.0))
+        .unwrap();
+    sheet
+        .set_zone_members(one, vec![root], vec![object])
+        .unwrap();
+    let before = sheet.clone();
+    for (roots, objects) in [
+        (vec![root, root], vec![]),
+        (vec![], vec![object, object]),
+        (vec![], vec![CanvasObjectId(u64::MAX)]),
+        (vec![sheet.root], vec![]),
+    ] {
+        assert!(sheet.set_zone_members(two, roots, objects).is_err());
+        assert_eq!(sheet, before);
+    }
+    let mut invalid = sheet.clone();
+    invalid.zones[1].objects.push(object);
+    assert!(invalid.validate().is_err());
+    invalid.zones[1].objects = vec![CanvasObjectId(u64::MAX)];
+    assert!(invalid.validate().is_err());
+    sheet.remove_canvas_objects(&[object]).unwrap();
+    assert!(sheet.zones.iter().all(|zone| zone.objects.is_empty()));
+    sheet.validate().unwrap();
+}
+
+#[test]
+fn zone_movement_moves_explicit_objects_and_groups_with_atomic_lock_failure() {
+    let (mut sheet, root, _, card) = board();
+    let object = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 80.0, 60.0),
+        ))
+        .unwrap();
+    sheet
+        .group_board_members(&[BoardMember::Object(object), BoardMember::Card(card)])
+        .unwrap();
+    let zone = sheet
+        .create_zone("Mixed", vec![root], rect(0.0, 0.0, 200.0, 200.0))
+        .unwrap();
+    let ink = sheet
+        .add_canvas_object(CanvasObject::ink(stroke(&[(10.0, 20.0), (30.0, 40.0)])))
+        .unwrap();
+    let connector = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(15.0, 25.0)),
+            Endpoint::Topic(root),
+        )))
+        .unwrap();
+    // Partial explicit group membership still uses the shared rigid group rules.
+    sheet
+        .set_zone_members(zone, vec![root], vec![object, ink, connector])
+        .unwrap();
+    sheet.canvas.objects[0].locked = true;
+    let before = sheet.clone();
+    let delta = Vec2::new(30.0, 50.0);
+    assert!(sheet.move_zone(zone, delta).is_err());
+    assert_eq!(sheet, before);
+    sheet.canvas.objects[0].locked = false;
+    sheet.move_zone(zone, delta).unwrap();
+    assert_eq!(
+        sheet.canvas.objects[0].rect,
+        before.canvas.objects[0].rect.translate(delta)
+    );
+    for topic in [root, card] {
+        assert_eq!(
+            sheet.topic(topic).unwrap().position,
+            before
+                .topic(topic)
+                .unwrap()
+                .position
+                .map(|position| position + delta)
+        );
+    }
+    assert_eq!(sheet.zones[0].frame, before.zones[0].frame.translate(delta));
+    let CanvasObjectKind::Ink(actual) = &sheet.canvas.object(ink).unwrap().kind else {
+        panic!("ink");
+    };
+    assert_eq!(
+        actual.points.as_ref(),
+        &[Vec2::new(10.0, 20.0) + delta, Vec2::new(30.0, 40.0) + delta]
+    );
+    let CanvasObjectKind::Connector(actual) = &sheet.canvas.object(connector).unwrap().kind else {
+        panic!("connector");
+    };
+    assert_eq!(actual.from, Endpoint::Point(Vec2::new(15.0, 25.0) + delta));
+    assert_eq!(actual.to, Endpoint::Topic(root));
+    let before = sheet.clone();
+    assert!(
+        sheet
+            .move_zone(zone, Vec2::new(MAX_BOARD_COORDINATE, 0.0))
+            .is_err()
+    );
+    assert_eq!(sheet, before);
+    sheet.validate().unwrap();
+}
+
+#[test]
+fn zone_objects_use_explicit_clipping_and_source_slide_membership() {
+    let (mut sheet, root, _, _) = board();
+    let frame = rect(0.0, 0.0, 200.0, 200.0);
+    let outside = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(500.0, 500.0, 80.0, 60.0),
+        ))
+        .unwrap();
+    let spatial = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(20.0, 20.0, 80.0, 60.0),
+        ))
+        .unwrap();
+    let zone = sheet.create_zone("Mixed", vec![root], frame).unwrap();
+    sheet
+        .set_zone_members(zone, vec![root], vec![outside])
+        .unwrap();
+    sheet.zones[0].clip = true;
+    assert_eq!(
+        crate::scene::object_clip_rect(&sheet, sheet.canvas.object(outside).unwrap()),
+        Some(frame)
+    );
+    assert_eq!(
+        crate::scene::object_clip_rect(&sheet, sheet.canvas.object(spatial).unwrap()),
+        Some(frame)
+    );
+    let layout = crate::layout::layout_sheet(&sheet, &crate::layout::ApproxMeasure, false);
+    let slide_id = sheet
+        .add_presentation_slide("Slide", PresentationSource::Zone(zone), frame)
+        .unwrap();
+    sheet.presentation.slides[0].scope = crate::PresentationScope::Source;
+    let resolved =
+        crate::resolve_presentation_slide(&sheet, &sheet.presentation.slides[0], &layout).unwrap();
+    assert_eq!(sheet.presentation.slides[0].id, slide_id);
+    assert_eq!(resolved.permitted_objects, HashSet::from([outside]));
+    sheet.zones[0].clip = false;
+    assert_eq!(
+        crate::scene::object_clip_rect(&sheet, sheet.canvas.object(outside).unwrap()),
+        None
+    );
+    let payload = crate::clipboard::copy_board_selection(&sheet, &layout, &[root], &[outside])
+        .unwrap()
+        .unwrap();
+    let pasted =
+        crate::clipboard::paste_board_selection(&mut sheet, &payload, Vec2::new(10.0, 10.0))
+            .unwrap();
+    assert_eq!(sheet.zones[0].objects, vec![outside]);
+    assert!(!sheet.zones[0].objects.contains(&pasted.objects[0]));
+    sheet.validate().unwrap();
+}
+
+#[test]
 fn legacy_sheet_json_round_trips_byte_identically() {
     let mut s = Sheet::new("Map", "Central");
     let a = s.add_child(s.root, None, "A");

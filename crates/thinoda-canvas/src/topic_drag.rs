@@ -293,6 +293,33 @@ pub(crate) fn ghost_layout(sheet: &Sheet, layout: &Layout, members: &BTreeSet<To
     }
 }
 
+fn moving_object_clip(
+    sheet: &Sheet,
+    object: thinoda_core::CanvasObjectId,
+    center: Vec2,
+    delta: Vec2,
+    moving_zone: Option<ZoneId>,
+) -> Option<thinoda_core::Rect> {
+    let frame = |zone: &thinoda_core::Zone| {
+        if moving_zone == Some(zone.id) {
+            zone.frame.translate(delta)
+        } else {
+            zone.frame
+        }
+    };
+    if let Some(owner) = sheet
+        .zones
+        .iter()
+        .find(|zone| zone.objects.contains(&object))
+    {
+        return owner.clip.then(|| frame(owner));
+    }
+    sheet.zones.iter().find_map(|zone| {
+        let frame = frame(zone);
+        (zone.clip && frame.contains(center)).then_some(frame)
+    })
+}
+
 fn ghost_scene(
     sheet: &Sheet,
     scene: &Scene,
@@ -323,14 +350,10 @@ fn ghost_scene(
             .map(|item| {
                 let mut item = item.clone();
                 let center = item.bounds.center() + delta;
-                item.clip = sheet.zones.iter().find_map(|zone| {
-                    let frame = if moving_zone == Some(zone.id) {
-                        zone.frame.translate(delta)
-                    } else {
-                        zone.frame
-                    };
-                    (zone.clip && frame.contains(center)).then(|| frame.translate(delta * -1.0))
-                });
+                if let SceneId::Object(id) = item.id {
+                    item.clip = moving_object_clip(sheet, id, center, delta, moving_zone)
+                        .map(|frame| frame.translate(delta * -1.0));
+                }
                 item
             })
             .collect(),
@@ -373,12 +396,14 @@ pub(crate) fn paint_ghost(
 pub(crate) fn zone_board_members(
     sheet: &Sheet,
     roots: &[TopicId],
+    objects: &[thinoda_core::CanvasObjectId],
 ) -> Result<Vec<BoardMember>, EditError> {
     let cards: Vec<_> = roots
         .iter()
         .copied()
         .filter(|root| sheet.topic(*root).is_some_and(|topic| topic.card.is_some()))
         .map(BoardMember::Card)
+        .chain(objects.iter().copied().map(BoardMember::Object))
         .collect();
     if cards.is_empty() {
         return Ok(Vec::new());
@@ -469,14 +494,7 @@ pub(crate) fn paint_zone_members(
                     CanvasObjectKind::Connector(_) => item.bounds.center(),
                     _ => object.rect.center(),
                 } + delta;
-                sheet.zones.iter().find_map(|candidate| {
-                    let frame = if candidate.id == zone {
-                        candidate.frame.translate(delta)
-                    } else {
-                        candidate.frame
-                    };
-                    (candidate.clip && frame.contains(center)).then_some(frame)
-                })
+                moving_object_clip(sheet, id, center, delta, Some(zone))
             }
             _ => continue,
         };
@@ -1139,6 +1157,35 @@ mod tests {
     }
 
     #[test]
+    fn zone_preview_includes_explicit_objects_outside_the_frame() {
+        use thinoda_core::{CanvasObject, Rect, ShapeKind};
+        let mut sheet = Sheet::new("Map", "Root");
+        let object = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(500.0, 500.0), Vec2::new(80.0, 60.0)),
+            ))
+            .unwrap();
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 200.0));
+        let zone = sheet.create_board_frame("Frame", frame).unwrap();
+        sheet.set_zone_members(zone, vec![], vec![object]).unwrap();
+        sheet.zones[0].clip = true;
+        assert_eq!(
+            zone_board_members(&sheet, &[], &[object]).unwrap(),
+            vec![BoardMember::Object(object)]
+        );
+        let delta = Vec2::new(20.0, 30.0);
+        assert_eq!(
+            moving_object_clip(&sheet, object, Vec2::new(560.0, 560.0), delta, Some(zone)),
+            Some(frame.translate(delta))
+        );
+        assert_eq!(
+            moving_object_clip(&sheet, object, Vec2::new(560.0, 560.0), delta, None),
+            Some(frame)
+        );
+    }
+
+    #[test]
     fn zone_group_outlines_only_actual_rigid_members_with_their_target_clips() {
         use thinoda_core::{
             CanvasConnector, CanvasObject, Card, CardKind, Rect, ShapeKind, SheetRootMode,
@@ -1209,7 +1256,7 @@ mod tests {
             ])
             .unwrap();
         let before = sheet.clone();
-        let board_members = zone_board_members(&sheet, &[inside]).unwrap();
+        let board_members = zone_board_members(&sheet, &[inside], &[]).unwrap();
         assert!(!board_members.contains(&BoardMember::Object(stationary)));
         let topics = members(&sheet, &[inside]);
         let moving_topics = zone_moving_topics(&sheet, &topics, &board_members);

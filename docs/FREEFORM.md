@@ -10,6 +10,29 @@ storage-provider gap analysis). Roadmap entries live in
 [BACKLOG.md](BACKLOG.md#freeform-boards-and-flexible-map-roots) and
 [PLAN.md](PLAN.md#r14---freeform-boards-and-flexible-map-roots).
 
+### Zone membership
+
+The **Zone** main menu and board context submenu group **Create Zone**,
+**Add to Zone…**, **Remove from Zone**, **Edit Zone**, **Remove Zone**, and
+**Manage Zones**. Select floating topics, board objects, or a mixed selection,
+then choose **Add to Zone…** and select an existing Zone. Items keep their
+positions; membership transfers from their previous Zone. Grouped board items
+are included together; locked items cannot be reassigned.
+
+**Remove from Zone** detaches the selected items without deleting or moving
+them. Empty Zones remain available for reuse. Select a Zone frame to edit or
+remove it; **Remove Zone** keeps all its contents. Membership changes are
+undoable as one operation. Adding items does not resize the frame: use
+**Edit Zone** to adjust its dimensions if needed.
+
+The model API `Sheet::set_zone_members(id, roots, objects)` replaces complete
+membership atomically and retains both target and donor frames when empty.
+`Zone.objects` stores explicit object IDs; unassigned objects still use spatial
+containment for clipping, while assigned objects use their owning Zone's clipping.
+Moving a Zone expands rigid board groups and rejects locked or invalid moves
+without changing any contents. Explicit object membership requires native format
+v9 so older applications refuse the file rather than silently dropping ownership.
+
 ## 1. Goal
 
 Thinoda should also work as a **whiteboard**, not only as a tree-shaped mind map,

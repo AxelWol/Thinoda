@@ -472,7 +472,9 @@ fn board_duplication_transaction_copies_frames_and_rejects_locked_contents() {
     let rect =
         thinoda_core::Rect::from_min_size(Vec2::new(-150.0, -120.0), Vec2::new(400.0, 240.0));
     let frame = sheet.create_board_frame("Frame", rect).unwrap();
-    sheet.set_zone_roots(frame, vec![card]).unwrap();
+    sheet
+        .set_zone_members(frame, vec![card], vec![object])
+        .unwrap();
     sheet.zones[0].color = Some(thinoda_core::Color::rgb(10, 20, 30));
     sheet.zones[0].clip = true;
     let mut h = harness(sheet);
@@ -503,6 +505,8 @@ fn board_duplication_transaction_copies_frames_and_rejects_locked_contents() {
     assert!(copied.clip && copied.keep_empty);
     assert_eq!(copied.roots.len(), 1);
     assert_ne!(copied.roots[0], card);
+    assert_eq!(copied.objects.len(), 1);
+    assert_ne!(copied.objects[0], object);
     assert_eq!(sheet.topic(copied.roots[0]).unwrap().position, Some(delta));
     let copied_group = sheet
         .board_member_group(BoardMember::Card(copied.roots[0]))

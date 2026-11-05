@@ -1743,7 +1743,7 @@ impl FimDocument {
         }
         sheet
             .zones
-            .retain(|zone| zone.keep_empty || !zone.roots.is_empty());
+            .retain(|zone| zone.keep_empty || !zone.roots.is_empty() || !zone.objects.is_empty());
         sheet
             .presentation
             .slides

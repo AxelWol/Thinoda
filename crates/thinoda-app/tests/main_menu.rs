@@ -75,7 +75,8 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                 h.run_steps(3);
                 for category in [
-                    "File", "Edit", "Sheet", "Insert", "AI", "Tools", "Board", "View", "Help",
+                    "File", "Edit", "Sheet", "Insert", "AI", "Tools", "Board", "Zone", "View",
+                    "Help",
                 ] {
                     reveal(&mut h, t(category));
                     let rect = h.get_by_role_and_label(Role::Button, t(category)).rect();
@@ -108,6 +109,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                         "AI settings",
                     ),
                     ("Tools", "Map Shot", Cmd::MapShot, "Merge Map Files…"),
+                    ("Zone", "Create Zone", Cmd::CreateZone, "Manage Zones"),
                     (
                         "Board",
                         "Select tool",
@@ -224,7 +226,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
 
     // Keep language-sensitive menu tests together because the app locale is global.
     let categories = [
-        "File", "Edit", "Sheet", "Insert", "AI", "Tools", "Board", "View", "Help",
+        "File", "Edit", "Sheet", "Insert", "AI", "Tools", "Board", "Zone", "View", "Help",
     ];
     let mut app = ThinodaApp::headless();
     app.settings.show_format_panel = false;

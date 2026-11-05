@@ -99,6 +99,9 @@ pub enum Cmd {
     InsertFimBefore,
     InsertFimAfter,
     CreateZone,
+    AddToZone,
+    RemoveFromZone,
+    RemoveZone,
     EditZone,
     Zones,
     Pitch,
@@ -1196,6 +1199,9 @@ impl ThinodaApp {
             Cmd::WorkCalendar => self.begin_task_planning(ctx, true),
             Cmd::Gantt => self.open_gantt(),
             Cmd::CreateZone => self.begin_zone_editor(ctx, None),
+            Cmd::AddToZone => self.begin_zone_membership(ctx),
+            Cmd::RemoveFromZone => self.remove_from_zones(ctx),
+            Cmd::RemoveZone => self.remove_selected_zone(ctx),
             Cmd::EditZone => {
                 if let Some(thinoda_canvas::ObjectSelection::Zone(id)) =
                     self.doc().and_then(|doc| doc.view.selected_object)
@@ -1891,18 +1897,16 @@ impl ThinodaApp {
             | Cmd::Pitch
             | Cmd::PitchPresenter
             | Cmd::EditPresentation => self.doc().is_some() && !self.any_modal_open(),
-            Cmd::CreateZone => {
+            Cmd::CreateZone => !self.any_modal_open() && self.selected_zone_members().is_some(),
+            Cmd::AddToZone => {
                 !self.any_modal_open()
-                    && self.doc().is_some_and(|doc| {
-                        !doc.view.selection.is_empty()
-                            && doc
-                                .view
-                                .selection
-                                .iter()
-                                .all(|id| doc.doc.sheet().floating.contains(id))
-                    })
+                    && self.selected_zone_members().is_some()
+                    && self
+                        .doc()
+                        .is_some_and(|doc| !doc.doc.sheet().zones.is_empty())
             }
-            Cmd::EditZone => {
+            Cmd::RemoveFromZone => !self.any_modal_open() && self.zone_selection_has_membership(),
+            Cmd::EditZone | Cmd::RemoveZone => {
                 !self.any_modal_open()
                     && self.doc().is_some_and(|doc| {
                         matches!(
@@ -4010,9 +4014,12 @@ impl ThinodaApp {
             (Cmd::AddFimChild, "Add FIM child", "", "Insert"),
             (Cmd::InsertFimBefore, "Insert FIM node before", "", "Insert"),
             (Cmd::InsertFimAfter, "Insert FIM node after", "", "Insert"),
-            (Cmd::CreateZone, "Create Zone", "", "Insert"),
-            (Cmd::EditZone, "Edit Zone", "", "Edit"),
-            (Cmd::Zones, "Zones", "", "Tools"),
+            (Cmd::CreateZone, "Create Zone", "", "Zone"),
+            (Cmd::AddToZone, "Add to Zone…", "", "Zone"),
+            (Cmd::RemoveFromZone, "Remove from Zone", "", "Zone"),
+            (Cmd::RemoveZone, "Remove Zone", "", "Zone"),
+            (Cmd::EditZone, "Edit Zone", "", "Zone"),
+            (Cmd::Zones, "Manage Zones", "", "Zone"),
             (Cmd::Pitch, "Pitch", "", "View"),
             (Cmd::PitchPresenter, "Presenter View", "", "View"),
             (Cmd::EditPresentation, "Edit Presentation", "", "View"),

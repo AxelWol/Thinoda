@@ -135,6 +135,75 @@ fn all_text(bytes: &[u8]) -> String {
 // --- native versioning --------------------------------------------------------------
 
 #[test]
+fn explicit_zone_objects_require_native_v9_and_round_trip() {
+    let mut wb = board();
+    let sheet = &mut wb.sheets[0];
+    let zone = sheet
+        .create_board_frame(
+            "Mixed",
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(500.0, 500.0)),
+        )
+        .unwrap();
+    let root = sheet.floating[0];
+    let object = sheet.canvas.objects[0].id;
+    sheet
+        .set_zone_members(zone, vec![root], vec![object])
+        .unwrap();
+    wb.validate().unwrap();
+    assert_eq!(required_native_version(&wb), 9);
+    let bytes = export(&wb, Format::Thinoda);
+    assert_eq!(manifest_version(&bytes), 9);
+    assert_eq!(import_bytes(Format::Thinoda, &bytes).unwrap(), wb);
+    let content = serde_json::to_vec(&wb).unwrap();
+    let downgraded = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":8,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &downgraded)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit Zone object membership requires native format version 9")
+    );
+    assert!(
+        import_bytes(Format::Thinoda, &content)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit Zone object membership requires a versioned native archive")
+    );
+    let sheet = &mut wb.sheets[0];
+    let other = sheet
+        .create_board_frame(
+            "Other",
+            Rect::from_min_size(Vec2::new(700.0, 0.0), Vec2::new(200.0, 200.0)),
+        )
+        .unwrap();
+    sheet
+        .set_zone_members(other, vec![], vec![sheet.canvas.objects[1].id])
+        .unwrap();
+    let slide = sheet
+        .add_presentation_slide(
+            "Mixed",
+            PresentationSource::Zone(zone),
+            sheet.zones[0].frame,
+        )
+        .unwrap();
+    let slide = sheet
+        .presentation
+        .slides
+        .iter_mut()
+        .find(|candidate| candidate.id == slide)
+        .unwrap();
+    slide.scope = thinoda_core::PresentationScope::Source;
+    let svg = render_presentation_slide_svg(sheet, 1, &ExportOptions::default()).unwrap();
+    assert!(svg.contains(&format!("id=\"object-{}\"", object.0)));
+    assert!(!svg.contains(&format!("id=\"object-{}\"", sheet.canvas.objects[1].id.0)));
+}
+
+#[test]
 fn board_workbooks_write_native_v6_and_round_trip() {
     let wb = board();
     assert_eq!(required_native_version(&wb), 6);
@@ -499,7 +568,7 @@ fn board_data_under_older_manifests_is_rejected() {
     let bytes = zip_with(&[
         (
             "manifest.json",
-            br#"{"format":"thinoda","version":9,"resources":[]}"#,
+            br#"{"format":"thinoda","version":10,"resources":[]}"#,
         ),
         ("content.json", &content),
     ]);

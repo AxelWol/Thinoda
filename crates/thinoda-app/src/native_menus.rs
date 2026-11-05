@@ -705,7 +705,7 @@ mod tests {
         let mut app = ThinodaApp::headless();
         app.docs.clear();
         let groups = app.main_menu_entries();
-        assert_eq!(groups.len(), 9);
+        assert_eq!(groups.len(), 10);
         let names: Vec<_> = groups
             .iter()
             .map(|entry| match entry {
@@ -716,7 +716,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "File", "Edit", "Sheet", "Insert", "AI", "Tools", "Board", "View", "Help",
+                "File", "Edit", "Sheet", "Insert", "AI", "Tools", "Board", "Zone", "View", "Help",
             ]
             .map(t)
         );
