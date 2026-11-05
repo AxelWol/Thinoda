@@ -12,15 +12,22 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 7;
+pub const NATIVE_FORMAT_VERSION: u64 = 8;
 
 /// Lowest native format version able to represent `book`.
 ///
 /// 2 is the base format, 3 adds embedded resources, 4 formatted notes, 5 FIM documents,
-/// 6 Freeform board semantics and 7 independent Zone background colors. Workbooks
-/// without newer content keep the version (and bytes) they had before the feature existed.
+/// 6 Freeform board semantics, 7 independent Zone background colors, and 8 inline card
+/// text formatting. Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.sheets.iter().any(|sheet| {
+    if book
+        .sheets
+        .iter()
+        .flat_map(|sheet| sheet.topics.values())
+        .any(|topic| !topic.inline_text.is_empty())
+    {
+        8
+    } else if book.sheets.iter().any(|sheet| {
         sheet
             .zones
             .iter()
@@ -148,6 +155,8 @@ pub enum ExportLoss {
     OrientedImageMetadataDropped(usize),
     /// Board grid and snapping settings are not written.
     BoardSettingsDropped,
+    /// Inline card titles with formatting or list semantics are not written.
+    InlineTextDropped(usize),
 }
 
 /// Content lost when exporting `book` to `format` with `opts`, itemised with counts.
@@ -221,6 +230,7 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
         {
             push(ExportLoss::ZoneClipDropped, c.zone_clip);
         }
+        push(ExportLoss::InlineTextDropped, c.inline_text);
     } else {
         push(ExportLoss::ShapesDropped, c.shapes);
         push(ExportLoss::InkDropped, c.ink);
@@ -276,6 +286,7 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
                 sheets.iter().map(|(_, sheet)| sheet.boundaries.len()).sum(),
             );
         }
+        push(ExportLoss::InlineTextDropped, c.inline_text);
         for (index, sheet) in &sheets {
             if sheet.root_mode == SheetRootMode::Hidden {
                 out.push(ExportLoss::SynthesizedRoot {
@@ -328,6 +339,7 @@ struct Counts {
     viewport_slides: usize,
     zones: usize,
     zone_clip: usize,
+    inline_text: usize,
     /// Floating topics of Central sheets (Hidden sheets fold them into the outline).
     central_floating: usize,
     settings: bool,
@@ -353,6 +365,11 @@ impl Counts {
             }
             self.rotated_cards += usize::from(card.rotation != 0.0);
         }
+        self.inline_text += sheet
+            .topics
+            .values()
+            .filter(|topic| !topic.inline_text.is_empty())
+            .count();
         self.viewport_slides += sheet
             .presentation
             .slides

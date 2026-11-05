@@ -3232,6 +3232,57 @@ mod tests {
     }
 
     #[test]
+    fn changed_formatted_card_title_is_rejected_without_losing_its_draft_or_styles() {
+        use thinoda_core::{
+            CardKind, InlineParagraph, InlineText, InlineTextRun, InlineTextStyle, ListKind,
+            board::Card, geometry::Vec2,
+        };
+
+        for kind in [CardKind::Sticky, CardKind::Text] {
+            let mut sheet = Sheet::new("Board", "Root");
+            let id = sheet
+                .add_card(
+                    "Sticky",
+                    Vec2::ZERO,
+                    Card::new(kind, Vec2::new(180.0, 100.0)),
+                )
+                .unwrap();
+            let inline_text = InlineText {
+                runs: vec![InlineTextRun {
+                    start: 0,
+                    end: 2,
+                    style: InlineTextStyle {
+                        bold: Some(true),
+                        ..InlineTextStyle::default()
+                    },
+                }],
+                paragraphs: vec![InlineParagraph {
+                    index: 0,
+                    list: ListKind::Bulleted,
+                }],
+            };
+            sheet.topic_mut(id).unwrap().inline_text = inline_text.clone();
+            let mut doc = Document::new(Workbook::new(sheet));
+            let mut view = MapView::default();
+
+            view.begin_edit(doc.sheet(), id, false);
+            view.set_editing_text("Tricky");
+
+            assert!(!view.commit_edit(&mut doc));
+            let error = view.take_title_error().unwrap();
+            assert!(
+                error.contains("Formatted card titles"),
+                "unexpected error: {error}"
+            );
+            assert_eq!(doc.sheet().topic(id).unwrap().title, "Sticky");
+            assert_eq!(doc.sheet().topic(id).unwrap().inline_text, inline_text);
+            assert_eq!(view.editing_topic(), Some(id));
+            assert_eq!(view.editing_text(), Some("Tricky"));
+            assert!(!doc.undo(), "rejected title edits must not enter history");
+        }
+    }
+
+    #[test]
     fn modal_snapshot_retains_the_canvas_automatic_stroke() {
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = thinoda_core::SheetRootMode::Hidden;

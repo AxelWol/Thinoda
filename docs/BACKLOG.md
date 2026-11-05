@@ -49,10 +49,15 @@ Save and window transitions preserve the order of queued card input, and
 deferred tab closures bind to their intended document and window.
 Conflicting drafts retain their text without taking focus or keyboard and IME
 input from the minimap and other editors.
-Selected-range formatting and lists remain open. An isolated history experiment
-estimates retained snapshot bytes but does not implement board-card rich text.
-An egui frame-rollback experiment preserves the draft on rejection but can
-discard other input and briefly expose stale widget state; it is not enabled.
+Selected-range formatting and lists remain open. A bounded Sticky/Text-card
+inline-style and paragraph-list model now has validation, history-memory
+accounting, native v8 gating and non-native export-loss reporting, but no
+editor, undo/IME, clipboard, rendering or accessibility integration; plain
+title edits and search/replace retain draft/data and reject formatted titles.
+An isolated history experiment estimates retained snapshot bytes but does not
+implement rich-aware board-card editing. An egui frame-rollback experiment
+preserves the draft on rejection but can discard other input and briefly expose
+stale widget state; it is not enabled.
 Additional brushes are not represented as working features. The persistence,
 accessibility and verification constraints for these features are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).

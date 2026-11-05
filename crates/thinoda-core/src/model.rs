@@ -349,6 +349,12 @@ pub struct Topic {
     pub hyperlink: Option<String>,
     #[serde(default, skip_serializing_if = "TopicStyle::is_default")]
     pub style: TopicStyle,
+    /// Inline style runs and list semantics for supported board-card titles.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::rich_text::InlineText::is_empty"
+    )]
+    pub inline_text: crate::rich_text::InlineText,
     /// Center position for floating topics (sheet coordinates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<Vec2>,
@@ -395,6 +401,7 @@ impl Topic {
             marker_colors: Default::default(),
             hyperlink: None,
             style: TopicStyle::default(),
+            inline_text: crate::rich_text::InlineText::default(),
             position: None,
             structure: None,
             branch_side: None,
@@ -1194,6 +1201,21 @@ impl Sheet {
             return Err("root has a parent".into());
         }
         for (id, t) in &self.topics {
+            if !t.inline_text.is_empty() {
+                if !t.card.is_some_and(|card| {
+                    matches!(
+                        card.kind,
+                        crate::board::CardKind::Sticky | crate::board::CardKind::Text
+                    )
+                }) {
+                    return Err(format!(
+                        "topic {id} has inline text formatting without a sticky or text card"
+                    ));
+                }
+                t.inline_text
+                    .validate(&t.title)
+                    .map_err(|error| format!("topic {id}: {error}"))?;
+            }
             if t.marker_colors
                 .keys()
                 .any(|index| *index >= t.markers.len())
