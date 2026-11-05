@@ -155,6 +155,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertLess(web.index("trunk build"), web.index("npm run test:browser"))
         self.assertLess(web.index("npm run test:browser"), web.index("actions/upload-artifact"))
 
+    def test_web_ci_retains_browser_failure_diagnostics(self):
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        web = job(source, "web")
+        self.assertIn("id: browser_tests", web)
+        self.assertIn("failure() && steps.browser_tests.outcome == 'failure'", web)
+        self.assertIn("name: thinoda-web-test-results-${{ github.run_attempt }}", web)
+        self.assertIn("path: crates/thinoda-web/test-results", web)
+        config = (ROOT / "crates" / "thinoda-web" / "playwright.config.cjs").read_text()
+        self.assertIn('trace: "retain-on-failure"', config)
+
     def test_published_builds_keep_integrated_cloud_services_opt_in(self):
         feature = "integrated-cloud-services"
         for package in ["thinoda-app", "thinoda-web"]:

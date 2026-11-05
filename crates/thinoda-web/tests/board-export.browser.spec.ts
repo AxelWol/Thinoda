@@ -111,6 +111,8 @@ async function confirmVisualPreflight(page: Page) {
 }
 
 test("mixed rootless board SVG, PNG and JPEG exports require consent and preserve their objects", async ({ page }, testInfo) => {
+    // This end-to-end journey takes almost three minutes on the CI software renderer.
+    test.setTimeout(300_000);
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     await page.locator("#thinoda_canvas").focus();
