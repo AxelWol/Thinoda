@@ -27,6 +27,81 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.22.0](https://github.com/AxelWol/Thinoda/compare/v0.21.0...v0.22.0) (2026-11-04)
+
+
+### Features
+
+* add affinity and priority board templates ([94d5a6d](https://github.com/AxelWol/Thinoda/commit/94d5a6dac3cad68b7648e098c7ea4e9226d457c7))
+* add freeform board editing and presentation ([cbe9f52](https://github.com/AxelWol/Thinoda/commit/cbe9f527bdb16df0dee6f2cc19aab469cd55536c))
+* add graphical board shape picker ([fe94747](https://github.com/AxelWol/Thinoda/commit/fe94747c2f7ff3c196ecb61f0fd4ca3ca409b40b))
+* add graphical ink context controls ([5e89548](https://github.com/AxelWol/Thinoda/commit/5e8954873367a49d4255b1b89585f1a688d9679f))
+* add localized meeting board template ([95a367f](https://github.com/AxelWol/Thinoda/commit/95a367f86de1337d58b0634f37733337a28474d6))
+* add safe strikethrough to notes ([3659c4c](https://github.com/AxelWol/Thinoda/commit/3659c4cf6c27677c5eb31186180a119dec87d176))
+* add selected connector controls ([df0fee3](https://github.com/AxelWol/Thinoda/commit/df0fee34b648ba1a80493c6489a1eb61f057baf2))
+* add swimlane board template ([c18bd82](https://github.com/AxelWol/Thinoda/commit/c18bd8250766ab9b14f3fbf75c7e8035ff52cc50))
+* add user journey map board template ([f2ab3f6](https://github.com/AxelWol/Thinoda/commit/f2ab3f61604bf957d06e20cae0e5b0833fedcff7))
+* add whole-card text formatting ([14aa61b](https://github.com/AxelWol/Thinoda/commit/14aa61becdb5189c79c9aa20a1b1b8b03e239644))
+* add Zone background styling and Moodboard template ([11bde13](https://github.com/AxelWol/Thinoda/commit/11bde131aa6a0c1f09de93b3040c815032491049))
+* **ai:** add local Ollama and AI settings shortcuts ([48a8d70](https://github.com/AxelWol/Thinoda/commit/48a8d705aa07c6fa19a1fd7760b2259794a6db6e))
+* preserve styling in card title editors ([57035b9](https://github.com/AxelWol/Thinoda/commit/57035b945840d40c2b00432600e0f6c984219b2c))
+* separate board tools in context menu ([0d12994](https://github.com/AxelWol/Thinoda/commit/0d12994ace61bf1cb68d6603fbc7c91a03955278))
+
+
+### Bug Fixes
+
+* align board appearance in visual exports ([59aa839](https://github.com/AxelWol/Thinoda/commit/59aa839239adb3fa6693e808f103bb52cc339bc0))
+* align rotated card interactions and connectors ([e60e1a8](https://github.com/AxelWol/Thinoda/commit/e60e1a8a0c712e8f844ba63b3afc62ad5fe434dd))
+* correct board drag previews ([11260ce](https://github.com/AxelWol/Thinoda/commit/11260ce670d0d830300673b73fc59c5b2d7ef36f))
+* honor camera image orientation ([4f240ab](https://github.com/AxelWol/Thinoda/commit/4f240ab9843c4642ab01e3890c4e3dc66767f887))
+* keep board topic actions clear of cards ([a24e49e](https://github.com/AxelWol/Thinoda/commit/a24e49eb5b99dfc6168e0be2c41d5751ca2dbd2c))
+* match visual export page themes to previews ([1825a6e](https://github.com/AxelWol/Thinoda/commit/1825a6e1b0532e444b0864691e60d978ae825eb6))
+* preserve board rotations in editable PowerPoint ([9c95fb0](https://github.com/AxelWol/Thinoda/commit/9c95fb001ec466e6a6bb8b56688a899e83dc288f))
+* preserve card drafts across editing and window actions ([9d02b70](https://github.com/AxelWol/Thinoda/commit/9d02b705759a0697a231dc7b74267c6e153d96b2))
+* preserve literal text when formatting plain notes ([4d44316](https://github.com/AxelWol/Thinoda/commit/4d44316b89467242c4dac0c2bc98712ff5b6fca6))
+* preserve Notes content during list formatting ([1038321](https://github.com/AxelWol/Thinoda/commit/10383215cd8ddae71427e77bf914d9fb3d602c6d))
+* preserve Notes drafts and formatting ([e59d2d3](https://github.com/AxelWol/Thinoda/commit/e59d2d3d204f4fcc70c773ebba2d075969ef3136))
+* preserve raw browser recovery records ([e296710](https://github.com/AxelWol/Thinoda/commit/e2967101b72c5cc4af2f66e7ed1856fc261e2f59))
+
+
+### Performance Improvements
+
+* avoid repeated resource union hashing ([51e08b2](https://github.com/AxelWol/Thinoda/commit/51e08b22b4123f8739c95eb747c9b8e781fc07c0))
+* build template previews on demand ([f03cace](https://github.com/AxelWol/Thinoda/commit/f03cace66b742fe6954b3ab0e546e73078db8793))
+* reuse board scenes for thumbnails ([269f2a1](https://github.com/AxelWol/Thinoda/commit/269f2a1586aee4029247099dfce64ae577ac0ba8))
+* share immutable ink points with mesh cache ([5ca188c](https://github.com/AxelWol/Thinoda/commit/5ca188c3127e9db93dea42f09ef17f009b15aa4b))
+
+
+### Documentation
+
+* reconcile cross-browser acceptance evidence ([596f132](https://github.com/AxelWol/Thinoda/commit/596f132a706003059372f52f266e8fa88c986cea))
+* record desktop startup comparisons ([8710ec9](https://github.com/AxelWol/Thinoda/commit/8710ec921c8d6d17e2c409141588633c5687a290))
+* record PowerPoint editing evidence ([35f584b](https://github.com/AxelWol/Thinoda/commit/35f584b4faeef07d7c9e1bc44e4a4227b3d69a9f))
+* record PowerPoint rotated board evidence ([33613d3](https://github.com/AxelWol/Thinoda/commit/33613d32a84ba833cc35181dbd7585157d96b94b))
+* refresh accessibility probe timestamps ([f831619](https://github.com/AxelWol/Thinoda/commit/f831619190e4b2718176f39e8b9a1d661b5f1fc2))
+* refresh draft handoff timestamp ([a8047c8](https://github.com/AxelWol/Thinoda/commit/a8047c8e1f853322bb351ef92a0f23fe303f4d19))
+* refresh editor characterization timestamps ([50eb636](https://github.com/AxelWol/Thinoda/commit/50eb6366b96ed91175171cb7d7341dbb6c6cd6e6))
+* refresh history checkpoint timestamps ([ff6c8f1](https://github.com/AxelWol/Thinoda/commit/ff6c8f1017aa7121835162c67d2e403a27e0d960))
+* refresh IME checkpoint timestamps ([ca507f5](https://github.com/AxelWol/Thinoda/commit/ca507f5a22cde158c8930b253423168ff8abb475))
+* refresh integration checkpoint timestamps ([13e440d](https://github.com/AxelWol/Thinoda/commit/13e440d283036f0405ebf6efc9c24020c280ed1c))
+* refresh journey template timestamps ([2b94a6f](https://github.com/AxelWol/Thinoda/commit/2b94a6f89c6c9cf6702f4d4e4bf1555b950b6e86))
+* refresh master-plan timestamp ([e3da1bb](https://github.com/AxelWol/Thinoda/commit/e3da1bb37ef566ad5e626e6f9eda6babfff09ed7))
+* refresh mixed-board benchmark timestamps ([7761e6b](https://github.com/AxelWol/Thinoda/commit/7761e6b5170aa2c7c1fc0134f6aa9d31b442ef0b))
+* refresh Notes and accessibility timestamps ([9c4bacc](https://github.com/AxelWol/Thinoda/commit/9c4bacc9fb2d566b08d90e81dd7964814a36473e))
+* refresh notes checkpoint timestamps ([eeacb82](https://github.com/AxelWol/Thinoda/commit/eeacb828954a2d3aa59924813c34a4daceb5538f))
+* refresh Notes checkpoint timestamps ([1747563](https://github.com/AxelWol/Thinoda/commit/174756392b0c2e63e1bc037f9f10e466a161d7b7))
+* refresh Notes list checkpoint timestamps ([acbde9e](https://github.com/AxelWol/Thinoda/commit/acbde9e81bb21bf439dcd016812dad9675743a33))
+* refresh Office evidence stamps ([359480e](https://github.com/AxelWol/Thinoda/commit/359480e4234a373eda85cbf11365dd35858101bf))
+* refresh Office evidence timestamps ([26bba85](https://github.com/AxelWol/Thinoda/commit/26bba85f06879868ca6d363096704837400af70d))
+* refresh recovery and template timestamps ([03cbac1](https://github.com/AxelWol/Thinoda/commit/03cbac128c6e73229205e0099d0b5b164d7974a8))
+* refresh rich-text checkpoint timestamps ([68d7fec](https://github.com/AxelWol/Thinoda/commit/68d7fecc636f4b6ea0bb4da2410fb1638b9f1afc))
+* refresh rotated card checkpoint stamps ([b949cb1](https://github.com/AxelWol/Thinoda/commit/b949cb1f0a4ce30bd5507f8bef34dec4c33c15ef))
+* refresh rotation checkpoint stamps ([9bbaad5](https://github.com/AxelWol/Thinoda/commit/9bbaad5afd73bae24aaf252ded7cdd2c1e6521fe))
+* refresh source-derived timestamps ([1441e35](https://github.com/AxelWol/Thinoda/commit/1441e352b62299435f8d5985e20f7460d13b9dee))
+* refresh thumbnail checkpoint stamp ([a5c744c](https://github.com/AxelWol/Thinoda/commit/a5c744c0481b0321738a6b28177ff5ff9d2d515a))
+* update production integration checkpoint ([41257aa](https://github.com/AxelWol/Thinoda/commit/41257aadecd5450df487e7264615748b5dd7ed62))
+* web startup concept, Freeform status and merged cloud state ([669aae3](https://github.com/AxelWol/Thinoda/commit/669aae38fd6058c2500e845fa624c7e6b408df51))
+
 ## [0.21.0](https://github.com/AxelWol/Thinoda/compare/v0.20.1...v0.21.0) (2026-11-01)
 
 
