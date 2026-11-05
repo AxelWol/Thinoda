@@ -249,6 +249,8 @@ fn filtered_editable_slides_use_original_board_semantics_for_frame_titles() {
     let zone = sheet
         .create_zone("Legacy frame", vec![branch], frame)
         .unwrap();
+    // Simulate a legacy zone so only the connector enables board semantics.
+    sheet.zones[0].color = None;
     for source in [
         PresentationSource::Branch(branch),
         PresentationSource::Zone(zone),
