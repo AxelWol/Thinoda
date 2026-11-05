@@ -12,11 +12,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import platform
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "crates/thinoda-platform/native/print_linux.c"
@@ -99,11 +101,31 @@ native_print.restype = c.c_int
 pixels = (c.c_ubyte * 4)(255, 255, 255, 255)
 error = c.create_string_buffer(1024)
 mode = sys.argv[2]
-if mode == "cancel":
+if mode in ("cancel", "cancel-after-dropped-response"):
     gtk = c.CDLL("libgtk-3.so.0")
     gtk.gtk_init_check.argtypes = [c.c_void_p, c.c_void_p]
     gtk.gtk_init_check.restype = c.c_int
     assert gtk.gtk_init_check(None, None), "GTK cannot initialize on Xvfb"
+
+    # Exercise the real dialog without discovering or contacting host printers.
+    gtk.gtk_settings_get_default.restype = c.c_void_p
+    settings = gtk.gtk_settings_get_default()
+    assert settings, "GTK settings are unavailable"
+    gobject = c.CDLL("libgobject-2.0.so.0")
+    gobject.g_object_set.argtypes = [c.c_void_p, c.c_char_p]
+    gobject.g_object_set.restype = None
+    gobject.g_object_get.argtypes = [c.c_void_p, c.c_char_p]
+    gobject.g_object_get.restype = None
+    gobject.g_object_set(settings, b"gtk-print-backends", c.c_char_p(b"file"), None)
+    backend = c.c_char_p()
+    gobject.g_object_get(settings, b"gtk-print-backends", c.byref(backend), None)
+    try:
+        assert backend.value == b"file", backend.value
+    finally:
+        glib = c.CDLL("libglib-2.0.so.0")
+        glib.g_free.argtypes = [c.c_void_p]
+        glib.g_free(c.cast(backend, c.c_void_p))
+    print("GTK initialized with the file print backend", flush=True)
 
     class GList(c.Structure):
         pass
@@ -113,13 +135,13 @@ if mode == "cancel":
     gtk.gtk_window_list_toplevels.restype = c.POINTER(GList)
     gtk.gtk_widget_get_visible.argtypes = [c.c_void_p]
     gtk.gtk_widget_get_visible.restype = c.c_int
-    gtk.gtk_dialog_get_type.restype = c.c_size_t
+    gtk.gtk_print_unix_dialog_get_type.restype = c.c_size_t
     gtk.g_type_check_instance_is_a.argtypes = [c.c_void_p, c.c_size_t]
     gtk.g_type_check_instance_is_a.restype = c.c_int
     gtk.gtk_dialog_response.argtypes = [c.c_void_p, c.c_int]
     gtk.g_list_free.argtypes = [c.c_void_p]
     callback_type = c.CFUNCTYPE(c.c_int, c.c_void_p)
-    cancelled = []
+    attempts = []
     @callback_type
     def cancel_dialog(_):
         windows = gtk.gtk_window_list_toplevels()
@@ -127,14 +149,17 @@ if mode == "cancel":
         while node:
             window = node.contents.data
             if gtk.gtk_widget_get_visible(window) and gtk.g_type_check_instance_is_a(
-                window, gtk.gtk_dialog_get_type()
+                window, gtk.gtk_print_unix_dialog_get_type()
             ):
                 # GTK_RESPONSE_CANCEL only. Never GTK_RESPONSE_OK/APPLY/ACCEPT.
-                gtk.gtk_dialog_response(window, -6)
-                cancelled.append(True)
+                attempts.append(True)
+                if len(attempts) == 1:
+                    print("GTK print dialog observed", flush=True)
+                if mode != "cancel-after-dropped-response" or len(attempts) > 1:
+                    gtk.gtk_dialog_response(window, -6)
             node = node.contents.next
         gtk.g_list_free(windows)
-        return 0 if cancelled else 1
+        return 1
     gtk.g_timeout_add.argtypes = [c.c_uint, callback_type, c.c_void_p]
     gtk.g_timeout_add.restype = c.c_uint
     gtk.g_timeout_add(100, cancel_dialog, None)
@@ -143,12 +168,45 @@ result = native_print(
     None, 3, pixels, 1, 1, 210.0, 297.0, 150,
     b"Thinoda cancellation test", error, len(error),
 )
-if mode == "cancel":
-    assert cancelled, "No native GTK dialog was observed"
+if mode in ("cancel", "cancel-after-dropped-response"):
+    print(f"GTK print returned {result} after {len(attempts)} cancellation attempts", flush=True)
+    assert attempts, "No native GTK print dialog was observed"
+    if mode == "cancel-after-dropped-response":
+        assert len(attempts) >= 2, "A dropped cancellation was not retried"
     assert result == 0, (result, error.value)
 else:
     assert result == -1 and b"initialize GTK" in error.value, (result, error.value)
 """
+
+
+def run_isolated_probe(command: list[str], *, env: dict[str, str], timeout: int) -> None:
+    with subprocess.Popen(command, env=env, start_new_session=True) as process:
+        try:
+            result = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise
+        if result:
+            raise subprocess.CalledProcessError(result, command)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux process groups")
+class NativeProbeIsolationTests(unittest.TestCase):
+    def test_timeout_stops_only_the_probe_process_group(self):
+        command = ["probe"]
+        with patch.object(subprocess, "Popen") as popen, patch.object(os, "killpg") as killpg:
+            process = popen.return_value.__enter__.return_value
+            process.pid = 12345
+            process.wait.side_effect = [subprocess.TimeoutExpired(command, 1), 0]
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run_isolated_probe(command, env={}, timeout=1)
+        popen.assert_called_once_with(command, env={}, start_new_session=True)
+        killpg.assert_called_once_with(12345, signal.SIGKILL)
+        self.assertEqual(process.wait.call_count, 2)
 
 
 def has_gtk_headers() -> bool:
@@ -197,10 +255,12 @@ class NativePrintingTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("xvfb-run"), "requires xvfb-run")
     def test_real_gtk_printer_dialog_cancellation_never_submits(self):
-        subprocess.run(
-            ["xvfb-run", "-a", sys.executable, "-c", PROBE, self.library, "cancel"],
-            env={**os.environ, "GDK_BACKEND": "x11"}, check=True, timeout=20,
-        )
+        for mode in ("cancel", "cancel-after-dropped-response"):
+            with self.subTest(mode=mode):
+                run_isolated_probe(
+                    ["xvfb-run", "-a", sys.executable, "-c", PROBE, self.library, mode],
+                    env={**os.environ, "GDK_BACKEND": "x11"}, timeout=60,
+                )
 
 
 if __name__ == "__main__":
