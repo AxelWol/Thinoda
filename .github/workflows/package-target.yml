@@ -133,6 +133,16 @@ jobs:
         run: rm -rf "target/$TARGET/debug"
       - name: Install pinned packaging tool
         run: cargo install cargo-packager --version 0.11.8 --locked
+      # GitHub-hosted Intel runners can lose HTTP/3 ticket lookups. Keep this
+      # workaround confined to the ephemeral runner, not self-hosted machines.
+      # https://github.com/actions/runner-images/issues/14924#issuecomment-6188826956
+      - name: Route macOS Intel ticket lookups over TCP
+        if: inputs.os == 'macos-15-intel' && inputs.target == 'x86_64-apple-darwin' && runner.environment == 'github-hosted'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
+          sudo pfctl -E
       - name: Import macOS signing certificate and notarization key
         if: runner.os == 'macOS'
         shell: bash

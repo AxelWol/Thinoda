@@ -624,6 +624,9 @@ dependencies before improving existing offline workflows.
   retains strict signing/notarization and gates publication on all six targets.
   Final DMG validation now uses the existing bounded retry for confirmed
   CloudKit network loss; invalid signatures and retry exhaustion still fail.
+  GitHub-hosted Intel packaging blocks outbound UDP port 443 for the disposable
+  job, forcing Apple ticket lookups to use TCP while retaining all signature,
+  notarization and installed-package checks. Self-hosted runners are unaffected.
   Workflow/Node/artifact/retry regressions are in place. PRs #66/#67 are merged;
   the authorized v0.9.0 website deployment succeeded. Native release packaging
   succeeded for all six targets, including both macOS signing/notarization
