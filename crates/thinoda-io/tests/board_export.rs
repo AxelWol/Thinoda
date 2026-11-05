@@ -565,16 +565,17 @@ fn board_data_under_older_manifests_is_rejected() {
             "{error}"
         );
     }
-    let bytes = zip_with(&[
-        (
-            "manifest.json",
-            br#"{"format":"thinoda","version":10,"resources":[]}"#,
-        ),
-        ("content.json", &content),
-    ]);
+    let newer = thinoda_io::NATIVE_FORMAT_VERSION + 1;
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": newer,
+        "resources": [],
+    }))
+    .unwrap();
+    let bytes = zip_with(&[("manifest.json", &manifest), ("content.json", &content)]);
     assert!(matches!(
         import_bytes(Format::Thinoda, &bytes),
-        Err(IoError::NewerVersion(_))
+        Err(IoError::NewerVersion(version)) if version == newer.to_string()
     ));
 }
 
