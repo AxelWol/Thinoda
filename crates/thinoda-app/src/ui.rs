@@ -4254,6 +4254,26 @@ impl ThinodaApp {
     }
 
     fn context_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        if matches!(
+            self.doc().and_then(|d| d.view.selected_object),
+            Some(thinoda_canvas::ObjectSelection::Zone(_))
+        ) {
+            menu_button(ui, t("Zone"), |ui| {
+                for (command, label) in Self::zone_menu_commands() {
+                    if ui
+                        .add_enabled(
+                            self.command_available(&command),
+                            egui::Button::new(t(label)),
+                        )
+                        .clicked()
+                    {
+                        *cmd = Some(command);
+                        ui.close();
+                    }
+                }
+            });
+            return;
+        }
         if let Some(object) = self.doc().and_then(|d| d.view.selected_object) {
             let label = match object {
                 thinoda_canvas::ObjectSelection::Relationship(_) => "Delete Relationship",
@@ -4261,12 +4281,6 @@ impl ThinodaApp {
                 thinoda_canvas::ObjectSelection::Summary(_) => "Delete Summary",
                 thinoda_canvas::ObjectSelection::Zone(_) => "Remove Zone",
             };
-            if matches!(object, thinoda_canvas::ObjectSelection::Zone(_))
-                && ui.button(t("Edit Zone")).clicked()
-            {
-                *cmd = Some(Cmd::EditZone);
-                ui.close();
-            }
             if matches!(object, thinoda_canvas::ObjectSelection::Summary(_)) {
                 widgets::caption(
                     ui,
@@ -4364,12 +4378,12 @@ impl ThinodaApp {
         );
         item(ui, t("Summary"), Cmd::Canvas(Action::AddSummary), has_sel);
         item(ui, t("Boundary"), Cmd::Canvas(Action::AddBoundary), has_sel);
-        item(
-            ui,
-            t("Create Zone"),
-            Cmd::CreateZone,
-            self.command_available(&Cmd::CreateZone),
-        );
+        menu_button(ui, t("Zone"), |ui| {
+            for (command, label) in Self::zone_menu_commands() {
+                let available = self.command_available(&command);
+                item(ui, t(label), command, available);
+            }
+        });
         item(ui, t("To-Do"), Cmd::Canvas(Action::ToggleTodo), has_sel);
         if single {
             ui.separator();

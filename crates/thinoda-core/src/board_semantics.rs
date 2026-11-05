@@ -11,6 +11,7 @@ impl Sheet {
                 zone.color.is_some()
                     || zone.background_color.is_some()
                     || zone.clip
+                    || !zone.objects.is_empty()
                     || zone.keep_empty
             })
             || self

@@ -101,6 +101,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                     "Styles",
                     "Select",
                     "Board",
+                    "Zone",
                     "Arrange",
                     "Tools",
                     "New Sheet from Topic",
@@ -276,6 +277,23 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     };
     right_click(&mut h, pos);
     assert_eq!(h.state().doc().unwrap().view.board_selection, vec![shape]);
+    menu_action(&h, t("Zone")).click();
+    h.run_steps(3);
+    for label in [
+        "Create Zone",
+        "Add to Zone…",
+        "Remove from Zone",
+        "Edit Zone",
+        "Remove Zone",
+        "Manage Zones",
+    ] {
+        reveal(&mut h, t(label));
+    }
+    menu_action(&h, t("Create Zone")).click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+    h.run_steps(3);
+    right_click(&mut h, pos);
     menu_action(&h, t("Board")).click();
     h.run_steps(3);
     reveal(&mut h, t("Lock board selection"));

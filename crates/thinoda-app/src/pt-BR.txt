@@ -299,6 +299,12 @@ Right / Space: next · Left: previous · Escape: exit|Direita / Espaço: próxim
 Zone|Zona
 Zones|Zonas
 Create Zone|Criar zona
+Add to Zone…|Adicionar à zona…
+Remove from Zone|Remover da zona
+Manage Zones|Gerenciar zonas
+Select floating topics or board objects.|Selecione tópicos flutuantes ou objetos do quadro.
+Choose a Zone. Items stay in place; existing memberships are transferred.|Escolha uma zona. Os itens ficam no lugar; as associações existentes são transferidas.
+Zones group floating topics and board objects. Removing a Zone keeps its contents.|As zonas agrupam tópicos flutuantes e objetos do quadro. Remover uma zona preserva seu conteúdo.
 Edit Zone|Editar zona
 Remove Zone|Remover zona
 Background color|Cor de fundo

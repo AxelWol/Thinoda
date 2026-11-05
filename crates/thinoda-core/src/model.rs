@@ -475,7 +475,7 @@ pub struct Boundary {
     pub color: Option<Color>,
 }
 
-/// A named frame containing independent floating topic trees.
+/// A named frame containing independent floating topic trees and explicit canvas objects.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Zone {
     pub id: ZoneId,
@@ -483,6 +483,8 @@ pub struct Zone {
     pub frame: Rect,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots: Vec<TopicId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<crate::board::CanvasObjectId>,
     /// Keep a freeform frame even when it contains no floating topics.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep_empty: bool,
@@ -1012,7 +1014,7 @@ impl Sheet {
             zone.roots.retain(|root| !removed.contains(root));
         }
         self.zones
-            .retain(|zone| zone.keep_empty || !zone.roots.is_empty());
+            .retain(|zone| zone.keep_empty || !zone.roots.is_empty() || !zone.objects.is_empty());
         self.presentation.slides.retain(|slide| match slide.source {
             PresentationSource::Branch(root) => !removed.contains(&root),
             PresentationSource::Zone(zone) => self.zones.iter().any(|item| item.id == zone),
@@ -1297,16 +1299,36 @@ impl Sheet {
         }
         let mut zone_ids = HashSet::new();
         let mut zone_roots = HashSet::new();
+        let mut zone_objects = HashSet::new();
         let mut membership_count = 0usize;
         for zone in &self.zones {
             if !zone_ids.insert(zone.id) {
                 return Err(format!("duplicate zone id {}", zone.id));
             }
-            if zone.roots.is_empty() && !zone.keep_empty {
+            if zone.roots.is_empty() && zone.objects.is_empty() && !zone.keep_empty {
                 return Err(format!("zone {} has no floating topics", zone.id));
             }
             validate_presentation_name(&zone.name, "zone")?;
             validate_frame(zone.frame, true)?;
+            for object in &zone.objects {
+                membership_count += 1;
+                if membership_count > MAX_ZONE_MEMBERSHIPS {
+                    return Err(format!(
+                        "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
+                    ));
+                }
+                if !zone_objects.insert(*object) {
+                    return Err(format!(
+                        "canvas object {object} belongs to more than one zone"
+                    ));
+                }
+                if self.canvas.object(*object).is_none() {
+                    return Err(format!(
+                        "zone {} canvas object {object} is missing",
+                        zone.id
+                    ));
+                }
+            }
             for root in &zone.roots {
                 membership_count += 1;
                 if membership_count > MAX_ZONE_MEMBERSHIPS {
@@ -1460,7 +1482,7 @@ impl Sheet {
             || self
                 .zones
                 .iter()
-                .map(|zone| zone.roots.len())
+                .map(|zone| zone.roots.len() + zone.objects.len())
                 .sum::<usize>()
                 .saturating_add(roots.len())
                 > MAX_ZONE_MEMBERSHIPS
@@ -1496,6 +1518,7 @@ impl Sheet {
             name: name.trim().to_string(),
             frame,
             roots,
+            objects: Vec::new(),
             keep_empty,
             color: Some(color),
             background_color: None,
@@ -1527,7 +1550,8 @@ impl Sheet {
             .iter()
             .position(|zone| zone.id == id)
             .ok_or_else(|| format!("zone {id} not found"))?;
-        if roots.is_empty() && !self.zones[index].keep_empty {
+        if roots.is_empty() && self.zones[index].objects.is_empty() && !self.zones[index].keep_empty
+        {
             return Err("a zone needs at least one floating topic".into());
         }
         let mut unique = HashSet::new();
@@ -1554,8 +1578,10 @@ impl Sheet {
                     .iter()
                     .filter(|root| !unique.contains(root))
                     .count()
+                    + zone.objects.len()
             })
-            .sum::<usize>();
+            .sum::<usize>()
+            + self.zones[index].objects.len();
         if current_memberships.saturating_add(roots.len()) > MAX_ZONE_MEMBERSHIPS {
             return Err(format!(
                 "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
@@ -1571,14 +1597,96 @@ impl Sheet {
         }
         let removed: HashSet<_> = zones
             .iter()
-            .filter(|zone| zone.roots.is_empty() && !zone.keep_empty)
+            .filter(|zone| zone.roots.is_empty() && zone.objects.is_empty() && !zone.keep_empty)
             .map(|zone| zone.id)
             .collect();
-        zones.retain(|zone| zone.keep_empty || !zone.roots.is_empty());
+        zones.retain(|zone| zone.keep_empty || !zone.roots.is_empty() || !zone.objects.is_empty());
         self.zones = zones;
         self.presentation.slides.retain(|slide| {
             !matches!(slide.source, PresentationSource::Zone(zone) if removed.contains(&zone))
         });
+        Ok(())
+    }
+
+    /// Replaces all explicit membership, transferring members from other Zones.
+    /// The target and every donor remain valid freeform frames even when emptied.
+    /// Invalid membership leaves the sheet unchanged.
+    pub fn set_zone_members(
+        &mut self,
+        id: ZoneId,
+        roots: Vec<TopicId>,
+        objects: Vec<crate::board::CanvasObjectId>,
+    ) -> Result<(), String> {
+        let index = self
+            .zones
+            .iter()
+            .position(|zone| zone.id == id)
+            .ok_or_else(|| format!("zone {id} not found"))?;
+        if roots.len().saturating_add(objects.len()) > MAX_ZONE_MEMBERSHIPS {
+            return Err(format!(
+                "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
+            ));
+        }
+        let mut root_set = HashSet::new();
+        for root in &roots {
+            if *root == self.root
+                || !self.floating.contains(root)
+                || self.parent(*root).is_some()
+                || !root_set.insert(*root)
+                || self
+                    .topic(*root)
+                    .and_then(|topic| topic.position)
+                    .is_none_or(|position| !valid_position(position))
+            {
+                return Err(format!("topic {root} is not an available floating root"));
+            }
+        }
+        let mut object_set = HashSet::new();
+        for object in &objects {
+            if self.canvas.object(*object).is_none() || !object_set.insert(*object) {
+                return Err(format!("canvas object {object} is not an available object"));
+            }
+        }
+        let remaining = self
+            .zones
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, zone)| {
+                zone.roots
+                    .iter()
+                    .filter(|root| !root_set.contains(root))
+                    .count()
+                    + zone
+                        .objects
+                        .iter()
+                        .filter(|object| !object_set.contains(object))
+                        .count()
+            })
+            .sum::<usize>();
+        if remaining
+            .saturating_add(roots.len())
+            .saturating_add(objects.len())
+            > MAX_ZONE_MEMBERSHIPS
+        {
+            return Err(format!(
+                "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
+            ));
+        }
+        for (other, zone) in self.zones.iter_mut().enumerate() {
+            if other == index {
+                continue;
+            }
+            let before = zone.roots.len() + zone.objects.len();
+            zone.roots.retain(|root| !root_set.contains(root));
+            zone.objects.retain(|object| !object_set.contains(object));
+            if before != zone.roots.len() + zone.objects.len() {
+                zone.keep_empty = true;
+            }
+        }
+        self.zones[index].roots = roots;
+        self.zones[index].objects = objects;
+        self.zones[index].keep_empty = true;
         Ok(())
     }
 
@@ -1596,7 +1704,7 @@ impl Sheet {
         Ok(())
     }
 
-    /// Moves the zone frame and all its floating topic trees by `delta`.
+    /// Moves the frame, floating topic trees and explicit objects by `delta`.
     pub fn move_zone(&mut self, id: ZoneId, delta: Vec2) -> Result<(), String> {
         if !delta.x.is_finite()
             || !delta.y.is_finite()
@@ -1628,6 +1736,13 @@ impl Sheet {
             .filter(|root| self.topic(**root).is_some_and(|topic| topic.card.is_some()))
             .map(|root| crate::board::BoardMember::Card(*root))
             .collect();
+        let mut board_members = cards.clone();
+        board_members.extend(
+            zone.objects
+                .iter()
+                .copied()
+                .map(crate::board::BoardMember::Object),
+        );
         let card_roots: HashSet<_> = cards
             .iter()
             .filter_map(|member| match member {
@@ -1643,8 +1758,8 @@ impl Sheet {
         }) {
             return Err("zone movement would place a topic outside the coordinate limit".into());
         }
-        if !cards.is_empty() {
-            self.move_board_members(&cards, delta)?;
+        if !board_members.is_empty() {
+            self.move_board_members(&board_members, delta)?;
         }
         self.zones
             .iter_mut()

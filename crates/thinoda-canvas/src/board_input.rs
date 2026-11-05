@@ -478,11 +478,7 @@ fn moved_visible_bounds(
                 } else {
                     object.rect.center() + delta
                 };
-                sheet
-                    .zones
-                    .iter()
-                    .find(|zone| zone.clip && zone.frame.contains(center))
-                    .map(|zone| zone.frame)
+                thinoda_core::scene::object_clip_at(sheet, id, center)
             }),
         SceneId::Zone(_) => None,
     };
@@ -3014,6 +3010,7 @@ mod alignment_tests {
                 Vec2::new(180.0, 100.0),
             ),
             roots: vec![],
+            objects: vec![],
             keep_empty: true,
             color: None,
             background_color: None,
@@ -3076,6 +3073,7 @@ mod alignment_tests {
                 name: "Original clip".into(),
                 frame: thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(60.0, 40.0)),
                 roots: vec![],
+                objects: vec![],
                 keep_empty: true,
                 color: None,
                 background_color: None,
@@ -3089,6 +3087,7 @@ mod alignment_tests {
                     Vec2::new(40.0, 40.0),
                 ),
                 roots: vec![],
+                objects: vec![],
                 keep_empty: true,
                 color: None,
                 background_color: None,

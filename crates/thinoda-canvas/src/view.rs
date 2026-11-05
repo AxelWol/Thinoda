@@ -1864,7 +1864,7 @@ impl MapCanvas {
                 let board_members = if resize {
                     Ok(Vec::new())
                 } else {
-                    crate::topic_drag::zone_board_members(doc.sheet(), &zone.roots)
+                    crate::topic_drag::zone_board_members(doc.sheet(), &zone.roots, &zone.objects)
                 };
                 view.select_object(ObjectSelection::Zone(id));
                 match board_members {
@@ -4324,6 +4324,7 @@ mod tests {
                 name: "Root clip".into(),
                 frame: small_frame(boundary_point),
                 roots: vec![root],
+                objects: vec![],
                 keep_empty: false,
                 color: None,
                 background_color: None,
@@ -4334,6 +4335,7 @@ mod tests {
                 name: "A clip".into(),
                 frame: small_frame(same_point),
                 roots: vec![a],
+                objects: vec![],
                 keep_empty: false,
                 color: None,
                 background_color: None,
@@ -4344,6 +4346,7 @@ mod tests {
                 name: "B clip".into(),
                 frame: small_frame(cross_point + Vec2::new(200.0, 200.0)),
                 roots: vec![b],
+                objects: vec![],
                 keep_empty: false,
                 color: None,
                 background_color: None,
@@ -4354,6 +4357,7 @@ mod tests {
                 name: "Summary clip".into(),
                 frame: small_frame(summary_layout.tip),
                 roots: vec![summary_topic],
+                objects: vec![],
                 keep_empty: false,
                 color: None,
                 background_color: None,

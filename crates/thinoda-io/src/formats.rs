@@ -92,9 +92,19 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "inline card text requires native format version 8".into(),
             ));
         }
+        if version < 9 && has_zone_objects(&book) {
+            return Err(IoError::Invalid(
+                "explicit Zone object membership requires native format version 9".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if has_zone_objects(&book) {
+            return Err(IoError::Invalid(
+                "explicit Zone object membership requires a versioned native archive".into(),
+            ));
+        }
         if has_inline_text(&book) {
             return Err(IoError::Invalid(
                 "inline card text requires a versioned native archive".into(),
@@ -109,6 +119,12 @@ fn has_inline_text(book: &Workbook) -> bool {
         .iter()
         .flat_map(|sheet| sheet.topics.values())
         .any(|topic| !topic.inline_text.is_empty())
+}
+
+fn has_zone_objects(book: &Workbook) -> bool {
+    book.sheets
+        .iter()
+        .any(|sheet| sheet.zones.iter().any(|zone| !zone.objects.is_empty()))
 }
 
 pub(super) fn escape(s: &str) -> String {

@@ -1892,6 +1892,12 @@ impl Sheet {
             centers
         };
         self.canvas.objects.retain(|o| !removed.contains(&o.id));
+        for zone in &mut self.zones {
+            if zone.objects.iter().any(|id| removed.contains(id)) {
+                zone.objects.retain(|id| !removed.contains(id));
+                zone.keep_empty = true;
+            }
+        }
         for o in &mut self.canvas.objects {
             if let CanvasObjectKind::Connector(c) = &mut o.kind {
                 for end in [&mut c.from, &mut c.to] {

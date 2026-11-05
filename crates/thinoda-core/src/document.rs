@@ -244,6 +244,7 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
                 size_of::<crate::model::Zone>()
                     + zone.name.len()
                     + zone.roots.len() * size_of::<crate::model::TopicId>()
+                    + zone.objects.len() * size_of::<CanvasObjectId>()
             })
             .sum::<usize>()
         + sheet
@@ -785,6 +786,19 @@ impl Document {
     pub fn reorder_zone(&mut self, id: ZoneId, index: usize) -> EditResult<()> {
         self.edit_sheet("Reorder zones", |sheet| {
             sheet.reorder_zone(id, index).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_zone_members(
+        &mut self,
+        id: ZoneId,
+        roots: Vec<crate::model::TopicId>,
+        objects: Vec<CanvasObjectId>,
+    ) -> EditResult<()> {
+        self.edit_sheet("Change zone membership", |sheet| {
+            sheet
+                .set_zone_members(id, roots, objects)
+                .map_err(EditError::Invalid)
         })
     }
 
