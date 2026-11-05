@@ -27,6 +27,23 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.23.0](https://github.com/AxelWol/Thinoda/compare/v0.22.1...v0.23.0) (2026-11-05)
+
+
+### Features
+
+* integrate zone membership and harden CI ([d3de894](https://github.com/AxelWol/Thinoda/commit/d3de894b12def4a0370c1eab4633438db70e499b))
+* manage Zone membership from dedicated menus ([43cd226](https://github.com/AxelWol/Thinoda/commit/43cd22688079423ee29d36e608afb3bd06bdd907))
+
+
+### Bug Fixes
+
+* publish verified release assets safely ([db0b8ec](https://github.com/AxelWol/Thinoda/commit/db0b8ec57c8741860b7522c327bcfd19b98e864d))
+* retry transient Trunk download failures ([6728745](https://github.com/AxelWol/Thinoda/commit/67287459f162eaa60667dab11ab0e1de5d5e33ec))
+* stabilize production browser CI ([15451dc](https://github.com/AxelWol/Thinoda/commit/15451dcf5e0e92fbb7bf743c3e9c80d9973c8201))
+* stabilize Settings touch tests on macOS Intel ([22b6a63](https://github.com/AxelWol/Thinoda/commit/22b6a63dadf9d3c5c4ffeb64e164bace5c5ff31d))
+* stabilize Settings touch tests on macOS Intel ([db63f1f](https://github.com/AxelWol/Thinoda/commit/db63f1f088b8c9c67e4aea50d6659eebb982ca47))
+
 ## [0.22.1](https://github.com/AxelWol/Thinoda/compare/v0.22.0...v0.22.1) (2026-11-05)
 
 
