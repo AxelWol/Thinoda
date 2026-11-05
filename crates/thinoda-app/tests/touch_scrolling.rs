@@ -12,6 +12,14 @@ mod support;
 use support::menu_action;
 
 fn harness(theme: ThemeMode, scale: f32) -> Harness<'static, ThinodaApp> {
+    harness_with_services(theme, scale, Services::default())
+}
+
+fn harness_with_services(
+    theme: ThemeMode,
+    scale: f32,
+    services: Services,
+) -> Harness<'static, ThinodaApp> {
     let mut app = ThinodaApp::new(
         Settings {
             language: Language::English,
@@ -21,7 +29,7 @@ fn harness(theme: ThemeMode, scale: f32) -> Harness<'static, ThinodaApp> {
             show_topic_toolbar: false,
             ..Default::default()
         },
-        Services::default(),
+        services,
         &[],
     );
     app.exec(&egui::Context::default(), Cmd::New);
@@ -550,26 +558,87 @@ fn masked_copy_consent_expires_when_its_source_changes() {
 }
 
 fn settings_control_center(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &str) -> egui::Pos2 {
-    h.get_by_role_and_label(role, label).scroll_to_me();
-    h.run_steps(8);
-    let rect = h.get_by_role_and_label(role, label).rect();
-    let dialog = h
-        .ctx
-        .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_settings")))
-        .expect("Settings area");
-    assert!(
-        h.ctx.content_rect().contains_rect(rect) && dialog.contains_rect(rect),
-        "{label}: {rect:?} outside Settings {dialog:?}"
-    );
-    assert_eq!(
-        h.ctx.layer_id_at(rect.center()),
-        Some(egui::LayerId::new(
-            egui::Order::Middle,
-            egui::Id::unique("thinoda_settings")
-        )),
-        "{label} is obscured"
-    );
-    rect.center()
+    let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::unique("thinoda_settings"));
+    for attempt in 0..3 {
+        h.run_steps(1);
+        h.get_by_role_and_label(role, label).scroll_to_me();
+        h.run_steps(8);
+        let rect = h.get_by_role_and_label(role, label).rect();
+        let dialog = h
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_settings")))
+            .expect("Settings area");
+        let actual_layer = h.ctx.layer_id_at(rect.center());
+        if h.ctx.content_rect().contains_rect(rect)
+            && dialog.contains_rect(rect)
+            && actual_layer == Some(layer)
+        {
+            return rect.center();
+        }
+        assert!(
+            attempt < 2,
+            "{label}: {rect:?} outside or obscured in Settings {dialog:?}; layer {actual_layer:?}, notifications {}",
+            h.state().toasts.len()
+        );
+    }
+    unreachable!()
+}
+
+#[test]
+fn settings_touch_targets_remain_reachable_above_notifications() {
+    use thinoda_app::app::SettingsTab;
+
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for notification_after_open in [false, true] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1000.0, 360.0));
+            if !notification_after_open {
+                h.state_mut()
+                    .toasts
+                    .sticky(thinoda_ui::ToastKind::Warning, "Persistent warning");
+            }
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Settings);
+            h.run_steps(8);
+            let original = h.state().settings.clone();
+            if notification_after_open {
+                h.get_by_role_and_label(Role::Switch, "Confirm before deleting")
+                    .scroll_to_me();
+                h.run_steps(1);
+                h.state_mut()
+                    .toasts
+                    .sticky(thinoda_ui::ToastKind::Warning, "Persistent warning");
+            }
+
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                for label in ["Autosave", "Keep backup on save", "Confirm before deleting"] {
+                    let pos = settings_control_center(&mut h, Role::Switch, label);
+                    rejected_tap(&mut h, pos, contacts, cancel);
+                    assert_eq!(h.state().settings, original, "{label}");
+                }
+                for (role, label) in [
+                    (Role::Tab, "Editor"),
+                    (Role::Tab, "AI Assistant"),
+                    (Role::Tab, "Cloud"),
+                    (Role::Button, "Keyboard Shortcuts"),
+                ] {
+                    let pos = settings_control_center(&mut h, role, label);
+                    rejected_tap(&mut h, pos, contacts, cancel);
+                    assert_eq!(h.state().dialogs.settings_tab, SettingsTab::General);
+                    assert!(!h.state().dialogs.shortcuts);
+                }
+            }
+            settings_control_center(&mut h, Role::Switch, "Confirm before deleting");
+            h.get_by_role_and_label(Role::Switch, "Confirm before deleting")
+                .click();
+            h.run_steps(4);
+            assert_ne!(
+                h.state().settings.confirm_on_delete,
+                original.confirm_on_delete
+            );
+            assert!(!h.state().toasts.is_empty());
+        }
+    }
 }
 
 #[test]
@@ -586,9 +655,15 @@ fn rejected_settings_actions_preserve_profile_and_network_drafts() {
         let root = tempfile::tempdir().unwrap();
         let paths = Paths::from_root(root.path());
         paths.ensure().unwrap();
-        let mut h = harness(theme, 1.0);
+        let mut h = harness_with_services(
+            theme,
+            1.0,
+            Services {
+                paths: Some(paths.clone()),
+                ..Default::default()
+            },
+        );
         h.set_size(vec2(1000.0, height));
-        h.state_mut().services.paths = Some(paths.clone());
         h.state_mut().save_settings();
         let ctx = h.ctx.clone();
         h.state_mut().exec(&ctx, Cmd::Settings);

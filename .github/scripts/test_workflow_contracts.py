@@ -72,6 +72,15 @@ class WorkflowContractTests(unittest.TestCase):
         test_step = test_step.split("\n      - name:", 1)[0]
         self.assertIn('          RUST_TEST_THREADS: "1"\n', test_step)
 
+    def test_macos_intel_settings_regressions_run_before_full_native_tests(self):
+        ci = job((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"), "test")
+        self.assertIn("macos-15-intel", ci)
+        targeted = "cargo test --locked --target x86_64-apple-darwin -p thinoda-app --test touch_scrolling settings -- --test-threads=1"
+        full = "cargo test --locked --workspace --target x86_64-apple-darwin"
+        self.assertIn(targeted, ci)
+        self.assertIn(full, ci)
+        self.assertLess(ci.index(targeted), ci.index(full))
+
     def test_office_sdk_validation_gates_web_publication(self):
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         office = job(source, "office")
