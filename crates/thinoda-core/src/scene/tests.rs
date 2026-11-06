@@ -395,6 +395,62 @@ fn polygon_clip_takes_the_outermost_crossing() {
 }
 
 #[test]
+fn edge_to_edge_ends_meet_a_bent_target_on_its_path() {
+    let mut sheet = Sheet::new("Edges", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let target = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(280.0, 280.0, 40.0, 40.0),
+        Band::Above,
+    );
+    let elbow = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector {
+            route: ConnectorRoute::Elbow,
+            ..CanvasConnector::new(
+                Endpoint::Point(Vec2::new(0.0, 600.0)),
+                Endpoint::Object(target),
+            )
+        }))
+        .unwrap();
+    let dependent = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(elbow),
+            Endpoint::Point(Vec2::new(-300.0, 0.0)),
+        )))
+        .unwrap();
+    let (layout, _) = scene(&sheet);
+    let path = |id| match &sheet.canvas.object(id).unwrap().kind {
+        CanvasObjectKind::Connector(c) => connector_path(&sheet, &layout, c),
+        _ => unreachable!(),
+    };
+    let bent = path(elbow);
+    assert!(bent.len() > 2, "{bent:?}");
+    let start = path(dependent)[0];
+    // Halfway along the route; today's routes are point-symmetric, but waypoint
+    // routes (Phase 8) would put a bounding-box centre off the path.
+    assert!(
+        distance_to_polyline(start, &bent) < 0.5,
+        "{start:?} {bent:?}"
+    );
+    assert_eq!(Some(start), crate::board::polyline_midpoint(&bent));
+}
+
+#[test]
+fn polyline_midpoint_follows_length() {
+    let points = [Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(100.0, 300.0)];
+    assert_eq!(
+        crate::board::polyline_midpoint(&points),
+        Some(Vec2::new(100.0, 100.0))
+    );
+    assert_eq!(crate::board::polyline_midpoint(&[]), None);
+    assert_eq!(
+        crate::board::polyline_midpoint(&[Vec2::new(4.0, 5.0)]),
+        Some(Vec2::new(4.0, 5.0))
+    );
+}
+
+#[test]
 fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
     let mut sheet = Sheet::new("Connectors", "");
     sheet.root_mode = SheetRootMode::Hidden;

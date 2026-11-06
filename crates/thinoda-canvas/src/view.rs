@@ -2525,6 +2525,7 @@ impl MapCanvas {
                 Drag::Zone { resize: true, .. } => egui::CursorIcon::ResizeNwSe,
                 Drag::Zone { .. } => egui::CursorIcon::Grabbing,
                 _ if space || view.board_tool == BoardTool::Hand => egui::CursorIcon::Grab,
+                _ if view.board_input.outline_hover.is_some() => egui::CursorIcon::Crosshair,
                 _ if view.board_tool != BoardTool::Select && !view.board_input.armed_hover => {
                     egui::CursorIcon::Crosshair
                 }

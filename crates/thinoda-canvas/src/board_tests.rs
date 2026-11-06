@@ -5410,6 +5410,121 @@ fn direction_arrow_drag_connects_shapes_free_points_and_ctrl_clones() {
 }
 
 #[test]
+fn dragging_from_a_shape_outline_draws_a_connector_and_the_body_still_moves() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let target = shape(&mut sheet, 300.0, 250.0, "Target");
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+
+    // Just outside the right edge (x = 60), beyond the body's hit tolerance.
+    let band = point(&h, Vec2::new(67.0, 0.0));
+    h.hover_at(band);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_input.outline_hover, Some(source));
+    let end = point(&h, Vec2::new(300.0, 250.0));
+    drag(&mut h, band, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_drag(&mut h, end);
+    let sheet = h.state().doc.sheet().clone();
+    let edges = connectors(&sheet);
+    assert_eq!(edges.len(), 1);
+    assert_eq!(
+        connector_ends(&sheet, edges[0]),
+        (Endpoint::Object(source), Endpoint::Object(target))
+    );
+    assert_eq!(h.state().view.board_selection, vec![edges[0]]);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.run_steps(30);
+    let empty = point(&h, Vec2::new(320.0, -260.0));
+    drag(&mut h, band, empty);
+    finish_drag(&mut h, empty);
+    let sheet = h.state().doc.sheet().clone();
+    let edges = connectors(&sheet);
+    assert_eq!(sheet.canvas.objects.len(), 3);
+    let (from, to) = connector_ends(&sheet, edges[0]);
+    assert_eq!(from, Endpoint::Object(source));
+    assert!(matches!(to, Endpoint::Point(_)), "{to:?}");
+    assert!(h.state_mut().doc.undo());
+
+    // Inside the body a drag still moves the shape.
+    h.run_steps(30);
+    let body = point(&h, Vec2::new(30.0, 0.0));
+    drag(&mut h, body, body + vec2(50.0, 0.0));
+    finish_drag(&mut h, body + vec2(50.0, 0.0));
+    let sheet = h.state().doc.sheet();
+    assert!(connectors(sheet).is_empty());
+    assert_eq!(
+        sheet.canvas.object(source).unwrap().rect.center(),
+        Vec2::new(50.0, 0.0)
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn outline_drag_onto_a_connector_attaches_edge_to_edge() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let left = shape(&mut sheet, -300.0, 300.0, "Left");
+    let right = shape(&mut sheet, 300.0, 300.0, "Right");
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(left),
+            Endpoint::Object(right),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+
+    // Below the bottom edge (y = 40), then onto the middle of the edge.
+    let band = point(&h, Vec2::new(0.0, 47.0));
+    let end = point(&h, Vec2::new(0.0, 300.0));
+    drag(&mut h, band, end);
+    finish_drag(&mut h, end);
+    let sheet = h.state().doc.sheet().clone();
+    let added: Vec<_> = connectors(&sheet)
+        .into_iter()
+        .filter(|id| *id != edge)
+        .collect();
+    let [added] = added[..] else {
+        panic!("expected one new connector");
+    };
+    assert_eq!(
+        connector_ends(&sheet, added),
+        (Endpoint::Object(source), Endpoint::Object(edge))
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn armed_shapes_treat_the_outline_band_as_content() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Ellipse));
+    let band = point(&h, Vec2::new(67.0, 0.0));
+    h.hover_at(band);
+    h.run_steps(2);
+    assert!(h.state().view.board_input.armed_hover);
+    assert_eq!(h.state().view.board_input.ghost, None);
+    assert_eq!(h.state().view.board_input.outline_hover, Some(source));
+    click(&mut h, band, Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+
+    let end = point(&h, Vec2::new(300.0, 0.0));
+    h.run_steps(30);
+    drag(&mut h, band, end);
+    finish_drag(&mut h, end);
+    let sheet = h.state().doc.sheet();
+    let edges = connectors(sheet);
+    assert_eq!(edges.len(), 1);
+    assert_eq!(connector_ends(sheet, edges[0]).0, Endpoint::Object(source));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn direction_arrow_keyboard_and_touch_activation() {
     let mut sheet = board();
     let source = shape(&mut sheet, 0.0, 0.0, "Source");

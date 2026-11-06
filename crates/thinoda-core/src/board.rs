@@ -943,6 +943,20 @@ pub fn points_bounds(points: &[Vec2]) -> Option<Rect> {
     Some(Rect::from_min_size(min, max - min))
 }
 
+/// Point halfway along an open polyline, measured by length.
+pub fn polyline_midpoint(points: &[Vec2]) -> Option<Vec2> {
+    let total: f32 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    let mut left = total / 2.0;
+    for w in points.windows(2) {
+        let len = (w[1] - w[0]).length();
+        if len >= left && len > 0.0 {
+            return Some(w[0] + (w[1] - w[0]) * (left / len));
+        }
+        left -= len;
+    }
+    points.last().copied()
+}
+
 pub fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let len2 = ab.x * ab.x + ab.y * ab.y;

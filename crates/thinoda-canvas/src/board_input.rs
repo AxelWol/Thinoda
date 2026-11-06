@@ -39,6 +39,8 @@ pub(super) struct State {
     /// Direction arrow under the mouse and when resting there began; `None`
     /// after a press or a closed picker, until the pointer leaves the arrow.
     arrow_hover: Option<((SceneId, ArrowDir), Option<f64>)>,
+    /// Shape whose outline band is hovered, where a drag draws a connector.
+    pub(super) outline_hover: Option<CanvasObjectId>,
 }
 
 /// draw.io-style shape picker shown next to a direction arrow.
@@ -251,6 +253,12 @@ enum GestureKind {
         since: f64,
         /// Moved far enough to become a drag; holding no longer opens the picker.
         far: bool,
+    },
+    /// Connector dragged out of a shape's outline band.
+    Outline {
+        source: CanvasObjectId,
+        anchor: Vec2,
+        current: Vec2,
     },
 }
 
@@ -980,8 +988,36 @@ fn armed_target(
 ) -> bool {
     let tolerance = 6.0 / view.zoom;
     scene.hit_test(point).is_some()
+        || outline_source(doc.sheet(), scene, view, point).is_some()
         || hit_zone(doc.sheet(), point, tolerance).is_some()
         || hit_object(doc.sheet(), layout, point, tolerance).is_some()
+}
+
+/// Shape whose outline band, the ring just outside its body, holds `point`.
+/// Dragging from there draws a connector, as on draw.io's hover outline.
+fn outline_source(
+    sheet: &Sheet,
+    scene: &Scene,
+    view: &MapView,
+    point: Vec2,
+) -> Option<CanvasObjectId> {
+    if scene.hit_test(point).is_some() {
+        return None;
+    }
+    let band = thinoda_core::scene::HIT_TOLERANCE + OUTLINE_BAND / view.zoom;
+    let Some(SceneHit::Object(id)) = scene.hit_test_tolerance(point, band) else {
+        return None;
+    };
+    arrow_source(sheet, id).map(|object| object.id)
+}
+
+/// Sheet-space outline of a shape item, for the outline-band highlight.
+fn item_outline(item: &SceneItem) -> Option<Vec<Vec2>> {
+    match &item.geometry {
+        SceneGeometry::Polygon { outline, .. } => Some(outline.clone()),
+        SceneGeometry::Rect { rect, rotation } => Some(rotated_corners(*rect, *rotation).to_vec()),
+        _ => None,
+    }
 }
 
 fn prepare_edit(doc: &mut Document, view: &mut MapView, out: &mut CanvasOutput) -> bool {
@@ -1109,6 +1145,8 @@ const ARROW_GAP: f32 = 80.0;
 const ARROW_MIN_SCREEN: f32 = 40.0;
 /// Screen movement turning an arrow press into a drag.
 const ARROW_DRAG: f32 = 8.0;
+/// Screen width of the band outside a shape where a drag starts a connector.
+const OUTLINE_BAND: f32 = 8.0;
 /// Seconds the mouse rests on, or a press holds, an arrow before its shape picker opens.
 const QUICK_DELAY: f64 = 0.6;
 /// Shapes offered by the picker after the source's own kind.
@@ -1208,6 +1246,9 @@ fn update_hover_shape(
             if let Some(SceneHit::Object(id)) = scene.hit_test(xf.sheet(pos))
                 && arrow_source(sheet, id).is_some()
             {
+                return Some(id);
+            }
+            if let Some(id) = outline_source(sheet, scene, view, xf.sheet(pos)) {
                 return Some(id);
             }
             current.filter(|id| {
@@ -2350,7 +2391,9 @@ fn update_gesture(
                 };
                 *preview = thinoda_core::board::normalize_rotation(degrees);
             }
-            GestureKind::Endpoint { point: p, .. } | GestureKind::Arrow { current: p, .. } => {
+            GestureKind::Endpoint { point: p, .. }
+            | GestureKind::Arrow { current: p, .. }
+            | GestureKind::Outline { current: p, .. } => {
                 *p = current;
             }
         }
@@ -2481,6 +2524,16 @@ fn update_gesture(
                         arrow_click(doc, view, scene, source, dir, mode)
                     }
                 }
+                GestureKind::Outline {
+                    source, current, ..
+                } => {
+                    if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
+                        let modifiers = ctx.input(|input| input.modifiers);
+                        arrow_drop(doc, view, scene, source, current, modifiers)
+                    } else {
+                        Ok(false)
+                    }
+                }
             };
             match result {
                 Ok(true) if duplicating => focus_duplicated_selection(ui, view),
@@ -2512,6 +2565,7 @@ pub(super) fn interact(
     view.observe_board_rotation_selection(doc);
     view.board_input.armed_hover = false;
     view.board_input.ghost = None;
+    view.board_input.outline_hover = None;
     let ctx = ui.ctx().clone();
     if view.board_input.last_tool != view.board_tool {
         view.board_input.cancel_gesture();
@@ -2624,6 +2678,12 @@ pub(super) fn interact(
     view.board_input.ghost = response.hover_pos().filter(|point| {
         armed_idle && !armed_hover && canvas_point_unobscured(ui, response, *point)
     });
+    if (tool == BoardTool::Select || armed_idle) && !over_controls {
+        view.board_input.outline_hover = response
+            .hover_pos()
+            .filter(|point| canvas_point_unobscured(ui, response, *point))
+            .and_then(|point| outline_source(doc.sheet(), scene, view, view.xf().sheet(point)));
+    }
     if tool != BoardTool::Select && !armed_passthrough {
         let mut started_here = false;
         if view.board_input.creation_press.is_none()
@@ -2747,6 +2807,21 @@ pub(super) fn interact(
             SceneHit::Topic(id) => is_board_topic(doc.sheet(), view, id),
         });
         let modifiers = ctx.input(|input| input.modifiers);
+        if hit.is_none()
+            && let Some(source) = outline_source(doc.sheet(), scene, view, point)
+        {
+            if !prepare_edit(doc, view, out) {
+                return true;
+            }
+            let kind = GestureKind::Outline {
+                source,
+                anchor: point,
+                current: point,
+            };
+            view.board_input.gesture = Some(gesture(doc, view, kind, point));
+            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+            return true;
+        }
         if let Some(hit) = board_hit {
             if !prepare_edit(doc, view, out) {
                 return true;
@@ -3586,6 +3661,20 @@ pub(super) fn paint(
             4.0,
         ));
     }
+    if view.board_input.gesture.is_none()
+        && let Some(id) = view.board_input.outline_hover
+        && let Some(item) = scene.item(SceneId::Object(id))
+        && let Some(outline) = item_outline(item)
+    {
+        let clipped = item.clip.map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        clipped
+            .as_ref()
+            .unwrap_or(painter)
+            .add(egui::Shape::closed_line(
+                outline.into_iter().map(|point| xf.pos(point)).collect(),
+                Stroke::new(3.0, view.accent.gamma_multiply(0.7)),
+            ));
+    }
     let Some(drag) = &view.board_input.gesture else {
         return;
     };
@@ -3697,6 +3786,11 @@ pub(super) fn paint(
             anchor,
             current,
             ..
+        }
+        | GestureKind::Outline {
+            source,
+            anchor,
+            current,
         } => {
             if (*current - drag.origin).length() * xf.zoom < ARROW_DRAG {
                 return;

@@ -307,20 +307,7 @@ fn arrowhead(from: Vec2, tip: Vec2, width: f32, color: Color) -> Prim {
 
 /// Point halfway along a polyline.
 pub(crate) fn midpoint(points: &[Vec2]) -> Vec2 {
-    let total: f32 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
-    let mut left = total / 2.0;
-    for w in points.windows(2) {
-        let len = (w[1] - w[0]).length();
-        if len >= left && len > 0.0 {
-            let t = left / len;
-            return Vec2::new(
-                w[0].x + (w[1].x - w[0].x) * t,
-                w[0].y + (w[1].y - w[0].y) * t,
-            );
-        }
-        left -= len;
-    }
-    points.last().copied().unwrap_or(Vec2::ZERO)
+    thinoda_core::board::polyline_midpoint(points).unwrap_or(Vec2::ZERO)
 }
 
 /// Match the canvas defaults for sticky and text cards in each color mode.

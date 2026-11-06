@@ -781,9 +781,32 @@ from the toolbar now also inserts shapes directly, like draw.io's sidebar:
   `armed_keyboard_insert_avoids_content_at_the_viewport_centre` in `board_tests.rs`, and
   `shape_insert_tests.rs` (Shift+Enter, plain activation, real mouse drag from the tile).
 
-Remaining Phase 1 items: connect from a shape's outline, edge-to-edge drop, and
-reconnecting connector ends by dragging (verify against today's endpoint handles). The
-web drag-and-drop browser test follows with the web build checks.
+**Phase 1f — connect from the outline, edge-to-edge and reconnect.** Hovering just
+outside a single, unlocked, ungrouped shape (an 8 px screen band beyond the body's hit
+tolerance) highlights its outline in the accent colour and shows a crosshair; the shape's
+direction arrows stay visible. Dragging from that band draws a dashed connector preview
+that behaves exactly like an arrow drag: release on a topic, card, shape or connector to
+connect to it, on empty space to leave a free end, or with Ctrl/Cmd on empty space to
+drop a connected clone; each is one undo step. A press inside the body still moves the
+shape, and selection handles still take priority. With a shape armed the band counts as
+content, so it never creates a shape there (no ghost) and a drag from it still connects.
+- **Edge-to-edge:** dropping a connector end, arrow drag or outline drag on another
+  connector attaches as `Endpoint::Object(connector)` (cycles stay rejected). The end now
+  meets the target halfway along its path (`board::polyline_midpoint`, shared with the
+  export renderer's label anchor) instead of at its bounding-box centre. Today's straight,
+  elbow and curve routes are point-symmetric, so both agree; the change keeps ends on the
+  path once Phase 8 adds waypoints.
+- **Reconnect:** verified that dragging the existing *Connector From/To* handles onto a
+  shape, connector or empty space already re-targets the end as one "Reconnect connector"
+  undo step (`connector_creation_and_endpoint_edits_are_undoable`); no change needed.
+- Tests: `dragging_from_a_shape_outline_draws_a_connector_and_the_body_still_moves`,
+  `outline_drag_onto_a_connector_attaches_edge_to_edge` and
+  `armed_shapes_treat_the_outline_band_as_content` in `board_tests.rs`;
+  `edge_to_edge_ends_meet_a_bent_target_on_its_path` and
+  `polyline_midpoint_follows_length` in core.
+
+Phase 1 is complete apart from the web drag-and-drop browser test, which follows with
+the web build checks.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

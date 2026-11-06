@@ -569,8 +569,10 @@ impl<'a> ConnectorResolver<'a> {
             Endpoint::Object(id) => {
                 let object = self.objects.get(&id)?;
                 if object.is_connector() {
+                    // Edge-to-edge ends meet the target path halfway along it,
+                    // where its label sits, even when the route bends.
                     let points = self.paths.get(&id)?.as_ref()?;
-                    let center = points_bounds(points)?.center();
+                    let center = crate::board::polyline_midpoint(points)?;
                     Some(EndTarget::boxed(
                         Rect::from_center_size(center, Vec2::ZERO),
                         0.0,
