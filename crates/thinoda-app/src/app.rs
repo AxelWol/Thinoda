@@ -23,7 +23,7 @@ use thinoda_platform::{
 use thinoda_ui::{CommandPalette, ThemeMode, Toasts};
 
 use crate::{
-    doc::{OpenDoc, is_native},
+    doc::{OpenDoc, is_native, is_save_target},
     files,
     i18n::{self, t},
     ui::CardOpenOrder,
@@ -34,7 +34,11 @@ const MAP_FILTERS: &[files::Filter<'static>] = &[
     ("Thinoda", &["thinoda"]),
     ("XMind", &["xmind"]),
     ("MindManager", &["mmap"]),
+    ("draw.io", &["drawio"]),
 ];
+
+/// Editable draw.io SVG and PNG files carry their diagram inside an image file.
+const DRAWIO_OPEN_FILTER: files::Filter<'static> = ("draw.io", &["drawio", "dio", "svg", "png"]);
 
 const MAX_PENDING_RECOVERY_CLEANUPS: usize = 256;
 pub(crate) const RECOVERY_CLEANUP_WARNING: &str =
@@ -383,6 +387,7 @@ pub const EXPORT_MENU: &[Format] = &[
     Format::Excel,
     Format::Opml,
     Format::TextBundle,
+    Format::DrawIo,
     Format::FreeMind,
     Format::XMind,
     Format::Csv,
@@ -1057,7 +1062,7 @@ impl ThinodaApp {
                 if let Some(files) = files::pick_files(
                     files::Purpose::Open,
                     None,
-                    &[(t("Mind maps"), &exts)],
+                    &[(t("Mind maps"), &exts), DRAWIO_OPEN_FILTER],
                     self.settings.last_open_dir.as_deref(),
                     true,
                 ) {
@@ -1107,7 +1112,7 @@ impl ThinodaApp {
                 for f in files::pick_files(
                     files::Purpose::Import,
                     None,
-                    &[(t("Import"), &exts)],
+                    &[(t("Import"), &exts), DRAWIO_OPEN_FILTER],
                     None,
                     false,
                 )
@@ -2571,7 +2576,7 @@ impl ThinodaApp {
         }
         d.view.commit_edit(&mut d.doc);
         let (target, chosen) = match (&d.path, save_as) {
-            (Some(p), false) if is_native(d.format) || d.format == Format::MindManager => {
+            (Some(p), false) if is_save_target(d.format) => {
                 if (d.externally_changed || (self.file_ops.inline() && d.changed_on_disk()))
                     && !d.ignore_conflict
                 {

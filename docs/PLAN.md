@@ -11,7 +11,8 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## draw.io diagram support (2026-11-05)
 
-⬜ Planned. [DRAWIO.md](DRAWIO.md) holds the research (app.diagrams.net 32.6.10,
+🟡 In progress (Milestone A — codec, import, export — landed; see DRAWIO.md §4.1).
+[DRAWIO.md](DRAWIO.md) holds the research (app.diagrams.net 32.6.10,
 file format), the concept (native board model + lossless round-trip contract,
 `.drawio` editable in place, Apache-2.0 generic libraries bundled, vendor sets
 downloaded on demand) and phases 0–14. Phase 1 changes shape placement on all

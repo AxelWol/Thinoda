@@ -21,6 +21,11 @@ pub fn is_native(format: Format) -> bool {
     matches!(format, Format::Thinoda | Format::XMind)
 }
 
+/// Formats a document can be saved to; non-native targets go through a loss preflight.
+pub fn is_save_target(format: Format) -> bool {
+    is_native(format) || matches!(format, Format::MindManager | Format::DrawIo)
+}
+
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn oversized_import_error(path: &Path) -> Option<thinoda_io::IoError> {
     let limit = import_read_limit(path)?;
@@ -616,8 +621,10 @@ impl OpenDoc {
         self.commit_inspector_edit()?;
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
-            .filter(|f| is_native(*f) || *f == Format::MindManager)
-            .ok_or_else(|| t("Choose a .thinoda, .xmind or .mmap destination.").to_string())?;
+            .filter(|f| is_save_target(*f))
+            .ok_or_else(|| {
+                t("Choose a .thinoda, .xmind, .mmap or .drawio destination.").to_string()
+            })?;
         if format == Format::MindManager && self.doc.workbook().sheets.len() != 1 {
             return Err(t("MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.").into());
         }
@@ -662,8 +669,10 @@ impl OpenDoc {
     ) -> Result<(), String> {
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
-            .filter(|format| is_native(*format) || *format == Format::MindManager)
-            .ok_or_else(|| t("Choose a .thinoda, .xmind or .mmap destination.").to_string())?;
+            .filter(|format| is_save_target(*format))
+            .ok_or_else(|| {
+                t("Choose a .thinoda, .xmind, .mmap or .drawio destination.").to_string()
+            })?;
         if self.targets_current_file(path)? {
             return Err("choose a different path to preserve the source workbook".into());
         }
@@ -908,7 +917,7 @@ pub fn convert_with_consent(
         .ok_or_else(|| format!("unknown output format: {}", output.display()))?;
     if !format.can_export() {
         if format == Format::MindManagerXml {
-            return Err(t("Choose a .thinoda, .xmind or .mmap destination.").into());
+            return Err(t("Choose a .thinoda, .xmind, .mmap or .drawio destination.").into());
         }
         return Err(format!("{} cannot be exported", format.label()));
     }

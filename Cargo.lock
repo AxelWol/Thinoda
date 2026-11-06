@@ -4922,6 +4922,7 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "log",
+ "miniz_oxide 0.8.9",
  "pdf-writer",
  "pulldown-cmark",
  "quick-xml 0.42.0",

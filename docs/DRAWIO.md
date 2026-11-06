@@ -2,7 +2,7 @@ _Last updated: 2026-11-06 07:56:21 UTC (non-binding repository metadata)._ <!-- 
 
 # draw.io (diagrams.net) support: research, concept and phase plan
 
-Status: ⬜ planned (Phase 0 documentation landed). Tracked in [BACKLOG](BACKLOG.md#p1--drawio-diagram-support-user-request-2026-11-05) and [PLAN](PLAN.md#drawio-diagram-support-2026-11-05).
+Status: 🟡 in progress — Milestone A (codec, import, export) landed 2026-11-05; see [§4.1](#41-implementation-progress). Tracked in [BACKLOG](BACKLOG.md#p1--drawio-diagram-support-user-request-2026-11-05) and [PLAN](PLAN.md#drawio-diagram-support-2026-11-05).
 
 ## 1. Problem & goal
 
@@ -593,6 +593,41 @@ connections arrive in Phase 8 without changing the gestures).
 - Benchmarks vs Phase 0 targets, support-matrix tier gates (§1), fuzz CI, a11y audit,
   i18n completeness, user guide,
   CHANGELOG (release-please conventional commits).
+
+### 4.1 Implementation progress
+
+**Milestone A — codec, import and native-model export (2026-11-05).** A vertical slice
+of Phases 2, 6, 7 and 11 that maps draw.io onto *today's* board model, before the
+Phase 3 scene-model extensions exist:
+
+- `crates/thinoda-io/src/drawio.rs`: bounded XML DOM (no DTDs or unknown entities,
+  depth/element/page/size caps), raw-deflate and zlib inflation with an output cap,
+  `.drawio` / `.dio` / bare `mxGraphModel` / `.drawio.svg` (`content`) /
+  `.drawio.png` (`tEXt`, `zTXt`, `iTXt`) containers and content sniffing.
+- Import: pages → hidden-root sheets; nested and relative geometry, groups, swimlanes /
+  containers → frames, notes → sticky cards, text, lines, edges with deferred, free and
+  labelled endpoints, rotation and `direction`, colours and opacity, links. Anything
+  without a native equivalent (dashes, waypoints, rich HTML, images, unknown stencils,
+  hidden or orphan cells, custom properties) becomes a placeholder or is dropped and is
+  reported through the existing `ImportWarning` consent dialog; the source file is never
+  overwritten.
+- Export (`File › Export › draw.io` and Save As `.drawio`): uncompressed
+  `mxfile` with one page per sheet. Board content round-trips idempotently
+  (`thinoda*` style keys carry cards, ink, bands and frame clipping). Mind-map
+  topics, relationships, boundaries and summaries are flattened to shapes and connectors;
+  the board loss preflight lists *Mind-map topics and links flattened to shapes*, *Topic
+  notes, labels, markers or tasks omitted*, *Presentation slides omitted*, inline text
+  formatting and board grid/snap settings. Sheets with equations or embedded resources
+  are refused, as for other editable formats.
+- Opening a `.drawio` file imports a copy (like MindManager): Save asks for a
+  destination and cannot overwrite the imported source. In-place, lossless save-back
+  needs the Phase 3 ownership/passthrough model and remains Phase 7 work. Autosave stays
+  limited to native formats.
+
+Not yet covered: everything in Phases 1, 3–5 and 8–14, ink pressure (exported as a
+plain polyline without a loss row), clipboard interop, drag-and-drop of
+`.drawio.png` (still inserted as a picture; `.drawio.svg` opens as a diagram), and the
+fixture corpus from Phase 0.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

@@ -1,0 +1,673 @@
+use super::*;
+use crate::{ExportLoss, ExportOptions, detect_format, export_bytes, export_losses};
+use std::path::Path;
+use thinoda_core::{PresentationSource, board::CanvasCardState};
+
+/// Written by draw.io's algorithm (deflateRaw of encodeURIComponent) in Python,
+/// independently of this codec.
+const GOLDEN_COMPRESSED: &str = "xZTNboMwDMefJndKpqo7rqzdaSeeICUuiRYIMm5L9/RzICtUtPuQJu2AiD/+TvzDQcis6l5QNebVa3AiTUq0WshnkaYLfqIjt+8wONMkeOVGyAy9p2FVdRm4IP6U9knp9k40Fm4UQk0/EahBcFTuEI+Rk0ISQbZUVSPkOhzUD2ktnV1M4zK2adlYn4wlyBtVhMiJG2afocqxteDl3jqXeeex10mtYLUv2N8S+jeYRJbFCnb7fsP+SIAE3d22FhdYTBl8BYRnTomCh6Hr5HxtnqwmE/URTGLAliYWXUafage7vBQeEfIiUrxNdDcjKjIpHrM6vJ62BQ/DDCb6Q61BR2LfAP0DPP/Jp5iPki4hj6ZHMr70tXKb0bse+SS3WIQCX5Pg/fwBC7gaeh70Emjy1ea8EJwie7yu/ovu2Rzvch+b/BHk5gM=";
+
+fn page(cells: &str) -> String {
+    format!(
+        "<mxfile><diagram name=\"P\"><mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/>{cells}</root></mxGraphModel></diagram></mxfile>"
+    )
+}
+
+fn load(xml: &str) -> ImportReport {
+    import(xml.as_bytes()).unwrap_or_else(|e| panic!("{e}"))
+}
+
+fn clean(xml: &str) -> Sheet {
+    let report = load(xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    report.workbook.sheets.into_iter().next().unwrap()
+}
+
+fn shapes(sheet: &Sheet) -> Vec<&CanvasObject> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|o| matches!(o.kind, CanvasObjectKind::Shape { .. }))
+        .collect()
+}
+
+fn connectors(sheet: &Sheet) -> Vec<&CanvasConnector> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|o| match &o.kind {
+            CanvasObjectKind::Connector(c) => Some(c),
+            _ => None,
+        })
+        .collect()
+}
+
+fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
+    Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h))
+}
+
+fn shape(kind: ShapeKind, frame: Rect, label: &str) -> CanvasObject {
+    let mut object = CanvasObject::shape(kind, frame);
+    if let CanvasObjectKind::Shape { label: text, .. } = &mut object.kind {
+        *text = label.into();
+    }
+    object
+}
+
+/// A board exercising every native draw.io mapping.
+fn board() -> Workbook {
+    let mut s = Sheet::new("Board", "");
+    s.root_mode = SheetRootMode::Hidden;
+    s.board.grid = GridKind::Lines;
+    s.board.grid_size = 16.0;
+    let mut cloud = shape(
+        ShapeKind::Cloud,
+        rect(0.0, 300.0, 120.0, 80.0),
+        "Cloud & <co>\nline 2",
+    );
+    cloud.style.fill = Some(Color::rgba(0x33, 0x99, 0xFF, 128));
+    cloud.style.stroke = Some(Color::rgb(1, 2, 3));
+    cloud.style.text_color = Some(Color::WHITE);
+    cloud.style.stroke_width = 3.5;
+    cloud.style.opacity = 0.5;
+    cloud.rotation = 30.0;
+    cloud.alt_text = "A cloud".into();
+    let cloud = s.add_canvas_object(cloud).unwrap();
+    let mut triangle = shape(ShapeKind::Triangle, rect(200.0, 300.0, 60.0, 40.0), "");
+    triangle.band = Band::Below;
+    let triangle = s.add_canvas_object(triangle).unwrap();
+    let mut text = shape(
+        ShapeKind::Rectangle,
+        rect(400.0, 0.0, 100.0, 30.0),
+        "Free text",
+    );
+    text.style.fill = Some(Color::TRANSPARENT);
+    text.style.stroke = Some(Color::TRANSPARENT);
+    s.add_canvas_object(text).unwrap();
+    for (i, kind) in [
+        ShapeKind::Hexagon,
+        ShapeKind::Star,
+        ShapeKind::Decision,
+        ShapeKind::Cylinder,
+        ShapeKind::Chevron,
+        ShapeKind::RightTriangle,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        s.add_canvas_object(shape(kind, rect(i as f32 * 80.0, 600.0, 60.0, 50.0), ""))
+            .unwrap();
+    }
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(160.0, 120.0));
+    card.rotation = 8.0;
+    card.color = Some(Color::rgb(0xFF, 0xF2, 0xA8));
+    let sticky = s
+        .add_card("Sticky", Vec2::new(-200.0, 100.0), card)
+        .unwrap();
+    s.topic_mut(sticky).unwrap().style.fill = card.color;
+    s.topic_mut(sticky).unwrap().hyperlink = Some("https://example.com/?a=1&b=2".into());
+    let text_card = s
+        .add_card(
+            "Text card",
+            Vec2::new(-200.0, 400.0),
+            Card::new(CardKind::Text, Vec2::new(120.0, 40.0)),
+        )
+        .unwrap();
+    s.add_canvas_object(CanvasObject::ink(InkStroke::new(
+        InkTool::Highlighter,
+        Color::rgb(250, 220, 0),
+        12.0,
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(40.0, 30.0),
+            Vec2::new(90.0, 10.0),
+        ],
+    )))
+    .unwrap();
+    let mut connector = CanvasConnector::new(Endpoint::Object(cloud), Endpoint::Topic(sticky));
+    connector.label = "links".into();
+    connector.route = ConnectorRoute::Elbow;
+    connector.arrow_start = true;
+    connector.color = Some(Color::rgb(200, 0, 0));
+    connector.width = 4.0;
+    s.add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let mut curve = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-50.0, -50.0)),
+        Endpoint::Object(triangle),
+    );
+    curve.route = ConnectorRoute::Curve;
+    curve.arrow_end = false;
+    s.add_canvas_object(CanvasObject::connector(curve)).unwrap();
+    // A locked group of a shape and a card inside a clipped zone.
+    let zone = s
+        .create_board_frame("Lane", rect(1000.0, 0.0, 600.0, 400.0))
+        .unwrap();
+    let boxed = s
+        .add_canvas_object(shape(
+            ShapeKind::RoundedRectangle,
+            rect(1100.0, 100.0, 100.0, 60.0),
+            "In zone",
+        ))
+        .unwrap();
+    let zone_card = s
+        .add_card(
+            "Zone card",
+            Vec2::new(1400.0, 200.0),
+            Card::new(CardKind::Sticky, Vec2::new(100.0, 100.0)),
+        )
+        .unwrap();
+    s.set_zone_members(zone, vec![zone_card], vec![boxed])
+        .unwrap();
+    {
+        let zone = s.zones.iter_mut().find(|z| z.id == zone).unwrap();
+        zone.clip = true;
+        zone.color = Some(Color::rgb(0x6C, 0x8E, 0xBF));
+        zone.background_color = Some(Color::rgb(0xDA, 0xE8, 0xFC));
+    }
+    let group = s
+        .group_board_members(&[BoardMember::Object(boxed), BoardMember::Card(zone_card)])
+        .unwrap();
+    s.canvas
+        .groups
+        .iter_mut()
+        .find(|g| g.id == group)
+        .unwrap()
+        .locked = true;
+    s.set_board_members_locked(&[BoardMember::Card(text_card)], true)
+        .unwrap();
+    let mut second = Sheet::new("Second & <page>", "");
+    second.root_mode = SheetRootMode::Hidden;
+    second
+        .add_canvas_object(shape(ShapeKind::Ellipse, rect(0.0, 0.0, 50.0, 50.0), "Two"))
+        .unwrap();
+    let mut book = Workbook::new(s);
+    book.sheets.push(second);
+    book.validate().unwrap();
+    book
+}
+
+fn roundtrip(book: &Workbook) -> Workbook {
+    let bytes = export(book).unwrap();
+    let report = import(&bytes).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    report.workbook.validate().unwrap();
+    report.workbook
+}
+
+type CardSummary = (String, Card, Option<Vec2>, Option<String>, Option<Color>);
+
+fn cards(sheet: &Sheet) -> Vec<CardSummary> {
+    sheet
+        .topics
+        .values()
+        .filter(|t| t.card.is_some())
+        .map(|t| {
+            (
+                t.title.clone(),
+                t.card.unwrap(),
+                t.position,
+                t.hyperlink.clone(),
+                t.style.fill,
+            )
+        })
+        .collect()
+}
+
+fn shape_summaries(sheet: &Sheet) -> Vec<String> {
+    let mut out: Vec<String> = shapes(sheet)
+        .iter()
+        .map(|o| {
+            format!(
+                "{:?}|{:?}|{}|{:?}|{:?}|{}",
+                o.kind, o.rect, o.rotation, o.band, o.style, o.alt_text
+            )
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn board_round_trips_without_warnings_and_is_idempotent() {
+    let original = board();
+    let first = roundtrip(&original);
+    let second = roundtrip(&first);
+    assert_eq!(first, second, "re-export changed the imported board");
+    assert_eq!(export(&first).unwrap(), export(&second).unwrap());
+
+    let sheet = &first.sheets[0];
+    let source = &original.sheets[0];
+    assert_eq!(first.sheets.len(), 2);
+    assert_eq!(sheet.title, "Board");
+    assert_eq!(first.sheets[1].title, "Second & <page>");
+    assert_eq!(sheet.root_mode, SheetRootMode::Hidden);
+    assert_eq!(sheet.board.grid, GridKind::Lines);
+    assert_eq!(sheet.board.grid_size, 16.0);
+    assert_eq!(shape_summaries(sheet), shape_summaries(source));
+
+    let imported_cards = cards(sheet);
+    assert_eq!(imported_cards.len(), 3);
+    for card in cards(source) {
+        assert!(
+            imported_cards.contains(&card),
+            "missing {card:?} in {imported_cards:?}"
+        );
+    }
+
+    let links = connectors(sheet);
+    assert_eq!(links.len(), 2);
+    let elbow = links
+        .iter()
+        .find(|c| c.route == ConnectorRoute::Elbow)
+        .unwrap();
+    assert!(matches!(elbow.from, Endpoint::Object(_)));
+    assert!(matches!(elbow.to, Endpoint::Topic(_)));
+    assert_eq!(
+        (elbow.label.as_str(), elbow.arrow_start, elbow.arrow_end),
+        ("links", true, true)
+    );
+    assert_eq!(
+        (elbow.color, elbow.width),
+        (Some(Color::rgb(200, 0, 0)), 4.0)
+    );
+    let curve = links
+        .iter()
+        .find(|c| c.route == ConnectorRoute::Curve)
+        .unwrap();
+    assert_eq!(curve.from, Endpoint::Point(Vec2::new(-50.0, -50.0)));
+    assert!(matches!(curve.to, Endpoint::Object(_)));
+    assert!(!curve.arrow_end);
+
+    let ink: Vec<_> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|o| match &o.kind {
+            CanvasObjectKind::Ink(ink) => Some(ink),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ink.len(), 1);
+    assert_eq!(ink[0].tool, InkTool::Highlighter);
+    assert_eq!(ink[0].width, 12.0);
+    assert_eq!(ink[0].points.len(), 3);
+    assert_eq!(ink[0].points[1], Vec2::new(40.0, 30.0));
+
+    assert_eq!(sheet.zones.len(), 1);
+    let zone = &sheet.zones[0];
+    assert_eq!(zone.name, "Lane");
+    assert_eq!(zone.frame, rect(1000.0, 0.0, 600.0, 400.0));
+    assert!(zone.clip);
+    assert_eq!(zone.color, Some(Color::rgb(0x6C, 0x8E, 0xBF)));
+    assert_eq!(zone.background_color, Some(Color::rgb(0xDA, 0xE8, 0xFC)));
+    assert_eq!((zone.roots.len(), zone.objects.len()), (1, 1));
+    assert_eq!(sheet.canvas.groups.len(), 1);
+    assert!(sheet.canvas.groups[0].locked);
+    assert_eq!(
+        sheet.board_group_members(sheet.canvas.groups[0].id).len(),
+        2
+    );
+    let locked_cards: Vec<_> = sheet
+        .canvas
+        .card_states
+        .iter()
+        .filter(|s: &&CanvasCardState| s.locked)
+        .map(|s| sheet.topic(s.topic).unwrap().title.clone())
+        .collect();
+    assert_eq!(locked_cards, ["Text card"]);
+}
+
+#[test]
+fn export_is_well_formed_uncompressed_and_escaped() {
+    let text = String::from_utf8(export(&board()).unwrap()).unwrap();
+    let root = parse_dom(&text).unwrap();
+    assert_eq!(root.name, "mxfile");
+    assert_eq!(
+        root.children.iter().filter(|c| c.name == "diagram").count(),
+        2
+    );
+    assert!(text.contains(
+        "label=\"Cloud &amp;amp; &amp;lt;co&amp;gt;&lt;br&gt;line 2\" id=\"o2\" tooltip=\"A cloud\""
+    ));
+    assert!(text.contains("name=\"Second &amp; &lt;page&gt;\""));
+    assert!(text.contains("shape=cloud;"));
+    assert!(text.contains("thinodaCard=sticky;"));
+    assert!(text.contains("thinodaInk=highlighter;"));
+    assert!(text.contains("thinodaClip=1;"));
+    assert!(text.contains("link=\"https://example.com/?a=1&amp;b=2\""));
+    let report = load(&text);
+    let label = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .map(|o| o.label())
+        .find(|l| l.starts_with("Cloud"))
+        .map(str::to_owned);
+    assert_eq!(label.as_deref(), Some("Cloud & <co>\nline 2"));
+}
+
+#[test]
+fn golden_compressed_page_imports() {
+    let xml = format!(
+        "<mxfile host=\"app.diagrams.net\"><diagram id=\"x\" name=\"Flow\">{GOLDEN_COMPRESSED}</diagram></mxfile>"
+    );
+    let sheet = clean(&xml);
+    assert_eq!(sheet.title, "Flow");
+    assert_eq!(sheet.board.grid, GridKind::Lines);
+    assert_eq!(sheet.board.grid_size, 20.0);
+    let objects = shapes(&sheet);
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[0].label(), "Start & go");
+    assert_eq!(objects[0].style.fill, Some(Color::rgb(0xDA, 0xE8, 0xFC)));
+    assert_eq!(objects[1].label(), "Ünïcode");
+    assert!(matches!(
+        &objects[1].kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::RoundedRectangle,
+            ..
+        }
+    ));
+    let links = connectors(&sheet);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].route, ConnectorRoute::Elbow);
+    assert_eq!(links[0].from, Endpoint::Object(objects[0].id));
+}
+
+#[test]
+fn zlib_wrapped_page_and_bare_graph_model_import() {
+    let inner = "<mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/><mxCell id=\"v\" value=\"Z\" vertex=\"1\" parent=\"1\"><mxGeometry width=\"10\" height=\"10\" as=\"geometry\"/></mxCell></root></mxGraphModel>";
+    let data = miniz_oxide::deflate::compress_to_vec_zlib(inner.as_bytes(), 6);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+    let sheet = clean(&format!(
+        "<mxfile><diagram>\n{encoded}\n</diagram></mxfile>"
+    ));
+    assert_eq!(sheet.title, "Page-1");
+    assert_eq!(shapes(&sheet)[0].label(), "Z");
+    let bare = clean(inner);
+    assert_eq!(shapes(&bare)[0].label(), "Z");
+}
+
+fn percent_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                char::from(b).to_string()
+            }
+            b => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+fn png_chunk(png: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
+    png.extend((data.len() as u32).to_be_bytes());
+    png.extend(kind);
+    png.extend(data);
+    png.extend([0; 4]);
+}
+
+#[test]
+fn svg_and_png_containers_are_detected_and_imported() {
+    let model = page(
+        r#"<mxCell id="v" value="Embedded" style="ellipse;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#,
+    );
+    let escaped = model
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;");
+    let svg = format!(
+        "<?xml version=\"1.0\"?><!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\"><svg xmlns=\"http://www.w3.org/2000/svg\" content=\"{escaped}\"><rect/></svg>"
+    );
+    assert_eq!(
+        detect_format(Path::new("a.drawio.svg"), svg.as_bytes()),
+        Some(Format::DrawIo)
+    );
+    assert_eq!(shapes(&clean(&svg))[0].label(), "Embedded");
+    let plain_svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>";
+    assert_eq!(
+        detect_format(Path::new("a.svg"), plain_svg.as_bytes()),
+        Some(Format::Svg)
+    );
+
+    let mut png = PNG_SIGNATURE.to_vec();
+    png_chunk(&mut png, b"IHDR", &[0; 13]);
+    let mut text = b"mxfile\0".to_vec();
+    text.extend(percent_encode(&model).bytes());
+    png_chunk(&mut png, b"tEXt", &text);
+    png_chunk(&mut png, b"IEND", &[]);
+    assert_eq!(
+        detect_format(Path::new("a.drawio.png"), &png),
+        Some(Format::DrawIo)
+    );
+    let report = import(&png).unwrap();
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Embedded");
+    let mut plain_png = PNG_SIGNATURE.to_vec();
+    png_chunk(&mut plain_png, b"IEND", &[]);
+    assert_eq!(
+        detect_format(Path::new("a.png"), &plain_png),
+        Some(Format::Png)
+    );
+
+    for name in ["a.xml", "diagram", "a.dio", "a.drawio"] {
+        assert_eq!(
+            detect_format(Path::new(name), model.as_bytes()),
+            Some(Format::DrawIo),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn nested_geometry_groups_containers_and_edge_labels() {
+    let xml = page(
+        r#"
+        <mxCell id="g" style="group" vertex="1" connectable="0" parent="1"><mxGeometry x="100" y="100" width="200" height="100" as="geometry"/></mxCell>
+        <mxCell id="a" value="A" vertex="1" parent="g"><mxGeometry x="0" y="0" width="50" height="50" as="geometry"/></mxCell>
+        <mxCell id="b" value="B" style="ellipse;" vertex="1" parent="g"><mxGeometry x="150" y="50" width="50" height="50" as="geometry"/></mxCell>
+        <mxCell id="e" value="" style="endArrow=none;" edge="1" parent="1" source="a" target="later"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="l" value="edge label" style="edgeLabel;" vertex="1" connectable="0" parent="e"><mxGeometry x="-0.2" relative="1" as="geometry"/></mxCell>
+        <mxCell id="lane" value="&lt;b&gt;&lt;/b&gt;Pool&lt;br&gt;" style="swimlane;html=1;startSize=20;" vertex="1" parent="1"><mxGeometry x="500" y="0" width="300" height="200" as="geometry"/></mxCell>
+        <mxCell id="later" value="Inside" vertex="1" parent="lane"><mxGeometry x="20" y="40" width="60" height="30" as="geometry"/></mxCell>
+        <mxCell id="pin" value="pin" style="ellipse;" vertex="1" parent="later"><mxGeometry x="1" y="0.5" width="10" height="10" relative="1" as="geometry"><mxPoint x="-5" y="-5" as="offset"/></mxGeometry></mxCell>
+        <mxCell id="free" edge="1" parent="lane"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="10" y="10" as="targetPoint"/></mxGeometry></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    // `<b>` is formatting without a native equivalent.
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let sheet = &report.workbook.sheets[0];
+    let find = |label: &str| {
+        shapes(sheet)
+            .into_iter()
+            .find(|o| o.label() == label)
+            .unwrap_or_else(|| panic!("{label}"))
+    };
+    assert_eq!(find("A").rect, rect(100.0, 100.0, 50.0, 50.0));
+    assert_eq!(find("B").rect, rect(250.0, 150.0, 50.0, 50.0));
+    assert_eq!(find("Inside").rect, rect(520.0, 40.0, 60.0, 30.0));
+    assert_eq!(find("pin").rect, rect(575.0, 50.0, 10.0, 10.0));
+    let a = find("A").id;
+    let b = find("B").id;
+    let inside = find("Inside").id;
+    let pin = find("pin").id;
+    assert_eq!(sheet.canvas.groups.len(), 2);
+    let groups: Vec<Vec<BoardMember>> = sheet
+        .canvas
+        .groups
+        .iter()
+        .map(|g| sheet.board_group_members(g.id))
+        .collect();
+    assert!(groups.contains(&vec![BoardMember::Object(a), BoardMember::Object(b)]));
+    assert!(groups.contains(&vec![BoardMember::Object(inside), BoardMember::Object(pin)]));
+    let zone = &sheet.zones[0];
+    assert_eq!(zone.name, "Pool");
+    assert_eq!(zone.objects.len(), 3, "inside, pin and the free edge");
+    let links = connectors(sheet);
+    let deferred = links.iter().find(|c| c.label == "edge label").unwrap();
+    assert_eq!(
+        (deferred.from, deferred.to),
+        (Endpoint::Object(a), Endpoint::Object(inside))
+    );
+    assert!(!deferred.arrow_end);
+    let free = links.iter().find(|c| c.label.is_empty()).unwrap();
+    assert_eq!(free.from, Endpoint::Point(Vec2::new(500.0, 0.0)));
+    assert_eq!(free.to, Endpoint::Point(Vec2::new(510.0, 10.0)));
+}
+
+#[test]
+fn notes_text_lines_directions_and_user_objects() {
+    let xml = page(
+        r#"
+        <mxCell id="n" value="Note" style="shape=note;fillColor=#fff2cc;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="80" as="geometry"/></mxCell>
+        <mxCell id="t" value="Label" style="text;html=1;" vertex="1" parent="1"><mxGeometry x="0" y="100" width="60" height="20" as="geometry"/></mxCell>
+        <mxCell id="ln" style="line;strokeWidth=2;direction=south;" vertex="1" parent="1"><mxGeometry x="0" y="200" width="10" height="100" as="geometry"/></mxCell>
+        <mxCell id="tri" style="triangle;direction=south;" vertex="1" parent="1"><mxGeometry x="0" y="400" width="60" height="40" as="geometry"/></mxCell>
+        <UserObject label="Linked" tooltip="Tip" link="https://example.com" id="u"><mxCell style="shape=note;" vertex="1" parent="1"><mxGeometry x="300" y="0" width="100" height="80" as="geometry"/></mxCell></UserObject>
+        "#,
+    );
+    let report = load(&xml);
+    // The card tooltip has no native equivalent.
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    let sheet = &report.workbook.sheets[0];
+    let note = sheet.topics.values().find(|t| t.title == "Note").unwrap();
+    let card = note.card.unwrap();
+    assert_eq!(card.kind, CardKind::Sticky);
+    assert_eq!(card.color, Some(Color::rgb(0xFF, 0xF2, 0xCC)));
+    assert_eq!(note.position, Some(Vec2::new(50.0, 40.0)));
+    let linked = sheet.topics.values().find(|t| t.title == "Linked").unwrap();
+    assert_eq!(linked.hyperlink.as_deref(), Some("https://example.com"));
+    let label = shapes(sheet)
+        .into_iter()
+        .find(|o| o.label() == "Label")
+        .unwrap();
+    assert_eq!(label.style.fill, Some(Color::TRANSPARENT));
+    let tri = shapes(sheet)
+        .into_iter()
+        .find(|o| {
+            matches!(
+                o.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::Triangle,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    // draw.io triangles point east and Thinoda's point north; south turns them down.
+    assert_eq!(tri.rotation, 180.0);
+    assert_eq!(tri.rect, rect(0.0, 400.0, 60.0, 40.0));
+    let line = connectors(sheet)[0];
+    assert_eq!(line.from, Endpoint::Point(Vec2::new(5.0, 200.0)));
+    assert_eq!(line.to, Endpoint::Point(Vec2::new(5.0, 300.0)));
+    assert!(!line.arrow_end);
+}
+
+#[test]
+fn unsupported_content_is_reported_not_dropped_silently() {
+    let xml = page(
+        r#"
+        <mxCell id="d" value="Dashed" style="rounded=0;dashed=1;" vertex="1" parent="1"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="k" value="Unknown" style="shape=mxgraph.aws4.lambda;" vertex="1" parent="1"><mxGeometry y="20" width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="i" style="shape=image;image=https://example.com/a.png;" vertex="1" parent="1"><mxGeometry y="40" width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="h" value="Hidden" vertex="1" visible="0" parent="1"><mxGeometry y="60" width="10" height="10" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert_eq!(
+        report.warnings,
+        vec![
+            ImportWarning::Formatting,
+            ImportWarning::Resources,
+            ImportWarning::Other
+        ]
+    );
+    assert_eq!(
+        shapes(&report.workbook.sheets[0]).len(),
+        3,
+        "unknown and image shapes become placeholders"
+    );
+}
+
+#[test]
+fn hostile_inputs_are_rejected() {
+    let dtd = "<!DOCTYPE mxfile [<!ENTITY x \"boom\">]><mxfile><diagram>&x;</diagram></mxfile>";
+    assert!(import(dtd.as_bytes()).is_err());
+    assert!(import(b"<mxfile><diagram>&unknown;</diagram></mxfile>").is_err());
+    let deep = format!(
+        "<mxfile>{}{}</mxfile>",
+        "<a>".repeat(100),
+        "</a>".repeat(100)
+    );
+    assert!(import(deep.as_bytes()).is_err());
+    assert!(import(b"<mxfile></mxfile>").is_err());
+    assert!(import(b"<html/>").is_err());
+    assert!(import(b"<mxfile><diagram>!!notbase64!!</diagram></mxfile>").is_err());
+    assert!(import(PNG_SIGNATURE).is_err());
+    let mut truncated = PNG_SIGNATURE.to_vec();
+    truncated.extend(u32::MAX.to_be_bytes());
+    truncated.extend(b"tEXt");
+    assert!(!sniff(&truncated));
+    let bomb = miniz_oxide::deflate::compress_to_vec(&vec![b'a'; MAX_BYTES + 1], 9);
+    let page = format!(
+        "<mxfile><diagram>{}</diagram></mxfile>",
+        base64::engine::general_purpose::STANDARD.encode(bomb)
+    );
+    assert!(import(page.as_bytes()).is_err());
+}
+
+#[test]
+fn cyclic_and_self_parented_cells_terminate() {
+    let xml = page(
+        r#"
+        <mxCell id="x" value="X" vertex="1" parent="y"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="y" value="Y" vertex="1" parent="x"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="s" value="S" vertex="1" parent="s"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="ok" value="OK" vertex="1" parent="1"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(
+        shapes(&report.workbook.sheets[0])
+            .iter()
+            .any(|o| o.label() == "OK")
+    );
+}
+
+#[test]
+fn export_reports_flattened_map_content() {
+    let mut book = board();
+    assert!(export_losses(&book, Format::DrawIo, &ExportOptions::default()).is_empty());
+    let sheet = &mut book.sheets[0];
+    let idea = sheet.add_floating("Idea", Vec2::new(200.0, -300.0));
+    let detail = sheet.add_child(idea, None, "Detail");
+    sheet.topic_mut(detail).unwrap().notes = Some("note".into());
+    sheet
+        .add_presentation_slide(
+            "All",
+            PresentationSource::Viewport,
+            rect(0.0, 0.0, 100.0, 100.0),
+        )
+        .unwrap();
+    assert_eq!(
+        export_losses(&book, Format::DrawIo, &ExportOptions::default()),
+        vec![
+            ExportLoss::MapElementsFlattened(2),
+            ExportLoss::TopicDetailsDropped(1),
+            ExportLoss::SlidesDropped(1),
+        ]
+    );
+    let bytes = export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let report = import(&bytes).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let sheet = &report.workbook.sheets[0];
+    assert!(shapes(sheet).iter().any(|o| o.label() == "Idea"));
+    assert!(shapes(sheet).iter().any(|o| o.label() == "Detail"));
+    assert_eq!(
+        connectors(sheet).len(),
+        3,
+        "two board connectors and one branch"
+    );
+}

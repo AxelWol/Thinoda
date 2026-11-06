@@ -12,6 +12,9 @@ Use the board toolbar to add sticky notes, text cards, shapes, connectors and fr
 Board > Hide central topic moves any central-topic content to a floating topic. Board > Show central topic shows the central topic again; floating topics stay separate. FIM sheets always show a central topic.|Quadro > Ocultar tópico central move o conteúdo do tópico central, se houver, para um tópico flutuante. Quadro > Mostrar tópico central exibe o tópico central novamente; os tópicos flutuantes permanecem separados. As folhas FIM sempre exibem um tópico central.
 Save boards as .thinoda to preserve cards, shapes, connectors, frames and board settings. Other formats may change or omit board content; review the export warnings.|Salve os quadros como .thinoda para preservar cartões, formas, conectores, molduras e configurações do quadro. Outros formatos podem alterar ou omitir conteúdo do quadro; confira os avisos de exportação.
 Inline card text and list formatting omitted|Formatação e listas do texto dos cartões omitidas
+Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa mental convertidos em formas
+Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
+Presentation slides omitted|Slides de apresentação omitidos
 Formatted card titles cannot be changed until rich-text editing is supported|Não é possível alterar títulos de cartões formatados até que a edição de texto formatado seja compatível.
 Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.|O recorte da moldura é apenas visual e não remove dados de forma segura. O conteúdo fora da moldura pode permanecer nos arquivos salvos ou exportados, e algumas exportações podem não aplicar o recorte.
 # Regional wording for the freeform board; other labels share Portuguese.

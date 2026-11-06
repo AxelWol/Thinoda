@@ -4,6 +4,7 @@
 //! Graphical output shares font-measured title layout. PDF keeps vector paths
 //! (including outlined text); JPEG always uses an opaque background.
 mod board_export;
+mod drawio;
 pub mod fim;
 pub mod fonts;
 mod formats;
@@ -43,6 +44,7 @@ pub enum Format {
     MindManager,
     MindManagerXml,
     TextBundle,
+    DrawIo,
     Svg,
     Png,
     Jpeg,
@@ -65,6 +67,7 @@ impl Format {
         Self::MindManager,
         Self::MindManagerXml,
         Self::TextBundle,
+        Self::DrawIo,
         Self::Word,
     ];
     pub const EXPORTABLE: &'static [Format] = &[
@@ -78,6 +81,7 @@ impl Format {
         Self::PlainText,
         Self::MindManager,
         Self::TextBundle,
+        Self::DrawIo,
         Self::Svg,
         Self::Png,
         Self::Jpeg,
@@ -101,6 +105,7 @@ impl Format {
             "mmap" => Self::MindManager,
             "xmmap" => Self::MindManagerXml,
             "textpack" | "textbundle" => Self::TextBundle,
+            "drawio" | "dio" => Self::DrawIo,
             "svg" => Self::Svg,
             "png" => Self::Png,
             "jpg" | "jpeg" => Self::Jpeg,
@@ -125,6 +130,7 @@ impl Format {
             Self::MindManager => &["mmap"],
             Self::MindManagerXml => &["xmmap"],
             Self::TextBundle => &["textpack", "textbundle"],
+            Self::DrawIo => &["drawio", "dio"],
             Self::Svg => &["svg"],
             Self::Png => &["png"],
             Self::Jpeg => &["jpg", "jpeg"],
@@ -148,6 +154,7 @@ impl Format {
             Self::MindManager => "MindManager",
             Self::MindManagerXml => "MindManager XML",
             Self::TextBundle => "TextBundle",
+            Self::DrawIo => "draw.io",
             Self::Svg => "SVG",
             Self::Png => "PNG",
             Self::Jpeg => "JPEG",
@@ -334,7 +341,16 @@ pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
             return detected;
         }
     }
-    if let Some(f) = Format::from_path(path) {
+    // draw.io stores editable diagrams in .drawio.svg/.drawio.png and plain .xml files.
+    let named = Format::from_path(path);
+    if matches!(
+        named,
+        None | Some(Format::Svg | Format::Png | Format::DrawIo)
+    ) && drawio::sniff(bytes)
+    {
+        return Some(Format::DrawIo);
+    }
+    if let Some(f) = named {
         return Some(f);
     }
     if bytes.starts_with(b"PK\x03\x04")
@@ -420,6 +436,7 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
         Format::TextBundle => formats::textbundle_import(bytes)?,
         Format::Word => office::docx_import(bytes)?,
         Format::FreeMind => formats::freemind_import_with_report(bytes)?,
+        Format::DrawIo => drawio::import(bytes)?,
         _ => {
             let workbook = match format {
                 Format::Thinoda => formats::native_import(bytes)?,
@@ -496,7 +513,10 @@ fn import_read_policy(name: &Path) -> Option<ImportReadPolicy> {
     match Format::from_path(name) {
         Some(Format::FimXdf2 | Format::FimXdf3) => Some(ImportReadPolicy::Fim),
         Some(Format::MindManager | Format::MindManagerXml) => Some(ImportReadPolicy::MindManager),
-        None | Some(Format::TextBundle | Format::Word) => Some(ImportReadPolicy::Archive),
+        None
+        | Some(Format::TextBundle | Format::Word | Format::DrawIo | Format::Svg | Format::Png) => {
+            Some(ImportReadPolicy::Archive)
+        }
         _ => None,
     }
 }
@@ -766,6 +786,7 @@ pub fn export_bytes_with_consent_and_visual_context(
             })?
         }
         Format::TextBundle => formats::textbundle_export(book, opts)?,
+        Format::DrawIo => drawio::export(book)?,
         Format::Svg => render::svg(book, opts, visual)?.into_bytes(),
         Format::Png => render::raster(book, opts, image::ImageFormat::Png, visual)?,
         Format::Jpeg => render::raster(book, opts, image::ImageFormat::Jpeg, visual)?,

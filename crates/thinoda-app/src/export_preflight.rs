@@ -15,7 +15,7 @@ use thinoda_ui::{Dialog, widgets};
 
 use crate::{
     app::ThinodaApp,
-    doc::{OpenDoc, is_native},
+    doc::{OpenDoc, is_save_target},
     i18n::{self, t},
 };
 
@@ -165,6 +165,13 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::InlineTextDropped(count) => {
                     (*count, "Inline card text and list formatting omitted")
                 }
+                ExportLoss::MapElementsFlattened(count) => {
+                    (*count, "Mind-map topics and links flattened to shapes")
+                }
+                ExportLoss::TopicDetailsDropped(count) => {
+                    (*count, "Topic notes, labels, markers or tasks omitted")
+                }
+                ExportLoss::SlidesDropped(count) => (*count, "Presentation slides omitted"),
                 ExportLoss::BoardSettingsDropped => {
                     return t("Board grid and snapping settings omitted").to_owned();
                 }
@@ -303,9 +310,7 @@ impl ThinodaApp {
         if self.dialogs.board_export.is_some() {
             return false;
         }
-        let Some(format) = Format::from_path(path)
-            .filter(|format| is_native(*format) || *format == Format::MindManager)
-        else {
+        let Some(format) = Format::from_path(path).filter(|format| is_save_target(*format)) else {
             return self.perform_preflight_save(
                 path,
                 backup,

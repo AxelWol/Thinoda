@@ -307,8 +307,10 @@ projection, export fidelity and rendered equations remain open; see PLAN.
 
 ### P1 — draw.io diagram support (user request, 2026-11-05)
 
-⬜ Planned; concept, support matrix and 15-phase plan in [DRAWIO.md](DRAWIO.md)
-(reviewed twice, findings resolved in its §7). Next: Phase 0 fixture corpus,
+🟡 In progress; concept, support matrix and 15-phase plan in [DRAWIO.md](DRAWIO.md)
+(reviewed twice, findings resolved in its §7). Milestone A landed: `.drawio`,
+`.dio`, `.drawio.svg` and `.drawio.png` open as imported copies; File › Export ›
+draw.io and Save As `.drawio` write after the loss preflight (DRAWIO.md §4.1). Next: Phase 0 fixture corpus,
 ADR/issue, consumer + interaction inventory, benchmark targets; then Phase 1
 draw.io-style shape placement (pick/drag, hover-edit, click-empty create,
 direction arrows, quick-shape popover, floating edge/shape toolbars,

@@ -164,6 +164,13 @@ pub enum ExportLoss {
     BoardSettingsDropped,
     /// Inline card titles with formatting or list semantics are not written.
     InlineTextDropped(usize),
+    /// Mind-map topics, branches and annotations are written as unlinked drawn
+    /// shapes and lines: they no longer reflow or form a hierarchy.
+    MapElementsFlattened(usize),
+    /// Topic notes, labels, markers and task state are not written.
+    TopicDetailsDropped(usize),
+    /// Presentation slides are not written.
+    SlidesDropped(usize),
 }
 
 /// Content lost when exporting `book` to `format` with `opts`, itemised with counts.
@@ -178,6 +185,9 @@ pub enum ExportLoss {
 pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> Vec<ExportLoss> {
     if matches!(format, Format::Thinoda) {
         return Vec::new();
+    }
+    if format == Format::DrawIo {
+        return drawio_losses(book);
     }
     let sheets: Vec<(usize, &Sheet)> = match format {
         Format::XMind => book.sheets.iter().enumerate().collect(),
@@ -304,6 +314,51 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
         }
     }
     if c.settings {
+        out.push(ExportLoss::BoardSettingsDropped);
+    }
+    out
+}
+
+/// draw.io writes every sheet as a page. Board content round-trips; the mind-map
+/// structure is drawn but not editable as a map.
+fn drawio_losses(book: &Workbook) -> Vec<ExportLoss> {
+    let mut flattened = 0;
+    let mut details = 0;
+    let mut slides = 0;
+    let mut inline_text = 0;
+    let mut settings = false;
+    for sheet in &book.sheets {
+        for (id, topic) in &sheet.topics {
+            if topic.card.is_none() && !sheet.is_anchor(*id) {
+                flattened += 1;
+            }
+            details += usize::from(
+                topic.notes.is_some()
+                    || !topic.labels.is_empty()
+                    || !topic.markers.is_empty()
+                    || topic.todo.is_some(),
+            );
+            inline_text += usize::from(!topic.inline_text.is_empty());
+        }
+        flattened += sheet.relationships.len() + sheet.boundaries.len() + sheet.summaries.len();
+        slides += sheet.presentation.slides.len();
+        settings |= sheet.board.grid == thinoda_core::GridKind::Dots || sheet.board.snap;
+    }
+    let mut out = Vec::new();
+    for (loss, count) in [
+        (
+            ExportLoss::MapElementsFlattened as fn(usize) -> ExportLoss,
+            flattened,
+        ),
+        (ExportLoss::TopicDetailsDropped, details),
+        (ExportLoss::InlineTextDropped, inline_text),
+        (ExportLoss::SlidesDropped, slides),
+    ] {
+        if count > 0 {
+            out.push(loss(count));
+        }
+    }
+    if settings {
         out.push(ExportLoss::BoardSettingsDropped);
     }
     out

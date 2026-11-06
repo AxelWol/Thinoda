@@ -729,8 +729,16 @@ fn export_losses_itemise_board_content_per_format() {
         ]
     );
 
-    // Plain Central workbooks lose nothing to board export.
+    // Plain Central workbooks lose nothing to board export, except draw.io, which has no
+    // editable mind-map model and flattens every topic into a shape.
+    assert_eq!(
+        export_losses(&central(), Format::DrawIo, &o),
+        vec![ExportLoss::MapElementsFlattened(3)]
+    );
     for &format in Format::EXPORTABLE {
+        if format == Format::DrawIo {
+            continue;
+        }
         assert!(
             export_losses(&central(), format, &o).is_empty(),
             "{format:?}"

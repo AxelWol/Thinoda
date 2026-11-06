@@ -417,6 +417,18 @@ const DE: &[(&str, &str)] = &[
         "Formatierung und Listen im Kartentext ausgelassen",
     ),
     (
+        "Mind-map topics and links flattened to shapes",
+        "Mind-Map-Themen und -Verbindungen in Formen umgewandelt",
+    ),
+    (
+        "Topic notes, labels, markers or tasks omitted",
+        "Notizen, Beschriftungen, Markierungen oder Aufgaben von Themen ausgelassen",
+    ),
+    (
+        "Presentation slides omitted",
+        "Präsentationsfolien ausgelassen",
+    ),
+    (
         "Formatted card titles cannot be changed until rich-text editing is supported",
         "Formatierte Kartentitel können erst geändert werden, wenn die Rich-Text-Bearbeitung unterstützt wird.",
     ),
@@ -1042,8 +1054,8 @@ const DE: &[(&str, &str)] = &[
         "Diese MindManager-Datei konnte nicht gelesen werden. Sie ist möglicherweise ungültig, verschlüsselt, zu groß oder unsicher.",
     ),
     (
-        "Choose a .thinoda, .xmind or .mmap destination.",
-        "Ein Ziel mit .thinoda, .xmind oder .mmap wählen.",
+        "Choose a .thinoda, .xmind, .mmap or .drawio destination.",
+        "Ein Ziel mit .thinoda, .xmind, .mmap oder .drawio wählen.",
     ),
     (
         "MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.",
@@ -1120,6 +1132,7 @@ const DE: &[(&str, &str)] = &[
     ("Markdown", "Markdown"),
     ("MindManager", "MindManager"),
     ("TextBundle", "TextBundle"),
+    ("draw.io", "draw.io"),
     ("SVG", "SVG"),
     ("PNG", "PNG"),
     ("JPEG", "JPEG"),
@@ -4480,6 +4493,9 @@ mod tests {
             "Relationships omitted",
             "Boundaries omitted",
             "Inline card text and list formatting omitted",
+            "Mind-map topics and links flattened to shapes",
+            "Topic notes, labels, markers or tasks omitted",
+            "Presentation slides omitted",
         ];
         for key in outline_export_losses {
             assert!(

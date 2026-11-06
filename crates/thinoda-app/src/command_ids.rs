@@ -165,6 +165,7 @@ impl Cmd {
                 Format::MindManager => "export.mindmanager",
                 Format::MindManagerXml => return None,
                 Format::TextBundle => "export.textbundle",
+                Format::DrawIo => "export.drawio",
                 Format::Svg => "export.svg",
                 Format::Png => "export.png",
                 Format::Jpeg => "export.jpeg",

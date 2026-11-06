@@ -623,6 +623,11 @@ fn export_menu_preflights_every_lossy_format_before_opening_a_picker() {
                 );
             }
             assert!(lacks_label(&h, &format!("1 — {}", t("Shapes omitted"))));
+        } else if format == Format::DrawIo {
+            // draw.io keeps cards, shapes, ink, connectors and frames editable.
+            has_label(&h, t("Board grid and snapping settings omitted"));
+            has_label(&h, &format!("1 — {}", t("Presentation slides omitted")));
+            assert!(lacks_label(&h, &format!("1 — {}", t("Shapes omitted"))));
         } else {
             has_label(&h, &format!("1 — {}", t("Shapes omitted")));
         }
