@@ -721,9 +721,22 @@ pointer leaves the arrow and picker. The picker also closes when the document, s
 camera or tool changes or an editor opens. Resting again on the same arrow needs the
 pointer to leave it first. Tests: `quick_picker_*` in `board_tests.rs`.
 
-Remaining Phase 1 slices: shape-aware
-perimeters (1c), floating edge/shape toolbars (1d), tile drag-and-drop and keyboard
-insert at a free spot (1e).
+**Phase 1c — shape-aware perimeters.** Free connectors attached to a shape now end on
+its visible outline instead of its bounding box, like draw.io's shape perimeters.
+`scene::EndTarget::clip` casts a ray from the shape's centre towards the other end and
+takes the outermost crossing with the rotated outline from `shape_geometry`. Using the
+outermost crossing means concave shapes (star, cloud, callout, plus) end on their outer
+edge. Shapes whose box centre is not strictly inside the outline (the right triangle)
+cast from the outline's area centroid. Rectangle, process and predefined-process keep
+the rotated-rect clip, as do topics, cards, images and text. Straight, elbow and curve
+routes all use it. Hit-testing, rendering, SVG/PDF export and template layout go
+through `scene::connector_path`, so they all follow. Shapes have no flip fields yet;
+flips and stored `Perimeter` overrides arrive with the Phase 3 model. Tests:
+`connectors_end_on_shape_perimeters` (every `ShapeKind`, rotated) and
+`polygon_clip_takes_the_outermost_crossing` in `scene/tests.rs`.
+
+Remaining Phase 1 slices: floating edge/shape toolbars (1d), tile drag-and-drop and
+keyboard insert at a free spot (1e).
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

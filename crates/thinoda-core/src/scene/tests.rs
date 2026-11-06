@@ -314,6 +314,87 @@ fn connectors_resolve_endpoints_and_hit() {
 }
 
 #[test]
+fn connectors_end_on_shape_perimeters() {
+    let mut s = Sheet::new("Perimeters", "");
+    s.root_mode = SheetRootMode::Hidden;
+    let corner = Endpoint::Point(Vec2::new(300.0, 300.0));
+    let mut end_on = |kind, rotation: f32, toward: Endpoint| {
+        let id = s
+            .add_canvas_object(CanvasObject {
+                rotation,
+                ..CanvasObject::shape(kind, rect(0.0, 0.0, 100.0, 100.0))
+            })
+            .unwrap();
+        let layout = layout_sheet(&s, &ApproxMeasure, false);
+        let start = connector_path(
+            &s,
+            &layout,
+            &CanvasConnector::new(Endpoint::Object(id), toward),
+        )[0];
+        s.remove_canvas_objects(&[id]).unwrap();
+        start
+    };
+    let near = |a: Vec2, b: Vec2| (a - b).length() < 1.0;
+
+    // Rectangles keep their box corner; a diamond and an ellipse end on their edge.
+    assert!(near(
+        end_on(ShapeKind::Rectangle, 0.0, corner),
+        Vec2::new(100.0, 100.0)
+    ));
+    assert!(near(
+        end_on(ShapeKind::Diamond, 0.0, corner),
+        Vec2::new(75.0, 75.0)
+    ));
+    let diagonal = 50.0 + 50.0 / 2f32.sqrt();
+    let ellipse = end_on(ShapeKind::Ellipse, 0.0, corner);
+    assert!(near(ellipse, Vec2::new(diagonal, diagonal)), "{ellipse:?}");
+
+    // Rotation turns the outline: a diamond rotated 45 degrees is an upright square.
+    let rotated = end_on(
+        ShapeKind::Diamond,
+        45.0,
+        Endpoint::Point(Vec2::new(300.0, 50.0)),
+    );
+    assert!(near(rotated, Vec2::new(diagonal, 50.0)), "{rotated:?}");
+
+    // Every shape's end lies on its outline, never inside or on the bare box.
+    for kind in ShapeKind::ALL {
+        let end = end_on(kind, 30.0, corner);
+        let outline = shape_geometry(kind, rect(0.0, 0.0, 100.0, 100.0), 30.0).outline;
+        assert!(
+            distance_to_outline(end, &outline) < 0.5,
+            "{kind:?} ends at {end:?}"
+        );
+    }
+}
+
+#[test]
+fn polygon_clip_takes_the_outermost_crossing() {
+    // A notch cut from the top: the ray to the right leaves at x 60, re-enters at 80
+    // and exits at 100.
+    let notched = [
+        Vec2::new(0.0, 0.0),
+        Vec2::new(60.0, 0.0),
+        Vec2::new(60.0, 55.0),
+        Vec2::new(80.0, 55.0),
+        Vec2::new(80.0, 0.0),
+        Vec2::new(100.0, 0.0),
+        Vec2::new(100.0, 100.0),
+        Vec2::new(0.0, 100.0),
+    ];
+    let center = Vec2::new(50.0, 50.0);
+    assert_eq!(
+        clip_to_polygon(&notched, center, Vec2::new(200.0, 50.0)),
+        Some(Vec2::new(100.0, 50.0))
+    );
+    assert_eq!(
+        clip_to_polygon(&notched, center, Vec2::new(50.0, -200.0)),
+        Some(Vec2::new(50.0, 0.0))
+    );
+    assert_eq!(clip_to_polygon(&notched, center, center), None);
+}
+
+#[test]
 fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
     let mut sheet = Sheet::new("Connectors", "");
     sheet.root_mode = SheetRootMode::Hidden;

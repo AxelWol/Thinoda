@@ -4,8 +4,8 @@
 
 use crate::board::{
     Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorRoute,
-    Endpoint, GridKind, distance_to_outline, distance_to_polyline, point_in_polygon, points_bounds,
-    rotate_around, rotated_bounds, rotated_rect_contains, shape_geometry,
+    Endpoint, GridKind, ShapeKind, distance_to_outline, distance_to_polyline, point_in_polygon,
+    points_bounds, rotate_around, rotated_bounds, rotated_rect_contains, shape_geometry,
 };
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rotated_rect, cubic};
@@ -425,25 +425,107 @@ fn topic_anchor(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<(TopicId,
     None
 }
 
-fn routed_path(connector: &CanvasConnector, a: (Rect, f32), b: (Rect, f32)) -> Vec<Vec2> {
-    let ((ra, rot_a), (rb, rot_b)) = (a, b);
-    let (ca, cb) = (ra.center(), rb.center());
-    match connector.route {
-        ConnectorRoute::Straight => {
-            vec![
-                clip_to_rotated_rect(ra, rot_a, cb),
-                clip_to_rotated_rect(rb, rot_b, ca),
-            ]
+/// What a connector end attaches to: a (rotated) box and, for shapes, the outline
+/// the end lands on.
+#[derive(Clone, Copy)]
+struct EndTarget {
+    rect: Rect,
+    rotation: f32,
+    shape: Option<ShapeKind>,
+}
+
+impl EndTarget {
+    fn boxed(rect: Rect, rotation: f32) -> Self {
+        Self {
+            rect,
+            rotation,
+            shape: None,
         }
+    }
+
+    /// Point on the visible perimeter in the direction of `toward`, like draw.io's
+    /// shape perimeters; boxes and rectangular shapes clip to their rotated rect.
+    fn clip(self, toward: Vec2) -> Vec2 {
+        let rectangular = |kind| {
+            matches!(
+                kind,
+                ShapeKind::Rectangle | ShapeKind::Process | ShapeKind::PredefinedProcess
+            )
+        };
+        self.shape
+            .filter(|kind| !rectangular(*kind))
+            .and_then(|kind| {
+                let outline = shape_geometry(kind, self.rect, self.rotation).outline;
+                // Shapes like the right triangle have the box centre on their edge;
+                // cast from the area centroid there so the ray still leaves the inside.
+                let center = self.rect.center();
+                let origin = if point_in_polygon(center, &outline)
+                    && distance_to_outline(center, &outline) > 0.5
+                {
+                    center
+                } else {
+                    polygon_centroid(&outline)
+                };
+                clip_to_polygon(&outline, origin, toward)
+            })
+            .unwrap_or_else(|| clip_to_rotated_rect(self.rect, self.rotation, toward))
+    }
+}
+
+/// Area centroid of a closed polygon; the vertex mean for degenerate outlines.
+fn polygon_centroid(outline: &[Vec2]) -> Vec2 {
+    let (mut area, mut sum) = (0.0, Vec2::ZERO);
+    for (i, &a) in outline.iter().enumerate() {
+        let b = outline[(i + 1) % outline.len()];
+        let cross = a.x * b.y - b.x * a.y;
+        area += cross;
+        sum = sum + (a + b) * cross;
+    }
+    if area.abs() > 1e-6 {
+        sum * (1.0 / (3.0 * area))
+    } else {
+        outline.iter().fold(Vec2::ZERO, |acc, &p| acc + p) * (1.0 / outline.len().max(1) as f32)
+    }
+}
+
+/// Outermost crossing of the ray from `center` towards `toward` with the closed
+/// `outline`, so concave outlines (stars, clouds) end on their outer edge.
+fn clip_to_polygon(outline: &[Vec2], center: Vec2, toward: Vec2) -> Option<Vec2> {
+    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
+    let direction = toward - center;
+    if direction.length() < 1e-3 {
+        return None;
+    }
+    let mut best: Option<f32> = None;
+    for (i, &a) in outline.iter().enumerate() {
+        let edge = outline[(i + 1) % outline.len()] - a;
+        let denominator = cross(direction, edge);
+        if denominator.abs() < 1e-9 {
+            continue;
+        }
+        let offset = a - center;
+        let t = cross(offset, edge) / denominator;
+        let u = cross(offset, direction) / denominator;
+        if t > 1e-6 && (-1e-6..=1.0 + 1e-6).contains(&u) {
+            best = Some(best.map_or(t, |best: f32| best.max(t)));
+        }
+    }
+    best.map(|t| center + direction * t)
+}
+
+fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let (ca, cb) = (a.rect.center(), b.rect.center());
+    match connector.route {
+        ConnectorRoute::Straight => vec![a.clip(cb), b.clip(ca)],
         ConnectorRoute::Elbow => {
-            let a = clip_to_rotated_rect(ra, rot_a, Vec2::new(cb.x, ca.y));
-            let b = clip_to_rotated_rect(rb, rot_b, Vec2::new(ca.x, cb.y));
+            let a = a.clip(Vec2::new(cb.x, ca.y));
+            let b = b.clip(Vec2::new(ca.x, cb.y));
             let mx = (a.x + b.x) / 2.0;
             vec![a, Vec2::new(mx, a.y), Vec2::new(mx, b.y), b]
         }
         ConnectorRoute::Curve => {
-            let a = clip_to_rotated_rect(ra, rot_a, cb);
-            let b = clip_to_rotated_rect(rb, rot_b, ca);
+            let a = a.clip(cb);
+            let b = b.clip(ca);
             let dx = (b.x - a.x) / 2.0;
             let (c1, c2) = (a + Vec2::new(dx, 0.0), b - Vec2::new(dx, 0.0));
             (0..=CURVE_SEGMENTS)
@@ -470,9 +552,11 @@ impl<'a> ConnectorResolver<'a> {
         }
     }
 
-    fn endpoint(&self, end: Endpoint) -> Option<(Rect, f32)> {
+    fn endpoint(&self, end: Endpoint) -> Option<EndTarget> {
         match end {
-            Endpoint::Point(p) => Some((Rect::from_center_size(p, Vec2::ZERO), 0.0)),
+            Endpoint::Point(p) => {
+                Some(EndTarget::boxed(Rect::from_center_size(p, Vec2::ZERO), 0.0))
+            }
             Endpoint::Topic(t) => {
                 let (anchor, rect) = topic_anchor(self.sheet, self.layout, t)?;
                 let rotation = self
@@ -480,16 +564,26 @@ impl<'a> ConnectorResolver<'a> {
                     .topic(anchor)
                     .and_then(|topic| topic.card.as_ref())
                     .map_or(0.0, |card| card.rotation);
-                Some((rect, rotation))
+                Some(EndTarget::boxed(rect, rotation))
             }
             Endpoint::Object(id) => {
                 let object = self.objects.get(&id)?;
                 if object.is_connector() {
                     let points = self.paths.get(&id)?.as_ref()?;
                     let center = points_bounds(points)?.center();
-                    Some((Rect::from_center_size(center, Vec2::ZERO), 0.0))
+                    Some(EndTarget::boxed(
+                        Rect::from_center_size(center, Vec2::ZERO),
+                        0.0,
+                    ))
                 } else {
-                    Some((object.rect, object.rotation))
+                    Some(EndTarget {
+                        rect: object.rect,
+                        rotation: object.rotation,
+                        shape: match &object.kind {
+                            CanvasObjectKind::Shape { shape, .. } => Some(*shape),
+                            _ => None,
+                        },
+                    })
                 }
             }
         }
