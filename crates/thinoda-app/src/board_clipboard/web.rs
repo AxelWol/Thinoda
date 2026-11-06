@@ -7,7 +7,10 @@ use js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
-use super::{Completion, DocumentGuard, MAX_HTML_BYTES, PreparedCopy, Snapshot};
+use super::{
+    Completion, DocumentGuard, MAX_BOARD_CLIPBOARD_BYTES, MAX_HTML_BYTES, MAX_PENDING_CUT,
+    PreparedCopy, Snapshot, verify_cut_snapshot,
+};
 
 thread_local! {
     // Kept only to make the current DOM event available while eframe runs its
@@ -71,21 +74,26 @@ impl Transport {
         generation: u64,
         prepared: PreparedCopy,
     ) -> Option<Completion> {
-        if let Some(result) = write_active_event(&prepared) {
-            return Some(Completion::Write {
-                generation,
-                prepared,
-                result,
-            });
-        }
-        let promise = clipboard().and_then(|clipboard| {
-            make_item(&prepared).and_then(|item| {
-                let items = Array::of1(&item);
-                call_promise(&clipboard, "write", Some(&items))
+        let pending = if let Some(result) = write_active_event(&prepared) {
+            if result.is_err() || prepared.cut.is_none() {
+                return Some(Completion::Write {
+                    generation,
+                    prepared,
+                    result,
+                });
+            }
+            after_event_dispatch().map(|promise| (None, promise))
+        } else {
+            clipboard().and_then(|clipboard| {
+                make_item(&prepared).and_then(|item| {
+                    let items = Array::of1(&item);
+                    call_promise(&clipboard, "write", Some(&items))
+                        .map(|promise| (Some(clipboard), promise))
+                })
             })
-        });
-        let promise = match promise {
-            Ok(promise) => promise,
+        };
+        let (clipboard, promise) = match pending {
+            Ok(pending) => pending,
             Err(error) => {
                 return Some(Completion::Write {
                     generation,
@@ -94,10 +102,33 @@ impl Transport {
                 });
             }
         };
+        let deadline = if prepared.cut.is_some() {
+            match CutDeadline::start() {
+                Ok(deadline) => Some(deadline),
+                Err(error) => {
+                    return Some(Completion::Write {
+                        generation,
+                        prepared,
+                        result: Err(error),
+                    });
+                }
+            }
+        } else {
+            None
+        };
         let completed = self.completed.clone();
         let ctx = ctx.clone();
         spawn_local(async move {
-            let result = JsFuture::from(promise).await.map(|_| ()).map_err(js_error);
+            let mut result = await_promise(promise, deadline.as_ref()).await.map(|_| ());
+            if result.is_ok()
+                && let Some(deadline) = deadline.as_ref()
+            {
+                result = match clipboard.map(Ok).unwrap_or_else(self::clipboard) {
+                    Ok(clipboard) => verify_cut(&clipboard, &prepared, deadline).await,
+                    Err(error) => Err(error),
+                }
+                .map_err(|error| format!("rich clipboard write could not be verified: {error}"));
+            }
             completed.borrow_mut().push_back(Completion::Write {
                 generation,
                 prepared,
@@ -142,7 +173,7 @@ impl Transport {
             let result = if text_only {
                 read_text_promise(promise).await
             } else {
-                match read_items(promise).await {
+                match read_items(promise, None, None).await {
                     Err(_) if fallback.is_none() => {
                         match call_promise(&clipboard, "readText", None) {
                             Ok(promise) => read_text_promise(promise).await,
@@ -165,6 +196,75 @@ impl Transport {
     pub(super) fn poll(&mut self) -> Vec<Completion> {
         self.completed.borrow_mut().drain(..).collect()
     }
+}
+
+struct CutDeadline {
+    window: web_sys::Window,
+    timer: i32,
+    promise: Promise,
+}
+
+impl CutDeadline {
+    fn start() -> Result<Self, String> {
+        let window = web_sys::window().ok_or("browser window is unavailable")?;
+        let mut timer = None;
+        let promise = Promise::new(&mut |_resolve, reject| {
+            timer = Some(
+                window.set_timeout_with_callback_and_timeout_and_arguments_1(
+                    &reject,
+                    MAX_PENDING_CUT.as_millis() as i32,
+                    &JsValue::from_str("clipboard operation timed out"),
+                ),
+            );
+        });
+        Ok(Self {
+            window,
+            timer: timer
+                .ok_or("could not start clipboard timeout")?
+                .map_err(js_error)?,
+            promise,
+        })
+    }
+}
+
+impl Drop for CutDeadline {
+    fn drop(&mut self) {
+        self.window.clear_timeout_with_handle(self.timer);
+    }
+}
+
+async fn await_promise(
+    promise: Promise,
+    deadline: Option<&CutDeadline>,
+) -> Result<JsValue, String> {
+    let promise = if let Some(deadline) = deadline {
+        Promise::race(&Array::of2(promise.as_ref(), deadline.promise.as_ref()))
+    } else {
+        promise
+    };
+    JsFuture::from(promise).await.map_err(js_error)
+}
+
+fn after_event_dispatch() -> Result<Promise, String> {
+    let window = web_sys::window().ok_or("browser window is unavailable")?;
+    Ok(Promise::new(&mut |resolve, reject| {
+        // The browser commits ClipboardEvent data after dispatch finishes.
+        if let Err(error) =
+            window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 0)
+        {
+            let _ = reject.call1(&JsValue::UNDEFINED, &error);
+        }
+    }))
+}
+
+async fn verify_cut(
+    clipboard: &JsValue,
+    prepared: &PreparedCopy,
+    deadline: &CutDeadline,
+) -> Result<(), String> {
+    let promise = call_promise(clipboard, "read", None)?;
+    let snapshot = read_items(promise, Some(MAX_BOARD_CLIPBOARD_BYTES), Some(deadline)).await?;
+    verify_cut_snapshot(prepared, &snapshot)
 }
 
 fn clipboard() -> Result<JsValue, String> {
@@ -218,8 +318,12 @@ fn make_item(prepared: &PreparedCopy) -> Result<web_sys::ClipboardItem, String> 
     web_sys::ClipboardItem::new_with_record_from_str_to_blob_promise(&properties).map_err(js_error)
 }
 
-async fn read_items(promise: Promise) -> Result<Snapshot, String> {
-    let result = JsFuture::from(promise).await.map_err(js_error)?;
+async fn read_items(
+    promise: Promise,
+    text_limit: Option<usize>,
+    deadline: Option<&CutDeadline>,
+) -> Result<Snapshot, String> {
+    let result = await_promise(promise, deadline).await?;
     let items = Array::from(&result);
     for value in items.iter() {
         let item = value
@@ -234,9 +338,9 @@ async fn read_items(promise: Promise) -> Result<Snapshot, String> {
         if !has_type("text/plain") {
             continue;
         }
-        let text = read_blob(&item, "text/plain", None).await?;
+        let text = read_blob(&item, "text/plain", text_limit, deadline).await?;
         let html = if has_type("text/html") {
-            Some(read_blob(&item, "text/html", Some(MAX_HTML_BYTES)).await?)
+            Some(read_blob(&item, "text/html", Some(MAX_HTML_BYTES), deadline).await?)
         } else {
             None
         };
@@ -249,18 +353,17 @@ async fn read_blob(
     item: &web_sys::ClipboardItem,
     mime: &str,
     limit: Option<usize>,
+    deadline: Option<&CutDeadline>,
 ) -> Result<String, String> {
-    let blob = JsFuture::from(item.get_type(mime))
-        .await
-        .map_err(js_error)?
+    let blob = await_promise(item.get_type(mime), deadline)
+        .await?
         .dyn_into::<web_sys::Blob>()
         .map_err(|_| "browser returned invalid clipboard data")?;
     if limit.is_some_and(|limit| blob.size() > limit as f64) {
-        return Err("clipboard HTML exceeds the size limit".into());
+        return Err(format!("clipboard {mime} exceeds the size limit"));
     }
-    JsFuture::from(blob.text())
-        .await
-        .map_err(js_error)?
+    await_promise(blob.text(), deadline)
+        .await?
         .as_string()
         .ok_or_else(|| "browser returned invalid clipboard text".into())
 }

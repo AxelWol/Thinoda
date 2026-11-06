@@ -59,6 +59,10 @@ Reparenting or converting formatted cards to unsupported topic types is rejected
 atomically. Clipboard sanitization, plain-text loss handling, real-host cut/paste
 acceptance, and the public attachment API change are covered in the
 [checkpoint critique](FREEFORM.md#internal-clipboard-and-recovery-checkpoint-critique).
+Structured browser cuts now fail closed on missing, changed, denied or
+timed-out rich readback, but cannot lock or cancel the system clipboard;
+compatibility and remaining host acceptance are described in the
+[cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
 An isolated history experiment estimates retained snapshot bytes but does not
 implement rich-aware board-card editing. An egui frame-rollback experiment
 preserves the draft on rejection but can discard other input and briefly expose

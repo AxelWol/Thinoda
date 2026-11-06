@@ -19,7 +19,16 @@ type TestClipboard = {
     writeAttempts: number;
     plainWrites: number;
     reads: number;
+    textReads: number;
+    oversizedBlobReads: number;
     rejectWrites: boolean;
+    readMode: "normal" | "wrapped" | "missing-html" | "sanitized" | "changed-rich" |
+        "changed-text" | "malformed" | "denied" | "missing-read" | "oversized-text" |
+        "oversized-html";
+    holdWrite: boolean;
+    releaseWrite: (() => void) | null;
+    holdRead: boolean;
+    releaseRead: (() => void) | null;
 };
 
 declare global {
@@ -33,6 +42,10 @@ type Topic = {
     title: string;
     image?: string;
     card?: { kind: string; color?: string };
+    inline_text?: {
+        runs: { start: number; end: number; style: { bold: boolean } }[];
+        paragraphs: { index: number; list: string }[];
+    };
 };
 
 type BoardObject = {
@@ -56,7 +69,10 @@ type Resource = { id: string; name: string; size: number };
 function archive(zip: Buffer) {
     return {
         zip,
-        content: JSON.parse(zipEntry(zip, "content.json").toString("utf8")) as { sheets: BoardSheet[] },
+        content: JSON.parse(zipEntry(zip, "content.json").toString("utf8")) as {
+            sheets: BoardSheet[];
+            active_sheet: number;
+        },
         manifest: JSON.parse(zipEntry(zip, "manifest.json").toString("utf8")) as { resources: Resource[] },
     };
 }
@@ -82,6 +98,47 @@ async function createShape(page: Page, title: string) {
     await page.locator("input[type='text']").pressSequentially(title);
     await page.keyboard.press("Enter");
     await frames(page);
+}
+
+async function formattedCardBoard(page: Page) {
+    await command(page, "Sticky note");
+    await page.mouse.click(220, 400);
+    await frames(page);
+    const input = page.locator("input[type='text']");
+    await expect(input).toBeFocused();
+    await input.fill("Styled card");
+    await page.keyboard.press("Enter");
+    await frames(page);
+
+    const original = archive(await saveAs(page, "clipboard-unformatted.thinoda"));
+    const sheet = original.content.sheets[0];
+    const card = Object.values(sheet.topics).find((topic) => topic.title === "Styled card");
+    if (!card) throw new Error("Missing card for rich clipboard fixture");
+    card.inline_text = {
+        runs: [{ start: 0, end: 6, style: { bold: true } }],
+        paragraphs: [{ index: 0, list: "bulleted" }],
+    };
+    const encoded = `THINODA-SHEET-5\n${JSON.stringify(sheet)}`;
+    await page.locator("#thinoda_canvas").focus();
+    await page.evaluate((text) => {
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        const event = new ClipboardEvent("paste", {
+            bubbles: true, cancelable: true, clipboardData: data,
+        });
+        Object.defineProperty(event, "clipboardData", { value: data });
+        document.dispatchEvent(event);
+    }, encoded);
+    await frames(page);
+    await page.waitForTimeout(300);
+    const formatted = archive(await saveAs(page, "clipboard-formatted.thinoda"));
+    expect(formatted.content.sheets).toHaveLength(2);
+    expect(formatted.content.active_sheet).toBe(1);
+    expect(formatted.content.sheets[1].topics[String(card.id)].inline_text).toEqual(card.inline_text);
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+a");
+    await frames(page);
+    return { formatted, card };
 }
 
 async function copyOrCut(page: Page, kind: "copy" | "cut") {
@@ -127,13 +184,19 @@ async function paste(page: Page) {
 test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
         const state: TestClipboard = {
-            items: [], writes: 0, writeAttempts: 0, plainWrites: 0, reads: 0, rejectWrites: false,
+            items: [], writes: 0, writeAttempts: 0, plainWrites: 0, reads: 0, textReads: 0,
+            oversizedBlobReads: 0, rejectWrites: false, readMode: "normal",
+            holdWrite: false, releaseWrite: null, holdRead: false, releaseRead: null,
         };
         Object.defineProperty(navigator, "clipboard", {
             configurable: true,
             value: {
                 async write(items: ClipboardItem[]) {
                     state.writeAttempts++;
+                    if (state.holdWrite) {
+                        await new Promise<void>((resolve) => { state.releaseWrite = resolve; });
+                        state.releaseWrite = null;
+                    }
                     if (state.rejectWrites) throw new DOMException("Clipboard denied", "NotAllowedError");
                     state.items = items;
                     state.writes++;
@@ -144,9 +207,56 @@ test.beforeEach(async ({ page }) => {
                 },
                 async read() {
                     state.reads++;
-                    return state.items;
+                    if (state.holdRead) {
+                        await new Promise<void>((resolve) => { state.releaseRead = resolve; });
+                        state.releaseRead = null;
+                    }
+                    if (state.readMode === "denied") {
+                        throw new DOMException("Clipboard read denied", "NotAllowedError");
+                    }
+                    if (state.readMode === "normal") return state.items;
+                    const item = state.items[0];
+                    if (!item) return [];
+                    const text = await item.getType("text/plain");
+                    if (state.readMode === "missing-html") {
+                        return [new ClipboardItem({ "text/plain": text })];
+                    }
+                    const html = await (await item.getType("text/html")).text();
+                    const changed = state.readMode === "sanitized" ? "<pre>sanitized</pre>"
+                        : state.readMode === "changed-rich" ? "<pre data-thinoda-board-v1='6f74686572'></pre>"
+                        : state.readMode === "malformed" ? "<pre data-thinoda-board-v1='xz'></pre>"
+                        : state.readMode === "wrapped" ? `<html><body>${html}</body></html>`
+                        : html;
+                    const result = new ClipboardItem({
+                        "text/plain": state.readMode === "changed-text"
+                            ? new Blob(["different text"], { type: "text/plain" }) : text,
+                        "text/html": new Blob([changed], { type: "text/html" }),
+                    });
+                    if (state.readMode === "oversized-text" || state.readMode === "oversized-html") {
+                        const oversizedType = state.readMode === "oversized-text" ? "text/plain" : "text/html";
+                        const limit = state.readMode === "oversized-text"
+                            ? 16 * 1024 * 1024 : 7 * 16 * 1024 * 1024 + 1024;
+                        const getType = result.getType.bind(result);
+                        Object.defineProperty(result, "getType", {
+                            value: async (type: string) => {
+                                const blob = await getType(type);
+                                if (type === oversizedType) {
+                                    Object.defineProperty(blob, "size", { value: limit + 1 });
+                                    Object.defineProperty(blob, "text", {
+                                        value: async () => {
+                                            state.oversizedBlobReads++;
+                                            throw new Error("Oversized blob must not be read");
+                                        },
+                                    });
+                                }
+                                return blob;
+                            },
+                        });
+                    }
+                    return [result];
                 },
                 async readText() {
+                    state.textReads++;
                     const item = state.items[0];
                     return item ? (await item.getType("text/plain")).text() : "";
                 },
@@ -371,4 +481,125 @@ test("a rejected browser clipboard write does not cut board content", async ({ p
     const after = archive(await saveAs(page, "clipboard-cut-after.thinoda"));
     expect(after.content.sheets).toEqual(before.content.sheets);
     expect(after.manifest.resources).toEqual(before.manifest.resources);
+});
+
+test("formatted card cuts require readable, unchanged rich clipboard data", async ({ page }) => {
+    const { formatted } = await formattedCardBoard(page);
+    for (const mode of [
+        "denied", "missing-html", "sanitized", "changed-rich", "changed-text", "malformed",
+        "oversized-text", "oversized-html", "missing-read",
+    ] as const) {
+        await page.evaluate((mode) => {
+            window.__thinodaTestClipboard.readMode = mode;
+            if (mode === "missing-read") {
+                Object.defineProperty(navigator.clipboard, "read", { value: undefined });
+            }
+        }, mode);
+        const reads = await page.evaluate(() => window.__thinodaTestClipboard.reads);
+        await copyOrCut(page, "cut");
+        await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.reads))
+            .toBe(reads + (mode === "missing-read" ? 0 : 1));
+        const after = archive(await saveAs(page, `clipboard-cut-${mode}.thinoda`));
+        expect(after.content.sheets).toEqual(formatted.content.sheets);
+    }
+    expect(await page.evaluate(() => window.__thinodaTestClipboard.textReads)).toBe(0);
+    expect(await page.evaluate(() => window.__thinodaTestClipboard.oversizedBlobReads)).toBe(0);
+});
+
+test("a timed-out browser cut ignores late clipboard writes and reads", async ({ page }) => {
+    const { formatted } = await formattedCardBoard(page);
+    await page.evaluate(() => {
+        const original = window.setTimeout.bind(window);
+        window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) =>
+            original(handler, timeout === 30_000 ? 50 : timeout, ...args)) as typeof window.setTimeout;
+    });
+    for (const phase of ["write", "read"] as const) {
+        await page.evaluate((phase) => {
+            const state = window.__thinodaTestClipboard;
+            if (phase === "write") state.holdWrite = true;
+            else state.holdRead = true;
+        }, phase);
+        await copyOrCut(page, "cut");
+        await expect.poll(() => page.evaluate((phase) => phase === "write"
+            ? window.__thinodaTestClipboard.releaseWrite !== null
+            : window.__thinodaTestClipboard.releaseRead !== null, phase)).toBe(true);
+        await page.evaluate((phase) => {
+            const state = window.__thinodaTestClipboard;
+            if (phase === "write") {
+                state.holdWrite = false;
+                state.releaseWrite?.();
+            } else {
+                state.holdRead = false;
+                state.releaseRead?.();
+            }
+        }, phase);
+        await frames(page);
+        await page.waitForTimeout(300);
+        const after = archive(await saveAs(page, `clipboard-cut-timeout-${phase}.thinoda`));
+        expect(after.content.sheets).toEqual(formatted.content.sheets);
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+a");
+        await frames(page);
+    }
+});
+
+test("verified formatted card cut is undoable and pastes its inline formatting", async ({ page }) => {
+    const { formatted, card } = await formattedCardBoard(page);
+    await page.evaluate(() => { window.__thinodaTestClipboard.readMode = "wrapped"; });
+    await copyOrCut(page, "cut");
+    const cut = archive(await saveAs(page, "clipboard-formatted-cut.thinoda"));
+    expect(cut.content.sheets[1].topics[String(card.id)]).toBeUndefined();
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "clipboard-formatted-cut-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(formatted.content.sheets);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    const redone = archive(await saveAs(page, "clipboard-formatted-cut-redo.thinoda"));
+    expect(redone.content.sheets).toEqual(cut.content.sheets);
+
+    await paste(page);
+    const pasted = archive(await saveAs(page, "clipboard-formatted-paste.thinoda"));
+    const pastedCard = Object.values(pasted.content.sheets[1].topics)
+        .find((topic) => topic.title === card.title);
+    expect(pastedCard?.inline_text).toEqual(card.inline_text);
+});
+
+test("delayed cut verification cannot delete after selection, clipboard, or copy changes", async ({ page }) => {
+    const { formatted } = await formattedCardBoard(page);
+    for (const change of ["selection", "clipboard", "new-copy"] as const) {
+        await page.evaluate(() => { window.__thinodaTestClipboard.holdRead = true; });
+        await copyOrCut(page, "cut");
+        await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.releaseRead !== null))
+            .toBe(true);
+
+        if (change === "selection") {
+            await page.keyboard.press("Escape");
+            await frames(page);
+        } else if (change === "clipboard") {
+            await page.evaluate(async () => {
+                const state = window.__thinodaTestClipboard;
+                const text = await state.items[0].getType("text/plain");
+                state.items = [new ClipboardItem({ "text/plain": text })];
+            });
+        } else {
+            await copyOrCut(page, "copy");
+        }
+        await page.evaluate(() => {
+            const state = window.__thinodaTestClipboard;
+            state.holdRead = false;
+            state.releaseRead?.();
+        });
+        await frames(page);
+        await page.waitForTimeout(300);
+        const after = archive(await saveAs(page, `clipboard-cut-delayed-${change}.thinoda`));
+        expect(after.content.sheets).toEqual(formatted.content.sheets);
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+a");
+        await frames(page);
+    }
 });

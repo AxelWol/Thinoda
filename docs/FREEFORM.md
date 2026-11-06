@@ -770,6 +770,36 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   permissions or sanitization, operating-system ownership, cross-application
   interchange, or screen-reader behavior; those host checks remain open.
 
+### Browser cut verification checkpoint: critique
+
+- Every structured browser cut now waits for a bounded readback of both the
+  plain text and the Thinoda rich HTML marker before deleting its source.
+  Line-ending differences and harmless HTML wrappers are accepted, but missing,
+  sanitized, changed, malformed or oversized data and denied or unavailable
+  reads cancel the cut. There is deliberately no text-only fallback. Copies
+  retain their previous behavior.
+- A single 30-second deadline covers the pending write and each readback step.
+  A late response cannot complete a timed-out cut; an additional elapsed-time
+  check protects against delayed timer execution. Document, selection, focus,
+  modal, pointer, newer-copy and pending-ink guards still apply. The original
+  content is retained and a translated cancellation message is shown when a
+  clipboard operation fails.
+- This is a conservative compatibility tradeoff, not proof of atomic clipboard
+  ownership. Some browsers or permission settings may refuse the readback or
+  strip HTML, making structured cuts unavailable even when copying works.
+  Browser promises cannot be cancelled: a write that finishes after timeout may
+  still change the system clipboard. Another application can also replace the
+  clipboard after verification but before deletion. Timer throttling can delay
+  feedback in a suspended tab. Real trusted-event, permission, sanitization and
+  system-clipboard tests remain acceptance gates.
+- The regressions use synthetic clipboard events and an isolated in-page
+  clipboard; they do not establish any of those real-host behaviors. All
+  eight clipboard cases passed in Chromium, and the four cut-verification cases
+  also passed in Firefox and WebKit. Oversized blob tests simulate reported
+  sizes without allocating oversized payloads. The focused clipboard and
+  localization suites passed 24 and 27 tests respectively; strict native and
+  Wasm app Clippy checks passed.
+
 ### Resource-union checkpoint: critique
 
 - Merging embedded resources previously revalidated and rehashed the growing

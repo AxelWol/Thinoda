@@ -51,6 +51,10 @@ history-memory accounting, native v8 gating, non-native export-loss reporting,
 internal clipboard/recovery versioning, and atomic scalar-range replacement that
 preserves surrounding style runs.
 Replacement rejects paragraph-boundary changes while list metadata exists.
+Structured browser cuts now require bounded rich clipboard readback and time
+out without deleting the original when verification fails. Browser permission,
+sanitization and non-atomic clipboard ownership still require real-host
+acceptance; see the [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
 No editor controls are enabled: rich-aware undo/IME, grapheme-aware selection,
 list editing, external clipboard and loss handling, accessibility and mixed-style
 measurement/rendering remain open. An isolated, non-application span-editing

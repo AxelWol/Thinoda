@@ -1844,6 +1844,10 @@ const DE: &[(&str, &str)] = &[
     ),
     ("Could not copy sheet", "Blatt konnte nicht kopiert werden"),
     (
+        "Cut cancelled; original content was kept",
+        "Ausschneiden abgebrochen; der ursprüngliche Inhalt bleibt erhalten",
+    ),
+    (
         "Could not paste sheet",
         "Blatt konnte nicht eingefügt werden",
     ),
