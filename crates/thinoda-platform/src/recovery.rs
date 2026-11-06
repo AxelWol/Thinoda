@@ -5,7 +5,11 @@ use crate::{
     fs::{self, EntryKind, Lock, atomic_write},
     unix_seconds,
 };
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer},
+    ser::SerializeTuple,
+};
 use std::{
     collections::BTreeMap,
     io,
@@ -32,7 +36,70 @@ pub struct SnapshotMeta {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
     pub meta: SnapshotMeta,
+    #[serde(
+        serialize_with = "serialize_workbook",
+        deserialize_with = "deserialize_workbook"
+    )]
     pub workbook: Workbook,
+}
+
+const INLINE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INLINE-1";
+
+fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if !workbook.has_inline_text() {
+        return workbook.serialize(serializer);
+    }
+    let mut tuple = serializer.serialize_tuple(2)?;
+    tuple.serialize_element(INLINE_WORKBOOK_VERSION)?;
+    tuple.serialize_element(workbook)?;
+    tuple.end()
+}
+
+fn deserialize_workbook<'de, D>(deserializer: D) -> std::result::Result<Workbook, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct WorkbookVisitor;
+    impl<'de> Visitor<'de> for WorkbookVisitor {
+        type Value = Workbook;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a legacy workbook or a versioned recovery workbook")
+        }
+
+        fn visit_map<A>(self, map: A) -> std::result::Result<Workbook, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            Workbook::deserialize(MapAccessDeserializer::new(map))
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Workbook, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let version: String = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::custom("missing recovery workbook version"))?;
+            if version != INLINE_WORKBOOK_VERSION {
+                return Err(A::Error::custom(format!(
+                    "unsupported recovery workbook version {version}"
+                )));
+            }
+            let workbook = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if seq.next_element::<IgnoredAny>()?.is_some() {
+                return Err(A::Error::custom("unexpected recovery workbook data"));
+            }
+            Ok(workbook)
+        }
+    }
+
+    deserializer.deserialize_any(WorkbookVisitor)
 }
 
 impl Snapshot {
@@ -41,6 +108,7 @@ impl Snapshot {
         #[derive(Serialize)]
         struct Borrowed<'a> {
             meta: SnapshotMeta,
+            #[serde(serialize_with = "serialize_workbook")]
             workbook: &'a Workbook,
         }
         Ok(serde_json::to_vec(&Borrowed { meta, workbook })?)
@@ -661,6 +729,127 @@ const _: fn() = || {
 #[cfg(test)]
 mod lock_tests {
     use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    struct LegacySnapshot {
+        meta: SnapshotMeta,
+        workbook: Workbook,
+    }
+
+    fn formatted_workbook(kind: thinoda_core::CardKind) -> Workbook {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let title = "A🦀é\n第二";
+        let card = sheet
+            .add_card(
+                title,
+                thinoda_core::Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(kind, thinoda_core::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(card).unwrap();
+        topic
+            .inline_text
+            .update_range(title, 0..3, |style| {
+                style.bold = Some(true);
+                style.font_family = Some("Sans".into());
+            })
+            .unwrap();
+        topic
+            .inline_text
+            .paragraphs
+            .push(thinoda_core::InlineParagraph {
+                index: 1,
+                list: thinoda_core::ListKind::Numbered,
+            });
+        book.validate().unwrap();
+        book
+    }
+
+    #[test]
+    fn recovery_workbook_versions_protect_rich_data_and_keep_legacy_snapshots() {
+        let meta = SnapshotMeta {
+            title: "Recovery".into(),
+            dirty: true,
+            ..SnapshotMeta::default()
+        };
+        let plain = Workbook::default();
+        let legacy_plain = LegacySnapshot {
+            meta: meta.clone(),
+            workbook: plain.clone(),
+        };
+        let plain_bytes = Snapshot::to_bytes(meta.clone(), &plain).unwrap();
+        assert_eq!(plain_bytes, serde_json::to_vec(&legacy_plain).unwrap());
+        assert_eq!(
+            serde_json::from_slice::<LegacySnapshot>(&plain_bytes)
+                .unwrap()
+                .workbook,
+            plain
+        );
+
+        for kind in [thinoda_core::CardKind::Sticky, thinoda_core::CardKind::Text] {
+            let book = formatted_workbook(kind);
+            let bytes = Snapshot::to_bytes(meta.clone(), &book).unwrap();
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.meta, meta);
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+            assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+
+            let historical = serde_json::to_vec(&LegacySnapshot {
+                meta: meta.clone(),
+                workbook: book.clone(),
+            })
+            .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Snapshot>(&historical)
+                    .unwrap()
+                    .workbook,
+                book
+            );
+
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            value["workbook"][0] = serde_json::json!("THINODA-RECOVERY-INLINE-999");
+            assert!(serde_json::from_value::<Snapshot>(value).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            value["workbook"].as_array_mut().unwrap().pop();
+            assert!(serde_json::from_value::<Snapshot>(value).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            value["workbook"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!(null));
+            assert!(serde_json::from_value::<Snapshot>(value).is_err());
+        }
+    }
+
+    #[test]
+    fn recovery_load_restores_formatted_cards_and_rejects_malformed_runs() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let manager = RecoveryManager::start(&paths).unwrap();
+        let mut book = formatted_workbook(thinoda_core::CardKind::Sticky);
+        manager
+            .snapshot("rich", SnapshotMeta::default(), &book)
+            .unwrap();
+        manager.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans[0].docs[0].load().unwrap(), book);
+        drop(orphans);
+        manager.resume().unwrap();
+        let sheet = book.active_mut();
+        let card = sheet.floating[0];
+        sheet.topic_mut(card).unwrap().inline_text.runs[0].end = 100;
+        manager
+            .snapshot("rich", SnapshotMeta::default(), &book)
+            .unwrap();
+        manager.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert!(orphans[0].docs[0].load().is_err());
+        drop(orphans);
+        manager.resume().unwrap();
+        manager.finish().unwrap();
+    }
 
     #[test]
     fn recovery_restores_embedded_bytes_and_rejects_missing_resources() {

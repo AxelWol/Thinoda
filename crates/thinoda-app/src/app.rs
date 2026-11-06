@@ -1426,8 +1426,12 @@ impl ThinodaApp {
                         }
                     }
                     Err(e) => {
-                        self.toasts
-                            .error(format!("{}: {e}", t("Not possible here")));
+                        let error = e.to_string();
+                        self.toasts.error(format!(
+                            "{}: {}",
+                            t("Not possible here"),
+                            i18n::localize_model_error(&error)
+                        ));
                     }
                 }
             }
@@ -1612,8 +1616,12 @@ impl ThinodaApp {
             }
             Err(e) => {
                 log::debug!("action failed: {e}");
-                self.toasts
-                    .warning(format!("{}: {e}", t("Not possible here")));
+                let error = e.to_string();
+                self.toasts.warning(format!(
+                    "{}: {}",
+                    t("Not possible here"),
+                    i18n::localize_model_error(&error)
+                ));
             }
         }
     }
@@ -3012,15 +3020,7 @@ impl ThinodaApp {
         for doc in &mut self.docs {
             if let Some(error) = doc.view.take_title_error() {
                 log::warn!("title commit: {error}");
-                let message = if error
-                    == "Formatted card titles cannot be changed until rich-text editing is supported"
-                {
-                    t("Formatted card titles cannot be changed until rich-text editing is supported")
-                        .to_owned()
-                } else {
-                    error
-                };
-                self.toasts.error(message);
+                self.toasts.error(i18n::localize_model_error(&error));
             }
         }
         let dt = self.last_frame.elapsed().as_secs_f32();
@@ -3885,16 +3885,11 @@ impl ThinodaApp {
             Ok(n) => self.toasts.info(format!("{} × {n}", t("Replace"))),
             Err(e) => {
                 let error = e.to_string();
-                let error = if error
-                    == "Formatted card titles cannot be changed until rich-text editing is supported"
-                {
-                    t("Formatted card titles cannot be changed until rich-text editing is supported")
-                        .to_owned()
-                } else {
-                    error
-                };
-                self.toasts
-                    .error(format!("{}: {error}", t("Not possible here")))
+                self.toasts.error(format!(
+                    "{}: {}",
+                    t("Not possible here"),
+                    i18n::localize_model_error(&error)
+                ))
             }
         };
         self.update_search();

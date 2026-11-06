@@ -15,12 +15,15 @@ const SHEET_PREFIX: &str = "THINODA-SHEET-1\n";
 const RESOURCE_SHEET_PREFIX: &str = "THINODA-SHEET-2\n";
 const FORMATTED_SHEET_PREFIX: &str = "THINODA-SHEET-3\n";
 const FIM_SHEET_PREFIX: &str = "THINODA-SHEET-4\n";
+const INLINE_SHEET_PREFIX: &str = "THINODA-SHEET-5\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.fim.is_some() {
+    let prefix = if sheet.has_inline_text() {
+        INLINE_SHEET_PREFIX
+    } else if sheet.fim.is_some() {
         FIM_SHEET_PREFIX
     } else if sheet.topics.values().any(|topic| {
         topic
@@ -47,9 +50,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(FIM_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-4\r\n"))
-        .map(|json| (4, json))
+        .strip_prefix(INLINE_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-5\r\n"))
+        .map(|json| (5, json))
+        .or_else(|| {
+            text.strip_prefix(FIM_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-4\r\n"))
+                .map(|json| (4, json))
+        })
         .or_else(|| {
             text.strip_prefix(FORMATTED_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-3\r\n"))
@@ -67,6 +75,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 5 && sheet.has_inline_text() {
+        return Err("inline card text requires sheet clipboard version 5".into());
+    }
     if version < 4 && sheet.fim.is_some() {
         return Err("FIM documents require sheet clipboard version 4".into());
     }
@@ -158,6 +169,87 @@ fn normalize(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn formatted_card_sheet(kind: crate::CardKind) -> Sheet {
+        let mut sheet = Sheet::new("Board", "Root");
+        let title = "A🦀é\n第二";
+        let id = sheet
+            .add_card(
+                title,
+                crate::Vec2::new(100.0, 100.0),
+                crate::Card::new(kind, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(title, 0..3, |style| {
+                style.bold = Some(true);
+                style.font_family = Some("Sans".into());
+                style.color = Some(crate::Color::rgb(20, 40, 60));
+            })
+            .unwrap();
+        topic.inline_text.paragraphs.push(crate::InlineParagraph {
+            index: 1,
+            list: crate::ListKind::Numbered,
+        });
+        sheet.validate().unwrap();
+        sheet
+    }
+
+    #[test]
+    fn inline_card_sheet_clipboard_versions_and_limits_are_preserved() {
+        for kind in [crate::CardKind::Sticky, crate::CardKind::Text] {
+            let sheet = formatted_card_sheet(kind);
+            let encoded = encode_sheet(&sheet).unwrap();
+            assert!(encoded.starts_with(INLINE_SHEET_PREFIX));
+            assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+            assert_eq!(
+                decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+                sheet
+            );
+            for version in 1..=4 {
+                let old =
+                    encoded.replacen("THINODA-SHEET-5", &format!("THINODA-SHEET-{version}"), 1);
+                assert!(
+                    decode_sheet(&old)
+                        .unwrap_err()
+                        .contains("inline card text requires sheet clipboard version 5")
+                );
+            }
+
+            let mut invalid = sheet.clone();
+            let card = invalid.floating[0];
+            invalid.topic_mut(card).unwrap().inline_text.runs[0].end = 100;
+            assert!(encode_sheet(&invalid).is_err());
+            let forged = format!(
+                "{INLINE_SHEET_PREFIX}{}",
+                serde_json::to_string(&invalid).unwrap()
+            );
+            assert!(decode_sheet(&forged).is_err());
+        }
+
+        let mut at_limit = formatted_card_sheet(crate::CardKind::Text);
+        let root = at_limit.root;
+        at_limit.topic_mut(root).unwrap().notes = Some("".into());
+        let base_len = encode_sheet(&at_limit).unwrap().len();
+        at_limit.topic_mut(root).unwrap().notes =
+            Some("x".repeat(MAX_SHEET_CLIPBOARD_BYTES - base_len).into());
+        let mut encoded = encode_sheet(&at_limit).unwrap();
+        assert_eq!(encoded.len(), MAX_SHEET_CLIPBOARD_BYTES);
+        assert_eq!(decode_sheet(&encoded).unwrap(), at_limit);
+        assert!(decode_sheet(&encoded.replacen('\n', "\r\n", 1)).is_err());
+        at_limit.topic_mut(root).unwrap().notes =
+            Some("x".repeat(MAX_SHEET_CLIPBOARD_BYTES - base_len - 1).into());
+        let windows = encode_sheet(&at_limit).unwrap().replacen('\n', "\r\n", 1);
+        assert_eq!(windows.len(), MAX_SHEET_CLIPBOARD_BYTES);
+        assert_eq!(decode_sheet(&windows).unwrap(), at_limit);
+        encoded.push(' ');
+        assert!(decode_sheet(&encoded).is_err());
+        at_limit.topic_mut(root).unwrap().notes =
+            Some("x".repeat(MAX_SHEET_CLIPBOARD_BYTES - base_len + 1).into());
+        assert!(encode_sheet(&at_limit).is_err());
+    }
 
     #[test]
     fn complete_sheet_clipboard_roundtrips_and_rejects_invalid_input() {

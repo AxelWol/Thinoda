@@ -87,7 +87,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "independent Zone background colors require native format version 7".into(),
             ));
         }
-        if version < 8 && has_inline_text(&book) {
+        if version < 8 && book.has_inline_text() {
             return Err(IoError::Invalid(
                 "inline card text requires native format version 8".into(),
             ));
@@ -105,20 +105,13 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "explicit Zone object membership requires a versioned native archive".into(),
             ));
         }
-        if has_inline_text(&book) {
+        if book.has_inline_text() {
             return Err(IoError::Invalid(
                 "inline card text requires a versioned native archive".into(),
             ));
         }
         Ok(book)
     }
-}
-
-fn has_inline_text(book: &Workbook) -> bool {
-    book.sheets
-        .iter()
-        .flat_map(|sheet| sheet.topics.values())
-        .any(|topic| !topic.inline_text.is_empty())
 }
 
 fn has_zone_objects(book: &Workbook) -> bool {

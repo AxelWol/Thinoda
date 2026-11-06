@@ -48,10 +48,11 @@ open gates; integrated cloud providers remain paused.
 The [selected-range and list contract](FREEFORM.md#selected-range-text-and-lists-bounded-model-foundation-controls-disabled)
 now has a bounded core representation for Sticky/Text card titles, validation,
 history-memory accounting, native v8 gating, non-native export-loss reporting,
-and atomic scalar-range replacement that preserves surrounding style runs.
+internal clipboard/recovery versioning, and atomic scalar-range replacement that
+preserves surrounding style runs.
 Replacement rejects paragraph-boundary changes while list metadata exists.
 No editor controls are enabled: rich-aware undo/IME, grapheme-aware selection,
-list editing, clipboard behavior, accessibility and mixed-style
+list editing, external clipboard and loss handling, accessibility and mixed-style
 measurement/rendering remain open. An isolated, non-application span-editing
 experiment still tests broader Unicode-scalar operations and rejection of
 over-budget edits. A separate experimental draft history tests snapshot
@@ -302,7 +303,7 @@ implemented feature is not treated as fully validated.
 | F5 ink | 🟡 Implemented locally | Define measurable budgets and representative hardware; realistic GPU/browser, touch/pen and accessibility acceptance |
 | F6 scenes | 🟡 Implemented locally | Final scene/PDF/PowerPoint and cross-platform acceptance; optional pressure device spike |
 | F1/F2 board UI | 🟡 Implemented locally | Broader integration, browser accessibility/screen-reader and physical-device acceptance |
-| Selected-range text and lists | 🟡 Bounded model and safety gates implemented | Rich-aware editing/history/IME, measurement/rendering, clipboard and accessibility remain; controls stay disabled |
+| Selected-range text and lists | 🟡 Bounded model, internal clipboard/recovery and safety gates implemented | Rich-aware editing/history/IME, measurement/rendering, external clipboard/loss handling and accessibility remain; controls stay disabled |
 | Profile browser archive loading | ✅ Recorded | The mixed-resource Wasm profile is retained; archive-import timing showed no material change |
 | Durable browser recovery | ⬜ Open | The asynchronous draft remains unintegrated until same-origin writer races, bounded discovery and rescue behavior are safe |
 | Validate large browser boards | 🟡 Partial | Synthetic 50-image/10,000-stroke save round-trips exist; representative resources, measured memory, quota/recovery and device acceptance remain |

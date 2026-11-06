@@ -165,6 +165,24 @@ pub fn t(en: &'static str) -> &'static str {
     t_in(lang(), en)
 }
 
+pub(crate) fn localize_model_error(error: &str) -> &str {
+    localize_model_error_in(lang(), error)
+}
+
+fn localize_model_error_in(language: Lang, error: &str) -> &str {
+    match error {
+        thinoda_core::rich_text::FORMATTED_CARD_REQUIRED => t_in(
+            language,
+            "Formatted card text must remain on a floating sticky note or text card.",
+        ),
+        "Formatted card titles cannot be changed until rich-text editing is supported" => t_in(
+            language,
+            "Formatted card titles cannot be changed until rich-text editing is supported",
+        ),
+        _ => error,
+    }
+}
+
 /// Translated title-row button labels for [`thinoda_ui::Dialog`].
 pub fn dialog_labels() -> thinoda_ui::DialogLabels {
     thinoda_ui::DialogLabels {
@@ -419,6 +437,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Formatted card titles cannot be changed until rich-text editing is supported",
         "Formatierte Kartentitel können erst geändert werden, wenn die Rich-Text-Bearbeitung unterstützt wird.",
+    ),
+    (
+        "Formatted card text must remain on a floating sticky note or text card.",
+        "Formatierter Kartentext muss auf einer frei schwebenden Haftnotiz oder Textkarte bleiben.",
     ),
     (
         "Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.",
@@ -3700,6 +3722,26 @@ mod tests {
     ];
 
     #[test]
+    fn formatted_card_errors_are_localized_without_changing_other_errors() {
+        for language in TRANSLATED {
+            for error in [
+                thinoda_core::rich_text::FORMATTED_CARD_REQUIRED,
+                "Formatted card titles cannot be changed until rich-text editing is supported",
+            ] {
+                assert_eq!(
+                    localize_model_error_in(language, error),
+                    t_in(language, error)
+                );
+                assert_ne!(localize_model_error_in(language, error), error);
+            }
+            assert_eq!(
+                localize_model_error_in(language, "Unknown error"),
+                "Unknown error"
+            );
+        }
+    }
+
+    #[test]
     fn fim_wizard_dynamic_labels_are_in_every_catalog() {
         for key in [
             "General",
@@ -4491,8 +4533,10 @@ mod tests {
             );
         }
         keys.extend(outline_export_losses);
-        let formatted_title_errors =
-            ["Formatted card titles cannot be changed until rich-text editing is supported"];
+        let formatted_title_errors = [
+            "Formatted card titles cannot be changed until rich-text editing is supported",
+            "Formatted card text must remain on a floating sticky note or text card.",
+        ];
         for key in formatted_title_errors {
             assert!(
                 include_str!("pt-BR.txt")

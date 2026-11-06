@@ -27,12 +27,7 @@ pub fn required_native_version(book: &Workbook) -> u64 {
         .any(|sheet| sheet.zones.iter().any(|zone| !zone.objects.is_empty()))
     {
         9
-    } else if book
-        .sheets
-        .iter()
-        .flat_map(|sheet| sheet.topics.values())
-        .any(|topic| !topic.inline_text.is_empty())
-    {
+    } else if book.has_inline_text() {
         8
     } else if book.sheets.iter().any(|sheet| {
         sheet

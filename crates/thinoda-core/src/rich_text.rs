@@ -10,6 +10,8 @@ pub const MAX_INLINE_TEXT_PARAGRAPHS: usize = 1_024;
 pub const MAX_INLINE_FONT_FAMILY_BYTES: usize = 128;
 pub const MIN_INLINE_FONT_SIZE: f32 = 6.0;
 pub const MAX_INLINE_FONT_SIZE: f32 = 256.0;
+pub const FORMATTED_CARD_REQUIRED: &str =
+    "Formatted card text must remain on a floating sticky note or text card.";
 
 /// Sparse formatting overrides for a contiguous Unicode-scalar range.
 /// `None` inherits the card's whole-title style; `Some(false)` explicitly disables a style.
@@ -617,5 +619,185 @@ mod tests {
                 .unwrap_err()
                 .contains("without a sticky or text card")
         );
+    }
+
+    #[test]
+    fn formatted_card_reparenting_conversion_and_mixed_paste_are_atomic() {
+        let mut sheet = crate::Sheet::new("Board", "Root");
+        let root = sheet.root;
+        let plain = sheet.add_child(root, None, "Plain");
+        let target = sheet.add_child(root, None, "Target");
+        let card = sheet
+            .add_card(
+                "A🦀\nList",
+                crate::Vec2::new(120.0, 100.0),
+                crate::Card::new(crate::CardKind::Sticky, crate::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(card).unwrap();
+        topic
+            .inline_text
+            .update_range("A🦀\nList", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        topic.inline_text.paragraphs.push(InlineParagraph {
+            index: 1,
+            list: ListKind::Numbered,
+        });
+        sheet.add_child(card, None, "Card child");
+        sheet.add_relationship(card, plain).unwrap();
+        sheet
+            .create_zone(
+                "Zone",
+                vec![card],
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(300.0, 240.0)),
+            )
+            .unwrap();
+        sheet.validate().unwrap();
+        let before = sheet.clone();
+        let expected = FORMATTED_CARD_REQUIRED;
+
+        assert_eq!(
+            sheet.move_topic(card, target, 0).unwrap_err().to_string(),
+            expected
+        );
+        assert_eq!(sheet, before);
+        assert_eq!(
+            sheet.copy_branch_as_sheet(card).unwrap_err().to_string(),
+            expected
+        );
+        assert_eq!(sheet, before);
+
+        let subtree = sheet.copy_subtree(card).unwrap();
+        let rejected = sheet.attach_child(target, 0, subtree.clone()).unwrap_err();
+        assert_eq!(rejected.to_string(), expected);
+        assert_eq!(*rejected.subtree, subtree);
+        assert_eq!(sheet, before);
+
+        let plain_subtree = sheet.copy_subtree(plain).unwrap();
+        assert_eq!(
+            sheet
+                .paste(target, &[plain_subtree, subtree])
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
+        assert_eq!(sheet, before);
+
+        let mut malformed = sheet.copy_subtree(target).unwrap();
+        let mut descendant = crate::Topic::new(crate::TopicId(999), "Malformed");
+        descendant
+            .inline_text
+            .update_range("Malformed", 0..3, |style| style.italic = Some(true))
+            .unwrap();
+        malformed.topics[0].children.push(descendant.id);
+        descendant.parent = Some(malformed.root);
+        malformed.topics.push(descendant);
+        let rejected = sheet
+            .attach_child(target, 0, malformed.clone())
+            .unwrap_err();
+        assert_eq!(rejected.to_string(), expected);
+        assert_eq!(*rejected.subtree, malformed);
+        assert_eq!(sheet, before);
+        assert_eq!(
+            sheet
+                .paste(target, &[sheet.copy_subtree(plain).unwrap(), malformed])
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
+        assert_eq!(sheet, before);
+
+        let mut invalid_sheet = before.clone();
+        let child = invalid_sheet.add_child(plain, None, "Child");
+        let grandchild = invalid_sheet.add_child(child, None, "Invalid");
+        invalid_sheet
+            .topic_mut(grandchild)
+            .unwrap()
+            .inline_text
+            .update_range("Invalid", 0..3, |style| style.bold = Some(true))
+            .unwrap();
+        let invalid_before = invalid_sheet.clone();
+        assert_eq!(
+            invalid_sheet
+                .move_topic(plain, target, 0)
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
+        assert_eq!(invalid_sheet, invalid_before);
+        assert_eq!(
+            invalid_sheet
+                .insert_parent(plain, "Parent")
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
+        assert_eq!(invalid_sheet, invalid_before);
+        assert_eq!(
+            invalid_sheet
+                .remove_topic_keep_children(plain)
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
+        assert_eq!(invalid_sheet, invalid_before);
+
+        let mut missing = before.clone();
+        missing
+            .topic_mut(plain)
+            .unwrap()
+            .children
+            .push(crate::TopicId(999));
+        let missing_before = missing.clone();
+        assert_eq!(
+            missing.move_topic(plain, target, 0).unwrap_err(),
+            crate::EditError::NoSuchTopic(crate::TopicId(999))
+        );
+        assert_eq!(missing, missing_before);
+
+        for replacement in [
+            None,
+            Some(crate::Card::new(
+                crate::CardKind::Image,
+                crate::Vec2::new(160.0, 100.0),
+            )),
+        ] {
+            assert_eq!(
+                sheet.set_topic_card(card, replacement).unwrap_err(),
+                expected
+            );
+            assert_eq!(sheet, before);
+        }
+        let mut doc = crate::Document::new(crate::Workbook::new(sheet));
+        let before = doc.workbook().clone();
+        let state = doc.state_id();
+        assert!(
+            doc.edit_sheet("Move", |sheet| {
+                sheet.move_topic(plain, target, 0)?;
+                sheet.move_topic(card, target, 1)
+            })
+            .is_err()
+        );
+        assert_eq!(doc.workbook(), &before);
+        assert_eq!(doc.state_id(), state);
+        assert!(!doc.can_undo());
+        doc.set_topic_card(
+            card,
+            Some(crate::Card::new(
+                crate::CardKind::Text,
+                crate::Vec2::new(160.0, 100.0),
+            )),
+        )
+        .unwrap();
+        let after = doc.workbook().clone();
+        assert_eq!(
+            doc.sheet().topic(card).unwrap().inline_text,
+            before.active().topic(card).unwrap().inline_text
+        );
+        doc.workbook().validate().unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &before);
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &after);
     }
 }

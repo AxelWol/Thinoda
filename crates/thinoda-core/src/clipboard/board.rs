@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
 
 const BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-1\n";
+const INLINE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-2\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -34,6 +35,14 @@ pub struct BoardClipboardPayload {
 }
 
 impl BoardClipboardPayload {
+    fn prefix(&self) -> &'static str {
+        if self.fragment.has_inline_text() {
+            INLINE_BOARD_PREFIX
+        } else {
+            BOARD_PREFIX
+        }
+    }
+
     /// Source topic roots after deduplication and group expansion. Useful when
     /// preparing a cut; the caller must still check locks before deleting.
     pub fn source_topic_roots(&self) -> &[TopicId] {
@@ -135,7 +144,7 @@ impl BoardClipboardPayload {
         }
 
         // Bound serialized input before the more expensive model validation.
-        let mut counter = SizeCounter::new(MAX_BOARD_CLIPBOARD_BYTES - BOARD_PREFIX.len());
+        let mut counter = SizeCounter::new(MAX_BOARD_CLIPBOARD_BYTES - self.prefix().len());
         if let Err(error) = serde_json::to_writer(&mut counter, self) {
             if counter.exceeded {
                 return Err("board clipboard payload exceeds 16 MiB".into());
@@ -187,7 +196,7 @@ impl Write for SizeCounter {
 pub fn encode_board_payload(payload: &BoardClipboardPayload) -> Result<String, String> {
     payload.validate()?;
     let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
-    Ok(format!("{BOARD_PREFIX}{json}"))
+    Ok(format!("{}{json}", payload.prefix()))
 }
 
 /// Decodes and validates a versioned board payload. Both LF and Windows CRLF
@@ -196,12 +205,21 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     if text.len() > MAX_BOARD_CLIPBOARD_BYTES {
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
-    let json = text
-        .strip_prefix(BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-1\r\n"))
+    let (version, json) = text
+        .strip_prefix(INLINE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-2\r\n"))
+        .map(|json| (2, json))
+        .or_else(|| {
+            text.strip_prefix(BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-1\r\n"))
+                .map(|json| (1, json))
+        })
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 2 && payload.fragment.has_inline_text() {
+        return Err("inline card text requires board clipboard version 2".into());
+    }
     payload.validate()?;
     Ok(payload)
 }

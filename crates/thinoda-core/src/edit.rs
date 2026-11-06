@@ -52,6 +52,20 @@ impl Sheet {
         Ok(())
     }
 
+    fn require_attachable_subtree(&self, id: TopicId) -> EditResult<()> {
+        let mut pending = vec![id];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let topic = self.topic(id).ok_or(EditError::NoSuchTopic(id))?;
+            topic.ensure_can_be_child().map_err(EditError::Invalid)?;
+            pending.extend(topic.children.iter().rev().copied());
+        }
+        Ok(())
+    }
+
     /// Adds a new last child (Tab).
     pub fn insert_child(&mut self, parent: TopicId, title: &str) -> EditResult<TopicId> {
         self.require(parent)?;
@@ -88,9 +102,11 @@ impl Sheet {
         self.require(id)?;
         let p = self.parent(id).ok_or(EditError::RootNotAllowed)?;
         let i = self.index_in_parent(id).unwrap();
+        self.require_attachable_subtree(id)?;
         let sub = self.detach_subtree_keep_refs(id)?;
         let new = self.add_child(p, Some(i), title);
-        self.attach_child(new, 0, sub);
+        self.attach_child(new, 0, sub)
+            .map_err(|error| EditError::Invalid(error.message))?;
         Ok(new)
     }
 
@@ -271,10 +287,14 @@ impl Sheet {
         let p = self.parent(id).ok_or(EditError::RootNotAllowed)?;
         let mut i = self.index_in_parent(id).unwrap();
         let kids = self.children(id).to_vec();
+        for &kid in &kids {
+            self.require_attachable_subtree(kid)?;
+        }
         for k in kids {
             let sub = self.detach_subtree_keep_refs(k)?;
             i += 1;
-            self.attach_child(p, i, sub);
+            self.attach_child(p, i, sub)
+                .map_err(|error| EditError::Invalid(error.message))?;
         }
         self.detach_subtree(id);
         Ok(())
@@ -297,11 +317,16 @@ impl Sheet {
                 });
         }
         let mut sub = self.copy_subtree(id).unwrap();
+        let parent = self.parent(id);
+        if parent.is_some() {
+            sub.ensure_can_be_child().map_err(EditError::Invalid)?;
+        }
         sub.reassign_ids(self);
-        match self.parent(id) {
+        match parent {
             Some(p) => {
                 let i = self.index_in_parent(id).unwrap();
-                Ok(self.attach_child(p, i + 1, sub))
+                self.attach_child(p, i + 1, sub)
+                    .map_err(|error| EditError::Invalid(error.message))
             }
             None => {
                 let pos = self.topic(id).and_then(|t| t.position).unwrap_or_default()
@@ -352,8 +377,10 @@ impl Sheet {
                 })
                 .map_err(|e| EditError::Invalid(e.to_string()));
         }
+        self.require_attachable_subtree(id)?;
         let sub = self.detach_subtree_keep_refs(id)?;
-        self.attach_child(new_parent, index, sub);
+        self.attach_child(new_parent, index, sub)
+            .map_err(|error| EditError::Invalid(error.message))?;
         Ok(())
     }
 
@@ -383,6 +410,10 @@ impl Sheet {
             return Err(EditError::Invalid("FIM branch extraction requires an explicit closed-document workflow; duplicate/copy the complete sheet instead".into()));
         }
         self.require(id)?;
+        self.topic(id)
+            .unwrap()
+            .ensure_can_be_child()
+            .map_err(EditError::Invalid)?;
         let owned = self.owned_subtree_ids(id);
         let mut sheet = self.clone();
         sheet.resources = self.copy_subtree(id).ok_or(EditError::NotFound)?.resources;
@@ -901,6 +932,9 @@ impl Sheet {
             ));
         }
         self.require(parent)?;
+        for subtree in subtrees {
+            subtree.ensure_can_be_child().map_err(EditError::Invalid)?;
+        }
         let resources = self
             .resources
             .merged(
@@ -931,7 +965,10 @@ impl Sheet {
         for s in subtrees {
             let mut s = s.clone();
             s.reassign_ids(self);
-            out.push(self.attach_child(parent, usize::MAX, s));
+            out.push(
+                self.attach_child(parent, usize::MAX, s)
+                    .map_err(|error| EditError::Invalid(error.message))?,
+            );
         }
         self.topic_mut(parent).unwrap().collapsed = false;
         Ok(out)

@@ -310,6 +310,74 @@ fn inline_card_text_requires_native_v8_and_reports_non_native_loss() {
 }
 
 #[test]
+fn formatted_card_native_clipboard_native_round_trip_is_undoable() {
+    use thinoda_core::{
+        ApproxMeasure, Document, EditError, InlineParagraph, ListKind,
+        clipboard::{
+            copy_board_selection, decode_board_payload, encode_board_payload, paste_board_selection,
+        },
+        layout_sheet,
+    };
+
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let mut source = central();
+        let title = "A🦀é\n第二";
+        let card = source.sheets[0]
+            .add_card(
+                title,
+                Vec2::new(120.0, 100.0),
+                Card::new(kind, Vec2::new(180.0, 120.0)),
+            )
+            .unwrap();
+        let topic = source.sheets[0].topic_mut(card).unwrap();
+        topic
+            .inline_text
+            .update_range(title, 0..3, |style| {
+                style.bold = Some(true);
+                style.font_size = Some(18.0);
+            })
+            .unwrap();
+        topic.inline_text.paragraphs.push(InlineParagraph {
+            index: 1,
+            list: ListKind::Numbered,
+        });
+        let native = export_bytes(&source, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(manifest_version(&native), 8);
+        let loaded = import_bytes(Format::Thinoda, &native).unwrap();
+        let layout = layout_sheet(loaded.active(), &ApproxMeasure, false);
+        let payload = copy_board_selection(loaded.active(), &layout, &[card], &[])
+            .unwrap()
+            .unwrap();
+        let encoded = encode_board_payload(&payload).unwrap();
+        let decoded = decode_board_payload(&encoded).unwrap();
+        let mut destination = Sheet::new("Destination", "Root");
+        destination.add_child(destination.root, None, "Existing");
+        let mut doc = Document::new(Workbook::new(destination));
+        let before = doc.workbook().clone();
+        let pasted = doc
+            .edit_sheet("Paste", |sheet| {
+                paste_board_selection(sheet, &decoded, Vec2::ZERO).map_err(EditError::Invalid)
+            })
+            .unwrap();
+        let copied = doc.sheet().topic(pasted.topics[0]).unwrap();
+        assert_eq!(
+            copied.inline_text,
+            loaded.active().topic(card).unwrap().inline_text
+        );
+        assert_eq!(copied.title, title);
+        assert_ne!(pasted.topics[0], card);
+        let after = doc.workbook().clone();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &before);
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &after);
+        let native = export_bytes(&after, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(manifest_version(&native), 8);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), after);
+    }
+}
+
+#[test]
 fn localized_board_templates_round_trip_in_native_v6() {
     use thinoda_core::templates::{TEMPLATES, TemplateCategory, instantiate_localized};
 

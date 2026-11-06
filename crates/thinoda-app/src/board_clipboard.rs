@@ -95,6 +95,11 @@ pub(crate) enum Completion {
     },
 }
 
+fn localize_error(error: thinoda_core::EditError) -> String {
+    let message = error.to_string();
+    crate::i18n::localize_model_error(&message).to_owned()
+}
+
 #[derive(Default)]
 pub(crate) struct ClipboardBridge {
     topic: Option<(String, ClipboardPayload)>,
@@ -192,10 +197,10 @@ impl ClipboardBridge {
 pub(crate) fn prepare_copy(doc: &mut OpenDoc, cut: bool) -> Result<Option<PreparedCopy>, String> {
     doc.view
         .try_commit_edit(&mut doc.doc)
-        .map_err(|e| e.to_string())?;
+        .map_err(localize_error)?;
     doc.view
         .try_commit_board_label(&mut doc.doc)
-        .map_err(|e| e.to_string())?;
+        .map_err(localize_error)?;
     let requested = if cut { Action::Cut } else { Action::Copy };
     if !requested.available(&doc.doc, &doc.view) {
         return Ok(None);
@@ -263,21 +268,21 @@ pub(crate) fn paste(
         Some(RichClipboard::Board(encoded)) => doc
             .view
             .paste_encoded_board(&mut doc.doc, &encoded)
-            .map_err(|error| error.to_string()),
+            .map_err(localize_error),
         Some(RichClipboard::TopicToken(token)) => {
             doc.view.invalidate_clipboard();
             if let Some((_, payload)) = topic.filter(|(owned, _)| *owned == token) {
                 doc.view.clipboard = Some(payload.clone());
                 apply_action(&mut doc.doc, &mut doc.view, Action::Paste(None))
-                    .map_err(|error| error.to_string())
+                    .map_err(localize_error)
             } else {
                 // This token came from another app session (or expired).
                 apply_action(&mut doc.doc, &mut doc.view, Action::Paste(Some(text)))
-                    .map_err(|error| error.to_string())
+                    .map_err(localize_error)
             }
         }
         None => apply_action(&mut doc.doc, &mut doc.view, Action::Paste(Some(text)))
-            .map_err(|error| error.to_string()),
+            .map_err(localize_error),
     }
 }
 
@@ -310,11 +315,11 @@ impl crate::app::ThinodaApp {
                     return;
                 };
                 if let Err(error) = doc.view.try_commit_edit(&mut doc.doc) {
-                    self.toasts.error(error.to_string());
+                    self.toasts.error(localize_error(error));
                     return;
                 }
                 if let Err(error) = doc.view.try_commit_board_label(&mut doc.doc) {
-                    self.toasts.error(error.to_string());
+                    self.toasts.error(localize_error(error));
                     return;
                 }
                 let guard = DocumentGuard::capture(doc);
@@ -651,6 +656,97 @@ mod tests {
         assert!(html.contains("&lt;not a tag&gt; &amp; café\nnext"));
         assert!(!html.contains("<not a tag>"));
         assert_eq!(read_html(&html).unwrap(), Some(rich));
+    }
+
+    #[test]
+    fn formatted_card_html_transport_pastes_and_rejects_a_downgraded_payload() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let title = "A🦀é\n第二";
+        let card = sheet
+            .add_card(
+                title,
+                Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(thinoda_core::CardKind::Text, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(card).unwrap();
+        topic
+            .inline_text
+            .update_range(title, 0..3, |style| style.bold = Some(true))
+            .unwrap();
+        topic
+            .inline_text
+            .paragraphs
+            .push(thinoda_core::InlineParagraph {
+                index: 1,
+                list: thinoda_core::ListKind::Numbered,
+            });
+        let mut doc = OpenDoc::new(Workbook::new(sheet));
+        doc.view.selection = vec![card];
+        let before = doc.doc.workbook().clone();
+        let prepared = prepare_copy(&mut doc, false).unwrap().unwrap();
+        let rich = read_html(&prepared.html).unwrap().unwrap();
+        let RichClipboard::Board(encoded) = &rich else {
+            panic!("expected board payload");
+        };
+        assert!(encoded.starts_with("THINODA-BOARD-CLIPBOARD-2\n"));
+        let old = encoded.replacen("THINODA-BOARD-CLIPBOARD-2", "THINODA-BOARD-CLIPBOARD-1", 1);
+        assert!(
+            paste(
+                &mut doc,
+                prepared.text.clone(),
+                Some(RichClipboard::Board(old)),
+                None
+            )
+            .is_err()
+        );
+        assert_eq!(doc.doc.workbook(), &before);
+        assert!(paste(&mut doc, prepared.text, Some(rich), None).unwrap());
+        let pasted = doc.view.selection[0];
+        assert_ne!(pasted, card);
+        assert_eq!(
+            doc.doc.sheet().topic(pasted).unwrap().inline_text,
+            before.active().topic(card).unwrap().inline_text
+        );
+        let after = doc.doc.workbook().clone();
+        assert!(doc.doc.undo());
+        assert_eq!(doc.doc.workbook(), &before);
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.workbook(), &after);
+    }
+
+    #[test]
+    fn formatted_card_copy_keeps_a_rejected_title_draft() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = sheet
+            .add_card(
+                "Styled",
+                Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .update_range("Styled", 0..3, |style| style.bold = Some(true))
+            .unwrap();
+        let mut doc = OpenDoc::new(Workbook::new(sheet));
+        doc.view.select_only(card);
+        doc.view.begin_edit(doc.doc.sheet(), card, false);
+        doc.view.set_editing_text("Uncommitted");
+        let before = doc.doc.workbook().clone();
+        let error = prepare_copy(&mut doc, false).err().unwrap();
+        assert_eq!(
+            error,
+            crate::i18n::t(
+                "Formatted card titles cannot be changed until rich-text editing is supported"
+            )
+        );
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.view.editing_text(), Some("Uncommitted"));
     }
 
     #[test]

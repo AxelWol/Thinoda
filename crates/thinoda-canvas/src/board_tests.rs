@@ -4103,6 +4103,58 @@ fn mixed_clipboard_copy_paste_remaps_group_and_connector_endpoints() {
 }
 
 #[test]
+fn formatted_card_clipboard_actions_preserve_runs_lists_and_history() {
+    let mut sheet = board();
+    let title = "Aéß\nÉlan";
+    let card = sheet
+        .add_card(
+            title,
+            Vec2::new(-100.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(160.0, 100.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(card).unwrap();
+    topic
+        .inline_text
+        .update_range(title, 0..3, |style| style.bold = Some(true))
+        .unwrap();
+    topic
+        .inline_text
+        .paragraphs
+        .push(thinoda_core::InlineParagraph {
+            index: 1,
+            list: thinoda_core::ListKind::Bulleted,
+        });
+    let mut h = harness(sheet);
+    h.state_mut().view.selection = vec![card];
+    let before = h.state().doc.workbook().clone();
+    let state = h.state_mut();
+    assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+    let encoded =
+        thinoda_core::clipboard::encode_board_payload(state.view.board_clipboard().unwrap())
+            .unwrap();
+    assert!(encoded.starts_with("THINODA-BOARD-CLIPBOARD-2\n"));
+    assert!(
+        state
+            .view
+            .paste_encoded_board(&mut state.doc, &encoded)
+            .unwrap()
+    );
+    let pasted = state.view.selection[0];
+    assert_ne!(pasted, card);
+    assert_eq!(
+        state.doc.sheet().topic(pasted).unwrap().inline_text,
+        before.active().topic(card).unwrap().inline_text
+    );
+    let after = state.doc.workbook().clone();
+    assert!(state.doc.undo());
+    assert_eq!(state.doc.workbook(), &before);
+    assert!(state.doc.redo());
+    assert_eq!(state.doc.workbook(), &after);
+    state.doc.workbook().validate().unwrap();
+}
+
+#[test]
 fn mixed_clipboard_cut_is_atomic_and_locked_members_preserve_the_clipboard() {
     let mut sheet = board();
     let card = sheet

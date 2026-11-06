@@ -51,9 +51,14 @@ Conflicting drafts retain their text without taking focus or keyboard and IME
 input from the minimap and other editors.
 Selected-range formatting and lists remain open. A bounded Sticky/Text-card
 inline-style and paragraph-list model now has validation, history-memory
-accounting, native v8 gating and non-native export-loss reporting, but no
-editor, undo/IME, clipboard, rendering or accessibility integration; plain
+accounting, native v8 gating, non-native export-loss reporting, and versioned
+internal clipboard and recovery propagation. It has no rich-aware editor,
+undo/IME, external rich clipboard, rendering or accessibility integration; plain
 title edits and search/replace retain draft/data and reject formatted titles.
+Reparenting or converting formatted cards to unsupported topic types is rejected
+atomically. Clipboard sanitization, plain-text loss handling, real-host cut/paste
+acceptance, and the public attachment API change are covered in the
+[checkpoint critique](FREEFORM.md#internal-clipboard-and-recovery-checkpoint-critique).
 An isolated history experiment estimates retained snapshot bytes but does not
 implement rich-aware board-card editing. An egui frame-rollback experiment
 preserves the draft on rejection but can discard other input and briefly expose

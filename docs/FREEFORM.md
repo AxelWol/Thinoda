@@ -1494,8 +1494,9 @@ Implementation contract and remaining work:
    in pre-v8 archives and legacy unversioned JSON. Non-native export preflight
    reports inline formatting/list loss. Until rich-aware editing is complete,
    plain title edits and search/replace reject affected cards without changing
-   the title or formatting. Clipboard/recovery propagation and external format
-   fidelity remain open.
+   the title or formatting. Internal clipboard and recovery propagation now
+   preserve this model with the version and compatibility limits below; external
+   format fidelity remains open.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,
@@ -1546,8 +1547,48 @@ runs. It refuses to change paragraph boundaries while list metadata exists.
 The bounded sparse-style/list model, range style updates, validation,
 history-memory accounting, and native/export loss gates are production code.
 Egui event/undo integration, empty-commit versus cancellation, grapheme
-behavior, paragraph-list editing, clipboard, rendering and accessibility are
-not production implementations.
+behavior, paragraph-list editing, external rich-text clipboard interoperability,
+rendering and accessibility are not production implementations.
+
+#### Internal clipboard and recovery checkpoint: critique
+
+- Sheet clipboard v5 and mixed-board clipboard v2 preserve inline style runs
+  and list metadata. Content without inline formatting keeps the older prefix.
+  Readers reject rich payloads with older prefixes, including rich payloads
+  produced by earlier experimental builds that did not version them. The
+  `data-thinoda-board-v1` HTML attribute identifies the wrapper, not the embedded
+  payload version; old readers reject a v2 payload rather than silently ignoring
+  its formatting. The 16 MiB limits count actual serialized bytes, including
+  the prefix; a Windows CRLF prefix consumes one more byte than LF. External
+  plain-text paste is not rich-text interoperability.
+- New recovery snapshots with inline formatting tag the workbook representation,
+  so older readers expecting the historical object-shaped workbook fail closed.
+  Plain snapshots retain that representation. Current readers also accept
+  historical unversioned rich snapshots, which cannot be retroactively protected
+  against an older application opening them. The public `Snapshot` deserializer
+  now relies on self-describing map/sequence input; this JSON recovery envelope
+  is not a compatibility guarantee for non-self-describing Serde formats.
+- Reparenting a formatted card beneath a topic and converting it to an image card
+  or ordinary topic are rejected before the guarded operation changes the sheet.
+  Mixed pastes and malformed subtrees containing formatted descendants are
+  preflighted before IDs or content are inserted, and rejected branch-to-sheet
+  operations leave the original intact. This is not a general validation guarantee
+  for arbitrary malformed public `Subtree` inputs. Supporting a rootless new sheet
+  for card branches remains open, including the older plain-card path.
+  `Sheet::attach_child` now returns `Result<TopicId, AttachChildError>` rather
+  than a bare ID; the error owns the unchanged subtree. This is a public Rust API
+  change, so downstream callers must handle rejection and retain or restore it.
+- Rich clipboard HTML can be removed or sanitized outside Thinoda; text-only
+  fallback cannot prove clipboard ownership and may discard formatting. Browser
+  clipboard event writes have not been verified against real OS sanitization,
+  permissions or trusted events. Explicit loss handling, safe real-host cut/paste,
+  cross-application interchange and native/browser acceptance remain open before
+  enabling selected-range controls. The internal round-trip tests are not evidence
+  for those host behaviors.
+- On Windows, the affected core, recovery, canvas, drag, clipboard, localization
+  and native-export suites passed 493 tests; two existing tests were ignored.
+  Native all-target and WebAssembly Clippy checks passed. This is not a completed
+  full-workspace test run or cross-platform host acceptance.
 
 Duck check: the replacement primitive is a pure candidate operation, so a
 failed range, style, or list-boundary check cannot partially change the source.
