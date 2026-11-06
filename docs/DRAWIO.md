@@ -831,6 +831,27 @@ or raw XML back. Thinoda now matches both directions:
   `copy_as_drawio_writes_plain_encoded_model_that_pastes_back` and
   `malformed_drawio_text_reports_an_error_without_editing` in the app.
 
+**Corpus validation (docs/draw-io-examples).** `crates/thinoda-io/tests/drawio_corpus.rs`
+runs every `.drawio`/`.xml` file in the user-supplied example corpus (89 files from
+jgraph/drawio-diagrams and the drawio.com docs: templates, floor plans, mockups, AWS/Azure,
+BPMN, C4, UML, network and infographic diagrams). For each file it checks format
+detection, import with report, `Workbook::validate`, draw.io export → re-import (same page
+count, no lost items), native `.thinoda` round trip, SVG export and clipboard decoding,
+each under `catch_unwind`. Result: 89/89 pass, no panics. The corpus folder is not
+committed (third-party content, ~3 MB); the test skips when it is absent and honours
+`THINODA_DRAWIO_CORPUS`. Run: `cargo test -p thinoda-io --release --test drawio_corpus -- --nocapture`.
+
+Gap analysis from the corpus (8,180 vertices, 1,876 edges) sets the fidelity order:
+1. **Images** — 200 image cells in 21 files: 32 inline `data:` URIs (PNG/SVG), the rest
+   remote or `img/lib/...` built-in libraries. Inline images are importable; remote URLs
+   stay labelled placeholders (never fetched).
+2. **Unmapped built-in shapes** — partialRectangle, folder, cube, message, delay,
+   endState, waypoint, umlActor/Lifeline/Frame, `mxgraph.arrows2.*`, `mxgraph.basic.*`.
+3. **Vendor stencils** — floorplan (1,070), mockup (461), cabinets, infographic,
+   salesforce, AWS, BPMN, network (Phases 5 and 12).
+4. **HTML labels** — near-universal styled spans (Phase 9 rich text).
+5. **Custom data** — `object`/`UserObject` attributes such as C4 metadata (Phase 9).
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

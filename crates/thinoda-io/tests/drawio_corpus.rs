@@ -1,0 +1,108 @@
+//! Validates the draw.io codec against real diagrams and templates.
+//!
+//! Point `THINODA_DRAWIO_CORPUS` at a folder of `.drawio`/`.xml` files, or keep
+//! them in `docs/draw-io-examples` (not committed; the test skips when absent).
+
+use std::path::{Path, PathBuf};
+use thinoda_core::Workbook;
+use thinoda_io::{ExportOptions, Format};
+
+fn corpus_dir() -> Option<PathBuf> {
+    let dir = std::env::var_os("THINODA_DRAWIO_CORPUS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/draw-io-examples")
+        });
+    dir.is_dir().then_some(dir)
+}
+
+fn items(book: &Workbook) -> usize {
+    book.sheets
+        .iter()
+        .map(|sheet| sheet.topics.len().saturating_sub(1) + sheet.canvas.objects.len())
+        .sum()
+}
+
+fn check(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let format = thinoda_io::detect_format(path, &bytes);
+    if format != Some(Format::DrawIo) {
+        return Err(format!("detected as {format:?}"));
+    }
+    let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes)
+        .map_err(|e| format!("import: {e}"))?;
+    let book = report.workbook;
+    book.validate()
+        .map_err(|e| format!("invalid workbook: {e}"))?;
+    let count = items(&book);
+    if count == 0 {
+        return Err("no items imported".into());
+    }
+    let opts = ExportOptions::default();
+
+    let drawio = thinoda_io::export_bytes(&book, Format::DrawIo, &opts)
+        .map_err(|e| format!("draw.io export: {e}"))?;
+    let again = thinoda_io::import_bytes_with_report(Format::DrawIo, &drawio)
+        .map_err(|e| format!("draw.io re-import: {e}"))?
+        .workbook;
+    if again.sheets.len() != book.sheets.len() {
+        return Err(format!(
+            "round trip pages {} -> {}",
+            book.sheets.len(),
+            again.sheets.len()
+        ));
+    }
+    let round_trip = items(&again);
+    if round_trip < count {
+        return Err(format!("round trip lost items {count} -> {round_trip}"));
+    }
+
+    let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
+        .map_err(|e| format!("native export: {e}"))?;
+    let reopened = thinoda_io::import_bytes(Format::Thinoda, &native)
+        .map_err(|e| format!("native re-import: {e}"))?;
+    if items(&reopened) != count {
+        return Err("native round trip changed the item count".into());
+    }
+    thinoda_io::export_bytes(&book, Format::Svg, &opts).map_err(|e| format!("svg: {e}"))?;
+
+    let text = String::from_utf8_lossy(&bytes);
+    if thinoda_io::drawio_clipboard::looks_like_drawio(&text) {
+        thinoda_io::drawio_clipboard::decode(&text).map_err(|e| format!("clipboard: {e}"))?;
+    }
+    Ok(format!(
+        "{} page(s), {count} item(s), {} warning kind(s)",
+        book.sheets.len(),
+        report.warnings.len()
+    ))
+}
+
+#[test]
+fn real_drawio_diagrams_import_round_trip_and_render() {
+    let Some(dir) = corpus_dir() else {
+        eprintln!("draw.io corpus not found; skipping");
+        return;
+    };
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e, "drawio" | "xml" | "dio"))
+        })
+        .collect();
+    files.sort();
+    let mut failures = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy();
+        match std::panic::catch_unwind(|| check(path)) {
+            Ok(Ok(summary)) => eprintln!("ok   {name}: {summary}"),
+            Ok(Err(error)) => failures.push(format!("{name}: {error}")),
+            Err(_) => failures.push(format!("{name}: panicked")),
+        }
+    }
+    eprintln!("{} file(s), {} failure(s)", files.len(), failures.len());
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
