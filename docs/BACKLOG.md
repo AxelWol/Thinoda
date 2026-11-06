@@ -24,6 +24,11 @@ remain open. An opt-in synthetic 50-image/ink fixture verifies browser save
 round trips, but does not close those gates. An isolated AccessKit probe
 identifies mixed-event focus, dropped input, selection/IME and rapid-refocus
 text-replacement hazards; it is not an application bridge.
+The F5 follow-up verifies touch stroke persistence and a Chromium-synthesized
+pen stroke, but that browser path currently loses simulated pen pressure.
+F6 source-only scenes now share object visibility across editor, Pitch and
+exports; branch/Zone browser, real-device and updated Office acceptance remain
+open. Pending ink is still excluded from crash recovery.
 Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
 limitations. A separate asynchronous discovery draft remains gated by

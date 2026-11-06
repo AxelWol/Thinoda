@@ -39,6 +39,18 @@ commands and document semantics. Deliver in independently verified slices:
    pointer targets. Additional brush appearances require real rendering and
    persistence support rather than decorative placeholders.
 
+**F5/F6 continuation:** touch stroke pressure and atomic rejection have focused
+host coverage, and a Chromium-synthesized pen produces one saved stroke. That
+browser currently drops the simulated pen's pressure before persistence; a
+pressure-input bridge and real-device validation remain open. Source-only
+scene isolation now uses the same object and connector policy in the editor,
+Pitch and exports. Unassigned objects remain crop-visible without expanding
+source auto-fit; clipping is not redaction. See the F5/F6 critiques in
+[FREEFORM.md](FREEFORM.md#f5-ink-checkpoint-critique) and
+[PRESENTATIONS.md](PRESENTATIONS.md#scene-object-isolation-follow-up).
+Pending-ink crash recovery, realistic performance, accessibility and broader
+browser/Office/device acceptance remain open.
+
 All slices must fit light/dark themes and constrained windows, retain localized
 accessible names and keyboard navigation, and test selection ownership,
 undo/redo, native save/reopen and visual/export parity where behavior changes.

@@ -276,6 +276,64 @@ fn accessible_retry_preserves_a_failed_gesture_and_cancel_is_explicit() {
 }
 
 #[test]
+fn successful_touch_ink_preserves_style_pressure_undo_redo_and_native_save_reopen() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("touch-ink.thinoda");
+    let mut h = harness();
+    h.get_by_label("Ink color").click();
+    h.run_steps(2);
+    h.get_by_label("Auto").click();
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.ink_settings.color = thinoda_core::Color::rgb(200, 30, 40);
+        doc.view.ink_settings.width = 4.0;
+        doc.view.ink_settings.opacity = 0.4;
+        doc.view.ink_settings.finish.tolerance = 0.0;
+    }
+
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    let start = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    touch(&mut h, TouchPhase::Start, start, Some(0.2));
+    touch(
+        &mut h,
+        TouchPhase::Move,
+        start + vec2(40.0, 20.0),
+        Some(0.6),
+    );
+    touch(&mut h, TouchPhase::End, start + vec2(80.0, 40.0), Some(0.9));
+
+    assert!(!h.state().doc().unwrap().has_unresolved_ink());
+    assert!(!h.state().doc().unwrap().view.has_pending_ink_gesture());
+    let committed = h.state().doc().unwrap().doc.sheet().canvas.objects.clone();
+    assert_eq!(committed.len(), 1);
+    let CanvasObjectKind::Ink(ink) = &committed[0].kind else {
+        panic!("expected a committed touch ink stroke");
+    };
+    assert_eq!(ink.tool, thinoda_core::InkTool::Pen);
+    assert_eq!(ink.color, thinoda_core::Color::rgb(200, 30, 40));
+    assert_eq!(ink.width, 4.0);
+    assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.2, 0.6, 0.9]);
+    assert_eq!(committed[0].style.opacity, 0.4);
+
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        assert!(doc.doc.undo());
+        assert!(doc.doc.sheet().canvas.objects.is_empty());
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.sheet().canvas.objects, committed);
+    }
+    assert!(h.state_mut().save_active_to(&path, false));
+    assert!(!h.state().doc().unwrap().is_dirty());
+    let reopened = crate::doc::OpenDoc::open(&path).unwrap();
+    assert!(!reopened.is_dirty());
+    assert_eq!(reopened.doc.sheet().canvas.objects, committed);
+}
+
+#[test]
 fn rejected_touch_samples_stay_visible_and_copyable_until_explicit_discard() {
     let mut h = harness();
     let canvas = h.state().doc().unwrap().view.canvas_rect();

@@ -544,6 +544,45 @@ fn losing_window_focus_retains_a_held_stroke_even_without_a_focus_event() {
 }
 
 #[test]
+fn invalid_touch_pressure_on_release_never_commits_a_partial_stroke() {
+    let mut h = harness(board());
+    tool(&mut h, BoardTool::Pen);
+    let start = point(&h, Vec2::new(-100.0, -100.0));
+
+    touch(&mut h, egui::TouchPhase::Start, start, Some(0.2));
+    touch(
+        &mut h,
+        egui::TouchPhase::Move,
+        start + vec2(20.0, 0.0),
+        Some(0.6),
+    );
+    touch(
+        &mut h,
+        egui::TouchPhase::End,
+        start + vec2(40.0, 0.0),
+        Some(1.5),
+    );
+
+    assert!(h.state().ink_errors.iter().any(|error| matches!(
+        error,
+        InkControllerError::InvalidSample(rejected)
+            if rejected.sample.pressure == Some(1.5)
+    )));
+    assert!(
+        h.state()
+            .ink_errors
+            .iter()
+            .any(|error| matches!(error, InkControllerError::RejectedInputPending))
+    );
+    assert!(h.state().doc.sheet().canvas.objects.is_empty());
+    assert!(h.state().view.has_released_ink_gesture());
+    let samples = h.state().view.pending_ink_samples();
+    assert_eq!(samples.len(), 2);
+    assert_eq!(samples[0].pressure, Some(0.2));
+    assert_eq!(samples[1].pressure, Some(0.6));
+}
+
+#[test]
 fn rejected_touch_samples_report_input_and_never_commit_a_partial_stroke() {
     let mut h = harness(board());
     tool(&mut h, BoardTool::Pen);

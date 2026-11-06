@@ -496,6 +496,79 @@ test.describe("empathy map gallery", () => {
     });
 });
 
+test("browser-synthesized pen input creates one saved ink stroke", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "Pen input synthesis requires the Chromium DevTools protocol");
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    await canvas.focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Hide central topic");
+    await page.keyboard.press("Escape");
+    await frames(page);
+    await command(page, "Pen");
+
+    await canvas.evaluate((element) => {
+        if (!(element instanceof HTMLCanvasElement)) throw new Error("Missing board canvas");
+        const events: { type: string; pointerType: string; pressure: number; trusted: boolean }[] = [];
+        for (const type of ["pointerdown", "pointermove", "pointerup"] as const) {
+            element.addEventListener(type, (event) => {
+                events.push({
+                    type: event.type,
+                    pointerType: event.pointerType,
+                    pressure: event.pressure,
+                    trusted: event.isTrusted,
+                });
+                element.dataset.testPenEvents = JSON.stringify(events);
+            });
+        }
+    });
+    const bounds = await canvas.boundingBox();
+    if (!bounds) throw new Error("Board canvas has no bounds");
+    const point = (x: number, y: number) => ({
+        x: bounds.x + bounds.width * x,
+        y: bounds.y + bounds.height * y,
+    });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchMouseEvent", {
+        type: "mousePressed", ...point(0.30, 0.62),
+        button: "left", buttons: 1, clickCount: 1, pointerType: "pen", force: 0.2,
+    });
+    await frames(page);
+    await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved", ...point(0.42, 0.68),
+        button: "left", buttons: 1, pointerType: "pen", force: 0.55,
+    });
+    await frames(page);
+    await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased", ...point(0.54, 0.74),
+        button: "left", buttons: 0, clickCount: 1, pointerType: "pen", force: 0,
+    });
+    await cdp.detach();
+    await frames(page);
+
+    const events = await canvas.evaluate((element) => {
+        if (!(element instanceof HTMLCanvasElement)) throw new Error("Missing board canvas");
+        return JSON.parse(element.dataset.testPenEvents ?? "[]") as {
+            type: string; pointerType: string; pressure: number; trusted: boolean;
+        }[];
+    });
+    expect(events.map((event) => event.type)).toEqual(["pointerdown", "pointermove", "pointerup"]);
+    expect(events.every((event) => event.trusted && event.pointerType === "pen")).toBe(true);
+    expect(events[0].pressure).toBeCloseTo(0.2, 2);
+    expect(events[1].pressure).toBeCloseTo(0.55, 2);
+
+    const saved = sheetFrom(await saveAs(page, "synthetic-pen.thinoda"));
+    const inkObjects = saved.canvas?.objects.filter((object) => object.kind.ink) ?? [];
+    expect(inkObjects).toHaveLength(1);
+    const ink = inkObjects[0].kind.ink;
+    expect(ink).toBeDefined();
+    expect(ink!.tool).toBe("pen");
+    expect(ink!.points.length).toBeGreaterThan(1);
+    expect(ink!.width).toBeGreaterThan(0);
+});
+
 test("rootless board objects, styling, connections and ink survive a native save", async ({ page }) => {
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });

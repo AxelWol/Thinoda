@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ChildRange, Layout, PresentationScope, PresentationSlide, PresentationSource, Rect, SceneId,
-    Sheet, TopicId, Vec2, Zone, build_scene,
+    CanvasObjectId, CanvasObjectKind, ChildRange, Endpoint, Layout, PresentationScope,
+    PresentationSlide, PresentationSource, Rect, SceneId, Sheet, TopicId, Vec2, Zone, build_scene,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,30 +23,102 @@ impl ResolvedPresentationSlide {
     /// Whether a scene connector may expose this endpoint. Collapsed descendants
     /// can use their visible collapsed ancestor, but hidden or unrevealed topics cannot.
     pub fn scene_topic_visible(&self, sheet: &Sheet, id: TopicId) -> bool {
-        if !self.permitted_topics.contains(&id) {
+        scene_topic_visible(sheet, &self.permitted_topics, &self.layout, id)
+    }
+
+    /// Canvas objects visible in this slide, including eligible connector endpoints.
+    /// Objects not assigned to a Zone remain visible in source-only slides.
+    pub fn scene_canvas_object_ids(&self, sheet: &Sheet) -> HashSet<CanvasObjectId> {
+        scene_canvas_object_ids(
+            sheet,
+            &self.permitted_objects,
+            &self.permitted_topics,
+            &self.layout,
+        )
+    }
+}
+
+fn scene_topic_visible(
+    sheet: &Sheet,
+    permitted_topics: &HashSet<TopicId>,
+    layout: &Layout,
+    id: TopicId,
+) -> bool {
+    if !permitted_topics.contains(&id) {
+        return false;
+    }
+    let mut current = Some(id);
+    let mut visible = id;
+    let mut seen = HashSet::new();
+    while let Some(topic_id) = current {
+        if !seen.insert(topic_id) || sheet.is_anchor(topic_id) {
             return false;
         }
-        let mut current = Some(id);
-        let mut visible = id;
-        let mut seen = HashSet::new();
-        while let Some(topic_id) = current {
-            if !seen.insert(topic_id) || sheet.is_anchor(topic_id) {
-                return false;
-            }
-            let Some(topic) = sheet.topic(topic_id) else {
-                return false;
-            };
-            if topic.collapsed {
-                visible = topic_id;
-            }
-            current = topic.parent.or_else(|| {
-                sheet
-                    .summary_for_topic(topic_id)
-                    .map(|summary| summary.parent)
-            });
+        let Some(topic) = sheet.topic(topic_id) else {
+            return false;
+        };
+        if topic.collapsed {
+            visible = topic_id;
         }
-        self.layout.topics.contains_key(&visible)
+        current = topic.parent.or_else(|| {
+            sheet
+                .summary_for_topic(topic_id)
+                .map(|summary| summary.parent)
+        });
     }
+    layout.topics.contains_key(&visible)
+}
+
+fn scene_canvas_object_ids(
+    sheet: &Sheet,
+    permitted_objects: &HashSet<CanvasObjectId>,
+    permitted_topics: &HashSet<TopicId>,
+    layout: &Layout,
+) -> HashSet<CanvasObjectId> {
+    let mut excluded: HashSet<_> = sheet
+        .zones
+        .iter()
+        .flat_map(|zone| zone.objects.iter().copied())
+        .filter(|id| !permitted_objects.contains(id))
+        .collect();
+    let mut dependents: HashMap<CanvasObjectId, Vec<CanvasObjectId>> = HashMap::new();
+    let mut topic_visibility = HashMap::new();
+    for object in &sheet.canvas.objects {
+        let CanvasObjectKind::Connector(connector) = &object.kind else {
+            continue;
+        };
+        for endpoint in [connector.from, connector.to] {
+            match endpoint {
+                Endpoint::Topic(id) => {
+                    if !*topic_visibility
+                        .entry(id)
+                        .or_insert_with(|| scene_topic_visible(sheet, permitted_topics, layout, id))
+                    {
+                        excluded.insert(object.id);
+                    }
+                }
+                Endpoint::Object(id) => dependents.entry(id).or_default().push(object.id),
+                Endpoint::Point(_) => {}
+            }
+        }
+    }
+    let mut pending: Vec<_> = excluded.iter().copied().collect();
+    while let Some(id) = pending.pop() {
+        if let Some(connectors) = dependents.get(&id) {
+            for &connector in connectors {
+                if excluded.insert(connector) {
+                    pending.push(connector);
+                }
+            }
+        }
+    }
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| !excluded.contains(&object.id))
+        .map(|object| object.id)
+        .collect()
 }
 
 /// Intersects conservative presentation bounds with an optional visual clip.
@@ -247,6 +319,7 @@ pub fn resolve_presentation_slide(
         .cloned()
         .collect();
     let zone_ids: HashSet<_> = zones.iter().map(|zone| zone.id).collect();
+    let visible_objects = scene_canvas_object_ids(sheet, &permitted_objects, &permitted, &filtered);
     let scene = build_scene(sheet, &filtered);
     let mut bounds = scene
         .items
@@ -254,7 +327,7 @@ pub fn resolve_presentation_slide(
         .filter(|item| match item.id {
             SceneId::Topic(id) => included.contains(&id),
             SceneId::Zone(id) => zone_ids.contains(&id),
-            SceneId::Object(id) => permitted_objects.contains(&id),
+            SceneId::Object(id) => permitted_objects.contains(&id) && visible_objects.contains(&id),
         })
         .filter_map(|item| item.visible_bounds())
         .reduce(|a, b| a.union(&b));
@@ -482,6 +555,100 @@ mod tests {
         sheet.zones[0].clip = true;
         sheet.validate().unwrap();
         (sheet, root, zone)
+    }
+
+    #[test]
+    fn auto_frame_ignores_zone_connectors_to_foreign_objects() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let root = sheet.add_floating("Root", Vec2::new(80.0, 80.0));
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0));
+        let zone = sheet.create_zone("Source", vec![root], frame).unwrap();
+        let other = sheet.create_board_frame("Other", frame).unwrap();
+        let foreign = sheet
+            .add_canvas_object(crate::CanvasObject::shape(
+                crate::ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(10_000.0, 100.0), Vec2::new(80.0, 50.0)),
+            ))
+            .unwrap();
+        let unassigned = sheet
+            .add_canvas_object(crate::CanvasObject::shape(
+                crate::ShapeKind::Ellipse,
+                Rect::from_min_size(Vec2::new(8_000.0, 100.0), Vec2::new(80.0, 50.0)),
+            ))
+            .unwrap();
+        let connector = sheet
+            .add_canvas_object(crate::CanvasObject::connector(crate::CanvasConnector::new(
+                Endpoint::Point(Vec2::new(100.0, 100.0)),
+                Endpoint::Object(foreign),
+            )))
+            .unwrap();
+        sheet
+            .set_zone_members(zone, vec![root], vec![connector])
+            .unwrap();
+        sheet
+            .set_zone_members(other, vec![], vec![foreign])
+            .unwrap();
+        sheet.validate().unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let resolved =
+            resolve_presentation_slide(&sheet, &slide(PresentationSource::Zone(zone)), &layout)
+                .unwrap();
+        assert!(resolved.frame.max().x < 1_000.0, "{:?}", resolved.frame);
+        let visible = resolved.scene_canvas_object_ids(&sheet);
+        assert!(!visible.contains(&foreign));
+        assert!(!visible.contains(&connector));
+        assert!(visible.contains(&unassigned));
+    }
+
+    #[test]
+    fn scene_object_filter_handles_long_reversed_connector_chains() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let root = sheet.add_floating("Root", Vec2::new(80.0, 80.0));
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0));
+        let other = sheet.create_board_frame("Other", frame).unwrap();
+        let foreign = sheet
+            .add_canvas_object(crate::CanvasObject::shape(
+                crate::ShapeKind::Rectangle,
+                frame,
+            ))
+            .unwrap();
+        let free = sheet
+            .add_canvas_object(crate::CanvasObject::shape(crate::ShapeKind::Ellipse, frame))
+            .unwrap();
+        sheet
+            .set_zone_members(other, vec![], vec![foreign])
+            .unwrap();
+        let mut target = foreign;
+        for _ in 0..2_000 {
+            target = sheet
+                .add_canvas_object(crate::CanvasObject::connector(crate::CanvasConnector::new(
+                    Endpoint::Object(target),
+                    Endpoint::Point(Vec2::ZERO),
+                )))
+                .unwrap();
+        }
+        sheet.canvas.objects.reverse();
+        sheet.validate().unwrap();
+        let mut resolved = ResolvedPresentationSlide {
+            layout: layout_sheet(&sheet, &ApproxMeasure, false),
+            frame,
+            zones: Vec::new(),
+            permitted_topics: HashSet::from([root]),
+            permitted_objects: HashSet::new(),
+        };
+        assert_eq!(
+            resolved.scene_canvas_object_ids(&sheet),
+            HashSet::from([free])
+        );
+        resolved.permitted_objects = sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|object| object.id)
+            .collect();
+        assert_eq!(resolved.scene_canvas_object_ids(&sheet).len(), 2_002);
     }
 
     #[test]

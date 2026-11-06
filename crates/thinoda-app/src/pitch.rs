@@ -537,21 +537,16 @@ fn presentation_paint_sheet(
         } else if zone.clip {
             zone.name.clear();
             zone.color = Some(thinoda_core::Color::rgba(0, 0, 0, 0));
+            zone.background_color = None;
             true
         } else {
             false
         }
     });
-    paint_sheet.canvas.objects.retain(|object| {
-        let thinoda_core::CanvasObjectKind::Connector(connector) = &object.kind else {
-            return true;
-        };
-        [connector.from, connector.to]
-            .into_iter()
-            .all(|endpoint| match endpoint {
-                thinoda_core::Endpoint::Topic(id) => resolved.scene_topic_visible(sheet, id),
-                _ => true,
-            })
-    });
+    let visible_objects = resolved.scene_canvas_object_ids(sheet);
+    paint_sheet
+        .canvas
+        .objects
+        .retain(|object| visible_objects.contains(&object.id));
     paint_sheet
 }

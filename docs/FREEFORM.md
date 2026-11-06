@@ -1086,6 +1086,14 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - Ink gestures commit atomically, and pending or rejected gestures are exposed
   for retry or cancellation rather than silently discarded. Pending ink is not
   crash-recoverable until it is committed.
+- A touch-host regression now checks captured style and pressure through one
+  stroke, undo/redo and native save/reopen; invalid pressure on release leaves
+  the accepted samples pending instead of committing part of the stroke. A
+  Chromium DevTools-generated pen sequence also creates exactly one saved
+  stroke. At this checkpoint the browser exposes the simulated pen pressure,
+  but the saved stroke does not retain it; pressure does not affect rendering.
+  Firefox and WebKit do not run that Chromium-specific pen synthesis. None of
+  these checks establishes physical-stylus fidelity, palm rejection or latency.
 - Pixel erasing can split strokes while retaining their metadata and undo
   behavior. Sixteen focused canvas tests cover geometry, limits, atomicity,
   grouping and undo. A production-browser regression checks the saved
@@ -1106,6 +1114,15 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   is not redaction, and editable PowerPoint output reports clipping it cannot
   preserve. Browser storage limits and realistic rendering performance still
   require integration acceptance.
+- Source-only editor, Pitch and export scenes now share object visibility.
+  Foreign Zone objects and connectors depending on hidden topics or excluded
+  objects are filtered, including reversed connector chains. Unassigned objects
+  remain visible when cropped into the frame but do not enlarge source auto-fit.
+  Hidden clipping frames retain their clip without painting their background.
+  Focused core, player and SVG/PNG/PDF/PowerPoint tests cover the policy; a
+  2,000-connector fixture checks iterative propagation, not a device performance
+  budget. The browser Pitch and PowerPoint checks exercise viewport slides, not
+  source-only isolation, and the presenter's Map still exposes the full map.
 - Editable branch/Zone PowerPoint slides now rotate card components and
   multiline shape labels around their owning card or shape, preserving image
   bytes and source data. The canvas rotates shape labels around the same pivot;
