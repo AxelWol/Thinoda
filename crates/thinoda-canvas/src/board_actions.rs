@@ -750,12 +750,13 @@ pub(crate) fn duplicate_selection(
     if topics.is_empty() && objects.is_empty() {
         return Ok(false);
     }
-    let layout = view.layout_for(doc);
-    let Some(payload) = clipboard::copy_board_selection(doc.sheet(), &layout, &topics, &objects)
+    let Some(prepared) = clipboard::prepare_board_selection(doc.sheet(), &topics, &objects)
         .map_err(EditError::Invalid)?
     else {
         return Ok(false);
     };
+    let layout = view.layout_for(doc);
+    let payload = prepared.copy(&layout).map_err(EditError::Invalid)?;
     paste_board_at(doc, view, &payload, delta, "Duplicate board items")
 }
 
@@ -798,12 +799,12 @@ fn duplicate_frame(
     let payload = if frame.roots.is_empty() && frame.objects.is_empty() {
         None
     } else {
-        let layout = view.layout_for(doc);
-        Some(
-            clipboard::copy_board_selection(doc.sheet(), &layout, &frame.roots, &frame.objects)
+        let prepared =
+            clipboard::prepare_board_selection(doc.sheet(), &frame.roots, &frame.objects)
                 .map_err(EditError::Invalid)?
-                .ok_or_else(|| EditError::Invalid("frame contents could not be copied".into()))?,
-        )
+                .ok_or_else(|| EditError::Invalid("frame contents could not be copied".into()))?;
+        let layout = view.layout_for(doc);
+        Some(prepared.copy(&layout).map_err(EditError::Invalid)?)
     };
     let new_id =
         doc.edit_sheet("Duplicate board frame", |sheet| {
@@ -873,17 +874,14 @@ fn copy_cut_or_duplicate(
     {
         return Ok(false);
     }
-    let layout = view.layout_for(doc);
-    let Some(payload) = clipboard::copy_board_selection(
-        doc.sheet(),
-        &layout,
-        &view.selection,
-        &view.board_selection,
-    )
-    .map_err(EditError::Invalid)?
+    let Some(prepared) =
+        clipboard::prepare_board_selection(doc.sheet(), &view.selection, &view.board_selection)
+            .map_err(EditError::Invalid)?
     else {
         return Ok(false);
     };
+    let layout = view.layout_for(doc);
+    let payload = prepared.copy(&layout).map_err(EditError::Invalid)?;
     if *action == Action::Duplicate {
         return paste_board(doc, view, &payload, "Duplicate board items");
     }

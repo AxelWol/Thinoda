@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 mod board;
 mod topic;
 pub use board::{
-    BoardClipboardPayload, BoardPasteResult, MAX_BOARD_CLIPBOARD_BYTES, ResolvedBoardPaste,
-    copy_board_selection, decode_board_payload, encode_board_payload, paste_board_selection,
-    paste_floating_subtrees, resolve_board_paste,
+    BoardClipboardPayload, BoardPasteResult, MAX_BOARD_CLIPBOARD_BYTES, PreparedBoardSelection,
+    ResolvedBoardPaste, copy_board_selection, decode_board_payload, encode_board_payload,
+    paste_board_selection, paste_floating_subtrees, prepare_board_selection, resolve_board_paste,
 };
 pub use topic::{
     MAX_TOPIC_CLIPBOARD_DEPTH, TOPIC_CLIPBOARD_PREFIX, decode_topic_payload, encode_topic_payload,

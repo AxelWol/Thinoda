@@ -141,6 +141,51 @@ fn shape(sheet: &mut Sheet, x: f32, y: f32, label: &str) -> CanvasObjectId {
 }
 
 #[test]
+fn deep_board_duplication_fails_before_layout_and_preserves_history() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let mut parent = card;
+    for _ in 0..=thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH {
+        parent = sheet.add_child(parent, None, "Child");
+    }
+    let frame = sheet
+        .create_board_frame(
+            "Frame",
+            thinoda_core::Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(200.0, 200.0)),
+        )
+        .unwrap();
+    sheet.set_zone_members(frame, vec![card], vec![]).unwrap();
+    let mut doc = Document::new(Workbook::new(sheet));
+    let mut view = MapView::default();
+    let before = doc.workbook().clone();
+
+    view.select_only(card);
+    for action in [Action::Copy, Action::Cut, Action::Duplicate] {
+        let error = apply_action(&mut doc, &mut view, action).unwrap_err();
+        assert!(error.to_string().contains("depth"), "{error}");
+        assert_eq!(doc.workbook(), &before);
+        assert!(!doc.can_undo());
+    }
+    let error =
+        board_actions::duplicate_selection(&mut doc, &mut view, Vec2::new(20.0, 20.0)).unwrap_err();
+    assert!(error.to_string().contains("depth"), "{error}");
+    assert_eq!(doc.workbook(), &before);
+
+    view.select_object(ObjectSelection::Zone(frame));
+    let error =
+        board_actions::duplicate_selection(&mut doc, &mut view, Vec2::new(20.0, 20.0)).unwrap_err();
+    assert!(error.to_string().contains("depth"), "{error}");
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.can_undo());
+}
+
+#[test]
 #[ignore = "manual full canvas CPU measurement"]
 fn measure_large_board_canvas_pass() {
     use std::{hint::black_box, time::Instant};

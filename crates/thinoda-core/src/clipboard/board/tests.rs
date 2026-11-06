@@ -3,6 +3,7 @@ use crate::board::{
     Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, InkStroke, InkTool,
     ShapeKind,
 };
+use crate::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
 use crate::geometry::{Color, Rect};
 use crate::layout::{ApproxMeasure, layout_sheet};
 use crate::{Document, EditError, Workbook};
@@ -22,6 +23,119 @@ fn copy(sheet: &Sheet, topics: &[TopicId], objects: &[CanvasObjectId]) -> BoardC
     copy_board_selection(sheet, &layout, topics, objects)
         .unwrap()
         .unwrap()
+}
+
+fn depth_fixture(depth: usize, summaries: bool) -> (Sheet, TopicId) {
+    let mut sheet = hidden_sheet("", "");
+    let root = sheet.add_floating("Root", Vec2::new(100.0, 100.0));
+    let (mut parent, start) = if summaries {
+        let covered = sheet.add_child(root, None, "Covered");
+        let summary = sheet.add_summary(&[covered], "Summary").unwrap();
+        let covered = sheet.add_child(summary, None, "Covered again");
+        (sheet.add_summary(&[covered], "Nested summary").unwrap(), 2)
+    } else {
+        (root, 0)
+    };
+    for level in start..depth {
+        let id = TopicId(100 + level as u64);
+        let mut topic = Topic::new(id, "Child");
+        topic.parent = Some(parent);
+        sheet.topic_mut(parent).unwrap().children.push(id);
+        sheet.topics.insert(id, topic);
+        parent = id;
+    }
+    (sheet, root)
+}
+
+#[test]
+fn mixed_clipboard_bounds_owned_depth_and_preserves_summary_trees() {
+    for summaries in [false, true] {
+        let (source, root) = depth_fixture(MAX_TOPIC_CLIPBOARD_DEPTH, summaries);
+        source.validate().unwrap();
+        let payload = copy_board_selection(&source, &Layout::default(), &[root], &[])
+            .unwrap()
+            .unwrap();
+        let encoded = encode_board_payload(&payload).unwrap();
+        let decoded = decode_board_payload(&encoded).unwrap();
+        assert_eq!(decoded, payload);
+        assert_eq!(
+            decoded.fragment.summaries.len(),
+            if summaries { 2 } else { 0 }
+        );
+
+        let mut doc = Document::new(Workbook::new(hidden_sheet("Destination", "")));
+        let before = doc.workbook().clone();
+        let (too_deep, too_deep_root) = depth_fixture(MAX_TOPIC_CLIPBOARD_DEPTH + 1, summaries);
+        too_deep.validate().unwrap();
+        let error = match copy_board_selection(&too_deep, &Layout::default(), &[too_deep_root], &[])
+        {
+            Err(error) => error,
+            Ok(_) => panic!("over-deep board selection should be rejected"),
+        };
+        assert!(error.contains("depth"), "{error}");
+
+        let invalid = BoardClipboardPayload {
+            text: "Root\n".into(),
+            fragment: too_deep,
+        };
+        assert!(invalid.validate().unwrap_err().contains("depth"));
+        assert!(
+            encode_board_payload(&invalid)
+                .unwrap_err()
+                .contains("depth")
+        );
+        let forged = format!("{BOARD_PREFIX}{}", serde_json::to_string(&invalid).unwrap());
+        assert!(decode_board_payload(&forged).unwrap_err().contains("depth"));
+        assert!(
+            doc.edit_sheet("Rejected paste", |sheet| {
+                paste_board_selection(sheet, &invalid, Vec2::ZERO).map_err(EditError::Invalid)
+            })
+            .unwrap_err()
+            .to_string()
+            .contains("depth")
+        );
+        assert_eq!(doc.workbook(), &before);
+        assert!(!doc.can_undo());
+
+        doc.edit_sheet("Paste", |sheet| {
+            paste_board_selection(sheet, &decoded, Vec2::ZERO).map_err(EditError::Invalid)
+        })
+        .unwrap();
+        assert_eq!(doc.sheet().summaries.len(), if summaries { 2 } else { 0 });
+        let after = doc.workbook().clone();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &before);
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &after);
+    }
+}
+
+#[test]
+fn mixed_copy_rejects_deep_sources_without_recursive_layout() {
+    let (source, root) = depth_fixture(4_096, true);
+    let error = copy_board_selection(&source, &Layout::default(), &[root], &[]).unwrap_err();
+    assert!(error.contains("depth"), "{error}");
+}
+
+#[test]
+fn mixed_copy_preflight_checks_cards_added_by_group_expansion() {
+    let (mut source, root) = depth_fixture(MAX_TOPIC_CLIPBOARD_DEPTH + 1, true);
+    source.topic_mut(root).unwrap().card =
+        Some(Card::new(CardKind::Sticky, Vec2::new(160.0, 100.0)));
+    let shape = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(10.0, 20.0, 50.0, 40.0),
+        ))
+        .unwrap();
+    source
+        .group_board_members(&[BoardMember::Card(root), BoardMember::Object(shape)])
+        .unwrap();
+
+    match prepare_board_selection(&source, &[], &[shape]) {
+        Err(error) => assert!(error.contains("depth"), "{error}"),
+        Ok(_) => panic!("a grouped over-deep card should be rejected"),
+    }
 }
 
 #[test]

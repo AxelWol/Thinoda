@@ -855,10 +855,12 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Normal card copies use the board format. The existing floating-subtree
   allocator can reject source topic IDs near the maximum `u64` value, even
   though the topic codec and central-map paste support those IDs.
-- These depth checks apply to the portable topic path, not to the existing
-  unbounded `copy_topics` compatibility API, mixed-board payloads or external
-  plain-text outline parsing. Those separate entry points still need their own
-  stack-safety review; the new checks are not a general document-depth limit.
+- At this checkpoint, these depth checks did not cover the existing unbounded
+  `copy_topics` compatibility API, mixed-board payloads or external plain-text
+  outline parsing. Mixed-board handling was addressed in the later
+  [depth checkpoint](#mixed-board-clipboard-depth-checkpoint-critique); the
+  remaining entry points still need their own review. None of these checks is
+  a general document-depth limit.
 - Topic and board paste use the destination calendar for copied tasks. A
   nonworking start date or an exceeded task/dependency limit rejects the
   scheduled insertion atomically. The source calendar is not copied with a
@@ -885,6 +887,26 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Firefox and WebKit using synthetic clipboard events and isolated in-page data.
   The separate browser pages are not independent OS processes sharing a real
   clipboard; native-host and trusted-event acceptance remain open.
+
+### Mixed-board clipboard depth checkpoint: critique
+
+- Mixed selections now reject ownership paths longer than 256 edges, including
+  ordinary child edges and edges to detached summary topics. The source walk
+  follows expanded groups and runs before copy, cut and both item and frame
+  duplication request a layout. Portable board decode, encode and paste apply
+  the same bound before model mutation. A selection rooted at depth zero with
+  256 edges is accepted; 257 is rejected with a depth error.
+- This is deliberately conservative: a valid existing sheet may contain a
+  deeper tree or summary chain, but it cannot be copied as one board fragment.
+  Selecting a smaller descendant can still work. The prepared selection holds
+  an immutable reference to its source; callers supplying their own layout must
+  ensure it describes that source. This does not impose a document-wide depth
+  limit or protect a separately computed layout of an unrelated deep tree.
+- Tests cover exact boundaries, nested summary ownership, group expansion,
+  forged payloads, rejection without undo entries, successful paste undo/redo,
+  and copy/cut/duplication error propagation. These are native model and host
+  checks, not real system-clipboard or physical-device acceptance. The app can
+  still commit a valid pending text draft before a subsequent copy is rejected.
 
 ### Resource-union checkpoint: critique
 

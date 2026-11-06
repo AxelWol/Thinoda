@@ -82,8 +82,10 @@ The portable-topic continuation replaces session-only tokens for new copies,
 validates destination scheduling, and records metadata exposure, older-version
 fallback and real-host gaps in the
 [topic critique](FREEFORM.md#portable-topic-clipboard-checkpoint-critique).
-Mixed-board depth, plain-text outline parsing and the legacy copy API still need
-bounded, stack-safe handling with explicit rejection and compatibility tests.
+Mixed-board depth is bounded, including summary ownership and grouped cards;
+see the [depth critique](FREEFORM.md#mixed-board-clipboard-depth-checkpoint-critique).
+Plain-text outline parsing and the legacy copy API still need bounded,
+stack-safe handling with explicit rejection and compatibility tests.
 New Sheet from Topic now preserves card branches and owned resources in a
 rootless destination, while warning about surrounding context left in the
 source. See the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)

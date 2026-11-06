@@ -1173,6 +1173,34 @@ mod tests {
     }
 
     #[test]
+    fn deep_board_selection_is_rejected_before_layout_copy_or_cut() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = sheet
+            .add_card(
+                "Card",
+                Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let mut parent = card;
+        for _ in 0..=MAX_TOPIC_CLIPBOARD_DEPTH {
+            parent = sheet.add_child(parent, None, "Child");
+        }
+        let mut source = OpenDoc::new(Workbook::new(sheet));
+        source.view.select_only(card);
+        let before = source.doc.workbook().clone();
+        for cut in [false, true] {
+            assert!(matches!(
+                prepare_copy(&mut source, cut),
+                Err(error) if error.contains("depth")
+            ));
+            assert_eq!(source.doc.workbook(), &before);
+            assert!(!source.doc.can_undo());
+        }
+    }
+
+    #[test]
     fn portable_topic_paste_checks_depth_against_destination_ancestry() {
         let mut source = Sheet::new("Source", "Root");
         let copied = source.add_child(source.root, None, "Parent");
