@@ -95,54 +95,47 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                 };
                 right_click(&mut h, pos);
                 for label in [
-                    "Fit Map",
                     "Topic",
-                    "Delete",
-                    "Styles",
+                    "Subtopic",
+                    "Cut",
+                    "Paste",
+                    "Add",
+                    "Structure",
+                    "Format",
                     "Select",
-                    "Board",
-                    "Zone",
-                    "Arrange",
-                    "Tools",
-                    "New Sheet from Topic",
+                    "Zones",
+                    "View",
+                    "Command Palette…",
+                    "Delete",
                 ] {
                     reveal(&mut h, t(label));
                 }
-                reveal(&mut h, t("Styles"));
-                h.get_by_role_and_label(Role::Button, t("Styles")).click();
-                h.run_steps(3);
-                for label in [
-                    "Indent",
-                    "Outdent",
-                    "Copy Style",
-                    "Paste Style",
-                    "Reset Style",
-                    "Save Quick Style…",
+                for (submenu, labels) in [
+                    (
+                        "Format",
+                        &[
+                            "Topic style",
+                            "Format Panel",
+                            "Copy Style",
+                            "Paste Style",
+                            "Reset Style",
+                            "Save Quick Style…",
+                        ][..],
+                    ),
+                    ("Structure", &["Indent", "Outdent", "New Sheet from Topic"]),
+                    ("Add", &["To-Do", "Task Planning", "Edit notes", "Boundary"]),
+                    ("View", &["Zoom to selection", "Fit Map", "Select tool"]),
                 ] {
-                    reveal(&mut h, t(label));
+                    reveal(&mut h, t(submenu));
+                    menu_action(&h, t(submenu)).click();
+                    h.run_steps(3);
+                    for label in labels {
+                        reveal(&mut h, t(label));
+                    }
+                    h.key_press(egui::Key::Escape);
+                    h.run_steps(3);
+                    right_click(&mut h, pos);
                 }
-                h.key_press(egui::Key::Escape);
-                h.run_steps(3);
-                right_click(&mut h, pos);
-                reveal(&mut h, t("Board"));
-                h.get_by_role_and_label(Role::Button, t("Board")).click();
-                h.run_steps(3);
-                reveal(&mut h, t("Distribute Vertical Centers"));
-                h.key_press(egui::Key::Escape);
-                h.run_steps(3);
-                right_click(&mut h, pos);
-                reveal(&mut h, t("Tools"));
-                h.get_by_role_and_label(Role::Button, t("Tools")).click();
-                h.run_steps(3);
-                reveal(&mut h, t("Select tool"));
-                h.key_press(egui::Key::Escape);
-                h.run_steps(3);
-                right_click(&mut h, pos);
-                reveal(&mut h, t("Arrange"));
-                h.get_by_role_and_label(Role::Button, t("Arrange")).click();
-                h.run_steps(3);
-                reveal(&mut h, t("Distribute Vertical Centers"));
-                reveal(&mut h, t("Align Left"));
                 h.key_press(egui::Key::Escape);
                 h.run_steps(3);
                 assert_eq!(h.state().doc().unwrap().view.selection, selection);
@@ -152,8 +145,11 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                 reveal(&mut h, &ai);
                 h.get_by_role_and_label(Role::Button, &ai).click();
                 h.run_steps(3);
-                reveal(&mut h, t(thinoda_app::ai::AiCommand::GenerateMap.label()));
-                for action in thinoda_app::ai::AiCommand::ALL {
+                reveal(&mut h, t(thinoda_app::ai::AiCommand::Summarize.label()));
+                for action in thinoda_app::ai::AiCommand::ALL
+                    .into_iter()
+                    .filter(|action| *action != thinoda_app::ai::AiCommand::GenerateMap)
+                {
                     assert!(
                         menu_action(&h, t(action.label()))
                             .accesskit_node()
@@ -188,9 +184,9 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                     canvas.right_bottom() - egui::vec2(8.0, 8.0),
                 ] {
                     right_click(&mut h, edge);
-                    reveal(&mut h, t("Fit Map"));
-                    reveal(&mut h, t("Topic"));
-                    assert!(menu_action(&h, t("Topic")).accesskit_node().is_disabled());
+                    for label in ["Floating Topic", "Paste", "Add", "Draw", "View"] {
+                        reveal(&mut h, t(label));
+                    }
                     h.key_press(egui::Key::Escape);
                     h.run_steps(3);
                     assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
@@ -212,12 +208,15 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     };
     right_click(&mut h, pos);
     let menu_order = [
-        "Styles",
+        "Topic",
+        "Cut",
+        "Add",
+        "Structure",
+        "Format",
         "Select",
-        "Board",
-        "Arrange",
-        "Fit Map",
-        "New Sheet from Topic",
+        "View",
+        "Command Palette…",
+        "Delete",
     ];
     let positions: Vec<_> = menu_order
         .iter()
@@ -225,11 +224,11 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
         .collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(h.state().style_clipboard.is_none());
-    menu_action(&h, t("Styles")).click();
+    menu_action(&h, t("Format")).click();
     h.run_steps(3);
     let style_order = [
-        "Indent",
-        "Outdent",
+        "Topic style",
+        "Format Panel",
         "Copy Style",
         "Paste Style",
         "Reset Style",
@@ -246,8 +245,9 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
 
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
-    right_click(&mut h, pos);
-    menu_action(&h, t("Tools")).click();
+    let blank = h.state().doc().unwrap().view.canvas_rect().left_top() + egui::vec2(8.0, 80.0);
+    right_click(&mut h, blank);
+    menu_action(&h, t("Add")).click();
     h.run_steps(3);
     reveal(&mut h, t("Sticky note"));
     menu_action(&h, t("Sticky note")).click();
@@ -277,14 +277,15 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     };
     right_click(&mut h, pos);
     assert_eq!(h.state().doc().unwrap().view.board_selection, vec![shape]);
-    menu_action(&h, t("Zone")).click();
+    for label in ["Cut", "Format", "Arrange", "Layers", "Zones", "Delete"] {
+        reveal(&mut h, t(label));
+    }
+    menu_action(&h, t("Zones")).click();
     h.run_steps(3);
     for label in [
         "Create Zone",
         "Add to Zone…",
         "Remove from Zone",
-        "Edit Zone",
-        "Remove Zone",
         "Manage Zones",
     ] {
         reveal(&mut h, t(label));
@@ -294,8 +295,6 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     h.get_by_role_and_label(Role::Button, t("Cancel")).click();
     h.run_steps(3);
     right_click(&mut h, pos);
-    menu_action(&h, t("Board")).click();
-    h.run_steps(3);
     reveal(&mut h, t("Lock board selection"));
     let lock = menu_action(&h, t("Lock board selection"));
     assert!(!lock.accesskit_node().is_disabled());
@@ -312,4 +311,8 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
             .unwrap()
             .locked
     );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    right_click(&mut h, pos);
+    reveal(&mut h, t("Unlock board selection"));
 }

@@ -181,14 +181,24 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
                 h.run_steps(1);
             }
             h.run_steps(4);
-            for (label, command) in [
-                ("Boundary", Cmd::Canvas(Action::AddBoundary)),
-                ("Copy", Cmd::Canvas(Action::Copy)),
-                ("Paste", Cmd::MenuPaste),
-                ("Delete Topic Only", Cmd::Canvas(Action::DeleteKeepChildren)),
-                ("Edit notes", Cmd::EditField(FocusField::Notes)),
-                ("Fit Map", Cmd::Canvas(Action::Fit)),
+            for (submenu, label, command) in [
+                (None, "Copy", Cmd::Canvas(Action::Copy)),
+                (None, "Paste", Cmd::MenuPaste),
+                (
+                    None,
+                    "Delete Topic Only",
+                    Cmd::Canvas(Action::DeleteKeepChildren),
+                ),
+                (Some("Add"), "Boundary", Cmd::Canvas(Action::AddBoundary)),
+                (Some("Add"), "Edit notes", Cmd::EditField(FocusField::Notes)),
+                (Some("View"), "Fit Map", Cmd::Canvas(Action::Fit)),
             ] {
+                if let Some(submenu) = submenu {
+                    menu_action(&h, submenu).scroll_to_me();
+                    h.run_steps(4);
+                    menu_action(&h, submenu).click();
+                    h.run_steps(3);
+                }
                 menu_action(&h, label).scroll_to_me();
                 h.run_steps(6);
                 if let Some(hint) = ThinodaApp::shortcut_hint(&h.ctx, &command) {
