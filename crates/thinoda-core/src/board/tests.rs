@@ -564,7 +564,11 @@ fn legacy_hidden_anchor_title_is_preserved_but_not_editable_or_content() {
     let content = sheet.add_floating("Visible", Vec2::ZERO);
     sheet.validate().unwrap();
     assert_eq!(sheet.content_ids_ordered(), vec![content]);
-    assert!(crate::clipboard::copy_topics(&sheet, &[anchor]).is_none());
+    assert!(
+        crate::clipboard::copy_topics(&sheet, &[anchor])
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         sheet.set_title(anchor, "Changed"),
         Err(crate::EditError::RootNotAllowed)
@@ -1832,7 +1836,9 @@ fn allocator_recovers_from_maximum_deserialized_ids_without_collisions() {
 #[test]
 fn raw_detach_reparent_and_clipboard_do_not_leave_card_memberships() {
     let (mut sheet, card, object, group) = mixed_group();
-    let payload = crate::clipboard::copy_topics(&sheet, &[card]).unwrap();
+    let payload = crate::clipboard::copy_topics(&sheet, &[card])
+        .unwrap()
+        .unwrap();
     let mut copied = payload.subtrees[0].clone();
     copied.reassign_ids(&mut sheet);
     let duplicate = sheet.attach_floating(Vec2::new(600.0, 0.0), copied);

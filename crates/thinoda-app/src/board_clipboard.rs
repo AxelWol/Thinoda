@@ -6,9 +6,11 @@
 //! plain-text fallback. The marker is never inferred from plain text.
 
 use thinoda_canvas::{Action, ObjectSelection, apply_action};
+#[cfg(test)]
+use thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
 use thinoda_core::{
     CanvasObjectId, TopicId,
-    clipboard::{self, MAX_BOARD_CLIPBOARD_BYTES, MAX_TOPIC_CLIPBOARD_DEPTH},
+    clipboard::{self, MAX_BOARD_CLIPBOARD_BYTES},
 };
 use web_time::Instant;
 
@@ -265,60 +267,6 @@ pub(crate) fn complete_cut(doc: &mut OpenDoc, guard: &DocumentGuard) -> Result<(
     }
 }
 
-fn validate_topic_destination(
-    doc: &OpenDoc,
-    payload: &clipboard::ClipboardPayload,
-) -> Result<(), String> {
-    let sheet = doc.doc.sheet();
-    if !sheet.root_mode.is_central() {
-        return Ok(());
-    }
-
-    let mut parent = doc
-        .view
-        .selection
-        .iter()
-        .rev()
-        .copied()
-        .find(|id| sheet.contains(*id))
-        .unwrap_or(sheet.root);
-    let mut root_depth = 1;
-    while let Some(next) = sheet.topic(parent).and_then(|topic| topic.parent) {
-        root_depth += 1;
-        if root_depth > MAX_TOPIC_CLIPBOARD_DEPTH {
-            return Err(format!(
-                "pasted topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
-            ));
-        }
-        parent = next;
-    }
-
-    for subtree in &payload.subtrees {
-        let topics: std::collections::HashMap<_, _> = subtree
-            .topics
-            .iter()
-            .map(|topic| (topic.id, topic))
-            .collect();
-        let root = topics
-            .get(&subtree.root)
-            .ok_or("topic clipboard subtree root is missing")?;
-        if root.card.is_some() {
-            return Err("card presentation requires a floating destination".into());
-        }
-        let mut pending = vec![(subtree.root, root_depth)];
-        while let Some((id, depth)) = pending.pop() {
-            if depth > MAX_TOPIC_CLIPBOARD_DEPTH {
-                return Err(format!(
-                    "pasted topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
-                ));
-            }
-            let topic = topics.get(&id).ok_or("topic clipboard child is missing")?;
-            pending.extend(topic.children.iter().map(|child| (*child, depth + 1)));
-        }
-    }
-    Ok(())
-}
-
 /// Apply a clipboard snapshot, never reusing an internal payload for plain text.
 pub(crate) fn paste(
     doc: &mut OpenDoc,
@@ -344,7 +292,6 @@ pub(crate) fn paste(
             {
                 return Err("clipboard text does not match rich topic data".into());
             }
-            validate_topic_destination(doc, &payload)?;
             doc.view.clipboard = Some(payload);
             let result = apply_action(&mut doc.doc, &mut doc.view, Action::Paste(None));
             if !matches!(&result, Ok(true)) {
@@ -378,9 +325,12 @@ impl crate::app::ThinodaApp {
                         let message = if cut {
                             crate::i18n::t("Cut cancelled; original content was kept")
                         } else {
-                            "Could not copy"
+                            crate::i18n::t("Could not copy")
                         };
-                        self.toasts.error(format!("{message}: {error}"));
+                        self.toasts.error(format!(
+                            "{message}: {}",
+                            crate::i18n::localize_model_error(&error)
+                        ));
                         return;
                     }
                 };
@@ -426,9 +376,12 @@ impl crate::app::ThinodaApp {
                     let message = if prepared.cut.is_some() {
                         crate::i18n::t("Cut cancelled; original content was kept")
                     } else {
-                        "Could not copy"
+                        crate::i18n::t("Could not copy")
                     };
-                    self.toasts.error(format!("{message}: {error}"));
+                    self.toasts.error(format!(
+                        "{message}: {}",
+                        crate::i18n::localize_model_error(&error)
+                    ));
                     return;
                 }
                 if generation != self.clipboard_bridge.generation {
@@ -515,8 +468,11 @@ impl crate::app::ThinodaApp {
                         for doc in &mut self.docs {
                             doc.view.invalidate_clipboard();
                         }
-                        self.toasts
-                            .error(format!("Could not paste clipboard data: {error}"));
+                        self.toasts.error(format!(
+                            "{}: {}",
+                            crate::i18n::t("Could not paste clipboard data"),
+                            crate::i18n::localize_model_error(&error)
+                        ));
                         return;
                     }
                 };
@@ -537,8 +493,11 @@ impl crate::app::ThinodaApp {
                     }
                     Ok(_) => {}
                     Err(error) => {
-                        self.toasts
-                            .error(format!("Could not paste clipboard data: {error}"));
+                        self.toasts.error(format!(
+                            "{}: {}",
+                            crate::i18n::t("Could not paste clipboard data"),
+                            crate::i18n::localize_model_error(&error)
+                        ));
                     }
                 }
             }
@@ -1205,7 +1164,7 @@ mod tests {
         let mut source = Sheet::new("Source", "Root");
         let copied = source.add_child(source.root, None, "Parent");
         source.add_child(copied, None, "Child");
-        let payload = clipboard::copy_topics(&source, &[copied]).unwrap();
+        let payload = clipboard::copy_topics(&source, &[copied]).unwrap().unwrap();
         let encoded = clipboard::encode_topic_payload(&payload).unwrap();
 
         for (parent_depth, should_succeed) in [(254, true), (255, false)] {
@@ -1233,6 +1192,91 @@ mod tests {
     }
 
     #[test]
+    fn plain_text_paste_checks_depth_and_preserves_undo_on_map_and_board() {
+        fn nested_text(depth: usize) -> String {
+            let mut text = "Root\n".to_string();
+            for level in 1..=depth {
+                text.extend(std::iter::repeat_n('\t', level));
+                text.push_str("Child\n");
+            }
+            text
+        }
+
+        for rootless in [false, true] {
+            let mut sheet = Sheet::new("Destination", "");
+            if rootless {
+                sheet.root_mode = SheetRootMode::Hidden;
+            }
+            let mut destination = OpenDoc::new(Workbook::new(sheet));
+            let before = destination.doc.workbook().clone();
+            let valid_depth = MAX_TOPIC_CLIPBOARD_DEPTH - usize::from(!rootless);
+            let error = paste(&mut destination, nested_text(valid_depth + 1), None).unwrap_err();
+            assert!(error.contains("depth"), "{error}");
+            assert_eq!(destination.doc.workbook(), &before);
+            assert!(!destination.doc.can_undo());
+
+            assert!(paste(&mut destination, nested_text(valid_depth), None).unwrap());
+            let after = destination.doc.workbook().clone();
+            assert!(destination.doc.undo());
+            assert_eq!(destination.doc.workbook(), &before);
+            assert!(destination.doc.redo());
+            assert_eq!(destination.doc.workbook(), &after);
+        }
+    }
+
+    #[test]
+    fn plain_text_paste_counts_summary_ownership_in_destination_depth() {
+        for (descendants, valid) in [(253, true), (254, false)] {
+            let mut sheet = Sheet::new("Destination", "Root");
+            let covered = sheet.add_child(sheet.root, None, "Covered");
+            let mut parent = sheet.add_summary(&[covered], "Summary").unwrap();
+            for _ in 0..descendants {
+                parent = sheet.add_child(parent, None, "Ancestor");
+            }
+            let mut destination = OpenDoc::new(Workbook::new(sheet));
+            destination.view.select_only(parent);
+            let before = destination.doc.workbook().clone();
+            let result = paste(&mut destination, "One\n\tTwo".into(), None);
+            if valid {
+                assert!(result.unwrap());
+                assert!(destination.doc.undo());
+                assert_eq!(destination.doc.workbook(), &before);
+            } else {
+                assert!(result.unwrap_err().contains("depth"));
+                assert_eq!(destination.doc.workbook(), &before);
+                assert!(!destination.doc.can_undo());
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn rejected_plain_text_paste_shows_an_error_toast() {
+        use crate::app::Cmd;
+
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        app.docs = vec![OpenDoc::new(Workbook::new(Sheet::new("Map", "Root")))];
+        let mut text = "Root\n".to_string();
+        for level in 1..=MAX_TOPIC_CLIPBOARD_DEPTH + 1 {
+            text.extend(std::iter::repeat_n('\t', level));
+            text.push_str("Child\n");
+        }
+        clipboard.borrow_mut().text = text;
+        clipboard.borrow_mut().html = None;
+        let before = app.doc().unwrap().doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(!app.doc().unwrap().doc.can_undo());
+        assert!(
+            app.toasts
+                .texts()
+                .any(|message| message.contains("paste") && message.contains("depth"))
+        );
+    }
+
+    #[test]
     fn portable_card_payload_cannot_silently_lose_its_presentation() {
         let mut source = Sheet::new("Source", "Root");
         let card = source
@@ -1242,7 +1286,7 @@ mod tests {
                 thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 100.0)),
             )
             .unwrap();
-        let payload = clipboard::copy_topics(&source, &[card]).unwrap();
+        let payload = clipboard::copy_topics(&source, &[card]).unwrap().unwrap();
         let encoded = clipboard::encode_topic_payload(&payload).unwrap();
         let mut destination = OpenDoc::new(Workbook::new(Sheet::new("Destination", "Root")));
         let before = destination.doc.workbook().clone();

@@ -82,10 +82,12 @@ Mixed-board clipboard ownership now has a 256-edge bound, including summary
 trees, checked before copy/cut/duplicate layout and before codec or paste
 mutation. The [checkpoint critique](FREEFORM.md#mixed-board-clipboard-depth-checkpoint-critique)
 records its conservative limits and remaining layout caveats. The clipboard
-safety audit still needs external plain-text outline parsing and the legacy
-unbounded copy API. Preserve valid outline behavior, reject over-limit inputs
-before recursive traversal or document mutation, and test exact boundaries,
-undo and explicit failure feedback.
+safety audit's subsequent
+[plain-text checkpoint](FREEFORM.md#plain-text-clipboard-safety-checkpoint-critique)
+now bounds external outline parsing and the legacy copy API, checks destination
+ancestry and reports rejections;
+it also records the public Rust API changes and remaining import, memory and
+real-clipboard limitations.
 New Sheet from Topic preserves card branches as rootless sheets, including
 summary-owned resources, while reporting surrounding context left in the
 source; the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)

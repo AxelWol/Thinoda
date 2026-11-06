@@ -91,7 +91,7 @@ fn fixture() -> Fixture {
     source.add_task_dependency(branch, child).unwrap();
     source.validate().unwrap();
 
-    let payload = copy_topics(&source, &[branch, other]).unwrap();
+    let payload = copy_topics(&source, &[branch, other]).unwrap().unwrap();
     assert_eq!(payload.subtrees[0].root_topic().parent, Some(parent));
     Fixture {
         source,
@@ -197,7 +197,7 @@ fn blank_text_and_reused_ids_in_independent_subtrees_are_preserved() {
     for title in ["", "   ", "\t"] {
         let mut source = Sheet::new("Source", "Root");
         let branch = source.add_child(source.root, None, title);
-        let payload = copy_topics(&source, &[branch]).unwrap();
+        let payload = copy_topics(&source, &[branch]).unwrap().unwrap();
         assert!(payload.text.trim().is_empty());
         assert_eq!(
             decode_topic_payload(&encode_topic_payload(&payload).unwrap()).unwrap(),
@@ -288,7 +288,7 @@ fn subtrees_can_independently_carry_the_same_embedded_resource() {
     source.topic_mut(second).unwrap().image = Some(reference.clone());
     source.validate().unwrap();
 
-    let payload = copy_topics(&source, &[first, second]).unwrap();
+    let payload = copy_topics(&source, &[first, second]).unwrap().unwrap();
     assert_eq!(payload.subtrees[0].resources.entries.len(), 1);
     assert_eq!(payload.subtrees[1].resources.entries.len(), 1);
     let decoded = decode_topic_payload(&encode_topic_payload(&payload).unwrap()).unwrap();
@@ -334,7 +334,7 @@ fn topic_identity_uses_the_existing_full_u64_model_domain() {
         successor: child,
     });
     source.validate().unwrap();
-    let payload = copy_topics(&source, &[root]).unwrap();
+    let payload = copy_topics(&source, &[root]).unwrap().unwrap();
     let decoded = decode_topic_payload(&encode_topic_payload(&payload).unwrap()).unwrap();
     assert_eq!(decoded, payload);
     let mut target = Sheet::new("Destination", "Root");
@@ -371,7 +371,7 @@ fn floating_card_formatting_is_retained_and_checked() {
         list: ListKind::Numbered,
     });
     source.validate().unwrap();
-    let payload = copy_topics(&source, &[card]).unwrap();
+    let payload = copy_topics(&source, &[card]).unwrap().unwrap();
     let decoded = decode_topic_payload(&encode_topic_payload(&payload).unwrap()).unwrap();
     assert_eq!(decoded, payload);
     let mut destination = Sheet::new("Destination", "Root");
@@ -748,7 +748,7 @@ fn sheet_for_subtree(subtree: Subtree) -> Sheet {
 #[test]
 fn copy_preflight_checks_limits_before_building_recursive_outlines() {
     let at_depth = sheet_for_subtree(chain_payload(256).subtrees.remove(0));
-    let expected = copy_topics(&at_depth, &[at_depth.root]).unwrap();
+    let expected = copy_topics(&at_depth, &[at_depth.root]).unwrap().unwrap();
     assert_eq!(
         try_copy_topics(&at_depth, &[at_depth.root]).unwrap(),
         Some(expected)
@@ -756,6 +756,8 @@ fn copy_preflight_checks_limits_before_building_recursive_outlines() {
     for depth in [257, 5_000] {
         let sheet = sheet_for_subtree(chain_payload(depth).subtrees.remove(0));
         let error = try_copy_topics(&sheet, &[sheet.root]).unwrap_err();
+        assert!(error.contains("depth"), "{depth}: {error}");
+        let error = copy_topics(&sheet, &[sheet.root]).unwrap_err();
         assert!(error.contains("depth"), "{depth}: {error}");
     }
 

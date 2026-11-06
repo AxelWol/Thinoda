@@ -123,13 +123,19 @@ pub fn to_indented_text(nodes: &[OutlineNode]) -> String {
 /// Parses indented text (tabs, spaces, bullets `-`, `*`, `+`, `•`, numbered `1.`) into
 /// outline nodes. Indentation width is detected from the first indented line.
 pub fn parse_indented_text(text: &str) -> Vec<OutlineNode> {
-    let mut items: Vec<(usize, String)> = Vec::new();
+    let levels: Vec<_> = indented_text_lines(text)
+        .map(|(level, title)| (level, title.to_string()))
+        .collect();
+    build_tree(&levels)
+}
+
+pub(crate) fn indented_text_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let mut unit: Option<usize> = None;
-    for line in text.lines() {
+    text.lines().filter_map(move |line| {
         if line.trim().is_empty() {
-            continue;
+            return None;
         }
-        let mut width = 0;
+        let mut width = 0usize;
         for c in line.chars() {
             match c {
                 '\t' => width += 4,
@@ -154,14 +160,8 @@ pub fn parse_indented_text(text: &str) -> Vec<OutlineNode> {
         {
             title = &title[pos + 2..];
         }
-        items.push((width, title.trim().to_string()));
-    }
-    let unit = unit.unwrap_or(4).max(1);
-    let levels: Vec<(usize, String)> = items
-        .into_iter()
-        .map(|(w, t)| (w.div_ceil(unit), t))
-        .collect();
-    build_tree(&levels)
+        Some((width.div_ceil(unit.unwrap_or(4).max(1)), title.trim()))
+    })
 }
 
 /// Builds a tree from (level, title) pairs. Level jumps are clamped.

@@ -1019,7 +1019,11 @@ pub(super) fn apply_shared(
             return Some(paste_board(doc, view, &payload, "Paste board items"));
         }
         if !doc.sheet().root_mode.is_central() {
-            let subtrees = clipboard::resolve_paste(view.clipboard.as_ref(), text.as_deref());
+            let subtrees = match clipboard::resolve_paste(view.clipboard.as_ref(), text.as_deref())
+            {
+                Ok(subtrees) => subtrees,
+                Err(error) => return Some(Err(EditError::Invalid(error))),
+            };
             if subtrees.is_empty() {
                 return Some(Ok(false));
             }

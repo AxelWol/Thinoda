@@ -24,7 +24,11 @@ fn scheduled_branch() -> Subtree {
     source.set_task(parent, Some(task.clone())).unwrap();
     source.set_task(child, Some(task)).unwrap();
     source.add_task_dependency(parent, child).unwrap();
-    copy_topics(&source, &[parent]).unwrap().subtrees.remove(0)
+    copy_topics(&source, &[parent])
+        .unwrap()
+        .unwrap()
+        .subtrees
+        .remove(0)
 }
 
 #[test]

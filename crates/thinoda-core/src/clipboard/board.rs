@@ -3,7 +3,7 @@
 //! The OS clipboard still receives plain text. The private fragment is a small
 //! rootless sheet, with a new empty anchor rather than the source sheet's root.
 
-use super::{ClipboardPayload, MAX_TOPIC_CLIPBOARD_DEPTH, normalize, resolve_paste};
+use super::{ClipboardPayload, MAX_TOPIC_CLIPBOARD_DEPTH, resolve_paste, same_normalized};
 use crate::board::{
     BoardMember, CanvasGroupId, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_OBJECTS,
     SheetRootMode,
@@ -251,13 +251,17 @@ pub fn resolve_board_paste<'a>(
     board: Option<&'a BoardClipboardPayload>,
     legacy: Option<&ClipboardPayload>,
     os_text: Option<&str>,
-) -> ResolvedBoardPaste<'a> {
-    if let Some(board) = board
-        && os_text.is_none_or(|text| normalize(text) == normalize(&board.text))
-    {
-        return ResolvedBoardPaste::Board(board);
+) -> Result<ResolvedBoardPaste<'a>, String> {
+    if os_text.is_some_and(|text| text.len() > MAX_BOARD_CLIPBOARD_BYTES) {
+        return Err("clipboard text exceeds 16 MiB".into());
     }
-    ResolvedBoardPaste::Topics(resolve_paste(legacy, os_text))
+    if let Some(board) = board
+        && os_text.is_none_or(|text| same_normalized(text, &board.text))
+    {
+        board.validate()?;
+        return Ok(ResolvedBoardPaste::Board(board));
+    }
+    Ok(ResolvedBoardPaste::Topics(resolve_paste(legacy, os_text)?))
 }
 
 /// Copies selected topics and canvas objects into a standalone board fragment.

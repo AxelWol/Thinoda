@@ -1,8 +1,9 @@
 //! Clipboard payloads: internal subtrees plus a plain-text representation for the OS.
 
-use crate::model::{Sheet, Subtree, TopicId};
-use crate::outline::{OutlineNode, parse_indented_text, to_indented_text, to_outline};
+use crate::model::{Sheet, Subtree, Topic, TopicId};
+use crate::outline::{OutlineNode, indented_text_lines, to_indented_text, to_outline};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 mod board;
 mod topic;
@@ -12,7 +13,8 @@ pub use board::{
     paste_board_selection, paste_floating_subtrees, prepare_board_selection, resolve_board_paste,
 };
 pub use topic::{
-    MAX_TOPIC_CLIPBOARD_DEPTH, TOPIC_CLIPBOARD_PREFIX, decode_topic_payload, encode_topic_payload,
+    MAX_TOPIC_CLIPBOARD_DEPTH, MAX_TOPIC_CLIPBOARD_TOPICS, TOPIC_CLIPBOARD_PREFIX,
+    decode_topic_payload, encode_topic_payload,
 };
 
 const SHEET_PREFIX: &str = "THINODA-SHEET-1\n";
@@ -111,16 +113,9 @@ pub struct ClipboardPayload {
     pub text: String,
 }
 
-/// Copies the given topics (descendants of other selected topics are skipped).
-pub fn copy_topics(sheet: &Sheet, ids: &[TopicId]) -> Option<ClipboardPayload> {
-    if sheet.fim.is_some() {
-        return None;
-    }
-    let roots = topic_copy_roots(sheet, ids);
-    if roots.is_empty() {
-        return None;
-    }
-    Some(copy_topic_roots(sheet, &roots))
+/// Copies selected topics after checking the portable clipboard's source limits.
+pub fn copy_topics(sheet: &Sheet, ids: &[TopicId]) -> Result<Option<ClipboardPayload>, String> {
+    try_copy_topics(sheet, ids)
 }
 
 /// Copies topics after checking the portable clipboard's source count, depth and text limits.
@@ -137,12 +132,15 @@ pub fn try_copy_topics(sheet: &Sheet, ids: &[TopicId]) -> Result<Option<Clipboar
 }
 
 fn topic_copy_roots(sheet: &Sheet, ids: &[TopicId]) -> Vec<TopicId> {
+    let selected: HashSet<_> = ids.iter().copied().collect();
     ids.iter()
         .copied()
         .filter(|id| sheet.contains(*id) && !sheet.is_anchor(*id))
         .filter(|id| {
-            !ids.iter()
-                .any(|o| o != id && sheet.ancestors(*id).contains(o))
+            !sheet
+                .ancestors(*id)
+                .iter()
+                .any(|parent| parent != id && selected.contains(parent))
         })
         .collect()
 }
@@ -159,35 +157,188 @@ fn copy_topic_roots(sheet: &Sheet, roots: &[TopicId]) -> ClipboardPayload {
     }
 }
 
-/// Builds subtrees from arbitrary text (each line becomes a topic).
-pub fn subtrees_from_text(text: &str) -> Vec<Subtree> {
-    let nodes = parse_indented_text(text);
-    nodes
-        .iter()
-        .map(|n| {
-            let mut tmp = Sheet::new("tmp", n.title.clone());
-            let root = tmp.root;
-            for c in &n.children {
-                crate::outline::add_outline(&mut tmp, root, c);
-            }
-            tmp.copy_subtree(root).expect("root exists")
-        })
-        .collect()
+/// Builds bounded subtrees from plain text without recursive outline traversal.
+pub fn subtrees_from_text(text: &str) -> Result<Vec<Subtree>, String> {
+    if text.len() > MAX_BOARD_CLIPBOARD_BYTES {
+        return Err("clipboard text exceeds 16 MiB".into());
+    }
+
+    let mut subtrees: Vec<Subtree> = Vec::new();
+    let mut ancestors: Vec<(usize, usize)> = Vec::new();
+    let mut count = 0usize;
+    for (level, title) in indented_text_lines(text) {
+        count += 1;
+        if count > MAX_TOPIC_CLIPBOARD_TOPICS {
+            return Err(format!(
+                "topic clipboard exceeds {MAX_TOPIC_CLIPBOARD_TOPICS} topics"
+            ));
+        }
+        while ancestors
+            .last()
+            .is_some_and(|(previous, _)| *previous >= level)
+        {
+            ancestors.pop();
+        }
+        if ancestors.len() > MAX_TOPIC_CLIPBOARD_DEPTH {
+            return Err(format!(
+                "topic clipboard subtree depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+            ));
+        }
+        if let Some((_, parent_index)) = ancestors.last().copied() {
+            let subtree = subtrees.last_mut().expect("an ancestor has a subtree");
+            let parent = subtree.topics[parent_index].id;
+            let id = TopicId(subtree.topics.len() as u64 + 1);
+            let mut topic = Topic::new(id, title);
+            topic.parent = Some(parent);
+            subtree.topics[parent_index].children.push(id);
+            subtree.topics.push(topic);
+            ancestors.push((level, subtree.topics.len() - 1));
+        } else {
+            let root = TopicId(1);
+            subtrees.push(Subtree {
+                root,
+                topics: vec![Topic::new(root, title)],
+                tasks: Default::default(),
+                dependencies: Vec::new(),
+                resources: Default::default(),
+            });
+            ancestors.push((level, 0));
+        }
+    }
+    Ok(subtrees)
 }
 
 /// Resolves what to paste: internal subtrees when the OS text still matches, otherwise
-/// the OS text parsed as an outline.
-pub fn resolve_paste(internal: Option<&ClipboardPayload>, os_text: Option<&str>) -> Vec<Subtree> {
+/// the OS text parsed as an outline. Invalid or over-limit content is rejected.
+pub fn resolve_paste(
+    internal: Option<&ClipboardPayload>,
+    os_text: Option<&str>,
+) -> Result<Vec<Subtree>, String> {
+    if os_text.is_some_and(|text| text.len() > MAX_BOARD_CLIPBOARD_BYTES) {
+        return Err("clipboard text exceeds 16 MiB".into());
+    }
     match (internal, os_text) {
-        (Some(p), Some(t)) if normalize(t) == normalize(&p.text) => p.subtrees.clone(),
+        (Some(p), Some(t)) if same_normalized(t, &p.text) => {
+            if p.text.len() > MAX_BOARD_CLIPBOARD_BYTES {
+                return Err("topic clipboard payload exceeds 16 MiB".into());
+            }
+            topic::validate_for_paste(p)?;
+            Ok(p.subtrees.clone())
+        }
         (_, Some(t)) if !t.trim().is_empty() => subtrees_from_text(t),
-        (Some(p), None) => p.subtrees.clone(),
-        _ => vec![],
+        (Some(p), None) => {
+            if p.text.len() > MAX_BOARD_CLIPBOARD_BYTES {
+                return Err("topic clipboard payload exceeds 16 MiB".into());
+            }
+            topic::validate_for_paste(p)?;
+            Ok(p.subtrees.clone())
+        }
+        _ => Ok(vec![]),
     }
 }
 
-fn normalize(s: &str) -> String {
-    s.replace("\r\n", "\n").trim_end().to_string()
+/// Checks a central-map paste against destination ancestry and clipboard limits.
+pub fn validate_topic_destination(
+    sheet: &Sheet,
+    parent: TopicId,
+    subtrees: &[Subtree],
+) -> Result<(), String> {
+    let mut summary_owners = HashMap::new();
+    for summary in &sheet.summaries {
+        if summary_owners
+            .insert(summary.topic, summary.parent)
+            .is_some()
+        {
+            return Err("summary topic has multiple owners".into());
+        }
+    }
+    let mut root_depth = 1usize;
+    let mut current = parent;
+    let mut ancestors = HashSet::new();
+    loop {
+        if !ancestors.insert(current) {
+            return Err("cyclic topic ownership in paste destination".into());
+        }
+        let topic = sheet
+            .topic(current)
+            .ok_or_else(|| format!("paste destination topic {current} is missing"))?;
+        let Some(next) = topic
+            .parent
+            .or_else(|| summary_owners.get(&current).copied())
+        else {
+            break;
+        };
+        root_depth += 1;
+        if root_depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+            return Err(format!(
+                "pasted topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+            ));
+        }
+        current = next;
+    }
+
+    let mut remaining = MAX_TOPIC_CLIPBOARD_TOPICS;
+    for subtree in subtrees {
+        remaining = remaining.checked_sub(subtree.topics.len()).ok_or_else(|| {
+            format!("topic clipboard exceeds {MAX_TOPIC_CLIPBOARD_TOPICS} topics")
+        })?;
+        let topics: HashMap<_, _> = subtree
+            .topics
+            .iter()
+            .map(|topic| (topic.id, topic))
+            .collect();
+        if topics.len() != subtree.topics.len() {
+            return Err("duplicate topic clipboard ID".into());
+        }
+        let root = topics
+            .get(&subtree.root)
+            .ok_or("topic clipboard subtree root is missing")?;
+        if root.card.is_some() {
+            return Err("card presentation requires a floating destination".into());
+        }
+        let mut visited = HashSet::new();
+        let mut pending = vec![(subtree.root, root_depth)];
+        while let Some((id, depth)) = pending.pop() {
+            if depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+                return Err(format!(
+                    "pasted topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+                ));
+            }
+            if !visited.insert(id) {
+                return Err(format!("repeated topic clipboard ownership of {id}"));
+            }
+            let topic = topics.get(&id).ok_or("topic clipboard child is missing")?;
+            for child in &topic.children {
+                if topics
+                    .get(child)
+                    .is_none_or(|child| child.parent != Some(id))
+                {
+                    return Err("invalid topic clipboard child ownership".into());
+                }
+                pending.push((*child, depth + 1));
+            }
+        }
+        if visited.len() != topics.len() {
+            return Err("topic clipboard contains unreachable topics".into());
+        }
+    }
+    Ok(())
+}
+
+fn same_normalized(left: &str, right: &str) -> bool {
+    fn characters(text: &str) -> impl Iterator<Item = char> {
+        let mut chars = text.trim_end().chars().peekable();
+        std::iter::from_fn(move || {
+            let ch = chars.next()?;
+            if ch == '\r' && chars.peek() == Some(&'\n') {
+                chars.next();
+                Some('\n')
+            } else {
+                Some(ch)
+            }
+        })
+    }
+    characters(left).eq(characters(right))
 }
 
 #[cfg(test)]
@@ -343,7 +494,7 @@ mod tests {
         let mut s = Sheet::new("S", "R");
         let a = s.add_child(s.root, None, "A");
         let a1 = s.add_child(a, None, "A1");
-        let p = copy_topics(&s, &[a, a1]).unwrap();
+        let p = copy_topics(&s, &[a, a1]).unwrap().unwrap();
         assert_eq!(p.subtrees.len(), 1);
         assert_eq!(p.text, "A\n\tA1\n");
     }
@@ -353,8 +504,8 @@ mod tests {
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = crate::SheetRootMode::Hidden;
         let topic = sheet.add_floating("Idea", crate::Vec2::ZERO);
-        assert!(copy_topics(&sheet, &[sheet.root]).is_none());
-        let copied = copy_topics(&sheet, &[sheet.root, topic]).unwrap();
+        assert!(copy_topics(&sheet, &[sheet.root]).unwrap().is_none());
+        let copied = copy_topics(&sheet, &[sheet.root, topic]).unwrap().unwrap();
         assert_eq!(copied.subtrees.len(), 1);
         assert_eq!(copied.text, "Idea\n");
     }
@@ -364,19 +515,48 @@ mod tests {
         let mut s = Sheet::new("S", "R");
         let a = s.add_child(s.root, None, "A");
         s.topic_mut(a).unwrap().markers.push("flag-red".into());
-        let p = copy_topics(&s, &[a]).unwrap();
-        let subs = resolve_paste(Some(&p), Some("A\r\n"));
+        let p = copy_topics(&s, &[a]).unwrap().unwrap();
+        let subs = resolve_paste(Some(&p), Some("A\r\n")).unwrap();
         assert_eq!(subs[0].root_topic().markers, vec!["flag-red"]);
-        let subs = resolve_paste(Some(&p), Some("X\n\tY"));
+        let subs = resolve_paste(Some(&p), Some("X\n\tY")).unwrap();
         assert_eq!(subs[0].root_topic().title, "X");
         assert_eq!(subs[0].len(), 2);
-        assert!(resolve_paste(None, Some("  ")).is_empty());
+        assert!(resolve_paste(None, Some("  ")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn normalized_comparison_matches_legacy_line_endings_and_whitespace() {
+        let examples = [
+            "",
+            " ",
+            "\r\n",
+            "a\r\nb",
+            "a\nb",
+            "a\rb",
+            "a\r\n",
+            "a\n ",
+            "é\u{2003}",
+            "é\r\n\u{2003}",
+            "\r\r\n",
+            "\n\r",
+        ];
+        for left in examples {
+            for right in examples {
+                let old_left = left.replace("\r\n", "\n");
+                let old_right = right.replace("\r\n", "\n");
+                assert_eq!(
+                    same_normalized(left, right),
+                    old_left.trim_end() == old_right.trim_end(),
+                    "{left:?} vs {right:?}"
+                );
+            }
+        }
     }
 
     #[test]
     fn pasted_text_creates_topics() {
         let mut s = Sheet::new("S", "R");
-        let subs = subtrees_from_text("One\nTwo\n\tTwo.1");
+        let subs = subtrees_from_text("One\nTwo\n\tTwo.1").unwrap();
         let root = s.root;
         let ids = s.paste(root, &subs).unwrap();
         assert_eq!(ids.len(), 2);

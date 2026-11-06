@@ -422,7 +422,11 @@ fn independent_variant_and_generic_duplicate_undo_preserve_source_closure() {
     assert!(doc.undo());
     assert!(doc.undo());
     assert_eq!(doc.sheet().fim.as_ref().unwrap().serialize(), sample());
-    assert!(thinoda_core::clipboard::copy_topics(doc.sheet(), &[first]).is_none());
+    assert!(
+        thinoda_core::clipboard::copy_topics(doc.sheet(), &[first])
+            .unwrap()
+            .is_none()
+    );
     assert!(doc.sheet().copy_branch_as_sheet(first).is_err());
 }
 

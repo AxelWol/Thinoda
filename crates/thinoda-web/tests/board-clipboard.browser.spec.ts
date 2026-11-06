@@ -486,6 +486,44 @@ test("identical external text does not reuse an earlier rich board selection", a
     expect(afterSheet.floating).toContain(added[0].id);
 });
 
+test("plain clipboard rejects excessive depth and still supports paste and undo", async ({ page }) => {
+    const before = archive(await saveAs(page, "plain-depth-before.thinoda"));
+    const setText = (text: string) => page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    let tooDeep = "Root\n";
+    for (let depth = 1; depth <= 257; depth++) {
+        tooDeep += "\t".repeat(depth) + "Child\n";
+    }
+    await setText(tooDeep);
+    await paste(page);
+    const rejected = archive(await saveAs(page, "plain-depth-rejected.thinoda"));
+    expect(rejected.content.sheets).toEqual(before.content.sheets);
+
+    await setText("  - Parent\n    - Child\n- Separate");
+    await paste(page);
+    const after = archive(await saveAs(page, "plain-depth-after.thinoda"));
+    const sheet = after.content.sheets[after.content.active_sheet];
+    const parent = Object.values(sheet.topics).find((topic) => topic.title === "Parent");
+    const separate = Object.values(sheet.topics).find((topic) => topic.title === "Separate");
+    if (!parent || !separate || !parent.children?.length) throw new Error("Missing pasted outline");
+    expect(sheet.floating).toEqual(expect.arrayContaining([parent.id, separate.id]));
+    expect(sheet.topics[String(parent.children[0])].title).toBe("Child");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "plain-depth-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    const redone = archive(await saveAs(page, "plain-depth-redo.thinoda"));
+    expect(redone.content.sheets).toEqual(after.content.sheets);
+});
+
 test("topic clipboard preserves a styled branch in a separate app instance", async ({ page }) => {
     await page.locator("#thinoda_canvas").focus();
     await page.keyboard.press("Control+n");

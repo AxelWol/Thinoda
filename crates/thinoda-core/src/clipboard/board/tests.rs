@@ -84,6 +84,11 @@ fn mixed_clipboard_bounds_owned_depth_and_preserves_summary_trees() {
                 .unwrap_err()
                 .contains("depth")
         );
+        assert!(
+            resolve_board_paste(Some(&invalid), None, None)
+                .unwrap_err()
+                .contains("depth")
+        );
         let forged = format!("{BOARD_PREFIX}{}", serde_json::to_string(&invalid).unwrap());
         assert!(decode_board_payload(&forged).unwrap_err().contains("depth"));
         assert!(
@@ -230,7 +235,9 @@ fn formatted_cards_survive_mixed_and_legacy_floating_clipboards_with_undo() {
     assert!(doc.redo());
     assert_eq!(doc.workbook(), &after);
 
-    let legacy = crate::clipboard::copy_topics(&source, &[cards[0]]).unwrap();
+    let legacy = crate::clipboard::copy_topics(&source, &[cards[0]])
+        .unwrap()
+        .unwrap();
     let mut legacy_destination = doc.sheet().clone();
     let roots = paste_floating_subtrees(
         &mut legacy_destination,
@@ -299,11 +306,12 @@ fn object_only_copy_has_plain_text_and_legacy_fallback() {
             Some(&payload),
             None,
             Some(&payload.text.replace('\n', "\r\n"))
-        ),
+        )
+        .unwrap(),
         ResolvedBoardPaste::Board(_)
     ));
     let ResolvedBoardPaste::Topics(topics) =
-        resolve_board_paste(Some(&payload), None, Some("One\n\tChild\n"))
+        resolve_board_paste(Some(&payload), None, Some("One\n\tChild\n")).unwrap()
     else {
         panic!("different OS text should use the legacy text parser");
     };
@@ -815,17 +823,19 @@ fn old_topic_payload_and_unrelated_plain_text_still_resolve_as_before() {
         .unwrap()
         .markers
         .push("flag-red".into());
-    let old = crate::clipboard::copy_topics(&sheet, &[topic]).unwrap();
+    let old = crate::clipboard::copy_topics(&sheet, &[topic])
+        .unwrap()
+        .unwrap();
     let serialized = serde_json::to_string(&old).unwrap();
     let old: ClipboardPayload = serde_json::from_str(&serialized).unwrap();
     let ResolvedBoardPaste::Topics(topics) =
-        resolve_board_paste(None, Some(&old), Some("Legacy\r\n"))
+        resolve_board_paste(None, Some(&old), Some("Legacy\r\n")).unwrap()
     else {
         panic!("expected legacy topic clipboard");
     };
     assert_eq!(topics[0].root_topic().markers, vec!["flag-red"]);
     let ResolvedBoardPaste::Topics(topics) =
-        resolve_board_paste(None, Some(&old), Some("External"))
+        resolve_board_paste(None, Some(&old), Some("External")).unwrap()
     else {
         panic!("expected external text");
     };
@@ -835,7 +845,7 @@ fn old_topic_payload_and_unrelated_plain_text_still_resolve_as_before() {
 
 #[test]
 fn plain_text_with_reused_ids_pastes_as_separate_floating_roots() {
-    let subtrees = crate::clipboard::subtrees_from_text("One\n\tChild\nTwo");
+    let subtrees = crate::clipboard::subtrees_from_text("One\n\tChild\nTwo").unwrap();
     // Each line root was parsed in a separate temporary Sheet.
     assert_eq!(subtrees[0].root, subtrees[1].root);
     let mut destination = hidden_sheet("Target", "private anchor");
@@ -885,7 +895,9 @@ fn floating_legacy_subtrees_preserve_cards_and_resources_and_validate_atomically
         resource: reference.clone(),
         name: "file.txt".into(),
     });
-    let payload = crate::clipboard::copy_topics(&source, &[card]).unwrap();
+    let payload = crate::clipboard::copy_topics(&source, &[card])
+        .unwrap()
+        .unwrap();
     let mut destination = hidden_sheet("Target", "");
     let pasted =
         paste_floating_subtrees(&mut destination, &payload.subtrees, Vec2::new(40.0, 60.0))
@@ -962,7 +974,9 @@ fn floating_subtrees_merge_multiple_resources_atomically_and_preserve_undo() {
         });
         cards.push(card);
     }
-    let mut payload = crate::clipboard::copy_topics(&source, &cards).unwrap();
+    let mut payload = crate::clipboard::copy_topics(&source, &cards)
+        .unwrap()
+        .unwrap();
     payload.subtrees[3]
         .resources
         .entries
@@ -1035,7 +1049,7 @@ fn floating_subtrees_merge_multiple_resources_atomically_and_preserve_undo() {
 
 #[test]
 fn floating_plain_text_paste_undoes_in_one_step() {
-    let subtrees = crate::clipboard::subtrees_from_text("One\nTwo");
+    let subtrees = crate::clipboard::subtrees_from_text("One\nTwo").unwrap();
     let mut doc = Document::new(Workbook::new(hidden_sheet("Target", "")));
     let before = doc.sheet().clone();
     doc.edit_sheet("Paste", |sheet| {

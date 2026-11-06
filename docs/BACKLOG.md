@@ -84,8 +84,10 @@ fallback and real-host gaps in the
 [topic critique](FREEFORM.md#portable-topic-clipboard-checkpoint-critique).
 Mixed-board depth is bounded, including summary ownership and grouped cards;
 see the [depth critique](FREEFORM.md#mixed-board-clipboard-depth-checkpoint-critique).
-Plain-text outline parsing and the legacy copy API still need bounded,
-stack-safe handling with explicit rejection and compatibility tests.
+Plain-text clipboard parsing and the legacy copy API now have bounded
+preflights and explicit errors; see the
+[plain-text critique](FREEFORM.md#plain-text-clipboard-safety-checkpoint-critique)
+for API migration and the remaining non-clipboard import and real-host gaps.
 New Sheet from Topic now preserves card branches and owned resources in a
 rootless destination, while warning about surrounding context left in the
 source. See the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)

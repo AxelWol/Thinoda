@@ -858,9 +858,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - At this checkpoint, these depth checks did not cover the existing unbounded
   `copy_topics` compatibility API, mixed-board payloads or external plain-text
   outline parsing. Mixed-board handling was addressed in the later
-  [depth checkpoint](#mixed-board-clipboard-depth-checkpoint-critique); the
-  remaining entry points still need their own review. None of these checks is
-  a general document-depth limit.
+  [depth checkpoint](#mixed-board-clipboard-depth-checkpoint-critique), and the
+  later [plain-text checkpoint](#plain-text-clipboard-safety-checkpoint-critique)
+  bounds the other clipboard entry points. None of these checks is a general
+  document-depth limit.
 - Topic and board paste use the destination calendar for copied tasks. A
   nonworking start date or an exceeded task/dependency limit rejects the
   scheduled insertion atomically. The source calendar is not copied with a
@@ -907,6 +908,51 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   and copy/cut/duplication error propagation. These are native model and host
   checks, not real system-clipboard or physical-device acceptance. The app can
   still commit a valid pending text draft before a subsequent copy is rejected.
+
+### Plain-text clipboard safety checkpoint: critique
+
+- Plain clipboard text is limited to 16 MiB, 20,000 nonblank topics and 256
+  effective child edges from each pasted root. It is parsed directly into flat
+  subtrees without recursively building or dropping an outline. Indentation
+  jumps, bullets, numbered lines, Unicode and CRLF retain the previous parser's
+  semantics; a large indentation jump is not itself a deep tree.
+- Both map and rootless-board paste reject excessive input before document
+  mutation. Central-map paste also counts destination ancestry, including
+  summary ownership, so inserting a safe subtree cannot make that path deeper
+  than 256 edges. Rootless paste creates independent roots; its existing board
+  serialization limit can reject a plain-text payload below 16 MiB because the
+  resulting structured data also consumes space.
+- The legacy `copy_topics` entry point now performs the same source preflight
+  as `try_copy_topics`. Cached topic and board payloads are validated before
+  reuse; a mismatched external clipboard still resolves to its own plain text.
+  Clipboard equality uses a streaming comparison with the previous CRLF and
+  trailing-whitespace behavior, but it does not prove clipboard ownership.
+  Error toasts for the new size, count and depth limits are localized.
+- **Public Rust API change:** `copy_topics` now returns
+  `Result<Option<ClipboardPayload>, String>`, while `subtrees_from_text`,
+  `resolve_paste` and `resolve_board_paste` return `Result`. Library callers
+  must handle rejection instead of treating invalid data as an empty result.
+  Existing valid text and document behavior are retained.
+- Tests cover the exact byte, topic and effective-depth boundaries, 4,096
+  indentation patterns against a frozen copy of the previous parser, summary
+  destinations, malformed cached data, rejection feedback, and one-step
+  undo/redo. The core library passed 290 tests, the canvas library 415 with two
+  ignored, and the app library 743 with two ignored when serialized. Related
+  clipboard, scheduling, resource, FIM and equation integration tests passed,
+  as did strict native and Wasm Clippy and the production Wasm build. All 11
+  isolated clipboard browser cases passed in each of Chromium, Firefox and
+  WebKit; these synthetic events do not establish real OS clipboard ownership
+  or sanitization.
+- The default parallel app-library run had four English-label UI failures
+  while another test had set the shared process language to German. The same
+  suite passed with one test thread; process-wide language isolation remains
+  an unresolved test-suite limitation.
+- The limits apply to these clipboard paths, not all document imports or the
+  public general-purpose outline parser, which can still recurse. Platform
+  clipboard reads can allocate before the bound is checked, and validating a
+  cached rich topic payload currently serializes it again; neither is a hard
+  peak-memory guarantee. Existing pending editor drafts may be committed
+  before a later paste is rejected.
 
 ### Resource-union checkpoint: critique
 

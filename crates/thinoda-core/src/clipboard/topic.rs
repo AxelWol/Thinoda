@@ -17,7 +17,8 @@ mod strict_json;
 pub const TOPIC_CLIPBOARD_PREFIX: &str = "THINODA-TOPIC-CLIPBOARD-1\n";
 
 const SIZE_ERROR: &str = "topic clipboard payload exceeds 16 MiB";
-const MAX_TOPIC_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
+/// Maximum number of topics in a clipboard selection.
+pub const MAX_TOPIC_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
 /// Maximum copied topic depth in edges, with the selection root at depth zero.
 pub const MAX_TOPIC_CLIPBOARD_DEPTH: usize = 256;
 
@@ -69,6 +70,10 @@ pub fn decode_topic_payload(text: &str) -> Result<ClipboardPayload, String> {
     let payload: ClipboardPayload = strict_json::from_str(json)?;
     validate_payload(&payload)?;
     Ok(payload)
+}
+
+pub(super) fn validate_for_paste(payload: &ClipboardPayload) -> Result<(), String> {
+    encode_topic_payload(payload).map(drop)
 }
 
 struct BoundedWriter {
