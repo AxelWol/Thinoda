@@ -940,6 +940,145 @@ fn viewport_honors_scene_item_frame_clipping_in_svg_png_pdf_and_pptx() {
 }
 
 #[test]
+fn source_slides_exclude_foreign_zone_objects_and_their_connectors_in_exports() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let root = sheet.add_floating("Root", Vec2::new(80.0, 80.0));
+    let frame = rect(0.0, 0.0, 400.0, 300.0);
+    let zone = sheet.create_zone("First", vec![root], frame).unwrap();
+    let other = sheet.create_board_frame("Other", frame).unwrap();
+    let ink = sheet
+        .add_canvas_object(CanvasObject::ink(InkStroke::new(
+            InkTool::Pen,
+            Color::rgb(10, 20, 30),
+            4.0,
+            vec![Vec2::new(20.0, 20.0), Vec2::new(60.0, 20.0)],
+        )))
+        .unwrap();
+    let mut foreign = shape(rect(100.0, 100.0, 80.0, 50.0), RED);
+    if let CanvasObjectKind::Shape { label, .. } = &mut foreign.kind {
+        *label = "Foreign shape".into();
+    }
+    let foreign = sheet.add_canvas_object(foreign).unwrap();
+    let mut free = shape(rect(200.0, 100.0, 80.0, 50.0), GREEN);
+    if let CanvasObjectKind::Shape { label, .. } = &mut free.kind {
+        *label = "Free shape".into();
+    }
+    let free = sheet.add_canvas_object(free).unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(40.0, 40.0)),
+        Endpoint::Object(foreign),
+    );
+    connector.label = "Foreign connector".into();
+    let connector = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let mut indirect = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(50.0, 50.0)),
+        Endpoint::Object(connector),
+    );
+    indirect.label = "Indirect connector".into();
+    let indirect = sheet
+        .add_canvas_object(CanvasObject::connector(indirect))
+        .unwrap();
+    sheet
+        .set_zone_members(zone, vec![root], vec![ink, connector, indirect])
+        .unwrap();
+    sheet
+        .set_zone_members(other, vec![], vec![foreign])
+        .unwrap();
+    for (name, source, scope) in [
+        (
+            "Zone",
+            PresentationSource::Zone(zone),
+            PresentationScope::Source,
+        ),
+        (
+            "Branch",
+            PresentationSource::Branch(root),
+            PresentationScope::Source,
+        ),
+        (
+            "Context",
+            PresentationSource::Zone(zone),
+            PresentationScope::Context,
+        ),
+        (
+            "View",
+            PresentationSource::Viewport,
+            PresentationScope::Source,
+        ),
+    ] {
+        sheet.add_presentation_slide(name, source, frame).unwrap();
+        let slide = sheet.presentation.slides.last_mut().unwrap();
+        slide.scope = scope;
+        slide.auto_frame = false;
+    }
+    sheet.validate().unwrap();
+    let before = sheet.clone();
+    let options = ExportOptions::default();
+    for (index, expected) in [
+        [true, false, true, false, false],
+        [false, false, true, false, false],
+        [true, true, true, true, true],
+        [true, true, true, true, true],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let svg = render_presentation_slide_svg(&sheet, index, &options).unwrap();
+        for (id, should_show) in [ink, foreign, free, connector, indirect]
+            .into_iter()
+            .zip(expected)
+        {
+            assert_eq!(
+                svg.contains(&format!("id=\"object-{}\"", id.0)),
+                should_show,
+                "slide {index}, object {id:?}"
+            );
+        }
+        let png = render_presentation_slide_png(&sheet, index, &options).unwrap();
+        let png = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(has_color(&png, RED), expected[1], "PNG slide {index}");
+        assert!(has_color(&png, GREEN), "PNG slide {index}");
+    }
+    let mut isolated = sheet.clone();
+    isolated.presentation.slides.truncate(2);
+    let mut without_foreign = isolated.clone();
+    without_foreign
+        .remove_canvas_objects(&[foreign, connector, indirect])
+        .unwrap();
+    assert_eq!(
+        export_presentation_pdf(&isolated, &options).unwrap(),
+        export_presentation_pdf(&without_foreign, &options).unwrap()
+    );
+    let pptx = export_presentation_pptx(&sheet, &options).unwrap();
+    for (index, expected) in [
+        [true, false, true, false, false],
+        [false, false, true, false, false],
+        [true, true, true, true, true],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let xml =
+            String::from_utf8(entry(&pptx, &format!("ppt/slides/slide{}.xml", index + 1))).unwrap();
+        for (id, should_show) in [ink, foreign, free, connector, indirect]
+            .into_iter()
+            .zip(expected)
+        {
+            assert_eq!(
+                xml.contains(&format!("name=\"Canvas object {id}\"")),
+                should_show,
+                "PowerPoint slide {index}, object {id:?}"
+            );
+        }
+    }
+    assert!(!entry(&pptx, "ppt/media/slide4-viewport.png").is_empty());
+    assert_eq!(sheet, before);
+}
+
+#[test]
 fn mixed_deck_keeps_legacy_branch_and_zone_slides_editable() {
     let mut sheet = Sheet::new("Map", "Central");
     let branch = sheet.add_child(sheet.root, None, "Legacy branch");

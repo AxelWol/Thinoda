@@ -192,7 +192,7 @@ fn svg_for_slide(
     visual: VisualExportContext,
 ) -> Result<String, IoError> {
     if slide.source != PresentationSource::Viewport {
-        let scene_sheet = scene_sheet_without_hidden_connectors(sheet, resolved);
+        let scene_sheet = scene_sheet_without_hidden_objects(sheet, resolved);
         return render::svg_resolved(sheet, &scene_sheet, options, resolved, false, visual);
     }
 
@@ -206,11 +206,8 @@ fn svg_for_slide(
             .and_then(|topic| topic.notes.as_ref())
             .is_some_and(thinoda_core::equations::has_equation)
     });
-    let has_hidden_connectors = sheet
-        .canvas
-        .objects
-        .iter()
-        .any(|object| !scene_connector_visible(sheet, resolved, object));
+    let visible_objects = resolved.scene_canvas_object_ids(sheet);
+    let has_hidden_objects = visible_objects.len() != sheet.canvas.objects.len();
     let off_frame_images: Vec<_> = resolved
         .layout
         .order
@@ -247,7 +244,7 @@ fn svg_for_slide(
         .collect();
     let off_frame_objects = viewport_off_frame_objects(sheet, resolved);
     if !has_equation
-        && !has_hidden_connectors
+        && !has_hidden_objects
         && off_frame_images.is_empty()
         && off_frame_objects.is_empty()
     {
@@ -285,56 +282,28 @@ fn svg_for_slide(
             }
         }
     }
-    if has_hidden_connectors {
+    if has_hidden_objects {
         scene_sheet
             .canvas
             .objects
-            .retain(|object| scene_connector_visible(sheet, resolved, object));
+            .retain(|object| visible_objects.contains(&object.id));
     }
     render::svg_resolved(sheet, &scene_sheet, options, resolved, true, visual)
 }
 
-fn scene_connector_visible(
-    sheet: &Sheet,
-    resolved: &ResolvedPresentationSlide,
-    object: &thinoda_core::CanvasObject,
-) -> bool {
-    let object_visible = |id| {
-        resolved.permitted_objects.contains(&id)
-            || !sheet.zones.iter().any(|zone| zone.objects.contains(&id))
-    };
-    if !object_visible(object.id) {
-        return false;
-    }
-    let CanvasObjectKind::Connector(connector) = &object.kind else {
-        return true;
-    };
-    [connector.from, connector.to]
-        .into_iter()
-        .all(|endpoint| match endpoint {
-            Endpoint::Topic(id) => resolved.scene_topic_visible(sheet, id),
-            Endpoint::Object(id) => object_visible(id),
-            _ => true,
-        })
-}
-
-fn scene_sheet_without_hidden_connectors<'a>(
+fn scene_sheet_without_hidden_objects<'a>(
     sheet: &'a Sheet,
     resolved: &ResolvedPresentationSlide,
 ) -> Cow<'a, Sheet> {
-    if sheet
-        .canvas
-        .objects
-        .iter()
-        .all(|object| scene_connector_visible(sheet, resolved, object))
-    {
+    let visible_objects = resolved.scene_canvas_object_ids(sheet);
+    if visible_objects.len() == sheet.canvas.objects.len() {
         return Cow::Borrowed(sheet);
     }
     let mut scene_sheet = sheet.clone();
     scene_sheet
         .canvas
         .objects
-        .retain(|object| scene_connector_visible(sheet, resolved, object));
+        .retain(|object| visible_objects.contains(&object.id));
     Cow::Owned(scene_sheet)
 }
 
@@ -532,7 +501,7 @@ pub fn export_presentation_pptx_with_visual_context(
             )?
         } else {
             resolved.frame = fitted;
-            let scene_sheet = scene_sheet_without_hidden_connectors(sheet, &resolved);
+            let scene_sheet = scene_sheet_without_hidden_objects(sheet, &resolved);
             let native = render::editable_slide(
                 sheet,
                 &scene_sheet,

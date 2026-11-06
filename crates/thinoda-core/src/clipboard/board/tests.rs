@@ -3,6 +3,7 @@ use crate::board::{
     Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, InkStroke, InkTool,
     ShapeKind,
 };
+use crate::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
 use crate::geometry::{Color, Rect};
 use crate::layout::{ApproxMeasure, layout_sheet};
 use crate::{Document, EditError, Workbook};
@@ -24,6 +25,271 @@ fn copy(sheet: &Sheet, topics: &[TopicId], objects: &[CanvasObjectId]) -> BoardC
         .unwrap()
 }
 
+fn depth_fixture(depth: usize, summaries: bool) -> (Sheet, TopicId) {
+    let mut sheet = hidden_sheet("", "");
+    let root = sheet.add_floating("Root", Vec2::new(100.0, 100.0));
+    let (mut parent, start) = if summaries {
+        let covered = sheet.add_child(root, None, "Covered");
+        let summary = sheet.add_summary(&[covered], "Summary").unwrap();
+        let covered = sheet.add_child(summary, None, "Covered again");
+        (sheet.add_summary(&[covered], "Nested summary").unwrap(), 2)
+    } else {
+        (root, 0)
+    };
+    for level in start..depth {
+        let id = TopicId(100 + level as u64);
+        let mut topic = Topic::new(id, "Child");
+        topic.parent = Some(parent);
+        sheet.topic_mut(parent).unwrap().children.push(id);
+        sheet.topics.insert(id, topic);
+        parent = id;
+    }
+    (sheet, root)
+}
+
+#[test]
+fn mixed_clipboard_bounds_owned_depth_and_preserves_summary_trees() {
+    for summaries in [false, true] {
+        let (source, root) = depth_fixture(MAX_TOPIC_CLIPBOARD_DEPTH, summaries);
+        source.validate().unwrap();
+        let payload = copy_board_selection(&source, &Layout::default(), &[root], &[])
+            .unwrap()
+            .unwrap();
+        let encoded = encode_board_payload(&payload).unwrap();
+        let decoded = decode_board_payload(&encoded).unwrap();
+        assert_eq!(decoded, payload);
+        assert_eq!(
+            decoded.fragment.summaries.len(),
+            if summaries { 2 } else { 0 }
+        );
+
+        let mut doc = Document::new(Workbook::new(hidden_sheet("Destination", "")));
+        let before = doc.workbook().clone();
+        let (too_deep, too_deep_root) = depth_fixture(MAX_TOPIC_CLIPBOARD_DEPTH + 1, summaries);
+        too_deep.validate().unwrap();
+        let error = match copy_board_selection(&too_deep, &Layout::default(), &[too_deep_root], &[])
+        {
+            Err(error) => error,
+            Ok(_) => panic!("over-deep board selection should be rejected"),
+        };
+        assert!(error.contains("depth"), "{error}");
+
+        let invalid = BoardClipboardPayload {
+            text: "Root\n".into(),
+            fragment: too_deep,
+        };
+        assert!(invalid.validate().unwrap_err().contains("depth"));
+        assert!(
+            encode_board_payload(&invalid)
+                .unwrap_err()
+                .contains("depth")
+        );
+        assert!(
+            resolve_board_paste(Some(&invalid), None, None)
+                .unwrap_err()
+                .contains("depth")
+        );
+        let forged = format!("{BOARD_PREFIX}{}", serde_json::to_string(&invalid).unwrap());
+        assert!(decode_board_payload(&forged).unwrap_err().contains("depth"));
+        assert!(
+            doc.edit_sheet("Rejected paste", |sheet| {
+                paste_board_selection(sheet, &invalid, Vec2::ZERO).map_err(EditError::Invalid)
+            })
+            .unwrap_err()
+            .to_string()
+            .contains("depth")
+        );
+        assert_eq!(doc.workbook(), &before);
+        assert!(!doc.can_undo());
+
+        doc.edit_sheet("Paste", |sheet| {
+            paste_board_selection(sheet, &decoded, Vec2::ZERO).map_err(EditError::Invalid)
+        })
+        .unwrap();
+        assert_eq!(doc.sheet().summaries.len(), if summaries { 2 } else { 0 });
+        let after = doc.workbook().clone();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &before);
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &after);
+    }
+}
+
+#[test]
+fn mixed_copy_rejects_deep_sources_without_recursive_layout() {
+    let (source, root) = depth_fixture(4_096, true);
+    let error = copy_board_selection(&source, &Layout::default(), &[root], &[]).unwrap_err();
+    assert!(error.contains("depth"), "{error}");
+}
+
+#[test]
+fn mixed_copy_preflight_checks_cards_added_by_group_expansion() {
+    let (mut source, root) = depth_fixture(MAX_TOPIC_CLIPBOARD_DEPTH + 1, true);
+    source.topic_mut(root).unwrap().card =
+        Some(Card::new(CardKind::Sticky, Vec2::new(160.0, 100.0)));
+    let shape = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(10.0, 20.0, 50.0, 40.0),
+        ))
+        .unwrap();
+    source
+        .group_board_members(&[BoardMember::Card(root), BoardMember::Object(shape)])
+        .unwrap();
+
+    match prepare_board_selection(&source, &[], &[shape]) {
+        Err(error) => assert!(error.contains("depth"), "{error}"),
+        Ok(_) => panic!("a grouped over-deep card should be rejected"),
+    }
+}
+
+#[test]
+fn formatted_cards_survive_mixed_and_legacy_floating_clipboards_with_undo() {
+    let mut source = hidden_sheet("Source", "");
+    let title = "A🦀é\n第二";
+    let mut cards = Vec::new();
+    for (index, kind) in [CardKind::Sticky, CardKind::Text].into_iter().enumerate() {
+        let id = source
+            .add_card(
+                title,
+                Vec2::new(100.0 + index as f32 * 200.0, 100.0),
+                Card::new(kind, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let topic = source.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(title, 0..3, |style| {
+                style.italic = Some(true);
+                style.color = Some(Color::rgb(30, 60, 90));
+            })
+            .unwrap();
+        topic.inline_text.paragraphs.push(crate::InlineParagraph {
+            index: 1,
+            list: crate::ListKind::Bulleted,
+        });
+        cards.push(id);
+    }
+    let shape = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(20.0, 40.0, 50.0, 60.0),
+        ))
+        .unwrap();
+    source.validate().unwrap();
+
+    let payload = copy(&source, &cards, &[shape]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(INLINE_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let old = encoded.replacen("THINODA-BOARD-CLIPBOARD-2", "THINODA-BOARD-CLIPBOARD-1", 1);
+    assert!(
+        decode_board_payload(&old)
+            .unwrap_err()
+            .contains("inline card text requires board clipboard version 2")
+    );
+    let mut invalid = payload.clone();
+    let bad_id = invalid.fragment.floating[0];
+    invalid.fragment.topic_mut(bad_id).unwrap().inline_text.runs[0].end = 100;
+    assert!(encode_board_payload(&invalid).is_err());
+    let forged = format!(
+        "{INLINE_BOARD_PREFIX}{}",
+        serde_json::to_string(&invalid).unwrap()
+    );
+    assert!(decode_board_payload(&forged).is_err());
+
+    let mut destination = hidden_sheet("Destination", "");
+    destination.add_floating("Existing", Vec2::new(600.0, 200.0));
+    let mut doc = Document::new(Workbook::new(destination));
+    let before = doc.workbook().clone();
+    assert!(
+        doc.edit_sheet("Bad paste", |sheet| {
+            paste_board_selection(sheet, &invalid, Vec2::ZERO).map_err(EditError::Invalid)
+        })
+        .is_err()
+    );
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.can_undo());
+    let pasted = doc
+        .edit_sheet("Paste", |sheet| {
+            paste_board_selection(sheet, &payload, Vec2::new(20.0, 20.0))
+                .map_err(EditError::Invalid)
+        })
+        .unwrap();
+    for (&original, &new) in cards.iter().zip(&pasted.topics) {
+        assert_ne!(original, new);
+        let actual = doc.sheet().topic(new).unwrap();
+        let expected = source.topic(original).unwrap();
+        assert_eq!(actual.inline_text, expected.inline_text);
+        assert_eq!(actual.card, expected.card);
+        assert_eq!(actual.title, expected.title);
+    }
+    doc.workbook().validate().unwrap();
+    let after = doc.workbook().clone();
+    assert!(doc.undo());
+    assert_eq!(doc.workbook(), &before);
+    assert!(doc.redo());
+    assert_eq!(doc.workbook(), &after);
+
+    let legacy = crate::clipboard::copy_topics(&source, &[cards[0]])
+        .unwrap()
+        .unwrap();
+    let mut legacy_destination = doc.sheet().clone();
+    let roots = paste_floating_subtrees(
+        &mut legacy_destination,
+        &legacy.subtrees,
+        Vec2::new(700.0, 200.0),
+    )
+    .unwrap();
+    assert_eq!(
+        legacy_destination.topic(roots[0]).unwrap().inline_text,
+        source.topic(cards[0]).unwrap().inline_text
+    );
+    legacy_destination.validate().unwrap();
+}
+
+#[test]
+fn formatted_board_clipboard_enforces_the_exact_encoded_size_limit() {
+    let mut source = hidden_sheet("Source", "");
+    let card = source
+        .add_card(
+            "A🦀",
+            Vec2::new(100.0, 100.0),
+            Card::new(CardKind::Sticky, Vec2::new(100.0, 80.0)),
+        )
+        .unwrap();
+    source
+        .topic_mut(card)
+        .unwrap()
+        .inline_text
+        .update_range("A🦀", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    let mut payload = copy(&source, &[card], &[]);
+    payload.text = "x".into();
+    let base_len = encode_board_payload(&payload).unwrap().len();
+    payload
+        .text
+        .push_str(&"x".repeat(MAX_BOARD_CLIPBOARD_BYTES - base_len));
+    let mut encoded = encode_board_payload(&payload).unwrap();
+    assert_eq!(encoded.len(), MAX_BOARD_CLIPBOARD_BYTES);
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert!(decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).is_err());
+    payload.text.pop();
+    let windows = encode_board_payload(&payload)
+        .unwrap()
+        .replacen('\n', "\r\n", 1);
+    assert_eq!(windows.len(), MAX_BOARD_CLIPBOARD_BYTES);
+    assert_eq!(decode_board_payload(&windows).unwrap(), payload);
+    payload.text.push_str("xx");
+    assert!(encode_board_payload(&payload).is_err());
+    encoded.push(' ');
+    assert!(decode_board_payload(&encoded).is_err());
+}
+
 #[test]
 fn object_only_copy_has_plain_text_and_legacy_fallback() {
     let mut sheet = Sheet::new("source", "root");
@@ -40,11 +306,12 @@ fn object_only_copy_has_plain_text_and_legacy_fallback() {
             Some(&payload),
             None,
             Some(&payload.text.replace('\n', "\r\n"))
-        ),
+        )
+        .unwrap(),
         ResolvedBoardPaste::Board(_)
     ));
     let ResolvedBoardPaste::Topics(topics) =
-        resolve_board_paste(Some(&payload), None, Some("One\n\tChild\n"))
+        resolve_board_paste(Some(&payload), None, Some("One\n\tChild\n")).unwrap()
     else {
         panic!("different OS text should use the legacy text parser");
     };
@@ -556,17 +823,19 @@ fn old_topic_payload_and_unrelated_plain_text_still_resolve_as_before() {
         .unwrap()
         .markers
         .push("flag-red".into());
-    let old = crate::clipboard::copy_topics(&sheet, &[topic]).unwrap();
+    let old = crate::clipboard::copy_topics(&sheet, &[topic])
+        .unwrap()
+        .unwrap();
     let serialized = serde_json::to_string(&old).unwrap();
     let old: ClipboardPayload = serde_json::from_str(&serialized).unwrap();
     let ResolvedBoardPaste::Topics(topics) =
-        resolve_board_paste(None, Some(&old), Some("Legacy\r\n"))
+        resolve_board_paste(None, Some(&old), Some("Legacy\r\n")).unwrap()
     else {
         panic!("expected legacy topic clipboard");
     };
     assert_eq!(topics[0].root_topic().markers, vec!["flag-red"]);
     let ResolvedBoardPaste::Topics(topics) =
-        resolve_board_paste(None, Some(&old), Some("External"))
+        resolve_board_paste(None, Some(&old), Some("External")).unwrap()
     else {
         panic!("expected external text");
     };
@@ -576,7 +845,7 @@ fn old_topic_payload_and_unrelated_plain_text_still_resolve_as_before() {
 
 #[test]
 fn plain_text_with_reused_ids_pastes_as_separate_floating_roots() {
-    let subtrees = crate::clipboard::subtrees_from_text("One\n\tChild\nTwo");
+    let subtrees = crate::clipboard::subtrees_from_text("One\n\tChild\nTwo").unwrap();
     // Each line root was parsed in a separate temporary Sheet.
     assert_eq!(subtrees[0].root, subtrees[1].root);
     let mut destination = hidden_sheet("Target", "private anchor");
@@ -626,7 +895,9 @@ fn floating_legacy_subtrees_preserve_cards_and_resources_and_validate_atomically
         resource: reference.clone(),
         name: "file.txt".into(),
     });
-    let payload = crate::clipboard::copy_topics(&source, &[card]).unwrap();
+    let payload = crate::clipboard::copy_topics(&source, &[card])
+        .unwrap()
+        .unwrap();
     let mut destination = hidden_sheet("Target", "");
     let pasted =
         paste_floating_subtrees(&mut destination, &payload.subtrees, Vec2::new(40.0, 60.0))
@@ -703,7 +974,9 @@ fn floating_subtrees_merge_multiple_resources_atomically_and_preserve_undo() {
         });
         cards.push(card);
     }
-    let mut payload = crate::clipboard::copy_topics(&source, &cards).unwrap();
+    let mut payload = crate::clipboard::copy_topics(&source, &cards)
+        .unwrap()
+        .unwrap();
     payload.subtrees[3]
         .resources
         .entries
@@ -776,7 +1049,7 @@ fn floating_subtrees_merge_multiple_resources_atomically_and_preserve_undo() {
 
 #[test]
 fn floating_plain_text_paste_undoes_in_one_step() {
-    let subtrees = crate::clipboard::subtrees_from_text("One\nTwo");
+    let subtrees = crate::clipboard::subtrees_from_text("One\nTwo").unwrap();
     let mut doc = Document::new(Workbook::new(hidden_sheet("Target", "")));
     let before = doc.sheet().clone();
     doc.edit_sheet("Paste", |sheet| {

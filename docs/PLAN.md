@@ -48,6 +48,22 @@ commands and document semantics. Deliver in independently verified slices:
    pointer targets. Additional brush appearances require real rendering and
    persistence support rather than decorative placeholders.
 
+**F5/F6 continuation:** touch stroke pressure and atomic rejection have focused
+host coverage. A conservative web bridge preserves Chromium-synthesized pen
+pressure through a saved stroke and distinguishes correlated touch pointers
+from mouse input; ambiguous streams are rejected or interrupted. Only a
+verified absent touch force becomes optional. Pressure remains metadata rather
+than rendered width. Physical-device and non-Chromium pen verification remain
+open.
+Source-only scene isolation uses the same object and connector policy in the
+editor, Pitch and exports. Unassigned objects remain crop-visible without
+expanding source auto-fit; a fixed-crop browser fixture covers Pitch, PDF,
+slide-image and PowerPoint exports. Clipping is not redaction. See the critiques
+in [FREEFORM.md](FREEFORM.md#f5-ink-checkpoint-critique) and
+[PRESENTATIONS.md](PRESENTATIONS.md#scene-object-isolation-follow-up).
+Pending-ink crash recovery, realistic performance, accessibility and broader
+browser/Office/device acceptance remain open.
+
 All slices must fit light/dark themes and constrained windows, retain localized
 accessible names and keyboard navigation, and test selection ownership,
 undo/redo, native save/reopen and visual/export parity where behavior changes.
@@ -57,10 +73,36 @@ open gates; integrated cloud providers remain paused.
 The [selected-range and list contract](FREEFORM.md#selected-range-text-and-lists-bounded-model-foundation-controls-disabled)
 now has a bounded core representation for Sticky/Text card titles, validation,
 history-memory accounting, native v8 gating, non-native export-loss reporting,
-and atomic scalar-range replacement that preserves surrounding style runs.
+internal clipboard/recovery versioning, and atomic scalar-range replacement that
+preserves surrounding style runs.
 Replacement rejects paragraph-boundary changes while list metadata exists.
+Structured browser cuts now require bounded rich clipboard readback and time
+out without deleting the original when verification fails. Browser permission,
+sanitization and non-atomic clipboard ownership still require real-host
+acceptance; see the [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
+Native cuts also verify both text and rich data across a stable HTML read;
+the [native critique](FREEFORM.md#native-cut-verification-checkpoint-critique)
+records their synchronous and non-atomic limitations. Portable ordinary-topic
+clipboard work replaces the old session-only token for new copies, checks task
+compatibility with the destination calendar, and retains explicit privacy and
+host-acceptance caveats in the
+[topic critique](FREEFORM.md#portable-topic-clipboard-checkpoint-critique).
+Mixed-board clipboard ownership now has a 256-edge bound, including summary
+trees, checked before copy/cut/duplicate layout and before codec or paste
+mutation. The [checkpoint critique](FREEFORM.md#mixed-board-clipboard-depth-checkpoint-critique)
+records its conservative limits and remaining layout caveats. The clipboard
+safety audit's subsequent
+[plain-text checkpoint](FREEFORM.md#plain-text-clipboard-safety-checkpoint-critique)
+now bounds external outline parsing and the legacy copy API, checks destination
+ancestry and reports rejections;
+it also records the public Rust API changes and remaining import, memory and
+real-clipboard limitations.
+New Sheet from Topic preserves card branches as rootless sheets, including
+summary-owned resources, while reporting surrounding context left in the
+source; the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)
+records its deliberate board-context exclusions and draft-commit ordering.
 No editor controls are enabled: rich-aware undo/IME, grapheme-aware selection,
-list editing, clipboard behavior, accessibility and mixed-style
+list editing, external clipboard and loss handling, accessibility and mixed-style
 measurement/rendering remain open. An isolated, non-application span-editing
 experiment still tests broader Unicode-scalar operations and rejection of
 over-budget edits. A separate experimental draft history tests snapshot
@@ -192,21 +234,17 @@ Generated PNG/JPEG fixtures cover pixel order, visual sizing, native round-trips
 exported media and insufficient output budgets. Real-camera, external Office,
 browser accessibility and physical-device acceptance remain open.
 
-**2026-11-03 menu and recovery continuation (implemented locally):** Board is
-at the first level of the shared main menu. The canvas context menu groups
-Indent, Outdent and the four style actions under Styles, places Board between
-Select and Arrange, and ends with New Sheet from Topic. The main menu, ribbon,
-native menu and context menu reuse Board commands, availability and shortcuts.
-Localized short-window navigation, command dispatch and selection ownership have
-focused coverage. Failed recovery-copy cleanup is reported and retried after a
-saved document closes without discarding newer edits or changing the recovery
-manager's ownership and pending-write contracts.
-
-**Completed user-directed context-menu change:** the canvas context menu now
-places board-tool commands in a scrollable Tools submenu between Arrange and AI.
-The Board submenu retains non-tool commands, the first-level main Board menu
-remains unchanged, and each command keeps the existing availability and dispatch
-rules. A short-viewport interaction test verifies Tools and Pen stay reachable.
+**Menu and recovery continuation:** Board remains at the first level of the
+shared main menu. The earlier uniform canvas context menu has since been
+replaced by the develop branch's target-specific Blank, Topic, Board,
+Annotation and Zone menus. On blank canvas, Add provides object tools and Draw
+provides pen, highlighter, lasso and erasers; selected targets expose their
+relevant commands, with the command palette as an escape hatch. Optional local
+usage counts do not reorder the menus. Localized short-window navigation,
+command dispatch and selection ownership have focused coverage. Failed
+recovery-copy cleanup is reported and retried after a saved document closes
+without discarding newer edits or changing the recovery manager's ownership and
+pending-write contracts.
 
 **Completed user-directed Zone-color change:** the Zone editor now controls
 frame and background colors independently. New Zones receive a deterministic
@@ -311,7 +349,7 @@ implemented feature is not treated as fully validated.
 | F5 ink | 🟡 Implemented locally | Define measurable budgets and representative hardware; realistic GPU/browser, touch/pen and accessibility acceptance |
 | F6 scenes | 🟡 Implemented locally | Final scene/PDF/PowerPoint and cross-platform acceptance; optional pressure device spike |
 | F1/F2 board UI | 🟡 Implemented locally | Broader integration, browser accessibility/screen-reader and physical-device acceptance |
-| Selected-range text and lists | 🟡 Bounded model and safety gates implemented | Rich-aware editing/history/IME, measurement/rendering, clipboard and accessibility remain; controls stay disabled |
+| Selected-range text and lists | 🟡 Bounded model, internal clipboard/recovery and safety gates implemented | Rich-aware editing/history/IME, measurement/rendering, external clipboard/loss handling and accessibility remain; controls stay disabled |
 | Profile browser archive loading | ✅ Recorded | The mixed-resource Wasm profile is retained; archive-import timing showed no material change |
 | Durable browser recovery | ⬜ Open | The asynchronous draft remains unintegrated until same-origin writer races, bounded discovery and rescue behavior are safe |
 | Validate large browser boards | 🟡 Partial | Synthetic 50-image/10,000-stroke save round-trips exist; representative resources, measured memory, quota/recovery and device acceptance remain |
@@ -323,7 +361,7 @@ implemented feature is not treated as fully validated.
 | Final integration | ⬜ Open | Re-run the integrated native/Wasm/browser matrix after the remaining acceptance gates |
 | Publish reviewed checkpoints | ⬜ Open | Publish a reviewed, tested checkpoint without claiming the open workstreams complete |
 | Add Moodboard starter | ✅ Complete locally | Six independent image cards and an ideas note; richer collage behavior remains out of scope |
-| Move board tools to context menu | ✅ Complete locally | Tools are in the scrollable canvas context-menu submenu |
+| Move board tools to context menu | ✅ Complete locally | The newer target-specific blank-canvas menu groups drawing tools under Draw |
 | Add editable and automatic Zone colors | ✅ Complete locally | Independent frame/background colors and deterministic new-Zone accents preserve legacy behavior |
 
 ## Current next-value state (2026-10-30)

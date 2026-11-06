@@ -15,6 +15,8 @@ use thinoda_canvas::{
     BoardTool,
     ink_controller::InkControllerError,
     ink_input::{InkSample, MAX_INPUT_SAMPLES},
+    pen_input::{self, PenInputIssue, PenInputMatcher, PenSample, PointerPhase, PointerRecord},
+    touch_input::{self, TouchForceRecord, TouchPointerIssue, TouchPointerRecord},
 };
 use thinoda_core::{CanvasObjectKind, Sheet, Vec2, Workbook};
 use thinoda_io::Format;
@@ -121,6 +123,70 @@ fn touch(h: &mut Harness<'_, ThinodaApp>, phase: TouchPhase, pos: Pos2, force: O
         });
     }
     h.run_steps(1);
+}
+
+fn pen(
+    h: &mut Harness<'_, ThinodaApp>,
+    matcher: &mut PenInputMatcher,
+    phase: PointerPhase,
+    pos: Pos2,
+    pressure: f32,
+) {
+    let event = match phase {
+        PointerPhase::Move => Event::PointerMoved(pos),
+        PointerPhase::Press(button) | PointerPhase::Release(button) => Event::PointerButton {
+            pos,
+            button,
+            pressed: matches!(phase, PointerPhase::Press(_)),
+            modifiers: Modifiers::NONE,
+        },
+    };
+    let events = [event];
+    let records = [PointerRecord {
+        phase,
+        position: pos,
+        pen: Some(PenSample { id: 7, pressure }),
+    }];
+    let matched = matcher.match_frame(&events, &records, None, false);
+    assert_eq!(matched.issue, None);
+    pen_input::publish(&h.ctx, ViewportId::ROOT, &events, matched);
+    h.event(events[0].clone());
+    h.run_steps(1);
+}
+
+fn touch_pointer(
+    h: &mut Harness<'_, ThinodaApp>,
+    position: Pos2,
+    pressed: bool,
+    recorded_position: Pos2,
+) -> Option<TouchPointerIssue> {
+    let event = Event::PointerButton {
+        pos: position,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let record = TouchPointerRecord {
+        phase: if pressed {
+            PointerPhase::Press(PointerButton::Primary)
+        } else {
+            PointerPhase::Release(PointerButton::Primary)
+        },
+        position: recorded_position,
+        is_touch: true,
+    };
+    let issue = touch_input::publish_pointer_frame(
+        &h.ctx,
+        ViewportId::ROOT,
+        std::slice::from_ref(&event),
+        &[record],
+        false,
+        &[],
+        false,
+    );
+    h.event(event);
+    h.run_steps(1);
+    issue
 }
 
 fn failed_drawing(h: &mut Harness<'_, ThinodaApp>) {
@@ -273,6 +339,383 @@ fn accessible_retry_preserves_a_failed_gesture_and_cancel_is_explicit() {
     assert!(!h.state().doc().unwrap().is_dirty());
     assert_eq!(std::fs::read(&path).unwrap(), saved);
     assert_eq!(h.state().doc().unwrap().doc.sheet().canvas.objects.len(), 1);
+}
+
+#[test]
+fn successful_touch_ink_preserves_style_pressure_undo_redo_and_native_save_reopen() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("touch-ink.thinoda");
+    let mut h = harness();
+    h.get_by_label("Ink color").click();
+    h.run_steps(2);
+    h.get_by_label("Auto").click();
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.ink_settings.color = thinoda_core::Color::rgb(200, 30, 40);
+        doc.view.ink_settings.width = 4.0;
+        doc.view.ink_settings.opacity = 0.4;
+        doc.view.ink_settings.finish.tolerance = 0.0;
+    }
+
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    let start = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    touch(&mut h, TouchPhase::Start, start, Some(0.2));
+    touch(
+        &mut h,
+        TouchPhase::Move,
+        start + vec2(40.0, 20.0),
+        Some(0.6),
+    );
+    touch(&mut h, TouchPhase::End, start + vec2(80.0, 40.0), Some(0.9));
+
+    assert!(!h.state().doc().unwrap().has_unresolved_ink());
+    assert!(!h.state().doc().unwrap().view.has_pending_ink_gesture());
+    let committed = h.state().doc().unwrap().doc.sheet().canvas.objects.clone();
+    assert_eq!(committed.len(), 1);
+    let CanvasObjectKind::Ink(ink) = &committed[0].kind else {
+        panic!("expected a committed touch ink stroke");
+    };
+    assert_eq!(ink.tool, thinoda_core::InkTool::Pen);
+    assert_eq!(ink.color, thinoda_core::Color::rgb(200, 30, 40));
+    assert_eq!(ink.width, 4.0);
+    assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.2, 0.6, 0.9]);
+    assert_eq!(committed[0].style.opacity, 0.4);
+
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        assert!(doc.doc.undo());
+        assert!(doc.doc.sheet().canvas.objects.is_empty());
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.sheet().canvas.objects, committed);
+    }
+    assert!(h.state_mut().save_active_to(&path, false));
+    assert!(!h.state().doc().unwrap().is_dirty());
+    let reopened = crate::doc::OpenDoc::open(&path).unwrap();
+    assert!(!reopened.is_dirty());
+    assert_eq!(reopened.doc.sheet().canvas.objects, committed);
+}
+
+#[test]
+fn matched_pen_pressure_survives_host_commit_undo_redo_and_native_save_reopen() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("pen-ink.thinoda");
+    let mut h = harness();
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .view
+        .ink_settings
+        .finish
+        .tolerance = 0.0;
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    let start = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    h.hover_at(start);
+    h.run_steps(1);
+    let mut matcher = PenInputMatcher::default();
+    pen(
+        &mut h,
+        &mut matcher,
+        PointerPhase::Press(PointerButton::Primary),
+        start,
+        0.2,
+    );
+    pen(
+        &mut h,
+        &mut matcher,
+        PointerPhase::Move,
+        start + vec2(40.0, 20.0),
+        0.6,
+    );
+    pen(
+        &mut h,
+        &mut matcher,
+        PointerPhase::Release(PointerButton::Primary),
+        start + vec2(80.0, 40.0),
+        0.9,
+    );
+
+    let doc = h.state().doc().unwrap();
+    assert!(!doc.has_unresolved_ink());
+    let committed = doc.doc.sheet().canvas.objects.clone();
+    assert_eq!(committed.len(), 1);
+    let CanvasObjectKind::Ink(ink) = &committed[0].kind else {
+        panic!("expected a committed pen ink stroke");
+    };
+    assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.2, 0.6, 0.9]);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        assert!(doc.doc.undo());
+        assert!(doc.doc.sheet().canvas.objects.is_empty());
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.sheet().canvas.objects, committed);
+    }
+    assert!(h.state_mut().save_active_to(&path, false));
+    let reopened = crate::doc::OpenDoc::open(&path).unwrap();
+    assert!(!reopened.is_dirty());
+    assert_eq!(reopened.doc.sheet().canvas.objects, committed);
+}
+
+#[test]
+fn separated_touch_pointer_events_commit_once_and_preserve_host_history() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("touch-pointer-ink.thinoda");
+    let mut h = harness();
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    let start = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    let end = start + vec2(50.0, 25.0);
+    h.hover_at(start);
+    h.run_steps(1);
+    assert_eq!(touch_pointer(&mut h, start, true, start), None);
+    assert!(!h.state().doc().unwrap().view.has_pending_ink_gesture());
+
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase: TouchPhase::Start,
+        pos: start,
+        force: Some(0.3),
+    });
+    h.run_steps(1);
+    assert!(h.state().doc().unwrap().view.has_pending_ink_gesture());
+    assert_eq!(touch_pointer(&mut h, end, false, end), None);
+    assert!(!h.state().doc().unwrap().view.has_released_ink_gesture());
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase: TouchPhase::End,
+        pos: end,
+        force: Some(0.7),
+    });
+    h.run_steps(2);
+    let doc = h.state().doc().unwrap();
+    assert!(!doc.has_unresolved_ink());
+    let committed = doc.doc.sheet().canvas.objects.clone();
+    assert_eq!(committed.len(), 1);
+    let CanvasObjectKind::Ink(ink) = &committed[0].kind else {
+        panic!("expected touch ink");
+    };
+    assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.3, 0.7]);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        assert!(doc.doc.undo());
+        assert!(doc.doc.sheet().canvas.objects.is_empty());
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.sheet().canvas.objects, committed);
+    }
+    assert!(h.state_mut().save_active_to(&path, false));
+    let reopened = crate::doc::OpenDoc::open(&path).unwrap();
+    assert_eq!(reopened.doc.sheet().canvas.objects, committed);
+}
+
+#[test]
+fn queued_synthetic_touch_buttons_do_not_block_a_real_touch_stroke() {
+    let mut h = harness();
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    let position = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    h.hover_at(position);
+    h.run_steps(1);
+    assert_eq!(touch_pointer(&mut h, position, true, position), None);
+
+    let button = |pressed| Event::PointerButton {
+        pos: position,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let touch = |phase, force| Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase,
+        pos: position,
+        force,
+    };
+    let touch_record = |phase| TouchForceRecord {
+        device: TouchDeviceId(1),
+        id: TouchId(1),
+        phase,
+        position,
+        force_missing: false,
+    };
+    let start = [
+        button(true),
+        touch(TouchPhase::Start, Some(0.3)),
+        button(false),
+    ];
+    let release = [TouchPointerRecord {
+        phase: PointerPhase::Release(PointerButton::Primary),
+        position,
+        is_touch: true,
+    }];
+    assert_eq!(
+        touch_input::publish_pointer_frame(
+            &h.ctx,
+            ViewportId::ROOT,
+            &start,
+            &release,
+            false,
+            &[touch_record(TouchPhase::Start)],
+            false,
+        ),
+        None
+    );
+    h.input_mut().events.extend(start);
+    h.run_steps(1);
+    assert!(h.state().doc().unwrap().view.has_pending_ink_gesture());
+
+    let end = [
+        button(false),
+        Event::PointerGone,
+        touch(TouchPhase::End, Some(0.7)),
+    ];
+    assert_eq!(
+        touch_input::publish_pointer_frame(
+            &h.ctx,
+            ViewportId::ROOT,
+            &end,
+            &[],
+            false,
+            &[touch_record(TouchPhase::End)],
+            false,
+        ),
+        None
+    );
+    h.input_mut().events.extend(end);
+    h.run_steps(2);
+    let doc = h.state().doc().unwrap();
+    assert!(
+        !doc.has_unresolved_ink(),
+        "feedback={:?}, pending={}, released={}, samples={:?}",
+        doc.ink_feedback,
+        doc.view.has_pending_ink_gesture(),
+        doc.view.has_released_ink_gesture(),
+        doc.view.pending_ink_samples()
+    );
+    assert_eq!(doc.doc.sheet().canvas.objects.len(), 1);
+    let CanvasObjectKind::Ink(ink) = &doc.doc.sheet().canvas.objects[0].kind else {
+        panic!("expected touch ink");
+    };
+    assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.3, 0.7]);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .objects
+            .is_empty()
+    );
+}
+
+#[test]
+fn unmatched_touch_pointer_reports_feedback_before_allowing_mouse_input() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("unmatched-touch-pointer.thinoda");
+    let mut h = harness();
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    let position = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    h.hover_at(position);
+    h.run_steps(1);
+    assert_eq!(
+        touch_pointer(&mut h, position, true, position + vec2(1.0, 0.0)),
+        Some(TouchPointerIssue::EventMismatch)
+    );
+    h.run_steps(1);
+    let doc = h.state().doc().unwrap();
+    assert!(doc.has_unresolved_ink());
+    assert!(!doc.view.has_pending_ink_gesture());
+    assert!(doc.doc.sheet().canvas.objects.is_empty());
+    assert!(
+        h.query_by_label(
+            "Touch pointer input could not be matched. Check the gesture or dismiss this message."
+        )
+        .is_some()
+    );
+    assert!(!h.state_mut().save_active_to(&path, false));
+    assert!(!path.exists());
+    h.get_by_role_and_label(Role::Button, "Dismiss ink feedback")
+        .click();
+    h.run_steps(2);
+    let mouse_start = start(&mut h);
+    move_to(&mut h, mouse_start + vec2(40.0, 20.0));
+    release(&mut h, mouse_start + vec2(80.0, 40.0));
+    let CanvasObjectKind::Ink(ink) = &h.state().doc().unwrap().doc.sheet().canvas.objects[0].kind
+    else {
+        panic!("expected mouse ink");
+    };
+    assert!(ink.pressure.is_none());
+}
+
+#[test]
+fn unmatched_first_pen_reports_the_lost_start_and_does_not_commit_mouse_ink() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("unmatched-pen.thinoda");
+    let mut h = harness();
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    let start_pos = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    let end = start_pos + vec2(80.0, 40.0);
+    h.hover_at(start_pos);
+    h.run_steps(1);
+    let events = [
+        Event::PointerButton {
+            pos: start_pos,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        Event::PointerMoved(end),
+        Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ];
+    let records = [PointerRecord {
+        phase: PointerPhase::Press(PointerButton::Primary),
+        position: start_pos + vec2(1.0, 0.0),
+        pen: Some(PenSample {
+            id: 7,
+            pressure: 0.2,
+        }),
+    }];
+    let mut matcher = PenInputMatcher::default();
+    let matched = matcher.match_frame(&events, &records, None, false);
+    assert_eq!(matched.issue, Some(PenInputIssue::PointerMismatch));
+    pen_input::publish(&h.ctx, ViewportId::ROOT, &events, matched);
+    for event in events {
+        h.event(event);
+    }
+    h.run_steps(2);
+    let doc = h.state().doc().unwrap();
+    assert!(doc.has_unresolved_ink());
+    assert!(doc.doc.sheet().canvas.objects.is_empty());
+    assert!(!doc.view.has_pending_ink_gesture());
+    assert!(
+        h.query_by_label(
+            "Pen input could not be matched. No stroke was started; dismiss this message and try again."
+        )
+        .is_some()
+    );
+    assert!(!h.state_mut().save_active_to(&path, false));
+    assert!(!path.exists());
+    h.get_by_role_and_label(Role::Button, "Dismiss ink feedback")
+        .click();
+    h.run_steps(2);
+    assert!(!h.state().doc().unwrap().has_unresolved_ink());
+    let mouse_start = start(&mut h);
+    move_to(&mut h, mouse_start + vec2(40.0, 20.0));
+    release(&mut h, mouse_start + vec2(80.0, 40.0));
+    let CanvasObjectKind::Ink(ink) = &h.state().doc().unwrap().doc.sheet().canvas.objects[0].kind
+    else {
+        panic!("expected mouse ink");
+    };
+    assert!(ink.pressure.is_none());
 }
 
 #[test]
@@ -636,6 +1079,71 @@ fn inactive_tab_tracks_touch_release_and_accepts_a_later_gesture() {
     assert!(h.state().docs[0].view.has_pending_ink_gesture());
     touch(&mut h, TouchPhase::End, p + vec2(15.0, 0.0), Some(0.7));
     assert_eq!(h.state().docs[0].doc.sheet().canvas.objects.len(), 1);
+}
+
+#[test]
+fn inactive_pending_ink_does_not_consume_active_tab_pointer_metadata() {
+    let mut h = harness();
+    h.state_mut().new_doc(Workbook::default());
+    h.state_mut().active = 0;
+    h.run_steps(3);
+    let old_start = start(&mut h);
+    h.state_mut().active = 1;
+    h.run_steps(1);
+    assert!(h.state().docs[0].view.has_released_ink_gesture());
+    release(&mut h, old_start);
+    h.state_mut().docs[1].view.set_board_tool(BoardTool::Pen);
+    h.run_steps(2);
+    let canvas = h.state().docs[1].view.canvas_rect();
+    let start = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    let end = start + vec2(50.0, 25.0);
+    h.hover_at(start);
+    h.run_steps(1);
+    assert_eq!(touch_pointer(&mut h, start, true, start), None);
+    assert!(!h.state().docs[1].view.has_pending_ink_gesture());
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(2),
+        phase: TouchPhase::Start,
+        pos: start,
+        force: Some(0.3),
+    });
+    h.run_steps(1);
+    assert!(h.state().docs[1].view.has_pending_ink_gesture());
+    assert_eq!(touch_pointer(&mut h, end, false, end), None);
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(2),
+        phase: TouchPhase::End,
+        pos: end,
+        force: Some(0.7),
+    });
+    h.run_steps(2);
+    assert!(!h.state().docs[1].has_unresolved_ink());
+    assert_eq!(h.state().docs[1].doc.sheet().canvas.objects.len(), 1);
+
+    let mut matcher = PenInputMatcher::default();
+    pen(
+        &mut h,
+        &mut matcher,
+        PointerPhase::Press(PointerButton::Primary),
+        start,
+        0.2,
+    );
+    pen(
+        &mut h,
+        &mut matcher,
+        PointerPhase::Release(PointerButton::Primary),
+        end,
+        0.8,
+    );
+    let second = &h.state().docs[1].doc.sheet().canvas.objects[1];
+    let CanvasObjectKind::Ink(ink) = &second.kind else {
+        panic!("expected pen ink");
+    };
+    assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.2, 0.8]);
+    assert!(h.state().docs[0].view.has_released_ink_gesture());
+    assert!(h.state().docs[0].doc.sheet().canvas.objects.is_empty());
 }
 
 #[test]

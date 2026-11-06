@@ -78,6 +78,48 @@ fn start_drag(h: &mut Harness<'_, State>, id: TopicId, end: Pos2) {
 }
 
 #[test]
+fn formatted_card_multi_topic_drag_rolls_back_earlier_moves() {
+    let mut sheet = Sheet::new("Drag", "Root");
+    let plain = sheet.add_floating("Plain", Vec2::new(-200.0, 0.0));
+    let card = sheet
+        .add_card(
+            "Styled",
+            Vec2::new(0.0, 0.0),
+            thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 100.0)),
+        )
+        .unwrap();
+    sheet
+        .topic_mut(card)
+        .unwrap()
+        .inline_text
+        .update_range("Styled", 0..3, |style| style.bold = Some(true))
+        .unwrap();
+    let parent = sheet.add_floating("Target", Vec2::new(200.0, 0.0));
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let target = DropTarget {
+        parent,
+        index: 0,
+        slot: None,
+        side: None,
+    };
+    let mut doc = Document::new(Workbook::new(sheet));
+    let before = doc.workbook().clone();
+    let state = doc.state_id();
+    let error = doc
+        .edit_sheet("Move Topic", |sheet| {
+            apply(sheet, &[plain, card], &target, &layout)
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        thinoda_core::rich_text::FORMATTED_CARD_REQUIRED
+    );
+    assert_eq!(doc.workbook(), &before);
+    assert_eq!(doc.state_id(), state);
+    assert!(!doc.can_undo());
+}
+
+#[test]
 fn drag_targets_follow_rotated_cards_and_frame_clips() {
     let mut sheet = Sheet::new("Board", "");
     sheet.root_mode = thinoda_core::SheetRootMode::Hidden;

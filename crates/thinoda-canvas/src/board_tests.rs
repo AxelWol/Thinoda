@@ -141,6 +141,51 @@ fn shape(sheet: &mut Sheet, x: f32, y: f32, label: &str) -> CanvasObjectId {
 }
 
 #[test]
+fn deep_board_duplication_fails_before_layout_and_preserves_history() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let mut parent = card;
+    for _ in 0..=thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH {
+        parent = sheet.add_child(parent, None, "Child");
+    }
+    let frame = sheet
+        .create_board_frame(
+            "Frame",
+            thinoda_core::Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(200.0, 200.0)),
+        )
+        .unwrap();
+    sheet.set_zone_members(frame, vec![card], vec![]).unwrap();
+    let mut doc = Document::new(Workbook::new(sheet));
+    let mut view = MapView::default();
+    let before = doc.workbook().clone();
+
+    view.select_only(card);
+    for action in [Action::Copy, Action::Cut, Action::Duplicate] {
+        let error = apply_action(&mut doc, &mut view, action).unwrap_err();
+        assert!(error.to_string().contains("depth"), "{error}");
+        assert_eq!(doc.workbook(), &before);
+        assert!(!doc.can_undo());
+    }
+    let error =
+        board_actions::duplicate_selection(&mut doc, &mut view, Vec2::new(20.0, 20.0)).unwrap_err();
+    assert!(error.to_string().contains("depth"), "{error}");
+    assert_eq!(doc.workbook(), &before);
+
+    view.select_object(ObjectSelection::Zone(frame));
+    let error =
+        board_actions::duplicate_selection(&mut doc, &mut view, Vec2::new(20.0, 20.0)).unwrap_err();
+    assert!(error.to_string().contains("depth"), "{error}");
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.can_undo());
+}
+
+#[test]
 #[ignore = "manual full canvas CPU measurement"]
 fn measure_large_board_canvas_pass() {
     use std::{hint::black_box, time::Instant};
@@ -4422,6 +4467,58 @@ fn mixed_clipboard_copy_paste_remaps_group_and_connector_endpoints() {
 }
 
 #[test]
+fn formatted_card_clipboard_actions_preserve_runs_lists_and_history() {
+    let mut sheet = board();
+    let title = "Aéß\nÉlan";
+    let card = sheet
+        .add_card(
+            title,
+            Vec2::new(-100.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(160.0, 100.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(card).unwrap();
+    topic
+        .inline_text
+        .update_range(title, 0..3, |style| style.bold = Some(true))
+        .unwrap();
+    topic
+        .inline_text
+        .paragraphs
+        .push(thinoda_core::InlineParagraph {
+            index: 1,
+            list: thinoda_core::ListKind::Bulleted,
+        });
+    let mut h = harness(sheet);
+    h.state_mut().view.selection = vec![card];
+    let before = h.state().doc.workbook().clone();
+    let state = h.state_mut();
+    assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+    let encoded =
+        thinoda_core::clipboard::encode_board_payload(state.view.board_clipboard().unwrap())
+            .unwrap();
+    assert!(encoded.starts_with("THINODA-BOARD-CLIPBOARD-2\n"));
+    assert!(
+        state
+            .view
+            .paste_encoded_board(&mut state.doc, &encoded)
+            .unwrap()
+    );
+    let pasted = state.view.selection[0];
+    assert_ne!(pasted, card);
+    assert_eq!(
+        state.doc.sheet().topic(pasted).unwrap().inline_text,
+        before.active().topic(card).unwrap().inline_text
+    );
+    let after = state.doc.workbook().clone();
+    assert!(state.doc.undo());
+    assert_eq!(state.doc.workbook(), &before);
+    assert!(state.doc.redo());
+    assert_eq!(state.doc.workbook(), &after);
+    state.doc.workbook().validate().unwrap();
+}
+
+#[test]
 fn mixed_clipboard_cut_is_atomic_and_locked_members_preserve_the_clipboard() {
     let mut sheet = board();
     let card = sheet
@@ -4832,6 +4929,33 @@ fn invalid_encoded_board_payload_rejects_without_reusing_old_content() {
         assert!(state.view.clipboard_out.is_none());
         assert!(!apply_action(&mut state.doc, &mut state.view, Action::Paste(None)).unwrap());
     }
+}
+
+#[test]
+fn invalid_board_payload_does_not_commit_a_pending_title_draft() {
+    let mut sheet = board();
+    let shape = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let topic = sheet.add_floating("Original", Vec2::new(200.0, 0.0));
+    let mut h = harness(sheet);
+    let state = h.state_mut();
+    state.view.board_selection = vec![shape];
+    assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+    let mut payload = state.view.board_clipboard().unwrap().clone();
+    payload.text.clear();
+    state
+        .view
+        .begin_edit_with(state.doc.sheet(), topic, "Draft");
+    let before = state.doc.workbook().clone();
+
+    assert!(
+        state
+            .view
+            .paste_board_payload(&mut state.doc, payload)
+            .is_err()
+    );
+    assert_eq!(state.doc.workbook(), &before);
+    assert_eq!(state.view.editing_text(), Some("Draft"));
+    assert!(state.view.board_clipboard().is_none());
 }
 
 #[test]

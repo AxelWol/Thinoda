@@ -535,7 +535,9 @@ mod tests {
                 .notes,
             sheet.root_topic().notes
         );
-        let payload = crate::clipboard::copy_topics(&sheet, &[root]).unwrap();
+        let payload = crate::clipboard::copy_topics(&sheet, &[root])
+            .unwrap()
+            .unwrap();
         assert_eq!(
             payload.subtrees[0]
                 .topics

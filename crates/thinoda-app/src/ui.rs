@@ -3015,8 +3015,12 @@ impl ThinodaApp {
                 .iter()
                 .any(|ink| ink.to_string() == error.to_string())
         {
-            self.toasts
-                .warning(format!("{}: {error}", t("Not possible here")));
+            let error = error.to_string();
+            self.toasts.warning(format!(
+                "{}: {}",
+                t("Not possible here"),
+                i18n::localize_model_error(&error)
+            ));
         }
         if let Some(preview) = preview {
             self.accept_fim_rendered_preview(&ctx, preview);

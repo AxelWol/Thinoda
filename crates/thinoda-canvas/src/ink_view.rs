@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::*;
 use crate::ink_controller::{InkCancelReason, InkFrameInput};
+use crate::pen_input::{self, PenFrameData};
 use egui::{Event, TouchPhase};
 use thinoda_core::EditError;
 
@@ -18,6 +19,7 @@ pub(super) struct Routing {
 
 fn attempted_start(
     events: &[Event],
+    pen: &PenFrameData,
     controller: &InkController,
     canvas: Rect,
 ) -> Option<(Pos2, Option<f32>)> {
@@ -26,8 +28,12 @@ fn attempted_start(
         .any(|event| matches!(event, Event::Touch { .. }));
     events
         .iter()
-        .filter(|event| controller.accepts_start_event(event, frame_has_touch))
-        .find_map(|event| {
+        .enumerate()
+        .filter(|(_, event)| controller.accepts_start_event(event, frame_has_touch))
+        .find_map(|(index, event)| {
+            if pen.touch_pointer(index) && pen.touch_issue.is_none() {
+                return None;
+            }
             let (pos, pressure) = match event {
                 Event::Touch {
                     phase: TouchPhase::Start,
@@ -40,7 +46,7 @@ fn attempted_start(
                     button: PointerButton::Primary,
                     pressed: true,
                     ..
-                } => (*pos, None),
+                } => (*pos, pen.sample(index).map(|sample| sample.pressure)),
                 _ => return None,
             };
             start_in_rect(canvas, pos).then_some((pos, pressure))
@@ -82,14 +88,42 @@ pub(super) fn interact(
     let ctx = ui.ctx();
     let (focused, mut events) = ctx.input(|input| (input.focused, input.events.clone()));
     let frame = (ctx.viewport_id(), ctx.cumulative_frame_nr());
-    if view.ink_events_frame == Some(frame) {
+    let mut pen = if view.ink_events_frame == Some(frame) {
         events.clear();
-    }
+        PenFrameData::default()
+    } else {
+        pen_input::take(ctx, frame.0, &events)
+    };
+    let touch = crate::touch_input::take_pointer_frame(ctx, frame.0, &events);
+    pen.touch_pointers = touch.pointers;
+    pen.touch_issue = touch.issue;
     view.ink_events_frame = Some(frame);
     let remaining = routing
         .restart_after_cancel
         .filter(|offset| *offset <= events.len())
-        .map(|offset| events.split_off(offset));
+        .map(|offset| {
+            let remaining_events = events.split_off(offset);
+            let remaining_samples = if pen.samples.is_empty() {
+                Vec::new()
+            } else {
+                pen.samples.split_off(offset)
+            };
+            let remaining_touch = if pen.touch_pointers.is_empty() {
+                Vec::new()
+            } else {
+                pen.touch_pointers.split_off(offset)
+            };
+            (
+                remaining_events,
+                PenFrameData {
+                    samples: remaining_samples,
+                    canceled: pen.canceled.take(),
+                    issue: pen.issue,
+                    touch_pointers: remaining_touch,
+                    touch_issue: pen.touch_issue,
+                },
+            )
+        });
     let scene_state = doc.state_id();
     let first_navigation = if remaining.is_some() {
         routing.previous_touch_navigation
@@ -107,9 +141,10 @@ pub(super) fn interact(
         first_navigation,
         scene_state,
         &mut events,
+        &mut pen,
         out,
     );
-    if let Some(mut remaining) = remaining {
+    if let Some((mut remaining, mut remaining_pen)) = remaining {
         captured |= interact_events(
             ui,
             doc,
@@ -121,6 +156,7 @@ pub(super) fn interact(
             routing.touch_navigation,
             scene_state,
             &mut remaining,
+            &mut remaining_pen,
             out,
         );
     }
@@ -139,6 +175,7 @@ fn interact_events(
     touch_navigation: bool,
     scene_state: u64,
     events: &mut Vec<Event>,
+    pen: &mut PenFrameData,
     out: &mut CanvasOutput,
 ) -> bool {
     let ctx = ui.ctx();
@@ -156,13 +193,38 @@ fn interact_events(
         && (response.has_focus() || ctx.memory(|memory| memory.focused()).is_none());
     // Disabled pointer events still reach the controller so it can observe
     // releases/cancellations and clear ownership without starting a gesture.
-    events.retain(|event| keyboard_owned || !matches!(event, Event::Key { .. }));
+    if !keyboard_owned {
+        let mut samples = Vec::with_capacity(pen.samples.len());
+        let mut pointers = Vec::with_capacity(pen.touch_pointers.len());
+        let mut index = 0;
+        events.retain(|event| {
+            let keep = !matches!(event, Event::Key { .. });
+            if keep {
+                if let Some(sample) = pen.samples.get(index) {
+                    samples.push(*sample);
+                }
+                if let Some(pointer) = pen.touch_pointers.get(index) {
+                    pointers.push(*pointer);
+                }
+            }
+            index += 1;
+            keep
+        });
+        pen.samples = samples;
+        pen.touch_pointers = pointers;
+    }
     if !focused
         && !events
             .iter()
             .any(|event| matches!(event, Event::WindowFocused(false)))
     {
         events.insert(0, Event::WindowFocused(false));
+        if !pen.samples.is_empty() {
+            pen.samples.insert(0, None);
+        }
+        if !pen.touch_pointers.is_empty() {
+            pen.touch_pointers.insert(0, false);
+        }
     }
     let touch_start = events.iter().any(|event| {
         matches!(
@@ -174,7 +236,7 @@ fn interact_events(
         )
     });
     let canvas = view.canvas_rect.intersect(ui.clip_rect());
-    let start = attempted_start(events, &view.ink_controller, canvas);
+    let start = attempted_start(events, pen, &view.ink_controller, canvas);
     let can_start = enabled
         && focused
         && !touch_navigation
@@ -191,6 +253,8 @@ fn interact_events(
         && (response.contains_pointer() || touch_start);
 
     let blocked_start = if can_start
+        && pen.issue.is_none()
+        && pen.touch_issue.is_none()
         && !view.ink_controller.has_pending_gesture()
         && let Some((position, pressure)) = start
         && let Err(error) = view
@@ -220,7 +284,7 @@ fn interact_events(
     };
     let transform = view.xf();
     let settings = view.ink_settings;
-    let frame = view.ink_controller.process_frame(
+    let frame = view.ink_controller.process_frame_with_pen(
         doc,
         scene,
         mode,
@@ -233,6 +297,7 @@ fn interact_events(
             can_start: can_start && !blocked_start,
             modifiers: ctx.input(|input| input.modifiers),
         },
+        pen,
     );
     if frame.captured && start.is_some() && enabled {
         response.request_focus();

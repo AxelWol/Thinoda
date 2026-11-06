@@ -1779,6 +1779,11 @@ impl Sheet {
         if current.card.is_some() {
             self.require_unlocked_board_selection(&[BoardMember::Card(id)])?;
         }
+        if !current.inline_text.is_empty()
+            && !card.is_some_and(|card| matches!(card.kind, CardKind::Sticky | CardKind::Text))
+        {
+            return Err(crate::rich_text::FORMATTED_CARD_REQUIRED.into());
+        }
         if let Some(card) = &card {
             validate_card(card)?;
             if id == self.root || self.parent(id).is_some() || !self.floating.contains(&id) {

@@ -3,7 +3,7 @@
 //! The OS clipboard still receives plain text. The private fragment is a small
 //! rootless sheet, with a new empty anchor rather than the source sheet's root.
 
-use super::{ClipboardPayload, normalize, resolve_paste};
+use super::{ClipboardPayload, MAX_TOPIC_CLIPBOARD_DEPTH, resolve_paste, same_normalized};
 use crate::board::{
     BoardMember, CanvasGroupId, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_OBJECTS,
     SheetRootMode,
@@ -12,11 +12,13 @@ use crate::geometry::Vec2;
 use crate::layout::Layout;
 use crate::model::{Sheet, Subtree, Topic, TopicId, valid_position};
 use crate::scene::{SceneGeometry, SceneId, build_scene, topic_anchor_rect};
+use crate::schedule::Weekday;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
 
 const BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-1\n";
+const INLINE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-2\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -34,6 +36,14 @@ pub struct BoardClipboardPayload {
 }
 
 impl BoardClipboardPayload {
+    fn prefix(&self) -> &'static str {
+        if self.fragment.has_inline_text() {
+            INLINE_BOARD_PREFIX
+        } else {
+            BOARD_PREFIX
+        }
+    }
+
     /// Source topic roots after deduplication and group expansion. Useful when
     /// preparing a cut; the caller must still check locks before deleting.
     pub fn source_topic_roots(&self) -> &[TopicId] {
@@ -45,7 +55,8 @@ impl BoardClipboardPayload {
         self.fragment.canvas.objects.iter().map(|object| object.id)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    /// Validates the current payload, including any changes to its public text.
+    pub fn validate(&self) -> Result<(), String> {
         if self.text.trim().is_empty() {
             return Err("board clipboard text must not be empty".into());
         }
@@ -92,8 +103,13 @@ impl BoardClipboardPayload {
                 .push(summary.topic);
         }
         let mut visited = HashSet::new();
-        let mut pending = sheet.floating.clone();
-        while let Some(id) = pending.pop() {
+        let mut pending: Vec<_> = sheet.floating.iter().map(|id| (*id, 0usize)).collect();
+        while let Some((id, depth)) = pending.pop() {
+            if depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+                return Err(format!(
+                    "board clipboard topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+                ));
+            }
             if id == sheet.root || !visited.insert(id) {
                 return Err("invalid or repeated board clipboard topic ownership".into());
             }
@@ -108,9 +124,9 @@ impl BoardClipboardPayload {
                     "board clipboard topic {id} has an invalid position"
                 ));
             }
-            pending.extend(topic.children.iter().copied());
+            pending.extend(topic.children.iter().map(|child| (*child, depth + 1)));
             if let Some(summaries) = summary_children.get(&id) {
-                pending.extend(summaries.iter().copied());
+                pending.extend(summaries.iter().map(|child| (*child, depth + 1)));
             }
         }
         if visited.len() + 1 != sheet.topics.len() {
@@ -135,7 +151,7 @@ impl BoardClipboardPayload {
         }
 
         // Bound serialized input before the more expensive model validation.
-        let mut counter = SizeCounter::new(MAX_BOARD_CLIPBOARD_BYTES - BOARD_PREFIX.len());
+        let mut counter = SizeCounter::new(MAX_BOARD_CLIPBOARD_BYTES - self.prefix().len());
         if let Err(error) = serde_json::to_writer(&mut counter, self) {
             if counter.exceeded {
                 return Err("board clipboard payload exceeds 16 MiB".into());
@@ -187,7 +203,7 @@ impl Write for SizeCounter {
 pub fn encode_board_payload(payload: &BoardClipboardPayload) -> Result<String, String> {
     payload.validate()?;
     let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
-    Ok(format!("{BOARD_PREFIX}{json}"))
+    Ok(format!("{}{json}", payload.prefix()))
 }
 
 /// Decodes and validates a versioned board payload. Both LF and Windows CRLF
@@ -196,12 +212,21 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     if text.len() > MAX_BOARD_CLIPBOARD_BYTES {
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
-    let json = text
-        .strip_prefix(BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-1\r\n"))
+    let (version, json) = text
+        .strip_prefix(INLINE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-2\r\n"))
+        .map(|json| (2, json))
+        .or_else(|| {
+            text.strip_prefix(BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-1\r\n"))
+                .map(|json| (1, json))
+        })
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 2 && payload.fragment.has_inline_text() {
+        return Err("inline card text requires board clipboard version 2".into());
+    }
     payload.validate()?;
     Ok(payload)
 }
@@ -226,13 +251,17 @@ pub fn resolve_board_paste<'a>(
     board: Option<&'a BoardClipboardPayload>,
     legacy: Option<&ClipboardPayload>,
     os_text: Option<&str>,
-) -> ResolvedBoardPaste<'a> {
-    if let Some(board) = board
-        && os_text.is_none_or(|text| normalize(text) == normalize(&board.text))
-    {
-        return ResolvedBoardPaste::Board(board);
+) -> Result<ResolvedBoardPaste<'a>, String> {
+    if os_text.is_some_and(|text| text.len() > MAX_BOARD_CLIPBOARD_BYTES) {
+        return Err("clipboard text exceeds 16 MiB".into());
     }
-    ResolvedBoardPaste::Topics(resolve_paste(legacy, os_text))
+    if let Some(board) = board
+        && os_text.is_none_or(|text| same_normalized(text, &board.text))
+    {
+        board.validate()?;
+        return Ok(ResolvedBoardPaste::Board(board));
+    }
+    Ok(ResolvedBoardPaste::Topics(resolve_paste(legacy, os_text)?))
 }
 
 /// Copies selected topics and canvas objects into a standalone board fragment.
@@ -247,12 +276,35 @@ pub fn resolve_board_paste<'a>(
 /// their direct/group locks are retained. For a cut, the caller must reject
 /// locked members before publishing or deleting anything. Hidden anchors are
 /// ignored, just as in [`super::copy_topics`].
+///
+/// Hosts that would otherwise compute a layout for the copy should call
+/// [`prepare_board_selection`] first, so excessive depth is rejected before
+/// recursive layout runs.
 pub fn copy_board_selection(
     sheet: &Sheet,
     layout: &Layout,
     topic_ids: &[TopicId],
     object_ids: &[CanvasObjectId],
 ) -> Result<Option<BoardClipboardPayload>, String> {
+    prepare_board_selection(sheet, topic_ids, object_ids)?
+        .map(|selection| selection.copy(layout))
+        .transpose()
+}
+
+/// A checked board selection tied to its unchanged source sheet.
+pub struct PreparedBoardSelection<'a> {
+    sheet: &'a Sheet,
+    roots: Vec<TopicId>,
+    owned: HashSet<TopicId>,
+    objects: HashSet<CanvasObjectId>,
+}
+
+/// Resolves groups and checks topic ownership and depth without building a layout.
+pub fn prepare_board_selection<'a>(
+    sheet: &'a Sheet,
+    topic_ids: &[TopicId],
+    object_ids: &[CanvasObjectId],
+) -> Result<Option<PreparedBoardSelection<'a>>, String> {
     if sheet.fim.is_some() {
         return Err("FIM selections cannot be copied as board fragments".into());
     }
@@ -342,10 +394,15 @@ pub fn copy_board_selection(
     }
 
     let mut owned = HashSet::new();
-    let mut pending = roots.clone();
-    while let Some(id) = pending.pop() {
+    let mut pending: Vec<_> = roots.iter().map(|id| (*id, 0usize)).collect();
+    while let Some((id, depth)) = pending.pop() {
+        if depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+            return Err(format!(
+                "board clipboard topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+            ));
+        }
         if !owned.insert(id) {
-            continue;
+            return Err("invalid or repeated board clipboard topic ownership".into());
         }
         if owned.len() > MAX_BOARD_CLIPBOARD_TOPICS {
             return Err(format!(
@@ -355,12 +412,38 @@ pub fn copy_board_selection(
         let topic = sheet
             .topic(id)
             .ok_or_else(|| format!("topic {id} not found"))?;
-        pending.extend(topic.children.iter().copied());
+        pending.extend(topic.children.iter().map(|child| (*child, depth + 1)));
         if let Some(summaries) = summary_children.get(&id) {
-            pending.extend(summaries.iter().copied());
+            pending.extend(summaries.iter().map(|child| (*child, depth + 1)));
         }
     }
 
+    Ok(Some(PreparedBoardSelection {
+        sheet,
+        roots,
+        owned,
+        objects,
+    }))
+}
+
+impl PreparedBoardSelection<'_> {
+    /// Builds the fragment using a layout of the prepared source sheet.
+    pub fn copy(self, layout: &Layout) -> Result<BoardClipboardPayload, String> {
+        copy_prepared_board_selection(self, layout)
+    }
+}
+
+fn copy_prepared_board_selection(
+    selection: PreparedBoardSelection<'_>,
+    layout: &Layout,
+) -> Result<BoardClipboardPayload, String> {
+    let PreparedBoardSelection {
+        sheet,
+        roots,
+        owned,
+        objects,
+    } = selection;
+    let floating: HashSet<_> = sheet.floating.iter().copied().collect();
     let mut fragment = Sheet::new("", "");
     // Choose an anchor that cannot be mistaken for any copied topic. It is
     // never written as a selected root, text, or a connector target.
@@ -425,6 +508,10 @@ pub fn copy_board_selection(
         .filter(|(id, _)| owned.contains(id))
         .map(|(id, task)| (*id, task.clone()))
         .collect();
+    if !fragment.scheduling.tasks.is_empty() {
+        // The source calendar is not copied; the destination is checked on paste.
+        fragment.scheduling.calendar.working_weekdays = Weekday::ALL.into();
+    }
     fragment.scheduling.dependencies = sheet
         .scheduling
         .dependencies
@@ -538,7 +625,7 @@ pub fn copy_board_selection(
     let text = plain_text(sheet, &roots, &fragment.canvas.objects)?;
     let payload = BoardClipboardPayload { text, fragment };
     payload.validate()?;
-    Ok(Some(payload))
+    Ok(payload)
 }
 
 fn is_external(
@@ -649,6 +736,7 @@ pub fn paste_floating_subtrees(
         .ok_or("board clipboard exhausts available IDs")?;
     let mut fragment = Sheet::new("", "");
     fragment.root_mode = SheetRootMode::Hidden;
+    fragment.scheduling.calendar.working_weekdays = Weekday::ALL.into();
     let mut previous_height = 0.0;
     let mut y = origin.y;
     for (index, subtree) in subtrees.iter().enumerate() {

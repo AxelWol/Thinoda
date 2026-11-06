@@ -5,6 +5,52 @@ use thinoda_core::{
 };
 
 #[test]
+fn tiny_imported_topic_fonts_render_without_changing_the_document() {
+    let mut sheet = Sheet::new("Fonts", "Root");
+    let root = sheet.root;
+    sheet.topic_mut(root).unwrap().child_numbering = Some(Default::default());
+    let topic = sheet.add_child(root, None, "Tiny text");
+    let imported_size = f32::from_bits(1);
+    let original = sheet.topic_mut(topic).unwrap();
+    original.style.font_size = Some(imported_size);
+    original.markers.push("priority-1".into());
+    original.hyperlink = Some("https://example.invalid".into());
+    original.notes = Some("Notes".into());
+
+    let mut document = Document::new(Workbook::new(sheet));
+    document.mark_saved();
+    let mut harness = Harness::new_ui_state(
+        |ui, state: &mut (Document, MapView)| {
+            MapCanvas::show(ui, &mut state.0, &mut state.1);
+        },
+        (document, MapView::default()),
+    );
+    for zoom in [0.1, 1.0, 5.0] {
+        harness.state_mut().1.set_zoom(zoom);
+        harness.run_steps(3);
+        {
+            let (document, view) = harness.state_mut();
+            view.begin_edit(document.sheet(), topic, false);
+        }
+        harness.run_steps(3);
+        harness.state_mut().1.cancel_edit();
+    }
+
+    assert_eq!(
+        harness
+            .state()
+            .0
+            .sheet()
+            .topic(topic)
+            .unwrap()
+            .style
+            .font_size,
+        Some(imported_size)
+    );
+    assert!(!harness.state().0.is_dirty());
+}
+
+#[test]
 fn named_family_is_used_for_title_measurement_paint_and_inline_editing() {
     let mut doc = Document::new(Workbook::new(Sheet::new("Fonts", "iiiiiiiiiiiiiiiiiiii")));
     doc.edit_sheet("Family", |sheet| {

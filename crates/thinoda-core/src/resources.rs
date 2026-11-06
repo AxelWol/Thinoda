@@ -147,6 +147,33 @@ impl ResourceStore {
         self.entries.is_empty()
     }
 
+    pub(crate) fn for_topics<'a>(
+        &self,
+        topics: impl IntoIterator<Item = &'a crate::model::Topic>,
+    ) -> Self {
+        let entries = topics
+            .into_iter()
+            .flat_map(|topic| {
+                topic.image.as_deref().into_iter().chain(
+                    topic
+                        .attachment
+                        .as_ref()
+                        .map(|attachment| attachment.resource.as_str()),
+                )
+            })
+            .filter_map(|reference| reference.strip_prefix(RESOURCE_PREFIX))
+            .filter_map(|id| {
+                self.entries
+                    .get(id)
+                    .map(|resource| (id.to_owned(), resource.clone()))
+            })
+            .collect();
+        Self {
+            entries,
+            ..Self::default()
+        }
+    }
+
     pub fn byte_len(&self) -> usize {
         self.entries.values().fold(0usize, |total, resource| {
             total.saturating_add(resource.data.len())

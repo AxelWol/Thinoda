@@ -85,7 +85,7 @@ fn subtree_sheet_clipboard_outline_duplicate_and_json_preserve_colors() {
         .toggle_marker_color(&[child], "task-half", Some(Color::rgba(15, 30, 90, 150)))
         .unwrap();
     let expected = sheet.topic(child).unwrap().marker_colors.clone();
-    let payload = clipboard::copy_topics(&sheet, &[child]).unwrap();
+    let payload = clipboard::copy_topics(&sheet, &[child]).unwrap().unwrap();
     let pasted = sheet.paste(sheet.root, &payload.subtrees).unwrap()[0];
     assert_eq!(sheet.topic(pasted).unwrap().marker_colors, expected);
     let duplicate = sheet.duplicate(child).unwrap();

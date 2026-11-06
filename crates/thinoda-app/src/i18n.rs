@@ -165,6 +165,38 @@ pub fn t(en: &'static str) -> &'static str {
     t_in(lang(), en)
 }
 
+pub(crate) fn localize_model_error(error: &str) -> &str {
+    localize_model_error_in(lang(), error)
+}
+
+fn localize_model_error_in(language: Lang, error: &str) -> &str {
+    match error {
+        thinoda_core::rich_text::FORMATTED_CARD_REQUIRED => t_in(
+            language,
+            "Formatted card text must remain on a floating sticky note or text card.",
+        ),
+        "Formatted card titles cannot be changed until rich-text editing is supported" => t_in(
+            language,
+            "Formatted card titles cannot be changed until rich-text editing is supported",
+        ),
+        "clipboard text exceeds 16 MiB"
+        | "topic clipboard payload exceeds 16 MiB"
+        | "board clipboard payload exceeds 16 MiB" => {
+            t_in(language, "Clipboard data exceeds 16 MiB.")
+        }
+        "topic clipboard exceeds 20000 topics" | "board clipboard exceeds 20000 topics" => {
+            t_in(language, "Clipboard selection exceeds 20,000 topics.")
+        }
+        "topic clipboard subtree depth exceeds 256" | "board clipboard topic depth exceeds 256" => {
+            t_in(language, "Clipboard topic depth exceeds 256 levels.")
+        }
+        "pasted topic depth exceeds 256" => {
+            t_in(language, "Paste would exceed a topic depth of 256 levels.")
+        }
+        _ => error,
+    }
+}
+
 /// Whether a dynamic label key has German and all additional-locale entries.
 #[cfg(test)]
 pub(crate) fn has_translations(en: &str) -> bool {
@@ -345,6 +377,14 @@ const DE: &[(&str, &str)] = &[
         "Ein Teil der Freihandeingabe wurde abgelehnt. Diese Geste kann nicht erneut ausgeführt werden; kopieren Sie ihre Messwerte oder verwerfen Sie sie.",
     ),
     (
+        "Pen input could not be matched. No stroke was started; dismiss this message and try again.",
+        "Die Stifteingabe konnte nicht zugeordnet werden. Es wurde kein Strich begonnen; schließen Sie diese Meldung und versuchen Sie es erneut.",
+    ),
+    (
+        "Touch pointer input could not be matched. Check the gesture or dismiss this message.",
+        "Die Berührungszeigereingabe konnte nicht zugeordnet werden. Prüfen Sie die Geste oder schließen Sie diese Meldung.",
+    ),
+    (
         "The ink gesture could not be completed. Retry it or discard it.",
         "Die Freihandgeste konnte nicht abgeschlossen werden. Versuchen Sie es erneut oder verwerfen Sie sie.",
     ),
@@ -437,6 +477,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Formatted card titles cannot be changed until rich-text editing is supported",
         "Formatierte Kartentitel können erst geändert werden, wenn die Rich-Text-Bearbeitung unterstützt wird.",
+    ),
+    (
+        "Formatted card text must remain on a floating sticky note or text card.",
+        "Formatierter Kartentext muss auf einer frei schwebenden Haftnotiz oder Textkarte bleiben.",
     ),
     (
         "Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.",
@@ -1863,6 +1907,10 @@ const DE: &[(&str, &str)] = &[
         "External relationships remain only in the original sheet",
         "Externe Beziehungen verbleiben nur im ursprünglichen Blatt",
     ),
+    (
+        "Some surrounding board, annotation or task context remains only in the original sheet",
+        "Ein Teil des umgebenden Board-, Anmerkungs- oder Aufgabenkontexts verbleibt nur im ursprünglichen Blatt",
+    ),
     ("Copy Sheet", "Blatt kopieren"),
     ("Paste Sheet", "Blatt einfügen"),
     (
@@ -1875,6 +1923,14 @@ const DE: &[(&str, &str)] = &[
         "Blatt in die Zwischenablage kopiert",
     ),
     ("Could not copy sheet", "Blatt konnte nicht kopiert werden"),
+    (
+        "Cut cancelled; original content was kept",
+        "Ausschneiden abgebrochen; der ursprüngliche Inhalt bleibt erhalten",
+    ),
+    (
+        "Older Thinoda clipboard data is unavailable; pasted text only",
+        "Ältere Thinoda-Zwischenablagedaten sind nicht verfügbar; nur Text wurde eingefügt",
+    ),
     (
         "Could not paste sheet",
         "Blatt konnte nicht eingefügt werden",
@@ -3773,6 +3829,27 @@ const DE: &[(&str, &str)] = &[
         "Could not clear menu usage counts",
         "Menünutzungszählungen konnten nicht gelöscht werden",
     ),
+    ("Could not copy", "Kopieren fehlgeschlagen"),
+    (
+        "Could not paste clipboard data",
+        "Zwischenablagedaten konnten nicht eingefügt werden",
+    ),
+    (
+        "Clipboard data exceeds 16 MiB.",
+        "Die Zwischenablagedaten überschreiten 16 MiB.",
+    ),
+    (
+        "Clipboard selection exceeds 20,000 topics.",
+        "Die Auswahl enthält mehr als 20.000 Themen.",
+    ),
+    (
+        "Clipboard topic depth exceeds 256 levels.",
+        "Die Thementiefe der Auswahl überschreitet 256 Ebenen.",
+    ),
+    (
+        "Paste would exceed a topic depth of 256 levels.",
+        "Das Einfügen würde eine Thementiefe von 256 Ebenen überschreiten.",
+    ),
 ];
 
 #[cfg(test)]
@@ -3790,6 +3867,78 @@ mod tests {
         Lang::Pl,
         Lang::PtBr,
     ];
+
+    #[test]
+    fn formatted_card_errors_are_localized_without_changing_other_errors() {
+        for language in TRANSLATED {
+            for error in [
+                thinoda_core::rich_text::FORMATTED_CARD_REQUIRED,
+                "Formatted card titles cannot be changed until rich-text editing is supported",
+            ] {
+                assert_eq!(
+                    localize_model_error_in(language, error),
+                    t_in(language, error)
+                );
+                assert_ne!(localize_model_error_in(language, error), error);
+            }
+            assert_eq!(
+                localize_model_error_in(language, "Unknown error"),
+                "Unknown error"
+            );
+        }
+    }
+
+    #[test]
+    fn clipboard_limit_errors_and_actions_are_localized() {
+        let depth = thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
+        let topics = thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_TOPICS;
+        let cases = [
+            (
+                "clipboard text exceeds 16 MiB".to_owned(),
+                "Clipboard data exceeds 16 MiB.",
+            ),
+            (
+                "topic clipboard payload exceeds 16 MiB".to_owned(),
+                "Clipboard data exceeds 16 MiB.",
+            ),
+            (
+                "board clipboard payload exceeds 16 MiB".to_owned(),
+                "Clipboard data exceeds 16 MiB.",
+            ),
+            (
+                format!("topic clipboard exceeds {topics} topics"),
+                "Clipboard selection exceeds 20,000 topics.",
+            ),
+            (
+                format!("board clipboard exceeds {topics} topics"),
+                "Clipboard selection exceeds 20,000 topics.",
+            ),
+            (
+                format!("topic clipboard subtree depth exceeds {depth}"),
+                "Clipboard topic depth exceeds 256 levels.",
+            ),
+            (
+                format!("board clipboard topic depth exceeds {depth}"),
+                "Clipboard topic depth exceeds 256 levels.",
+            ),
+            (
+                format!("pasted topic depth exceeds {depth}"),
+                "Paste would exceed a topic depth of 256 levels.",
+            ),
+        ];
+        for language in TRANSLATED {
+            for (error, key) in &cases {
+                assert_eq!(
+                    localize_model_error_in(language, error),
+                    t_in(language, key)
+                );
+                assert_ne!(localize_model_error_in(language, error), *key);
+            }
+            for key in ["Could not copy", "Could not paste clipboard data"] {
+                assert_ne!(t_in(language, key), key);
+            }
+        }
+    }
 
     #[test]
     fn fim_wizard_dynamic_labels_are_in_every_catalog() {
@@ -4392,6 +4541,8 @@ mod tests {
             "Resolve pending ink before continuing. Retry, copy, or discard it.",
             "The pointer is still down. Release it before retrying.",
             "Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it.",
+            "Pen input could not be matched. No stroke was started; dismiss this message and try again.",
+            "Touch pointer input could not be matched. Check the gesture or dismiss this message.",
             "The ink gesture could not be completed. Retry it or discard it.",
             "The ink gesture was interrupted. Retry it or discard it.",
             "Ink input details",
@@ -4600,8 +4751,10 @@ mod tests {
             );
         }
         keys.extend(outline_export_losses);
-        let formatted_title_errors =
-            ["Formatted card titles cannot be changed until rich-text editing is supported"];
+        let formatted_title_errors = [
+            "Formatted card titles cannot be changed until rich-text editing is supported",
+            "Formatted card text must remain on a floating sticky note or text card.",
+        ];
         for key in formatted_title_errors {
             assert!(
                 include_str!("pt-BR.txt")

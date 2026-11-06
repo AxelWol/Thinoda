@@ -28,8 +28,10 @@ fn equations_native_clipboard_outline_and_masking_preserve_or_remove_complete_so
     assert!(payload.starts_with("THINODA-SHEET-3\n"));
     assert_eq!(clipboard::decode_sheet(&payload).unwrap(), *book.active());
     assert!(clipboard::decode_sheet(&payload.replacen("SHEET-3", "SHEET-2", 1)).is_err());
-    let copied = clipboard::copy_topics(book.active(), &[book.active().root]).unwrap();
-    let pasted = clipboard::resolve_paste(Some(&copied), Some(&copied.text));
+    let copied = clipboard::copy_topics(book.active(), &[book.active().root])
+        .unwrap()
+        .unwrap();
+    let pasted = clipboard::resolve_paste(Some(&copied), Some(&copied.text)).unwrap();
     assert_eq!(pasted[0].topics[0].notes, book.active().root_topic().notes);
     let outline = outline::to_outline(book.active(), book.active().root);
     let restored = outline::sheet_from_outline("copy", &outline);

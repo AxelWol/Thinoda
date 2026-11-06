@@ -1,6 +1,6 @@
 //! Native clipboard transport. Keep the handle alive for X11 clipboard ownership.
 
-use super::{PreparedCopy, Snapshot, read_html};
+use super::{PreparedCopy, Snapshot, read_html, verify_cut_snapshot};
 
 #[derive(Default)]
 pub(super) struct Transport {
@@ -28,21 +28,32 @@ impl Transport {
             }
             fake.text = prepared.text.clone();
             fake.html = Some(prepared.html.clone());
-            return Ok(());
+            #[cfg(test)]
+            {
+                if let Some(text) = &fake.written_text {
+                    fake.text = text.clone();
+                }
+                if let Some(html) = &fake.written_html {
+                    fake.html = html.clone();
+                }
+            }
+        } else {
+            let clipboard = self.clipboard()?;
+            clipboard
+                .set_html(&prepared.html, Some(&prepared.text))
+                .map_err(|error| error.to_string())?;
+            if prepared.cut.is_none() {
+                let html = clipboard.get().html().map_err(|error| {
+                    format!("rich clipboard write could not be verified: {error}")
+                })?;
+                if read_html(&html)? != Some(prepared.rich.clone()) {
+                    return Err("rich clipboard write could not be verified".into());
+                }
+            }
         }
-        let clipboard = self.clipboard()?;
-        clipboard
-            .set_html(&prepared.html, Some(&prepared.text))
-            .map_err(|error| error.to_string())?;
-        // Some native APIs report a successful plain-text write even if the
-        // HTML format could not be registered. Never cut until the separate
-        // representation can actually be read back.
-        let html = clipboard
-            .get()
-            .html()
-            .map_err(|error| format!("rich clipboard write could not be verified: {error}"))?;
-        if read_html(&html)? != Some(prepared.rich.clone()) {
-            return Err("rich clipboard write could not be verified".into());
+        if prepared.cut.is_some() {
+            let snapshot = self.read(None)?;
+            verify_cut_snapshot(prepared, &snapshot)?;
         }
         Ok(())
     }
@@ -61,10 +72,14 @@ impl Transport {
                     html: None,
                 });
             }
-            return Ok(Snapshot {
-                text: fake.text.clone(),
-                html: fake.html.clone(),
-            });
+            #[cfg(test)]
+            let after = fake
+                .read_html_after
+                .clone()
+                .unwrap_or_else(|| fake.html.clone());
+            #[cfg(not(test))]
+            let after = fake.html.clone();
+            return stable_snapshot(fake.html.clone(), fake.text.clone(), after);
         }
         let clipboard = self.clipboard()?;
         // Separate native reads can race another application's clipboard
@@ -73,10 +88,7 @@ impl Transport {
         let before = clipboard.get().html().ok();
         let text = clipboard.get_text().map_err(|error| error.to_string())?;
         let after = clipboard.get().html().ok();
-        if before != after {
-            return Err("clipboard changed while it was being read".into());
-        }
-        Ok(Snapshot { text, html: after })
+        stable_snapshot(before, text, after)
     }
 
     pub(super) fn headless() -> Self {
@@ -98,6 +110,17 @@ impl Transport {
     }
 }
 
+fn stable_snapshot(
+    before: Option<String>,
+    text: String,
+    after: Option<String>,
+) -> Result<Snapshot, String> {
+    if before != after {
+        return Err("clipboard changed while it was being read".into());
+    }
+    Ok(Snapshot { text, html: after })
+}
+
 fn clipboard_initialization_error(error: &str, wayland: bool) -> String {
     if wayland {
         format!(
@@ -116,6 +139,12 @@ pub(super) struct FakeClipboard {
     pub fail_write: bool,
     pub fail_read: bool,
     pub prefer_event_text: bool,
+    #[cfg(test)]
+    pub written_text: Option<String>,
+    #[cfg(test)]
+    pub written_html: Option<Option<String>>,
+    #[cfg(test)]
+    pub read_html_after: Option<Option<String>>,
 }
 
 #[cfg(test)]

@@ -1645,7 +1645,7 @@ fn paint_topic(
     if let Some((label, nr)) = &t.number {
         let nr = xf.rect(*nr);
         let font = FontId::new(
-            st.font_size * z,
+            crate::measure::render_font_size(st.font_size * z),
             crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
         );
         let pos = pos2(nr.left(), nr.center().y);
@@ -1671,7 +1671,7 @@ fn paint_topic(
     if !editing && let Some(topic) = topic {
         let tr = xf.rect(t.title_rect);
         let font = FontId::new(
-            st.font_size * z,
+            crate::measure::render_font_size(st.font_size * z),
             crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
         );
         let mut job = LayoutJob::default();
@@ -1718,7 +1718,7 @@ fn paint_topic(
             ir.center(),
             egui::Align2::CENTER_CENTER,
             glyph,
-            FontId::proportional(ir.height() * 0.9),
+            FontId::proportional(crate::measure::render_font_size(ir.height() * 0.9)),
             text_color.gamma_multiply(0.8),
         );
     }
@@ -1782,7 +1782,7 @@ pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, col
                 c,
                 egui::Align2::CENTER_CENTER,
                 rest,
-                FontId::proportional(rad * 1.3),
+                FontId::proportional(crate::measure::render_font_size(rad * 1.3)),
                 a(detail),
             );
         }
@@ -1850,17 +1850,10 @@ pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, col
         }
         _ => {
             let glyph = thinoda_core::markers::glyph(id);
-            let has = painter
-                .ctx()
-                .fonts_mut(|f| f.has_glyphs(&FontId::proportional(rad * 1.6), glyph));
+            let font = FontId::proportional(crate::measure::render_font_size(rad * 1.6));
+            let has = painter.ctx().fonts_mut(|f| f.has_glyphs(&font, glyph));
             if has && !glyph.is_empty() {
-                painter.text(
-                    c,
-                    egui::Align2::CENTER_CENTER,
-                    glyph,
-                    FontId::proportional(rad * 1.6),
-                    a(foreground),
-                );
+                painter.text(c, egui::Align2::CENTER_CENTER, glyph, font, a(foreground));
             } else {
                 painter.circle_filled(
                     c,
@@ -1874,7 +1867,7 @@ pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, col
                     c,
                     egui::Align2::CENTER_CENTER,
                     initial,
-                    FontId::proportional(rad * 1.2),
+                    FontId::proportional(crate::measure::render_font_size(rad * 1.2)),
                     a(detail),
                 );
             }
