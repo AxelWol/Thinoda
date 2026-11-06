@@ -365,7 +365,8 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   add/edit label (A), "…" opens the full connector inspector. Positioned near the edge
   midpoint, never covering the edge; keyboard reachable; reuses existing board toolbar
   widgets/icons. Selected **shape** quick toolbar likewise (fill, stroke, text, style
-  presets, "…"), following the same visual language.
+  presets, "…"), following the same visual language. *Phase 1d places both in the
+  contextual section of the left board toolbar instead; see the Phase 1d progress note.*
 - **Virtual bends**: midpoint dots on each segment of the selected edge; drag = create
   waypoint; orthogonal edges drag whole segments; double-click waypoint = remove;
   "Clear waypoints" in toolbar "…".
@@ -735,8 +736,26 @@ flips and stored `Perimeter` overrides arrive with the Phase 3 model. Tests:
 `connectors_end_on_shape_perimeters` (every `ShapeKind`, rotated) and
 `polygon_clip_takes_the_outermost_crossing` in `scene/tests.rs`.
 
-Remaining Phase 1 slices: floating edge/shape toolbars (1d), tile drag-and-drop and
-keyboard insert at a free spot (1e).
+**Phase 1d — contextual edge and shape controls.** Selecting a single connector or
+shape fills the contextual section of the left board toolbar. draw.io shows these on
+a floating toolbar near the selection. Thinoda already shows connector controls in the
+left toolbar, so shapes use the same place rather than a second floating bar. This
+keeps one visual language and one keyboard path, and nothing covers the drawing. A
+floating variant can follow if users miss it.
+- **Shapes**: "Change shape" opens the shape library with the current shape selected;
+  "Fill color" (with "No fill"), "Outline color" (with "Auto") and "Outline width".
+  The size, label, description and opacity stay unchanged. Choosing a width while the
+  outline is automatic pins the automatic color, because the automatic outline is
+  always drawn at 2 px.
+- **Shapes and connectors**: "Edit label" starts inline editing, as F2 does. "More
+  formatting options" toggles the Format panel, like draw.io's "…".
+- The color and width menus are shared with the connector controls. Each change is one
+  undo step. Locked or grouped items show the controls disabled. Changes are rejected
+  when the document, sheet, selection or revision changed since the frame was drawn.
+  Open menus close when the selection changes or label editing starts.
+Tests: `shape_context_tests.rs`; `connector_context_tests.rs` still passes unchanged.
+
+Remaining Phase 1 slice: tile drag-and-drop and keyboard insert at a free spot (1e).
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

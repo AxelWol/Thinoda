@@ -884,3 +884,10 @@ Review hierarchy changes|Revisar alterações da hierarquia
 Grid|Grade
 Canvas settings|Configurações da tela
 No counts recorded yet.|Ainda não há contagens registradas.
+Edit label|Editar rótulo
+More formatting options|Mais opções de formatação
+Change shape|Alterar forma
+Fill color|Cor de preenchimento
+No fill|Sem preenchimento
+Outline color|Cor do contorno
+Outline width|Espessura do contorno

@@ -67,7 +67,116 @@ struct ConnectorPopups {
 }
 
 #[derive(Clone, Copy)]
-struct ConnectorColorDraft {
+struct ShapeProperties {
+    shape: ShapeKind,
+    fill: Option<Color>,
+    stroke: Option<Color>,
+    /// Outline drawn when no explicit stroke is set and the shape has no fill.
+    auto_stroke: Color,
+    stroke_width: f32,
+}
+
+impl ShapeProperties {
+    fn visible_stroke(self) -> Option<Color> {
+        self.stroke
+            .or_else(|| self.fill.is_none().then_some(self.auto_stroke))
+    }
+}
+
+struct ShapeContext {
+    target: ConnectorTarget,
+    enabled: bool,
+    properties: ShapeProperties,
+}
+
+enum ShapeChange {
+    Shape(ShapeKind),
+    Fill(Option<Color>),
+    Stroke(Option<Color>),
+    StrokeWidth(f32),
+}
+
+impl ShapeChange {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Shape(_) => "Change shape",
+            Self::Fill(_) => "Fill color",
+            Self::Stroke(_) => "Outline color",
+            Self::StrokeWidth(_) => "Outline width",
+        }
+    }
+
+    fn apply(self, object: &mut CanvasObject, auto_stroke: Color) {
+        match self {
+            Self::Shape(kind) => {
+                if let CanvasObjectKind::Shape { shape, .. } = &mut object.kind {
+                    *shape = kind;
+                }
+            }
+            Self::Fill(color) => object.style.fill = color,
+            Self::Stroke(color) => object.style.stroke = color,
+            Self::StrokeWidth(width) => {
+                object.style.stroke_width = width;
+                // An automatic outline has a fixed width, so a chosen width pins its color.
+                object.style.stroke.get_or_insert(auto_stroke);
+            }
+        }
+    }
+}
+
+/// Shortcut shown below the contextual board-object controls.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContextAction {
+    EditLabel,
+    FormatPanel,
+}
+
+#[derive(Clone, Copy)]
+struct ColorControl {
+    label: &'static str,
+    none: &'static str,
+    key: &'static str,
+    icon: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct WidthControl {
+    label: &'static str,
+    key: &'static str,
+    salt: &'static str,
+}
+
+const CONNECTOR_COLOR: ColorControl = ColorControl {
+    label: "Connector color",
+    none: "Auto",
+    key: "connector",
+    icon: icons::FORMAT,
+};
+const CONNECTOR_WIDTH: WidthControl = WidthControl {
+    label: "Connector width",
+    key: "connector",
+    salt: "connector-width",
+};
+const SHAPE_FILL: ColorControl = ColorControl {
+    label: "Fill color",
+    none: "No fill",
+    key: "shape_fill",
+    icon: icons::FORMAT,
+};
+const SHAPE_OUTLINE: ColorControl = ColorControl {
+    label: "Outline color",
+    none: "Auto",
+    key: "shape_outline",
+    icon: icons::TOPIC_STYLE,
+};
+const SHAPE_OUTLINE_WIDTH: WidthControl = WidthControl {
+    label: "Outline width",
+    key: "shape_outline",
+    salt: "shape-outline-width",
+};
+
+#[derive(Clone, Copy)]
+struct ColorDraft {
     owner: egui::Id,
     value: egui::ecolor::Hsva,
     frame: u64,
@@ -75,7 +184,7 @@ struct ConnectorColorDraft {
 }
 
 #[derive(Clone, Copy)]
-struct ConnectorWidthDraft {
+struct WidthDraft {
     owner: egui::Id,
     value: f32,
     frame: u64,
@@ -283,7 +392,8 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
 }
 
 impl ThinodaApp {
-    fn connector_context(&self) -> Option<ConnectorContext> {
+    /// The one selected board object a contextual toolbar may edit, and whether editing is allowed.
+    fn single_board_object(&self) -> Option<(ConnectorTarget, bool)> {
         let doc = self.doc()?;
         let view = &doc.view;
         if !matches!(view.board_tool, BoardTool::Select | BoardTool::Connector)
@@ -299,20 +409,6 @@ impl ThinodaApp {
         let sheet = doc.doc.sheet();
         let id = view.board_selection[0];
         let object = sheet.canvas.object(id)?;
-        let CanvasObjectKind::Connector(connector) = &object.kind else {
-            return None;
-        };
-        let default_color = if view.accent.a() > 0 {
-            view.accent
-        } else if view.dark {
-            Color32::from_gray(225)
-        } else {
-            Color32::from_gray(65)
-        };
-        let effective_color = connector
-            .color
-            .or(object.style.stroke)
-            .unwrap_or_else(|| crate::ui::to_color(default_color));
         let enabled = !object.locked
             && object.group.is_none()
             && !view.has_active_canvas_gesture()
@@ -327,8 +423,8 @@ impl ThinodaApp {
             && !self.any_modal_open()
             && !self.dialogs.settings
             && !self.dialogs.about;
-        Some(ConnectorContext {
-            target: ConnectorTarget {
+        Some((
+            ConnectorTarget {
                 owner: ConnectorOwner {
                     viewport: self.current_viewport,
                     document: doc.key.clone(),
@@ -340,6 +436,25 @@ impl ThinodaApp {
                 revision: doc.doc.state_id(),
             },
             enabled,
+        ))
+    }
+
+    fn connector_context(&self) -> Option<ConnectorContext> {
+        let (target, enabled) = self.single_board_object()?;
+        let doc = self.doc()?;
+        let view = &doc.view;
+        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let CanvasObjectKind::Connector(connector) = &object.kind else {
+            return None;
+        };
+        let default_color = thinoda_canvas::automatic_board_stroke(view.accent, view.dark);
+        let effective_color = connector
+            .color
+            .or(object.style.stroke)
+            .unwrap_or_else(|| crate::ui::to_color(default_color));
+        Some(ConnectorContext {
+            target,
+            enabled,
             properties: ConnectorProperties {
                 route: connector.route,
                 arrow_start: connector.arrow_start,
@@ -349,6 +464,75 @@ impl ThinodaApp {
                 width: connector.width,
             },
         })
+    }
+
+    fn shape_context(&self) -> Option<ShapeContext> {
+        let (target, enabled) = self.single_board_object()?;
+        let doc = self.doc()?;
+        let view = &doc.view;
+        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
+            return None;
+        };
+        Some(ShapeContext {
+            target,
+            enabled,
+            properties: ShapeProperties {
+                shape: *shape,
+                fill: object.style.fill,
+                stroke: object.style.stroke,
+                auto_stroke: crate::ui::to_color(thinoda_canvas::automatic_board_stroke(
+                    view.accent,
+                    view.dark,
+                )),
+                stroke_width: object.style.stroke_width,
+            },
+        })
+    }
+
+    fn apply_shape_change(
+        &mut self,
+        target: &ConnectorTarget,
+        change: ShapeChange,
+    ) -> Result<ConnectorTarget, String> {
+        let Some(context) = self
+            .shape_context()
+            .filter(|current| current.enabled && current.target == *target)
+        else {
+            return Err(t("Not possible here").into());
+        };
+        let label = change.label();
+        let auto_stroke = context.properties.auto_stroke;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .update_canvas_object(label, target.owner.object, |object| {
+                change.apply(object, auto_stroke);
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(ConnectorTarget {
+            revision: doc.doc.state_id(),
+            ..target.clone()
+        })
+    }
+
+    /// Starts inline editing of the selected shape or connector label, as F2 does.
+    fn edit_board_label(&mut self, target: &ConnectorTarget) -> Result<(), String> {
+        if !self
+            .single_board_object()
+            .is_some_and(|(current, enabled)| enabled && current == *target)
+        {
+            return Err(t("Not possible here").into());
+        }
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        if doc.view.begin_board_label(&doc.doc, target.owner.object) {
+            Ok(())
+        } else {
+            Err(t("Not possible here").into())
+        }
     }
 
     fn apply_connector_change(
@@ -401,16 +585,21 @@ impl ThinodaApp {
         editing_toolbar: Option<Rect>,
     ) -> Option<Rect> {
         let connector = self.connector_context();
+        let shape = connector.is_none().then(|| self.shape_context()).flatten();
+        let context_target = connector
+            .as_ref()
+            .map(|value| (&value.target, value.enabled))
+            .or_else(|| shape.as_ref().map(|value| (&value.target, value.enabled)));
         let viewport = self.current_viewport;
         let popup_slot = connector_popup_slot(viewport);
         let previous_popups = ctx.data(|data| data.get_temp::<ConnectorPopups>(popup_slot));
         if previous_popups.as_ref().is_some_and(|previous| {
-            !connector
-                .as_ref()
-                .is_some_and(|current| current.enabled && current.target == previous.target)
+            !context_target.is_some_and(|(target, enabled)| enabled && *target == previous.target)
         }) {
             Self::close_connector_popups(ctx, viewport);
         }
+        let format_panel_open = self.settings.show_format_panel
+            && self.sidebar_family == crate::app::SidebarFamily::Format;
         let doc = self.doc()?;
         let tool = doc.view.board_tool;
         let show_minimap = doc.view.show_minimap;
@@ -419,7 +608,7 @@ impl ThinodaApp {
         let auto_color_id = egui::Id::unique(("board_ink_auto_color", &doc.key));
         let last_tool_id = egui::Id::unique(("board_toolbar_last_tool", &doc.key));
         let last_connector_id = egui::Id::unique(("board_toolbar_last_connector", viewport));
-        let connector_owner = connector.as_ref().map(|value| value.target.owner.clone());
+        let connector_owner = context_target.map(|(target, _)| target.owner.clone());
         let reveal_connector = connector_owner.is_some()
             && ctx
                 .data(|data| data.get_temp::<Option<ConnectorOwner>>(last_connector_id))
@@ -447,6 +636,8 @@ impl ThinodaApp {
             .unwrap_or(true);
         let mut command = None;
         let mut connector_change = None;
+        let mut shape_change = None;
+        let mut context_action = None;
         let mut connector_popups = Vec::new();
         let content_width = (canvas.width() - 36.0).max(0.0);
         let toolbar_width = if collapsed {
@@ -501,14 +692,39 @@ impl ThinodaApp {
                     }
                     scroll.show(ui, |ui| {
                         if let Some(connector) = &connector {
-                            ui.add_enabled_ui(connector.enabled, |ui| {
-                                ui.push_id(&connector.target.owner, |ui| {
+                            ui.push_id(&connector.target.owner, |ui| {
+                                ui.add_enabled_ui(connector.enabled, |ui| {
                                     let (change, popups) = connector_context_controls(
                                         ui, canvas, collapsed, row_height, connector,
                                     );
                                     connector_change = change;
                                     connector_popups = popups;
                                 });
+                                context_action = context_action_controls(
+                                    ui,
+                                    collapsed,
+                                    row_height,
+                                    connector.enabled,
+                                    format_panel_open,
+                                );
+                            });
+                            ui.separator();
+                        } else if let Some(shape) = &shape {
+                            ui.push_id(&shape.target.owner, |ui| {
+                                ui.add_enabled_ui(shape.enabled, |ui| {
+                                    let (change, popups) = shape_context_controls(
+                                        ui, canvas, collapsed, row_height, shape,
+                                    );
+                                    shape_change = change;
+                                    connector_popups = popups;
+                                });
+                                context_action = context_action_controls(
+                                    ui,
+                                    collapsed,
+                                    row_height,
+                                    shape.enabled,
+                                    format_panel_open,
+                                );
                             });
                             ui.separator();
                         } else if matches!(tool, BoardTool::Pen | BoardTool::Highlighter) {
@@ -703,7 +919,15 @@ impl ThinodaApp {
                             matches!(tool, BoardTool::Shape(_)),
                             row_height,
                             |ui| {
-                                if let Some(shape) = shape_library(ui, canvas, tool, t) {
+                                if let Some(shape) = shape_library(
+                                    ui,
+                                    canvas,
+                                    match tool {
+                                        BoardTool::Shape(shape) => Some(shape),
+                                        _ => None,
+                                    },
+                                    t,
+                                ) {
                                     // Choosing the armed tile again finishes placing shapes.
                                     command =
                                         Some(Cmd::BoardTool(if tool == BoardTool::Shape(shape) {
@@ -775,6 +999,7 @@ impl ThinodaApp {
         if let Some(doc) = self.doc_mut() {
             doc.view.ink_settings = ink_settings;
         }
+        let action_target = context_target.map(|(target, _)| target.clone());
         if let Some(connector) = connector.filter(|value| value.enabled) {
             let mut target = connector.target;
             if let Some(change) = connector_change {
@@ -796,6 +1021,40 @@ impl ThinodaApp {
                     },
                 );
             });
+        } else if let Some(shape) = shape.as_ref().filter(|value| value.enabled) {
+            let mut target = shape.target.clone();
+            if let Some(change) = shape_change {
+                match self.apply_shape_change(&target, change) {
+                    Ok(updated) => target = updated,
+                    Err(error) => {
+                        Self::close_connector_popups(ctx, viewport);
+                        self.toasts.warning(error);
+                        return Some(toolbar.response.rect);
+                    }
+                }
+            }
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    popup_slot,
+                    ConnectorPopups {
+                        target,
+                        ids: connector_popups,
+                    },
+                );
+            });
+        }
+        match context_action {
+            Some(ContextAction::EditLabel) => {
+                Self::close_connector_popups(ctx, viewport);
+                if let Err(error) = action_target
+                    .ok_or_else(|| t("Not possible here").to_owned())
+                    .and_then(|target| self.edit_board_label(&target))
+                {
+                    self.toasts.warning(error);
+                }
+            }
+            Some(ContextAction::FormatPanel) => command = Some(Cmd::ToggleFormatPanel),
+            None => {}
         }
         if let Some(command) = command {
             self.exec(ctx, command);
@@ -1157,10 +1416,165 @@ fn connector_context_controls(
     {
         change = Some(ConnectorChange::ArrowEnd(!properties.arrow_end));
     }
-    let color = board_tool_popup(
+    let (color, picked) = color_popup(
         ui,
-        icons::FORMAT.into(),
-        "Connector color",
+        canvas,
+        collapsed,
+        row_height,
+        CONNECTOR_COLOR,
+        &context.target,
+        properties.color,
+        properties.effective_color,
+        Some(properties.effective_color),
+    );
+    popups.push(color);
+    if let Some(color) = picked {
+        change = Some(ConnectorChange::Color(color));
+    }
+    let (width, picked) = width_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        CONNECTOR_WIDTH,
+        &context.target,
+        properties.width,
+    );
+    popups.push(width);
+    if let Some(width) = picked {
+        change = Some(ConnectorChange::Width(width));
+    }
+    (change, popups)
+}
+
+fn shape_context_controls(
+    ui: &mut Ui,
+    canvas: Rect,
+    collapsed: bool,
+    row_height: f32,
+    context: &ShapeContext,
+) -> (Option<ShapeChange>, Vec<egui::Id>) {
+    let properties = context.properties;
+    let mut change = None;
+    let mut popups = Vec::with_capacity(4);
+    let shape = board_tool_popup(
+        ui,
+        icons::BOARD_SHAPES.into(),
+        "Change shape",
+        collapsed,
+        false,
+        row_height,
+        |ui| {
+            if let Some(shape) = shape_library(ui, canvas, Some(properties.shape), t)
+                && shape != properties.shape
+            {
+                change = Some(ShapeChange::Shape(shape));
+            }
+        },
+    );
+    popups.push(egui::Popup::menu(&shape).get_id());
+    let (fill, picked) = color_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        SHAPE_FILL,
+        &context.target,
+        properties.fill,
+        properties.fill.unwrap_or(Color::WHITE),
+        properties.fill,
+    );
+    popups.push(fill);
+    if let Some(color) = picked {
+        change = Some(ShapeChange::Fill(color));
+    }
+    let (outline, picked) = color_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        SHAPE_OUTLINE,
+        &context.target,
+        properties.stroke,
+        properties.stroke.unwrap_or(properties.auto_stroke),
+        properties.visible_stroke(),
+    );
+    popups.push(outline);
+    if let Some(color) = picked {
+        change = Some(ShapeChange::Stroke(color));
+    }
+    let (width, picked) = width_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        SHAPE_OUTLINE_WIDTH,
+        &context.target,
+        properties.stroke_width,
+    );
+    popups.push(width);
+    if let Some(width) = picked {
+        change = Some(ShapeChange::StrokeWidth(width));
+    }
+    (change, popups)
+}
+
+/// "Edit label" and "More formatting options" shortcuts shared by shapes and connectors.
+fn context_action_controls(
+    ui: &mut Ui,
+    collapsed: bool,
+    row_height: f32,
+    enabled: bool,
+    format_panel_open: bool,
+) -> Option<ContextAction> {
+    let mut action = None;
+    ui.add_enabled_ui(enabled, |ui| {
+        if board_tool_button(
+            ui,
+            icons::EDIT.into(),
+            "Edit label",
+            false,
+            collapsed,
+            row_height,
+        )
+        .1
+        {
+            action = Some(ContextAction::EditLabel);
+        }
+    });
+    if board_tool_button(
+        ui,
+        icons::TUNE.into(),
+        "More formatting options",
+        format_panel_open,
+        collapsed,
+        row_height,
+    )
+    .1
+    {
+        action = Some(ContextAction::FormatPanel);
+    }
+    action
+}
+
+/// Board-toolbar color menu: a "none" choice, swatches and a custom picker.
+#[allow(clippy::too_many_arguments)]
+fn color_popup(
+    ui: &mut Ui,
+    canvas: Rect,
+    collapsed: bool,
+    row_height: f32,
+    control: ColorControl,
+    target: &ConnectorTarget,
+    current: Option<Color>,
+    picker_start: Color,
+    swatch: Option<Color>,
+) -> (egui::Id, Option<Option<Color>>) {
+    let mut change = None;
+    let response = board_tool_popup(
+        ui,
+        control.icon.into(),
+        control.label,
         collapsed,
         false,
         row_height,
@@ -1169,37 +1583,37 @@ fn connector_context_controls(
             reserve_popup_scrollbar_space(ui);
             let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
             egui::ScrollArea::vertical()
-                .id_salt("connector_color_choices")
+                .id_salt((control.key, "color_choices"))
                 .min_scrolled_height(0.0)
                 .max_height(max_height)
                 .show(ui, |ui| {
-                    let auto = ui
-                        .selectable_label(properties.color.is_none(), t("Auto"))
-                        .accessible_name(format!("{} · {}", t("Connector color"), t("Auto")));
-                    if auto.clicked()
+                    let none = ui
+                        .selectable_label(current.is_none(), t(control.none))
+                        .accessible_name(format!("{} · {}", t(control.label), t(control.none)));
+                    if none.clicked()
                         && widgets::touch_activation_allowed(ui.ctx())
-                        && properties.color.is_some()
+                        && current.is_some()
                     {
-                        change = Some(ConnectorChange::Color(None));
+                        change = Some(None);
                     }
-                    let selected = properties
-                        .color
-                        .map(|color| Color32::from_rgb(color.r, color.g, color.b));
+                    let selected =
+                        current.map(|color| Color32::from_rgb(color.r, color.g, color.b));
                     if let Some(color) = widgets::color_swatches(ui, &crate::ui::SWATCHES, selected)
                     {
                         let [r, g, b, _] = color.to_srgba_unmultiplied();
-                        let alpha = properties.color.map_or(255, |color| color.a);
+                        let alpha = current.map_or(255, |color| color.a);
                         let color = Some(Color::rgba(r, g, b, alpha));
-                        if color != properties.color {
-                            change = Some(ConnectorChange::Color(color));
+                        if color != current {
+                            change = Some(color);
                         }
                     }
                     let custom = ui.collapsing(t("Custom color"), |ui| {
                         ui.spacing_mut().slider_width = ui.available_width().min(260.0);
-                        if let Some(color) = connector_color_picker(ui, &context.target, properties)
-                            && Some(color) != properties.color
+                        if let Some(color) =
+                            custom_color_picker(ui, control.key, target, picker_start)
+                            && Some(color) != current
                         {
-                            change = Some(ConnectorChange::Color(Some(color)));
+                            change = Some(Some(color));
                         }
                     });
                     if custom.header_response.clicked() && custom.body_response.is_some() {
@@ -1209,20 +1623,45 @@ fn connector_context_controls(
                 });
         },
     );
-    popups.push(egui::Popup::menu(&color).get_id());
-    let swatch = Rect::from_min_size(color.rect.left_bottom() + vec2(8.0, -6.0), vec2(16.0, 3.0));
-    ui.painter()
-        .rect_filled(swatch, 1, crate::ui::from_color(properties.effective_color));
+    let rect = Rect::from_min_size(
+        response.rect.left_bottom() + vec2(8.0, -6.0),
+        vec2(16.0, 3.0),
+    );
+    let border = thinoda_ui::Palette::of_ui(ui).border;
+    if let Some(color) = swatch {
+        ui.painter()
+            .rect_filled(rect, 1, crate::ui::from_color(color));
+    } else {
+        // A diagonal slash marks "no color", as in common design tools.
+        ui.painter().line_segment(
+            [rect.left_bottom(), rect.right_top()],
+            egui::Stroke::new(1.0, border),
+        );
+    }
     ui.painter().rect_stroke(
-        swatch,
+        rect,
         1,
-        egui::Stroke::new(1.0, thinoda_ui::Palette::of_ui(ui).border),
+        egui::Stroke::new(1.0, border),
         egui::StrokeKind::Inside,
     );
-    let width = board_tool_popup(
+    (egui::Popup::menu(&response).get_id(), change)
+}
+
+/// Board-toolbar width menu: presets plus an exact field committed on Enter or focus loss.
+fn width_popup(
+    ui: &mut Ui,
+    canvas: Rect,
+    collapsed: bool,
+    row_height: f32,
+    control: WidthControl,
+    target: &ConnectorTarget,
+    current: f32,
+) -> (egui::Id, Option<f32>) {
+    let mut change = None;
+    let response = board_tool_popup(
         ui,
         icons::STROKE_WIDTH.into(),
-        "Connector width",
+        control.label,
         collapsed,
         false,
         row_height,
@@ -1231,21 +1670,21 @@ fn connector_context_controls(
             reserve_popup_scrollbar_space(ui);
             let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
             egui::ScrollArea::vertical()
-                .id_salt("connector_width_choices")
+                .id_salt((control.key, "width_choices"))
                 .min_scrolled_height(0.0)
                 .max_height(max_height)
                 .show(ui, |ui| {
-                    let mut width = properties.width;
-                    width_presets(ui, &mut width, "Connector width");
-                    let preset_changed = width != properties.width;
+                    let mut width = current;
+                    width_presets(ui, &mut width, control.label);
+                    let preset_changed = width != current;
                     if preset_changed {
-                        change = Some(ConnectorChange::Width(width));
+                        change = Some(width);
                     }
-                    let id = ui.make_persistent_id("connector_width_text_draft");
+                    let id = ui.make_persistent_id((control.key, "width_text_draft"));
                     let frame = ui.ctx().cumulative_frame_nr();
                     let allowed = widgets::touch_activation_allowed(ui.ctx());
-                    let owner = egui::Id::unique(("connector_width", &context.target));
-                    let pending = ui.data(|data| data.get_temp::<ConnectorWidthDraft>(id));
+                    let owner = egui::Id::unique((control.key, "width", target));
+                    let pending = ui.data(|data| data.get_temp::<WidthDraft>(id));
                     let pending = pending.filter(|draft| {
                         allowed && draft.owner == owner && frame <= draft.frame.saturating_add(1)
                     });
@@ -1257,7 +1696,7 @@ fn connector_context_controls(
                     let (response, commit) = crate::ui::touch_numeric_value(
                         ui,
                         &mut width,
-                        "connector-width",
+                        control.salt,
                         Some(owner),
                         |ui, value| {
                             ui.add(
@@ -1268,7 +1707,7 @@ fn connector_context_controls(
                                     )
                                     .speed(0.5),
                             )
-                            .accessible_name(t("Connector width"))
+                            .accessible_name(t(control.label))
                         },
                     );
                     if response.gained_focus() {
@@ -1282,13 +1721,13 @@ fn connector_context_controls(
                     }
                     let editing = response.has_focus() && ui.ctx().text_edit_focused();
                     if preset_changed || escape || !allowed {
-                        ui.data_mut(|data| data.remove::<ConnectorWidthDraft>(id));
+                        ui.data_mut(|data| data.remove::<WidthDraft>(id));
                     } else if editing && !enter {
                         if commit || pending.is_some() {
                             ui.data_mut(|data| {
                                 data.insert_temp(
                                     id,
-                                    ConnectorWidthDraft {
+                                    WidthDraft {
                                         owner,
                                         value: width,
                                         frame,
@@ -1297,20 +1736,19 @@ fn connector_context_controls(
                             });
                         }
                     } else {
-                        ui.data_mut(|data| data.remove::<ConnectorWidthDraft>(id));
+                        ui.data_mut(|data| data.remove::<WidthDraft>(id));
                         if (commit || pending.is_some() && (enter || response.lost_focus()))
-                            && width != properties.width
+                            && width != current
                             && width.is_finite()
                         {
-                            change = Some(ConnectorChange::Width(width));
+                            change = Some(width);
                         }
                     }
                     crate::ui::reveal_changed_focus(ui);
                 });
         },
     );
-    popups.push(egui::Popup::menu(&width).get_id());
-    (change, popups)
+    (egui::Popup::menu(&response).get_id(), change)
 }
 
 fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRoute) -> bool {
@@ -1367,15 +1805,16 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
     activated
 }
 
-fn connector_color_picker(
+fn custom_color_picker(
     ui: &mut Ui,
+    key: &'static str,
     target: &ConnectorTarget,
-    properties: ConnectorProperties,
+    start: Color,
 ) -> Option<Color> {
-    let id = ui.make_persistent_id("connector_color_draft");
-    let owner = egui::Id::unique(("connector_color", target));
+    let id = ui.make_persistent_id((key, "color_draft"));
+    let owner = egui::Id::unique((key, "color", target));
     let frame = ui.ctx().cumulative_frame_nr();
-    let pending = ui.data(|data| data.get_temp::<ConnectorColorDraft>(id));
+    let pending = ui.data(|data| data.get_temp::<ColorDraft>(id));
     let allowed = widgets::touch_activation_allowed(ui.ctx());
     let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
     let canceled = !ui.is_enabled()
@@ -1386,7 +1825,7 @@ fn connector_color_picker(
         });
     let mut value = pending.filter(|_| !canceled).map_or_else(
         || {
-            let color = properties.effective_color;
+            let color = start;
             let mut value = egui::ecolor::Hsva::from_srgb([color.r, color.g, color.b]);
             value.a = f32::from(color.a) / 255.0;
             value
@@ -1409,7 +1848,7 @@ fn connector_color_picker(
             if pointer_down {
                 data.insert_temp(
                     id,
-                    ConnectorColorDraft {
+                    ColorDraft {
                         owner,
                         value,
                         frame,
@@ -1417,7 +1856,7 @@ fn connector_color_picker(
                     },
                 );
             } else {
-                data.remove::<ConnectorColorDraft>(id);
+                data.remove::<ColorDraft>(id);
             }
         });
         return None;
@@ -1427,7 +1866,7 @@ fn connector_color_picker(
             ui.data_mut(|data| {
                 data.insert_temp(
                     id,
-                    ConnectorColorDraft {
+                    ColorDraft {
                         owner,
                         value,
                         frame,
@@ -1439,7 +1878,7 @@ fn connector_color_picker(
         return None;
     }
     if changed || pending.is_some() {
-        ui.data_mut(|data| data.remove::<ConnectorColorDraft>(id));
+        ui.data_mut(|data| data.remove::<ColorDraft>(id));
         let [r, g, b, a] = value.to_srgba_unmultiplied();
         return Some(Color::rgba(r, g, b, a));
     }
@@ -1449,7 +1888,7 @@ fn connector_color_picker(
 fn shape_library(
     ui: &mut Ui,
     canvas: Rect,
-    tool: BoardTool,
+    current: Option<ShapeKind>,
     translate: fn(&'static str) -> &'static str,
 ) -> Option<ShapeKind> {
     const TILE: f32 = 44.0;
@@ -1509,7 +1948,7 @@ fn shape_library(
                 let mut ids = Vec::with_capacity(shapes.len());
                 for (index, (shape, name)) in shapes.iter().copied().enumerate() {
                     let (response, activated) =
-                        shape_tile(ui, shape, name, tool == BoardTool::Shape(shape), tile_size);
+                        shape_tile(ui, shape, name, current == Some(shape), tile_size);
                     ids.push(response.id);
                     if response.has_focus() {
                         focused = Some(index);
@@ -1709,6 +2148,10 @@ fn optional_color(ui: &mut Ui, label: &'static str, color: &mut Option<Color>, f
 #[cfg(test)]
 #[path = "connector_context_tests.rs"]
 mod connector_context_tests;
+
+#[cfg(test)]
+#[path = "shape_context_tests.rs"]
+mod shape_context_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2028,9 +2471,7 @@ mod tests {
             .with_size(vec2(500.0, 500.0))
             .build_ui_state(
                 |ui, selected: &mut ShapeKind| {
-                    if let Some(shape) =
-                        shape_library(ui, ui.max_rect(), BoardTool::Shape(*selected), german)
-                    {
+                    if let Some(shape) = shape_library(ui, ui.max_rect(), Some(*selected), german) {
                         *selected = shape;
                     }
                 },
