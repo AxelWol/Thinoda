@@ -1,8 +1,8 @@
 //! [`Document`]: a workbook plus snapshot based undo/redo and dirty tracking.
 
 use crate::board::{
-    Band, BoardMember, BoardSettings, CanvasGroupId, CanvasObject, CanvasObjectId,
-    CanvasObjectKind, Card, ZOrder,
+    Band, BoardMember, BoardSettings, CanvasConnector, CanvasGroupId, CanvasObject, CanvasObjectId,
+    CanvasObjectKind, Card, Endpoint, ZOrder,
 };
 use crate::edit::{EditError, EditResult};
 use crate::model::TopicId;
@@ -930,6 +930,25 @@ impl Document {
         })
     }
 
+    /// Adds `object` plus `connector` ending at it, as one undoable edit
+    /// (draw.io's clone-and-connect). `connector.to` is replaced by the new object.
+    pub fn add_connected_canvas_object(
+        &mut self,
+        object: CanvasObject,
+        mut connector: CanvasConnector,
+    ) -> EditResult<(CanvasObjectId, CanvasObjectId)> {
+        self.edit_sheet("Add connected shape", |sheet| {
+            let id = sheet
+                .add_canvas_object(object)
+                .map_err(EditError::Invalid)?;
+            connector.to = Endpoint::Object(id);
+            let edge = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .map_err(EditError::Invalid)?;
+            Ok((id, edge))
+        })
+    }
+
     pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> EditResult<()> {
         self.edit_sheet("Delete objects", |sheet| {
             sheet.remove_canvas_objects(ids).map_err(EditError::Invalid)
@@ -1089,6 +1108,50 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connected_object_is_one_undoable_edit_and_rolls_back_on_failure() {
+        use crate::board::ShapeKind;
+        let mut document = Document::default();
+        let source = document
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Ellipse,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let before = document.workbook().clone();
+        let clone = CanvasObject::shape(
+            ShapeKind::Ellipse,
+            Rect::from_min_size(Vec2::new(200.0, 0.0), Vec2::new(100.0, 60.0)),
+        );
+        let (id, edge) = document
+            .add_connected_canvas_object(
+                clone,
+                CanvasConnector::new(Endpoint::Object(source), Endpoint::Point(Vec2::ZERO)),
+            )
+            .unwrap();
+        let CanvasObjectKind::Connector(connector) =
+            &document.sheet().canvas.object(edge).unwrap().kind
+        else {
+            panic!("expected a connector");
+        };
+        assert_eq!(connector.from, Endpoint::Object(source));
+        assert_eq!(connector.to, Endpoint::Object(id));
+        assert!(document.undo());
+        assert_eq!(document.workbook(), &before);
+
+        let mut invalid = CanvasObject::shape(ShapeKind::Ellipse, Rect::default());
+        invalid.rotation = f32::NAN;
+        assert!(
+            document
+                .add_connected_canvas_object(
+                    invalid,
+                    CanvasConnector::new(Endpoint::Object(source), Endpoint::Point(Vec2::ZERO)),
+                )
+                .is_err()
+        );
+        assert_eq!(document.workbook(), &before);
+    }
 
     #[test]
     fn document_instance_identity_is_stable_and_distinct_for_copies_and_replacement() {

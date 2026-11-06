@@ -295,8 +295,10 @@ shape-library items (29 built-ins, bundled/vendor stencils, library images):
    draw.io-style affordances: drag body = move; corner/edge handles = resize; rotate
    handle = turn; double-click / F2 / start typing on the selected shape = edit label;
    four **direction arrows** = click to clone+connect in that direction, drag to draw a
-   connector and drop on another shape/port to connect (Shift-drag = connector without
-   clone); port dots on hover. Clicking a shape selects it — it never creates on top.
+   connector and drop on another shape/port to connect (modifiers as in draw.io:
+   Ctrl/Cmd+click = clone only, Shift+click = connector only, Ctrl/Cmd+drag onto empty
+   space = connected clone at the drop point); port dots on hover. Clicking a shape
+   selects it — it never creates on top.
 3. **Click empty space = create**: a click on empty canvas creates another instance of
    the armed shape centred at the (snapped) point and selects it; click-drag on empty
    canvas keeps today's drag-to-size creation.
@@ -339,9 +341,14 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   shape/port to connect or on empty space to create a connected clone; hold/hover on an
   arrow → **quick-shape popover** (recent + related shapes, e.g. circle/rect/ellipse/
   diamond as in screenshot 2) → click inserts that shape connected in that direction.
-  Modifier variants (clone without connect, connect without clone, keep size) and
-  keyboard equivalents (e.g. Alt+Shift+Arrow clone-and-connect) mirrored after Phase 0
-  inventory, re-mapped where they clash with Thinoda shortcuts.
+  Modifier variants follow draw.io's own arrow tooltip (implemented in 1b): click =
+  clone + connect (or connect to an existing neighbour in that slot), Ctrl/Cmd+click =
+  clone without connector, Shift+click = connector without clone, drag = connector to the
+  drop target or a free end, Ctrl/Cmd+drag = connected clone at the drop point. Keyboard:
+  each arrow is a Tab stop after the selection's resize/rotate handles; Enter/Space (with
+  the same modifiers) activates it and keeps focus on the new shape's arrow for chaining.
+  Alt+Shift+Arrow and similar draw.io shortcuts stay unmapped because Alt+Arrow already
+  duplicates in Thinoda.
 - **Connect from outline**: hovering near a shape's outline highlights it; dragging from
   there starts a connector (no tool switch). Edge-to-edge connections supported.
 - **Selected-edge floating toolbar** (screenshot 1): line style (straight/curved/…),
@@ -647,8 +654,8 @@ reachable from the home screen and About. Covered by `tests/github_badge.rs` and
   title bands, mind-map topics, selection handles) shows the normal Select cursor and
   hover feedback; pressing there selects, moves, resizes or rotates exactly like the
   Select tool. Only a click or tap on empty space (a frame *interior* counts as empty)
-  creates the armed shape, as one undoable edit.   A translucent, snapped ghost outline of
-    the shape follows the pointer over empty space (no crosshair over content).
+  creates the armed shape, as one undoable edit. A translucent, snapped ghost outline of
+  the shape follows the pointer over empty space (no crosshair over content).
 - Exit rules: Esc or V returns to Select (so type-to-edit cannot start with "v" while
   armed); clicking the armed tile again disarms it. With a board selection, Enter/Space
   edit its label instead of creating another shape.
@@ -661,7 +668,34 @@ reachable from the home screen and About. Covered by `tests/github_badge.rs` and
 - Tests: `armed_shape_*` in `board_tests.rs` (mouse, touch, keyboard, undo
   granularity) and `armed_shape_hint_*` in `board_ui.rs`.
 
-Remaining Phase 1 slices: direction arrows and quick-shape popover (1b), shape-aware
+**Phase 1b — direction arrows (draw.io behaviour).** A single, unlocked, ungrouped
+shape shows four accent arrows (↑→↓←) just outside its bounds when it is selected or
+hovered (arrows hide when the shape is smaller than 40 pt on screen; cards, connectors
+and topics get none):
+
+- Click: if another shape or topic sits in the next slot in that direction (one shape
+  extent plus an 80 pt gap, draw.io's default edge length), connect to it and select it;
+  otherwise insert an unlabelled clone there (stepping further while the slot is
+  occupied) connected by a new connector, and select the clone so clicks can chain.
+  Ctrl/Cmd+click inserts only the clone; Shift+click inserts only a connector ending in
+  the neighbour or a free point.
+- Drag: a dashed preview follows the pointer and outlines the target under it. Release on
+  a shape/topic connects to it; release on empty space leaves a free end, or with
+  Ctrl/Cmd drops a connected clone centred on the (snapped) point (ghost outline while
+  dragging). Releasing on the source does nothing.
+- Each compound action is one undo entry (`Document::add_connected_canvas_object`).
+- Keyboard and assistive tech: the selection's arrows are Tab stops after its resize and
+  rotate handles ("Add connected shape above/to the right/below/to the left").
+  Enter/Space activate them (Ctrl/Cmd and Shift variants included) and focus the same
+  arrow on the result. Hover-only arrows are not focusable and use separate widget ids.
+  A translated tooltip explains the click, modifier and drag variants.
+- Touch: tapping an arrow behaves like a click.
+- The rotate handle moved to the top-right corner (draw.io's position) so it no longer
+  collides with the up arrow.
+- Tests: `direction_arrow_*` and `hover_arrows_*` in `board_tests.rs`, and
+  `connected_object_is_one_undoable_edit_and_rolls_back_on_failure` in `document.rs`.
+
+Remaining Phase 1 slices: quick-shape popover on the arrows (1b part 2), shape-aware
 perimeters (1c), floating edge/shape toolbars (1d), tile drag-and-drop and keyboard
 insert at a free spot (1e).
 

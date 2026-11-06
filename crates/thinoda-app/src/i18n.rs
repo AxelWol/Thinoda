@@ -530,6 +530,26 @@ const DE: &[(&str, &str)] = &[
     ("Free point", "Freier Punkt"),
     ("Resize board item", "Größe des Board-Elements ändern"),
     ("Rotate board item", "Board-Element drehen"),
+    (
+        "Add connected shape above",
+        "Verbundene Form oberhalb hinzufügen",
+    ),
+    (
+        "Add connected shape to the right",
+        "Verbundene Form rechts hinzufügen",
+    ),
+    (
+        "Add connected shape below",
+        "Verbundene Form unterhalb hinzufügen",
+    ),
+    (
+        "Add connected shape to the left",
+        "Verbundene Form links hinzufügen",
+    ),
+    (
+        "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.",
+        "Klicken fügt eine verbundene Kopie hinzu; Strg+Klick fügt nur eine Kopie hinzu; Umschalt+Klick fügt nur einen Verbinder hinzu. Ziehen verbindet mit einem anderen Element; Strg+Ziehen legt eine verbundene Kopie ab. Unter macOS Befehlstaste verwenden.",
+    ),
     ("Board object label", "Beschriftung des Board-Objekts"),
     (
         "Select one board object to edit its properties.",
@@ -4281,6 +4301,11 @@ mod tests {
             "Free point",
             "Resize board item",
             "Rotate board item",
+            "Add connected shape above",
+            "Add connected shape to the right",
+            "Add connected shape below",
+            "Add connected shape to the left",
+            "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.",
             "Board object label",
             "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
             "Click or drag to pan. Arrow keys move the view; Shift makes larger steps.",

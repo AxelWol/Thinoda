@@ -264,6 +264,11 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.free_point = t("Free point").into();
     labels.resize = t("Resize board item").into();
     labels.rotate = t("Rotate board item").into();
+    labels.connect_up = t("Add connected shape above").into();
+    labels.connect_right = t("Add connected shape to the right").into();
+    labels.connect_down = t("Add connected shape below").into();
+    labels.connect_left = t("Add connected shape to the left").into();
+    labels.connect_hint = t("Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.").into();
     labels.label_editor = t("Board object label").into();
     view.minimap_labels.accessible_name = t(
         "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",

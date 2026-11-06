@@ -30,6 +30,8 @@ pub(super) struct State {
     pub(super) armed_hover: bool,
     /// Unobscured screen position for the armed shape's ghost preview.
     pub(super) ghost: Option<Pos2>,
+    /// Unselected shape whose draw.io-style direction arrows are shown on hover.
+    hover_shape: Option<CanvasObjectId>,
 }
 
 struct RotationPivot {
@@ -213,6 +215,12 @@ enum GestureKind {
         id: CanvasObjectId,
         start: bool,
         point: Vec2,
+    },
+    Arrow {
+        source: CanvasObjectId,
+        dir: ArrowDir,
+        anchor: Vec2,
+        current: Vec2,
     },
 }
 
@@ -873,12 +881,57 @@ fn prepare_edit(doc: &mut Document, view: &mut MapView, out: &mut CanvasOutput) 
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ArrowDir {
+    Up,
+    Right,
+    Down,
+    Left,
+}
+
+impl ArrowDir {
+    const ALL: [ArrowDir; 4] = [
+        ArrowDir::Up,
+        ArrowDir::Right,
+        ArrowDir::Down,
+        ArrowDir::Left,
+    ];
+
+    fn unit(self) -> Vec2 {
+        match self {
+            ArrowDir::Up => Vec2::new(0.0, -1.0),
+            ArrowDir::Right => Vec2::new(1.0, 0.0),
+            ArrowDir::Down => Vec2::new(0.0, 1.0),
+            ArrowDir::Left => Vec2::new(-1.0, 0.0),
+        }
+    }
+
+    /// Bounds extent along the direction.
+    fn extent(self, bounds: thinoda_core::Rect) -> f32 {
+        match self {
+            ArrowDir::Up | ArrowDir::Down => bounds.size.y,
+            ArrowDir::Right | ArrowDir::Left => bounds.size.x,
+        }
+    }
+
+    /// Midpoint of the bounds side facing the direction.
+    fn side(self, bounds: thinoda_core::Rect) -> Vec2 {
+        match self {
+            ArrowDir::Up => bounds.top_center(),
+            ArrowDir::Right => bounds.right_center(),
+            ArrowDir::Down => bounds.bottom_center(),
+            ArrowDir::Left => bounds.left_center(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ControlKind {
     Resize,
     Rotate,
     From,
     To,
+    Arrow(ArrowDir),
 }
 
 #[derive(Clone, Copy)]
@@ -888,6 +941,8 @@ struct Control {
     point: Vec2,
     rect: thinoda_core::Rect,
     rotation: f32,
+    /// Shown only while hovering an unselected shape; not a Tab stop.
+    hover: bool,
 }
 
 fn control_id(control: Control) -> Id {
@@ -896,8 +951,123 @@ fn control_id(control: Control) -> Id {
         ControlKind::Rotate => 1,
         ControlKind::From => 2,
         ControlKind::To => 3,
+        ControlKind::Arrow(dir) => 4 + dir as usize,
     };
-    MapCanvas::id().with(("board-control", control.item, part))
+    // Hover arrows never share an Id with the selection's, so focus cannot
+    // silently move onto a non-focusable hover control.
+    MapCanvas::id().with(("board-control", control.item, part, control.hover))
+}
+
+/// After keyboard activation, focus the same arrow on the new selection so
+/// Enter can keep chaining; otherwise focus the new selection itself.
+fn focus_next_arrow(ui: &Ui, view: &mut MapView, sheet: &Sheet, scene: &Scene, dir: ArrowDir) {
+    let next = match view.board_selection[..] {
+        [id] => arrow_controls(view, sheet, scene, id, false)
+            .into_iter()
+            .find(|control| control.kind == ControlKind::Arrow(dir))
+            .filter(|control| view.canvas_rect.contains(view.xf().pos(control.point))),
+        _ => None,
+    };
+    match next {
+        Some(control) => ui
+            .ctx()
+            .memory_mut(|memory| memory.request_focus(control_id(control))),
+        None => focus_duplicated_selection(ui, view),
+    }
+}
+
+/// Screen distance between a shape's bounds and its direction arrows.
+const ARROW_OFFSET: f32 = 32.0;
+/// Gap between a shape and its draw.io-style connected clone (`defaultEdgeLength`).
+const ARROW_GAP: f32 = 80.0;
+/// Shapes smaller than this on screen get no direction arrows.
+const ARROW_MIN_SCREEN: f32 = 40.0;
+/// Screen movement turning an arrow press into a drag.
+const ARROW_DRAG: f32 = 8.0;
+
+/// Shapes offering direction arrows: single, unlocked and ungrouped.
+fn arrow_source(sheet: &Sheet, id: CanvasObjectId) -> Option<&CanvasObject> {
+    sheet
+        .canvas
+        .object(id)
+        .filter(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        .filter(|_| board_actions::member_is_movable(sheet, BoardMember::Object(id)))
+        .filter(|_| {
+            sheet
+                .expand_board_selection(&[BoardMember::Object(id)])
+                .is_ok_and(|members| members.len() == 1)
+        })
+}
+
+fn arrow_controls(
+    view: &MapView,
+    sheet: &Sheet,
+    scene: &Scene,
+    id: CanvasObjectId,
+    hover: bool,
+) -> Vec<Control> {
+    let Some(object) = arrow_source(sheet, id) else {
+        return Vec::new();
+    };
+    let bounds = object.rotated_bounds();
+    if bounds.size.x * view.zoom < ARROW_MIN_SCREEN || bounds.size.y * view.zoom < ARROW_MIN_SCREEN
+    {
+        return Vec::new();
+    }
+    let item = SceneId::Object(id);
+    let clip = scene.item(item).and_then(|item| item.clip);
+    ArrowDir::ALL
+        .into_iter()
+        .map(|dir| Control {
+            item,
+            kind: ControlKind::Arrow(dir),
+            point: dir.side(bounds) + dir.unit() * (ARROW_OFFSET / view.zoom),
+            rect: object.rect,
+            rotation: object.rotation,
+            hover,
+        })
+        .filter(|control| clip.is_none_or(|clip| clip.contains(control.point)))
+        .collect()
+}
+
+/// Keyboard-reachable controls, in Tab order.
+fn tab_controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Vec<Control> {
+    let mut list = controls(view, sheet, layout, scene);
+    list.retain(|control| !control.hover);
+    list
+}
+
+/// Tracks the unselected shape whose arrows follow the mouse, kept while the
+/// pointer stays near it so the arrows can be reached.
+fn update_hover_shape(
+    view: &mut MapView,
+    sheet: &Sheet,
+    scene: &Scene,
+    response: &Response,
+    over_controls: bool,
+) {
+    if over_controls || view.board_input.is_active() {
+        return;
+    }
+    let xf = view.xf();
+    let current = view.board_input.hover_shape;
+    view.board_input.hover_shape = response
+        .hover_pos()
+        .filter(|_| matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_)))
+        .and_then(|pos| {
+            if let Some(SceneHit::Object(id)) = scene.hit_test(xf.sheet(pos))
+                && arrow_source(sheet, id).is_some()
+            {
+                return Some(id);
+            }
+            current.filter(|id| {
+                sheet.canvas.object(*id).is_some_and(|object| {
+                    xf.rect(object.rotated_bounds())
+                        .expand(ARROW_OFFSET + 18.0)
+                        .contains(pos)
+                })
+            })
+        });
 }
 
 fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Vec<Control> {
@@ -909,6 +1079,23 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
     {
         return Vec::new();
     }
+    let mut list = selection_controls(view, sheet, layout, scene);
+    if let Some(id) = view.board_input.hover_shape
+        && !list
+            .iter()
+            .any(|control| control.item == SceneId::Object(id))
+    {
+        list.extend(arrow_controls(view, sheet, scene, id, true));
+    }
+    list
+}
+
+fn selection_controls(
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+) -> Vec<Control> {
     let (item, rect, rotation) = if view.selection.is_empty() && view.board_selection.len() == 1 {
         let id = view.board_selection[0];
         let Some(object) = sheet.canvas.object(id) else {
@@ -944,6 +1131,7 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
                     point,
                     rect: object.rect,
                     rotation: 0.0,
+                    hover: false,
                 })
                 .collect();
         }
@@ -969,21 +1157,19 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
     };
 
     let corner = rotated_corners(rect, rotation)[2];
-    let top = rotate_around(rect.top_center(), rect.center(), rotation);
-    let outward = rotate_around(
-        rect.top_center() - Vec2::new(0.0, 25.0 / view.zoom),
-        rect.center(),
-        rotation,
-    );
+    // draw.io keeps the rotation handle off the top-right corner, clear of the ↑ arrow.
+    let bounds = thinoda_core::board::rotated_bounds(rect, rotation);
+    let anchor = Vec2::new(bounds.max().x, bounds.min.y);
+    let outward = anchor + Vec2::new(14.0, -14.0) * (1.0 / view.zoom);
     let clip = scene.item(item).and_then(|item| item.clip);
-    [
+    let mut list: Vec<Control> = [
         (ControlKind::Resize, corner),
         (ControlKind::Rotate, outward),
     ]
     .into_iter()
     .filter(|(kind, point)| {
         clip.is_none_or(|clip| {
-            clip.contains(*point) || (*kind == ControlKind::Rotate && clip.contains(top))
+            clip.contains(*point) || (*kind == ControlKind::Rotate && clip.contains(anchor))
         })
     })
     .map(|(kind, point)| Control {
@@ -992,8 +1178,13 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
         point,
         rect,
         rotation,
+        hover: false,
     })
-    .collect()
+    .collect();
+    if let SceneId::Object(id) = item {
+        list.extend(arrow_controls(view, sheet, scene, id, false));
+    }
+    list
 }
 
 fn control_label(view: &MapView, kind: ControlKind) -> String {
@@ -1002,6 +1193,12 @@ fn control_label(view: &MapView, kind: ControlKind) -> String {
         ControlKind::Rotate => view.board_labels.rotate.clone(),
         ControlKind::From => format!("{} {}", view.board_labels.connector, view.board_labels.from),
         ControlKind::To => format!("{} {}", view.board_labels.connector, view.board_labels.to),
+        ControlKind::Arrow(dir) => match dir {
+            ArrowDir::Up => view.board_labels.connect_up.clone(),
+            ArrowDir::Right => view.board_labels.connect_right.clone(),
+            ArrowDir::Down => view.board_labels.connect_down.clone(),
+            ArrowDir::Left => view.board_labels.connect_left.clone(),
+        },
     }
 }
 
@@ -1060,6 +1257,188 @@ fn set_endpoint(
             }
         }
     })
+}
+
+/// What a direction-arrow click does, following draw.io's `plusTooltip`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrowMode {
+    /// Clone and connect, or connect to a neighbour already in that place.
+    Chain,
+    /// Ctrl/Cmd: clone without a connector.
+    CloneOnly,
+    /// Shift: connector only.
+    ConnectOnly,
+}
+
+impl ArrowMode {
+    fn from_modifiers(modifiers: Modifiers) -> Self {
+        if modifiers.command {
+            Self::CloneOnly
+        } else if modifiers.shift {
+            Self::ConnectOnly
+        } else {
+            Self::Chain
+        }
+    }
+}
+
+/// Unlabelled, unlocked copy of `source` centred on `center`.
+fn arrow_clone(source: &CanvasObject, center: Vec2) -> CanvasObject {
+    let mut clone = source.clone();
+    clone.rect = thinoda_core::Rect::from_center_size(center, source.rect.size);
+    clone.locked = false;
+    clone.alt_text.clear();
+    if let CanvasObjectKind::Shape { label, .. } = &mut clone.kind {
+        label.clear();
+    }
+    clone
+}
+
+/// Topic or shape under `point`, other than `source`.
+fn arrow_neighbour(
+    sheet: &Sheet,
+    scene: &Scene,
+    point: Vec2,
+    source: CanvasObjectId,
+) -> Option<Endpoint> {
+    let mut scene = scene.clone();
+    scene.items.retain(|item| match item.id {
+        SceneId::Topic(id) => !sheet.is_anchor(id),
+        SceneId::Object(id) => {
+            id != source
+                && sheet
+                    .canvas
+                    .object(id)
+                    .is_some_and(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        }
+        SceneId::Zone(_) => false,
+    });
+    Some(match scene.hit_test(point)? {
+        SceneHit::Topic(id) => Endpoint::Topic(id),
+        SceneHit::Object(id) => Endpoint::Object(id),
+    })
+}
+
+/// Offset from `source` to the first free clone position in `dir`.
+fn clone_offset(sheet: &Sheet, scene: &Scene, source: &CanvasObject, dir: ArrowDir) -> Vec2 {
+    let bounds = source.rotated_bounds();
+    let step = dir.unit() * (dir.extent(bounds) + ARROW_GAP);
+    let mut offset = step;
+    for _ in 0..20 {
+        let target = bounds.translate(offset).expand(8.0);
+        let blocked = scene.items.iter().any(|item| {
+            let solid = match item.id {
+                SceneId::Topic(_) => true,
+                SceneId::Object(id) => {
+                    id != source.id
+                        && sheet
+                            .canvas
+                            .object(id)
+                            .is_some_and(|object| !object.is_connector())
+                }
+                SceneId::Zone(_) => false,
+            };
+            solid && item.bounds.intersects(&target)
+        });
+        if !blocked {
+            break;
+        }
+        offset = offset + step;
+    }
+    offset
+}
+
+fn select_endpoint(view: &mut MapView, sheet: &Sheet, endpoint: Endpoint) {
+    match endpoint {
+        Endpoint::Topic(id) => select_hit(view, sheet, SceneHit::Topic(id), false),
+        Endpoint::Object(id) => select_hit(view, sheet, SceneHit::Object(id), false),
+        Endpoint::Point(_) => {}
+    }
+}
+
+/// Click (or Enter) on a direction arrow; selects the result so users can keep chaining.
+fn arrow_click(
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    mode: ArrowMode,
+) -> EditResult<bool> {
+    let Some(object) = arrow_source(doc.sheet(), source).cloned() else {
+        return Ok(false);
+    };
+    let bounds = object.rotated_bounds();
+    let center = bounds.center();
+    let from = Endpoint::Object(source);
+    let neighbour = if mode == ArrowMode::CloneOnly {
+        None
+    } else {
+        let step = dir.unit() * (dir.extent(bounds) + ARROW_GAP);
+        arrow_neighbour(doc.sheet(), scene, center + step, source)
+    };
+    match (mode, neighbour) {
+        (ArrowMode::ConnectOnly, to) => {
+            let to =
+                to.unwrap_or_else(|| Endpoint::Point(dir.side(bounds) + dir.unit() * ARROW_GAP));
+            let edge =
+                doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+            select_hit(view, doc.sheet(), SceneHit::Object(edge), false);
+        }
+        (_, Some(to)) => {
+            doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+            select_endpoint(view, doc.sheet(), to);
+        }
+        (mode, None) => {
+            let offset = clone_offset(doc.sheet(), scene, &object, dir);
+            let clone = arrow_clone(&object, center + offset);
+            let id = if mode == ArrowMode::CloneOnly {
+                doc.add_canvas_object(clone)?
+            } else {
+                doc.add_connected_canvas_object(
+                    clone,
+                    CanvasConnector::new(from, Endpoint::Point(center)),
+                )?
+                .0
+            };
+            select_hit(view, doc.sheet(), SceneHit::Object(id), false);
+        }
+    }
+    Ok(true)
+}
+
+/// Drag from a direction arrow released at `point`: connect to the item there,
+/// or leave a free end; Ctrl/Cmd over empty space drops a connected clone.
+fn arrow_drop(
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    source: CanvasObjectId,
+    point: Vec2,
+    modifiers: Modifiers,
+) -> EditResult<bool> {
+    let Some(object) = arrow_source(doc.sheet(), source).cloned() else {
+        return Ok(false);
+    };
+    if object.rotated_bounds().contains(point) {
+        return Ok(false);
+    }
+    let from = Endpoint::Object(source);
+    match endpoint_at(doc.sheet(), scene, point, Some(source)) {
+        Endpoint::Point(center) if modifiers.command => {
+            let (id, _) = doc.add_connected_canvas_object(
+                arrow_clone(&object, center),
+                CanvasConnector::new(from, Endpoint::Point(center)),
+            )?;
+            select_hit(view, doc.sheet(), SceneHit::Object(id), false);
+        }
+        to => {
+            let edge =
+                doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+            select_hit(view, doc.sheet(), SceneHit::Object(edge), false);
+        }
+    }
+    Ok(true)
 }
 
 fn arrow(ui: &Ui, accept: impl Fn(Vec2, Modifiers) -> bool) -> Option<(Vec2, Modifiers)> {
@@ -1123,7 +1502,7 @@ fn keyboard_control(
     });
     for (modifiers, reverse) in [(Modifiers::SHIFT, true), (Modifiers::NONE, false)] {
         if ui.input_mut(|input| input.consume_key(modifiers, Key::Tab)) {
-            let controls = controls(view, doc.sheet(), layout, scene);
+            let controls = tab_controls(view, doc.sheet(), layout, scene);
             if let Some(index) = controls
                 .iter()
                 .position(|candidate| control_id(*candidate) == control_id(control))
@@ -1150,6 +1529,28 @@ fn keyboard_control(
     // Let the canvas own Alt+arrow duplication/rotation even when a handle is
     // focused. `consume_key` otherwise accepts extra Alt modifiers.
     if alt_arrow_pressed(ui) {
+        return;
+    }
+    if let ControlKind::Arrow(dir) = control.kind {
+        let SceneId::Object(source) = control.item else {
+            return;
+        };
+        // Enter/Space act like a click; modifiers pick the same variants.
+        for modifiers in [Modifiers::COMMAND, Modifiers::SHIFT, Modifiers::NONE] {
+            if ui.input_mut(|input| {
+                input.consume_key(modifiers, Key::Enter) || input.consume_key(modifiers, Key::Space)
+            }) {
+                if prepare_edit(doc, view, out) {
+                    let mode = ArrowMode::from_modifiers(modifiers);
+                    match arrow_click(doc, view, scene, source, dir, mode) {
+                        Ok(true) => focus_next_arrow(ui, view, doc.sheet(), scene, dir),
+                        Ok(false) => {}
+                        Err(error) => out.error = Some(error),
+                    }
+                }
+                return;
+            }
+        }
         return;
     }
     let Some((delta, modifiers)) = arrow(ui, |_, _| true) else {
@@ -1205,6 +1606,7 @@ fn keyboard_control(
             };
             set_endpoint(doc, id, control.kind == ControlKind::From, endpoint).map(|()| true)
         }
+        ControlKind::Arrow(_) => return,
     };
     if let Err(error) = result {
         out.error = Some(error);
@@ -1230,13 +1632,18 @@ fn interact_controls(
         if !view.canvas_rect.intersects(rect) {
             continue;
         }
-        let response = ui.interact(
-            rect,
-            control_id(control),
-            Sense::click_and_drag() | Sense::FOCUSABLE,
-        );
+        let sense = if control.hover {
+            Sense::click_and_drag()
+        } else {
+            Sense::click_and_drag() | Sense::FOCUSABLE
+        };
+        let mut response = ui.interact(rect, control_id(control), sense);
         let label = control_label(view, control.kind);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+        if matches!(control.kind, ControlKind::Arrow(_)) && view.board_input.gesture.is_none() {
+            response =
+                response.on_hover_text(format!("{label}\n{}", view.board_labels.connect_hint));
+        }
         blocked |= response.hovered()
             || response.is_pointer_button_down_on()
             || ui
@@ -1246,7 +1653,9 @@ fn interact_controls(
             && ui.input(|input| input.pointer.primary_pressed())
             && view.board_input.gesture.is_none()
         {
-            response.request_focus();
+            if !control.hover {
+                response.request_focus();
+            }
             let start = view.xf().sheet(
                 ui.input(|input| input.pointer.press_origin())
                     .unwrap_or(rect.center()),
@@ -1276,9 +1685,41 @@ fn interact_controls(
                         point: control.point,
                     }
                 }
+                ControlKind::Arrow(dir) => {
+                    let SceneId::Object(source) = control.item else {
+                        continue;
+                    };
+                    let bounds =
+                        thinoda_core::board::rotated_bounds(control.rect, control.rotation);
+                    GestureKind::Arrow {
+                        source,
+                        dir,
+                        anchor: dir.side(bounds),
+                        current: start,
+                    }
+                }
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, start));
             blocked = true;
+        }
+        // Press and release can land in one frame (e.g. synthetic taps).
+        if response.clicked()
+            && view.board_input.gesture.is_none()
+            && let ControlKind::Arrow(dir) = control.kind
+            && let SceneId::Object(source) = control.item
+        {
+            if prepare_edit(doc, view, out) {
+                let mode = ArrowMode::from_modifiers(ui.input(|input| input.modifiers));
+                match arrow_click(doc, view, scene, source, dir, mode) {
+                    // Enter/Space on a focused arrow, or an assistive-technology click.
+                    Ok(true) if response.has_focus() => {
+                        focus_next_arrow(ui, view, doc.sheet(), scene, dir);
+                    }
+                    Ok(_) => {}
+                    Err(error) => out.error = Some(error),
+                }
+            }
+            return true;
         }
         if response.has_focus() && view.board_input.gesture.is_none() {
             view.board_input.control_focused = true;
@@ -1369,12 +1810,15 @@ fn update_gesture(
                 };
                 *preview = thinoda_core::board::normalize_rotation(degrees);
             }
-            GestureKind::Endpoint { point: p, .. } => *p = current,
+            GestureKind::Endpoint { point: p, .. } | GestureKind::Arrow { current: p, .. } => {
+                *p = current;
+            }
         }
     }
     if release.is_some() {
+        let is_arrow = matches!(drag.kind, GestureKind::Arrow { .. });
         if !drag.canceled
-            && drag.moved
+            && (drag.moved || is_arrow)
             && pointer.is_some_and(|point| view.canvas_rect.contains(point))
         {
             let duplicating = matches!(
@@ -1455,6 +1899,20 @@ fn update_gesture(
                     let end = endpoint_at(doc.sheet(), scene, point, Some(id));
                     set_endpoint(doc, id, start, end).map(|()| true)
                 }
+                GestureKind::Arrow {
+                    source,
+                    dir,
+                    current,
+                    ..
+                } => {
+                    let modifiers = ctx.input(|input| input.modifiers);
+                    if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
+                        arrow_drop(doc, view, scene, source, current, modifiers)
+                    } else {
+                        let mode = ArrowMode::from_modifiers(modifiers);
+                        arrow_click(doc, view, scene, source, dir, mode)
+                    }
+                }
             };
             match result {
                 Ok(true) if duplicating => focus_duplicated_selection(ui, view),
@@ -1511,6 +1969,7 @@ pub(super) fn interact(
         return true;
     }
     let over_controls = interact_controls(ui, doc, view, layout, scene, enabled, out);
+    update_hover_shape(view, doc.sheet(), scene, response, over_controls);
     if update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out) {
         return true;
     }
@@ -2168,7 +2627,7 @@ fn cycle_selection(
     let id = items[index].id;
     select_item(view, doc.sheet(), id);
     let target = if reverse {
-        controls(view, doc.sheet(), layout, scene)
+        tab_controls(view, doc.sheet(), layout, scene)
             .last()
             .map_or_else(|| item_id(id), |control| control_id(*control))
     } else {
@@ -2211,7 +2670,7 @@ pub(super) fn keyboard(
     for (modifiers, reverse) in [(Modifiers::SHIFT, true), (Modifiers::NONE, false)] {
         if ctx.input_mut(|input| input.consume_key(modifiers, Key::Tab)) {
             let focused = ctx.memory(|memory| memory.focused());
-            let first = controls(view, doc.sheet(), layout, scene)
+            let first = tab_controls(view, doc.sheet(), layout, scene)
                 .into_iter()
                 .next();
             if !reverse
@@ -2414,12 +2873,40 @@ pub(super) fn paint(
         if !view.canvas_rect.contains(center) {
             continue;
         }
+        let focused = painter
+            .ctx()
+            .memory(|memory| memory.has_focus(control_id(control)));
+        if let ControlKind::Arrow(dir) = control.kind {
+            if view.board_input.gesture.is_some() {
+                continue;
+            }
+            let hot = focused || pointer.is_some_and(|pointer| pointer.distance(center) <= 14.0);
+            let unit = dir.unit();
+            let forward = vec2(unit.x, unit.y);
+            let normal = vec2(-forward.y, forward.x);
+            let size = if hot { 9.0 } else { 7.0 };
+            let color = if hot {
+                view.accent
+            } else {
+                view.accent.gamma_multiply(0.6)
+            };
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    center + forward * size,
+                    center - forward * (size * 0.6) + normal * size,
+                    center - forward * (size * 0.6) - normal * size,
+                ],
+                color,
+                Stroke::NONE,
+            ));
+            if focused {
+                painter.circle_stroke(center, 12.0, Stroke::new(2.0, view.accent));
+            }
+            continue;
+        }
         painter.circle_filled(center, 6.0, sheet_background(sheet, view.dark));
         painter.circle_stroke(center, 6.0, Stroke::new(2.0, view.accent));
-        if painter
-            .ctx()
-            .memory(|memory| memory.has_focus(control_id(control)))
-        {
+        if focused {
             painter.circle_stroke(center, 9.0, Stroke::new(2.0, view.accent));
         }
     }
@@ -2562,6 +3049,53 @@ pub(super) fn paint(
                         4.0,
                     ));
                 }
+            }
+        }
+        GestureKind::Arrow {
+            source,
+            anchor,
+            current,
+            ..
+        } => {
+            if (*current - drag.origin).length() * xf.zoom < ARROW_DRAG {
+                return;
+            }
+            painter.add(egui::Shape::dashed_line(
+                &[xf.pos(*anchor), xf.pos(*current)],
+                stroke,
+                6.0,
+                4.0,
+            ));
+            let target = scene
+                .hit_test(*current)
+                .filter(|hit| *hit != SceneHit::Object(*source))
+                .and_then(|hit| {
+                    scene.item(match hit {
+                        SceneHit::Topic(id) => SceneId::Topic(id),
+                        SceneHit::Object(id) => SceneId::Object(id),
+                    })
+                });
+            if let Some(item) = target {
+                painter.rect_stroke(
+                    xf.rect(item.bounds).expand(3.0),
+                    2.0,
+                    stroke,
+                    StrokeKind::Outside,
+                );
+            } else if painter.ctx().input(|input| input.modifiers.command)
+                && let Some(object) = sheet.canvas.object(*source)
+            {
+                let rect = thinoda_core::Rect::from_center_size(
+                    snapped(sheet, *current),
+                    object.rect.size,
+                );
+                painter.add(egui::Shape::closed_line(
+                    rotated_corners(rect, object.rotation)
+                        .into_iter()
+                        .map(|point| xf.pos(point))
+                        .collect(),
+                    Stroke::new(1.5, view.accent.gamma_multiply(0.6)),
+                ));
             }
         }
     }

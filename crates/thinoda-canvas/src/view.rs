@@ -112,6 +112,12 @@ pub struct BoardLabels {
     pub free_point: String,
     pub resize: String,
     pub rotate: String,
+    pub connect_up: String,
+    pub connect_right: String,
+    pub connect_down: String,
+    pub connect_left: String,
+    /// Tooltip line explaining the direction-arrow modifiers.
+    pub connect_hint: String,
     pub label_editor: String,
 }
 
@@ -143,6 +149,11 @@ impl Default for BoardLabels {
             free_point: "Free point".into(),
             resize: "Resize board item".into(),
             rotate: "Rotate board item".into(),
+            connect_up: "Add connected shape above".into(),
+            connect_right: "Add connected shape to the right".into(),
+            connect_down: "Add connected shape below".into(),
+            connect_left: "Add connected shape to the left".into(),
+            connect_hint: "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.".into(),
             label_editor: "Board object label".into(),
         }
     }

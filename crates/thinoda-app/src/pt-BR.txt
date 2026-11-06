@@ -35,6 +35,11 @@ Bring to front|Trazer para frente
 Rotate left|Girar para a esquerda
 Rotate right|Girar para a direita
 Rotate board item|Girar elemento do quadro
+Add connected shape above|Adicionar forma conectada acima
+Add connected shape to the right|Adicionar forma conectada à direita
+Add connected shape below|Adicionar forma conectada abaixo
+Add connected shape to the left|Adicionar forma conectada à esquerda
+Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.|Clique para adicionar uma cópia conectada; Ctrl+clique adiciona apenas uma cópia; Shift+clique adiciona apenas um conector. Arraste para conectar a outro item; Ctrl+arrastar solta uma cópia conectada. No macOS, use Command.
 Board object label|Rótulo do objeto do quadro
 Select one board object to edit its properties.|Selecione um objeto do quadro para editar suas propriedades.
 Replaces topic titles, board labels and descriptions.|Substitui títulos de tópicos, rótulos e descrições do quadro.

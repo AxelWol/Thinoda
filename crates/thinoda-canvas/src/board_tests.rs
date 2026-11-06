@@ -3536,8 +3536,8 @@ fn shape_resize_rotation_and_invalid_commands_preserve_undo_boundaries() {
 
     let handle = h.get_by_label("Rotate board item").rect().center();
     let center = point(&h, rect.center());
-    let radius = (handle - center).length();
-    let end = center + vec2(radius, 0.0);
+    let offset = handle - center;
+    let end = center + vec2(-offset.y, offset.x);
     drag(&mut h, handle, end);
     assert_eq!(h.state().doc.workbook(), &resized);
     finish_drag(&mut h, end);
@@ -4800,6 +4800,16 @@ fn keyboard_tab_order_reaches_frames_objects_and_their_controls() {
     h.key_press(Key::Tab);
     h.run_steps(2);
     assert!(h.get_by_label("Rotate board item").is_focused());
+    for label in [
+        "Add connected shape above",
+        "Add connected shape to the right",
+        "Add connected shape below",
+        "Add connected shape to the left",
+    ] {
+        h.key_press(Key::Tab);
+        h.run_steps(2);
+        assert!(h.get_by_label(label).is_focused(), "{label}");
+    }
     h.key_press(Key::Tab);
     h.run_steps(2);
     assert_eq!(h.state().view.board_selection, vec![second]);
@@ -4896,6 +4906,14 @@ fn keyboard_tab_can_leave_board_in_both_directions() {
     h.key_press(Key::Tab);
     h.run_steps(2);
     assert!(h.get_by_label("Rotate board item").is_focused());
+    for _ in 0..4 {
+        h.key_press(Key::Tab);
+        h.run_steps(2);
+    }
+    assert!(
+        h.get_by_label("Add connected shape to the left")
+            .is_focused()
+    );
     h.key_press(Key::Tab);
     h.run_steps(3);
     assert!(h.get_by_label("After board").is_focused());
@@ -4905,7 +4923,10 @@ fn keyboard_tab_can_leave_board_in_both_directions() {
     assert!(h.get_by_label("Rectangle: Last, Selected").is_focused());
     h.key_press_modifiers(Modifiers::SHIFT, Key::Tab);
     h.run_steps(2);
-    assert!(h.get_by_label("Rotate board item").is_focused());
+    assert!(
+        h.get_by_label("Add connected shape to the left")
+            .is_focused()
+    );
     assert_eq!(
         h.state().view.board_selection,
         vec![h.state().doc.sheet().canvas.objects[0].id]
@@ -4993,5 +5014,346 @@ fn keyboard_group_lock_ungroup_and_hand_pan() {
     finish_drag(&mut h, end);
     assert_eq!(h.state().view.offset, offset + vec2(80.0, -30.0));
     assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+fn connector_ends(sheet: &Sheet, id: CanvasObjectId) -> (Endpoint, Endpoint) {
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(id).unwrap().kind else {
+        panic!("not a connector");
+    };
+    (connector.from, connector.to)
+}
+
+fn connectors(sheet: &Sheet) -> Vec<CanvasObjectId> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| object.is_connector())
+        .map(|object| object.id)
+        .collect()
+}
+
+/// Selects the shape at `at` and waits out the double-click window.
+fn select_shape_at(h: &mut Harness<'_, State>, at: Vec2) {
+    let target = point(h, at);
+    click(h, target, Modifiers::NONE);
+    h.run_steps(30);
+}
+
+fn arrow_center(h: &Harness<'_, State>, label: &str) -> Pos2 {
+    h.get_by_label(label).rect().center()
+}
+
+#[test]
+fn direction_arrow_click_chains_a_connected_clone_in_one_undo() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    assert_eq!(h.state().view.board_selection, vec![source]);
+    let before = h.state().doc.workbook().clone();
+
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    click(&mut h, arrow, Modifiers::NONE);
+
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(sheet.canvas.objects.len(), 3);
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    assert_ne!(clone, source);
+    let object = sheet.canvas.object(clone).unwrap();
+    assert_eq!(object.rect.center(), Vec2::new(200.0, 0.0));
+    let CanvasObjectKind::Shape { label, shape, .. } = &object.kind else {
+        panic!("clone is not a shape");
+    };
+    assert!(label.is_empty());
+    assert_eq!(*shape, ShapeKind::Rectangle);
+    let edges = connectors(&sheet);
+    assert_eq!(
+        connector_ends(&sheet, edges[0]),
+        (Endpoint::Object(source), Endpoint::Object(clone))
+    );
+    assert_eq!(h.state().doc.undo_label(), Some("Add connected shape"));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn direction_arrow_click_connects_to_a_neighbour_without_cloning() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let neighbour = shape(&mut sheet, 200.0, 0.0, "Neighbour");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    click(&mut h, arrow, Modifiers::NONE);
+
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(sheet.canvas.objects.len(), 3);
+    let edges = connectors(&sheet);
+    assert_eq!(
+        connector_ends(&sheet, edges[0]),
+        (Endpoint::Object(source), Endpoint::Object(neighbour))
+    );
+    assert_eq!(h.state().view.board_selection, vec![neighbour]);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn direction_arrow_clone_skips_occupied_positions() {
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Source");
+    // Blocks the first slot without being the neighbour hit at its centre.
+    let mut blocker = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        thinoda_core::Rect::from_center_size(Vec2::new(200.0, 60.0), Vec2::new(40.0, 40.0)),
+    );
+    blocker.locked = true;
+    sheet.add_canvas_object(blocker).unwrap();
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    click(&mut h, arrow, Modifiers::NONE);
+
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    let sheet = h.state().doc.sheet();
+    assert_eq!(
+        sheet.canvas.object(clone).unwrap().rect.center(),
+        Vec2::new(400.0, 0.0)
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn direction_arrow_modifiers_clone_only_or_connect_only() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let before = h.state().doc.workbook().clone();
+
+    let arrow = arrow_center(&h, "Add connected shape below");
+    click(&mut h, arrow, Modifiers::COMMAND);
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(sheet.canvas.objects.len(), 2);
+    assert!(connectors(&sheet).is_empty());
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    assert_eq!(
+        sheet.canvas.object(clone).unwrap().rect.center(),
+        Vec2::new(0.0, 160.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.run_steps(30);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let arrow = arrow_center(&h, "Add connected shape below");
+    click(&mut h, arrow, Modifiers::SHIFT);
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(sheet.canvas.objects.len(), 2);
+    let edges = connectors(&sheet);
+    assert_eq!(
+        connector_ends(&sheet, edges[0]),
+        (
+            Endpoint::Object(source),
+            Endpoint::Point(Vec2::new(0.0, 120.0))
+        )
+    );
+    assert_eq!(h.state().view.board_selection, vec![edges[0]]);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn direction_arrow_drag_connects_shapes_free_points_and_ctrl_clones() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let target = shape(&mut sheet, 300.0, 250.0, "Target");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let before = h.state().doc.workbook().clone();
+
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    let end = point(&h, Vec2::new(300.0, 250.0));
+    drag(&mut h, arrow, end);
+    finish_drag(&mut h, end);
+    let sheet = h.state().doc.sheet().clone();
+    let edges = connectors(&sheet);
+    assert_eq!(edges.len(), 1);
+    assert_eq!(
+        connector_ends(&sheet, edges[0]),
+        (Endpoint::Object(source), Endpoint::Object(target))
+    );
+    assert_eq!(h.state().view.board_selection, vec![edges[0]]);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.run_steps(30);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    let empty = point(&h, Vec2::new(320.0, -260.0));
+    drag(&mut h, arrow, empty);
+    finish_drag(&mut h, empty);
+    let sheet = h.state().doc.sheet().clone();
+    let edges = connectors(&sheet);
+    assert_eq!(sheet.canvas.objects.len(), 3);
+    let (from, to) = connector_ends(&sheet, edges[0]);
+    assert_eq!(from, Endpoint::Object(source));
+    assert!(matches!(to, Endpoint::Point(_)), "{to:?}");
+    assert!(h.state_mut().doc.undo());
+
+    h.run_steps(30);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    h.event(egui::Event::ModifiersChanged(Modifiers::COMMAND));
+    drag(&mut h, arrow, empty);
+    h.event(egui::Event::PointerButton {
+        pos: empty,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::COMMAND,
+    });
+    h.run_steps(1);
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(sheet.canvas.objects.len(), 4);
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    let center = sheet.canvas.object(clone).unwrap().rect.center();
+    assert!(
+        (center - Vec2::new(320.0, -260.0)).length() < 20.0,
+        "{center:?}"
+    );
+    let edges = connectors(&sheet);
+    assert_eq!(
+        connector_ends(&sheet, edges[0]),
+        (Endpoint::Object(source), Endpoint::Object(clone))
+    );
+    assert_eq!(h.state().doc.undo_label(), Some("Add connected shape"));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn direction_arrow_keyboard_and_touch_activation() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    h.get_by_label("Add connected shape below").focus();
+    h.run_steps(2);
+    assert!(h.get_by_label("Add connected shape below").is_focused());
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(
+        sheet.canvas.object(clone).unwrap().rect.center(),
+        Vec2::new(0.0, 160.0)
+    );
+    assert_eq!(
+        connector_ends(&sheet, connectors(&sheet)[0]),
+        (Endpoint::Object(source), Endpoint::Object(clone))
+    );
+    // Focus follows the new shape so Enter can keep chaining.
+    let focused = h
+        .query_all_by_label("Add connected shape below")
+        .find(|node| node.is_focused())
+        .expect("focused arrow");
+    assert!(focused.rect().center().y > point(&h, Vec2::new(0.0, 200.0)).y);
+    // Leave the source so only the selection keeps its arrows.
+    h.hover_at(point(&h, Vec2::new(-500.0, -400.0)));
+    h.run_steps(3);
+    assert!(h.get_by_label("Add connected shape below").is_focused());
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let [second] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(second)
+            .unwrap()
+            .rect
+            .center(),
+        Vec2::new(0.0, 320.0)
+    );
+
+    h.run_steps(30);
+    let arrow = arrow_center(&h, "Add connected shape to the left");
+    tap(&mut h, arrow);
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(sheet.canvas.objects.len(), 7);
+    let [left] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    assert_eq!(
+        sheet.canvas.object(left).unwrap().rect.center(),
+        Vec2::new(-200.0, 320.0)
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn hover_arrows_show_on_eligible_unselected_shapes() {
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Plain");
+    let locked = shape(&mut sheet, 400.0, 0.0, "Locked");
+    sheet.canvas.object_mut(locked).unwrap().locked = true;
+    let first = shape(&mut sheet, 0.0, 300.0, "Grouped A");
+    let second = shape(&mut sheet, 200.0, 300.0, "Grouped B");
+    sheet.group_canvas_objects(&[first, second]).unwrap();
+    let mut tiny = CanvasObject::shape(
+        ShapeKind::Ellipse,
+        thinoda_core::Rect::from_center_size(Vec2::new(-300.0, 0.0), Vec2::new(20.0, 20.0)),
+    );
+    tiny.alt_text = "Tiny".into();
+    sheet.add_canvas_object(tiny).unwrap();
+    let mut h = harness(sheet);
+    let label = "Add connected shape to the right";
+
+    for at in [
+        Vec2::new(400.0, 0.0),
+        Vec2::new(0.0, 300.0),
+        Vec2::new(-300.0, 0.0),
+    ] {
+        let target = point(&h, at);
+        h.hover_at(target);
+        h.run_steps(3);
+        assert!(h.query_by_label(label).is_none(), "{at:?}");
+    }
+
+    let plain = point(&h, Vec2::ZERO);
+    h.hover_at(plain);
+    h.run_steps(3);
+    assert!(h.state().view.board_selection.is_empty());
+    let arrow = arrow_center(&h, label);
+    // Moving towards the arrow keeps it visible.
+    h.hover_at(arrow);
+    h.run_steps(3);
+    assert!(h.query_by_label(label).is_some());
+    click(&mut h, arrow, Modifiers::NONE);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 7);
+    assert_eq!(h.state().doc.undo_label(), Some("Add connected shape"));
+
+    // The hovered source and the selected clone both show arrows until the pointer leaves.
+    assert_eq!(h.query_all_by_label("Add connected shape above").count(), 2);
+    h.hover_at(point(&h, Vec2::new(0.0, -400.0)));
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("Add connected shape above").count(), 1);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
