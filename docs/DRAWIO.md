@@ -755,7 +755,35 @@ floating variant can follow if users miss it.
   Open menus close when the selection changes or label editing starts.
 Tests: `shape_context_tests.rs`; `connector_context_tests.rs` still passes unchanged.
 
-Remaining Phase 1 slice: tile drag-and-drop and keyboard insert at a free spot (1e).
+**Phase 1e — library drag-and-drop and keyboard insert.** The Shape library opened
+from the toolbar now also inserts shapes directly, like draw.io's sidebar:
+- **Drag** a tile (mouse or pen) onto the board. The menu closes as soon as the drag
+  starts so the board is visible. A snapped ghost of the shape follows the pointer, and
+  releasing creates one default-size shape centred on the point and selects it, as one
+  undo step. The armed tool does not change. Esc cancels the drag (an armed tool stays
+  armed). Releasing over the toolbar, a popup, the minimap or any other overlay creates
+  nothing. Touch swipes keep scrolling the grid, so touch inserts by tapping a tile to
+  arm it and then tapping empty space.
+- **Shift+Enter** on a focused tile inserts the shape at a free spot without arming it.
+  The spot is to the right of the current selection (same centre line) or at the
+  viewport centre, then the nearest grid cell ring around it that overlaps no topic or
+  object (zones and connectors are ignored); the new shape is selected and revealed, so
+  repeated Shift+Enter builds a row. *Deviation from 3.4.1:* plain Enter/Space and
+  AccessKit activation keep only arming the tile, as Phase 1a and the existing library
+  tests require; Shift+Enter is the keyboard counterpart of dragging.
+- With a shape armed, Enter/Space on the board (nothing selected) also uses the free-spot
+  search instead of dropping onto content at the viewport centre.
+- A translated caption under the search field (*Drag onto the board or press
+  Shift+Enter to insert*) explains both; it is omitted when the popup is too small, so
+  the tiles keep their room. "Change shape" uses the same grid without dragging or the
+  caption, and Shift+Enter there still just chooses.
+- Tests: `library_drop_*`, `inserted_shapes_land_in_free_space_beside_the_selection` and
+  `armed_keyboard_insert_avoids_content_at_the_viewport_centre` in `board_tests.rs`, and
+  `shape_insert_tests.rs` (Shift+Enter, plain activation, real mouse drag from the tile).
+
+Remaining Phase 1 items: connect from a shape's outline, edge-to-edge drop, and
+reconnecting connector ends by dragging (verify against today's endpoint handles). The
+web drag-and-drop browser test follows with the web build checks.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

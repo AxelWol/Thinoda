@@ -1299,6 +1299,172 @@ fn armed_shape_exits_with_escape_or_v_and_edits_a_selection_with_enter() {
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
+fn release(h: &mut Harness<'_, State>, position: Pos2) {
+    h.event(egui::Event::PointerButton {
+        pos: position,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(2);
+}
+
+fn object_rects(h: &Harness<'_, State>) -> Vec<thinoda_core::Rect> {
+    h.state()
+        .doc
+        .sheet()
+        .canvas
+        .objects
+        .iter()
+        .map(|object| object.rect)
+        .collect()
+}
+
+#[test]
+fn library_drop_previews_then_creates_one_undoable_shape_without_changing_the_tool() {
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Existing");
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    egui::DragAndDrop::set_payload(&h.ctx, ShapeDrop(ShapeKind::Ellipse));
+    let target = point(&h, Vec2::new(-360.0, -240.0));
+    h.hover_at(target);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_input.drop_ghost,
+        Some((ShapeKind::Ellipse, target))
+    );
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    release(&mut h, target);
+    let objects = &h.state().doc.sheet().canvas.objects;
+    assert_eq!(objects.len(), 2);
+    let created = objects.last().unwrap();
+    assert!(matches!(
+        created.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Ellipse,
+            ..
+        }
+    ));
+    let board = &h.state().doc.sheet().board;
+    let expected = if board.snap {
+        let grid = board.grid_size;
+        Vec2::new(
+            (-360.0 / grid).round() * grid,
+            (-240.0 / grid).round() * grid,
+        )
+    } else {
+        Vec2::new(-360.0, -240.0)
+    };
+    assert!((created.rect.center() - expected).length() < 0.01);
+    assert_eq!(h.state().view.board_selection, vec![created.id]);
+    assert_eq!(h.state().view.board_tool, BoardTool::Select);
+    assert_eq!(h.state().view.board_input.drop_ghost, None);
+    assert!(egui::DragAndDrop::payload::<ShapeDrop>(&h.ctx).is_none());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn library_drop_is_canceled_by_escape_or_obscured_targets() {
+    let overlay = Rect::from_min_size(pos2(40.0, 40.0), vec2(120.0, 120.0));
+    let mut h = harness_with_overlay(board(), Some(overlay));
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Hexagon));
+    let before = h.state().doc.workbook().clone();
+
+    egui::DragAndDrop::set_payload(&h.ctx, ShapeDrop(ShapeKind::Ellipse));
+    let target = point(&h, Vec2::new(200.0, 160.0));
+    h.hover_at(target);
+    h.run_steps(2);
+    assert!(h.state().view.board_input.drop_ghost.is_some());
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_input.drop_ghost, None);
+    release(&mut h, target);
+    assert_eq!(h.state().doc.workbook(), &before);
+    // Escape canceled only the drag; the armed tool stays armed.
+    assert_eq!(
+        h.state().view.board_tool,
+        BoardTool::Shape(ShapeKind::Hexagon)
+    );
+
+    egui::DragAndDrop::set_payload(&h.ctx, ShapeDrop(ShapeKind::Ellipse));
+    h.hover_at(overlay.center());
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_input.drop_ghost, None);
+    release(&mut h, overlay.center());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(egui::DragAndDrop::payload::<ShapeDrop>(&h.ctx).is_none());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn inserted_shapes_land_in_free_space_beside_the_selection() {
+    let mut sheet = board();
+    let mut h = harness(board());
+    let center = {
+        let view = &h.state().view;
+        view.xf().sheet(view.canvas_rect.center())
+    };
+    shape(&mut sheet, center.x, center.y, "Blocker");
+    h.state_mut().doc = Document::new(Workbook::new(sheet));
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+
+    let state = h.state_mut();
+    let first = state
+        .view
+        .insert_board_shape(&mut state.doc, ShapeKind::Diamond)
+        .unwrap();
+    let second = state
+        .view
+        .insert_board_shape(&mut state.doc, ShapeKind::Cloud)
+        .unwrap();
+    assert_eq!(state.view.board_selection, vec![second]);
+    assert_eq!(state.view.board_tool, BoardTool::Select);
+    let sheet = state.doc.sheet();
+    let rect = |id| sheet.canvas.object(id).unwrap().rect;
+    let blocker = sheet.canvas.objects[0].rect;
+    for id in [first, second] {
+        assert!(!rect(id).expand(4.0).intersects(&blocker), "{id:?}");
+    }
+    assert!(!rect(first).expand(4.0).intersects(&rect(second)));
+    // Same row, each one to the right of what was selected before it.
+    assert!(rect(first).center().x > blocker.center().x);
+    assert!(rect(second).center().x > rect(first).center().x);
+    assert!((rect(second).center().y - rect(first).center().y).abs() < 0.01);
+    assert!(state.doc.undo());
+    assert_eq!(state.doc.sheet().canvas.objects.len(), 2);
+    assert!(state.doc.undo());
+    assert_eq!(state.doc.workbook(), &before);
+}
+
+#[test]
+fn armed_keyboard_insert_avoids_content_at_the_viewport_centre() {
+    let mut sheet = board();
+    let mut h = harness(board());
+    let center = {
+        let view = &h.state().view;
+        view.xf().sheet(view.canvas_rect.center())
+    };
+    shape(&mut sheet, center.x, center.y, "Blocker");
+    h.state_mut().doc = Document::new(Workbook::new(sheet));
+    h.run_steps(2);
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Ellipse));
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let rects = object_rects(&h);
+    assert_eq!(rects.len(), 2);
+    assert!(!rects[1].expand(4.0).intersects(&rects[0]));
+    assert_eq!(
+        h.state().view.board_tool,
+        BoardTool::Shape(ShapeKind::Ellipse)
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
 #[test]
 fn touch_creates_and_moves_a_card_without_reparenting() {
     let mut h = harness(board());

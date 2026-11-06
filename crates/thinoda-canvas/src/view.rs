@@ -78,6 +78,13 @@ pub enum BoardTool {
     Lasso,
 }
 
+/// Drag-and-drop payload of a shape dragged from a host's shape library.
+///
+/// Set it with [`egui::Response::dnd_set_drag_payload`]; releasing it over
+/// empty board space creates the shape there as one undoable edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShapeDrop(pub ShapeKind);
+
 impl BoardTool {
     fn ink_mode(self) -> Option<InkMode> {
         match self {

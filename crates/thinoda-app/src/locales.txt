@@ -1848,3 +1848,4 @@ Fill color|Color de relleno|Couleur de remplissage|Fyldfarve|Vulkleur|Cor de pre
 No fill|Sin relleno|Aucun remplissage|Ingen fyld|Geen vulling|Sem preenchimento|Nessun riempimento|Brak wypełnienia
 Outline color|Color del contorno|Couleur du contour|Konturfarve|Contourkleur|Cor do contorno|Colore del contorno|Kolor konturu
 Outline width|Grosor del contorno|Épaisseur du contour|Konturbredde|Contourdikte|Espessura do contorno|Spessore del contorno|Grubość konturu
+Drag onto the board or press Shift+Enter to insert|Arrastra al tablero o pulsa Mayús+Intro para insertar|Faites glisser sur le tableau ou appuyez sur Maj+Entrée pour insérer|Træk ind på tavlen, eller tryk på Skift+Enter for at indsætte|Sleep naar het bord of druk op Shift+Enter om in te voegen|Arraste para o quadro ou prima Shift+Enter para inserir|Trascina sulla lavagna o premi Maiusc+Invio per inserire|Przeciągnij na tablicę lub naciśnij Shift+Enter, aby wstawić

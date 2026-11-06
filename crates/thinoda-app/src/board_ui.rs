@@ -638,6 +638,7 @@ impl ThinodaApp {
         let mut connector_change = None;
         let mut shape_change = None;
         let mut context_action = None;
+        let mut insert_shape = None;
         let mut connector_popups = Vec::new();
         let content_width = (canvas.width() - 36.0).max(0.0);
         let toolbar_width = if collapsed {
@@ -919,24 +920,27 @@ impl ThinodaApp {
                             matches!(tool, BoardTool::Shape(_)),
                             row_height,
                             |ui| {
-                                if let Some(shape) = shape_library(
-                                    ui,
-                                    canvas,
-                                    match tool {
-                                        BoardTool::Shape(shape) => Some(shape),
-                                        _ => None,
-                                    },
-                                    t,
-                                ) {
-                                    // Choosing the armed tile again finishes placing shapes.
-                                    command =
-                                        Some(Cmd::BoardTool(if tool == BoardTool::Shape(shape) {
-                                            BoardTool::Select
-                                        } else {
-                                            BoardTool::Shape(shape)
-                                        }));
-                                    ui.close_kind(egui::UiKind::Menu);
+                                let current = match tool {
+                                    BoardTool::Shape(shape) => Some(shape),
+                                    _ => None,
+                                };
+                                match shape_grid(ui, canvas, current, t, true) {
+                                    Some(ShapePick::Choose(shape)) => {
+                                        // Choosing the armed tile again finishes placing shapes.
+                                        command = Some(Cmd::BoardTool(
+                                            if tool == BoardTool::Shape(shape) {
+                                                BoardTool::Select
+                                            } else {
+                                                BoardTool::Shape(shape)
+                                            },
+                                        ));
+                                    }
+                                    Some(ShapePick::Insert(shape)) => insert_shape = Some(shape),
+                                    // The board takes the drop, so get the menu out of the way.
+                                    Some(ShapePick::Dragged) => {}
+                                    None => return,
                                 }
+                                ui.close_kind(egui::UiKind::Menu);
                             },
                         );
                         for (value, label) in [
@@ -1059,7 +1063,32 @@ impl ThinodaApp {
         if let Some(command) = command {
             self.exec(ctx, command);
         }
+        if let Some(shape) = insert_shape {
+            self.insert_board_shape(ctx, shape);
+        }
         Some(toolbar.response.rect)
+    }
+
+    /// Shift+Enter on a library tile: places the shape in free space beside
+    /// the selection (or near the viewport centre) without changing the tool.
+    fn insert_board_shape(&mut self, ctx: &Context, shape: ShapeKind) {
+        if !self.command_available(&Cmd::BoardTool(BoardTool::Shape(shape))) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if !self.finish_canvas_text_edit() {
+            return;
+        }
+        let Some(doc) = self.doc_mut() else { return };
+        match doc.view.insert_board_shape(&mut doc.doc, shape) {
+            Ok(_) => {
+                ctx.memory_mut(|memory| memory.request_focus(thinoda_canvas::MapCanvas::id()));
+            }
+            Err(error) => {
+                self.toasts
+                    .error(format!("{}: {error}", t("Not possible here")));
+            }
+        }
     }
 
     /// Bottom-centre hint while a shape is armed; dismissible for the session.
@@ -1885,12 +1914,38 @@ fn custom_color_picker(
     None
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShapePick {
+    /// Click, tap, Enter or Space.
+    Choose(ShapeKind),
+    /// Shift+Enter on a tile of the inserting library.
+    Insert(ShapeKind),
+    /// A tile started dragging a [`thinoda_canvas::ShapeDrop`] payload.
+    Dragged,
+}
+
+/// Searchable shape grid that only picks a shape (e.g. Change shape).
 fn shape_library(
     ui: &mut Ui,
     canvas: Rect,
     current: Option<ShapeKind>,
     translate: fn(&'static str) -> &'static str,
 ) -> Option<ShapeKind> {
+    match shape_grid(ui, canvas, current, translate, false)? {
+        ShapePick::Choose(shape) => Some(shape),
+        ShapePick::Insert(_) | ShapePick::Dragged => None,
+    }
+}
+
+/// Shape grid; with `inserting`, mouse and pen drag tiles onto the board and
+/// Shift+Enter inserts the focused tile's shape.
+fn shape_grid(
+    ui: &mut Ui,
+    canvas: Rect,
+    current: Option<ShapeKind>,
+    translate: fn(&'static str) -> &'static str,
+    inserting: bool,
+) -> Option<ShapePick> {
     const TILE: f32 = 44.0;
     const GAP: f32 = 4.0;
     const COLUMNS: f32 = 6.0;
@@ -1914,6 +1969,13 @@ fn shape_library(
         )
         .accessible_name(translate("Search shapes"));
     ui.data_mut(|data| data.insert_temp(id, query.clone()));
+    // The hint is supplementary; tiny popups keep their rows for the tiles.
+    if inserting && width >= 160.0 && available.y >= 240.0 {
+        widgets::caption(
+            ui,
+            translate("Drag onto the board or press Shift+Enter to insert"),
+        );
+    }
     let query = query.to_lowercase();
     let shapes: Vec<_> = ShapeKind::ALL
         .into_iter()
@@ -1947,15 +2009,19 @@ fn shape_library(
                 let mut focused = None;
                 let mut ids = Vec::with_capacity(shapes.len());
                 for (index, (shape, name)) in shapes.iter().copied().enumerate() {
-                    let (response, activated) =
-                        shape_tile(ui, shape, name, current == Some(shape), tile_size);
+                    let (response, pick) = shape_tile(
+                        ui,
+                        shape,
+                        name,
+                        current == Some(shape),
+                        tile_size,
+                        inserting,
+                    );
                     ids.push(response.id);
                     if response.has_focus() {
                         focused = Some(index);
                     }
-                    if activated {
-                        selected = Some(shape);
-                    }
+                    selected = selected.or(pick);
                 }
                 if let Some(index) = focused {
                     let direction = ui.input_mut(|input| {
@@ -2003,12 +2069,19 @@ fn shape_tile(
     name: &str,
     selected: bool,
     size: f32,
-) -> (egui::Response, bool) {
+    inserting: bool,
+) -> (egui::Response, Option<ShapePick>) {
     let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
     let palette = thinoda_ui::Palette::of_ui(ui);
     let (_, rect) = ui.allocate_space(egui::Vec2::splat(size));
     let id = ui.make_persistent_id(("board_shape_tile", shape.id()));
-    let response = ui.interact(rect, id, egui::Sense::click());
+    // Touch swipes keep scrolling the grid instead of dragging a tile.
+    let sense = if inserting && !ui.input(|input| input.any_touches()) {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let response = ui.interact(rect, id, sense);
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, name)
     });
@@ -2064,6 +2137,18 @@ fn shape_tile(
             ));
         }
     }
+    if inserting && ui.is_enabled() && response.drag_started() {
+        response.dnd_set_drag_payload(thinoda_canvas::ShapeDrop(shape));
+        return (response, Some(ShapePick::Dragged));
+    }
+    // egui also reports Shift+Enter as a click, so take it first.
+    let insert = inserting
+        && ui.is_enabled()
+        && response.has_focus()
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter));
+    if insert {
+        return (response.on_hover_text(name), Some(ShapePick::Insert(shape)));
+    }
     let keyboard = ui.is_enabled()
         && response.has_focus()
         && ui.input_mut(|input| {
@@ -2071,7 +2156,10 @@ fn shape_tile(
                 || input.consume_key(egui::Modifiers::NONE, egui::Key::Space)
         });
     let activated = ui.is_enabled() && ((touch_allowed && response.clicked()) || keyboard);
-    (response.on_hover_text(name), activated)
+    (
+        response.on_hover_text(name),
+        activated.then_some(ShapePick::Choose(shape)),
+    )
 }
 
 fn reserve_popup_scrollbar_space(ui: &mut Ui) {
@@ -2152,6 +2240,10 @@ mod connector_context_tests;
 #[cfg(test)]
 #[path = "shape_context_tests.rs"]
 mod shape_context_tests;
+
+#[cfg(test)]
+#[path = "shape_insert_tests.rs"]
+mod shape_insert_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2666,6 +2758,7 @@ mod tests {
                                     shape_name(shape),
                                     shape == ShapeKind::Star,
                                     44.0,
+                                    false,
                                 );
                             }
                         });

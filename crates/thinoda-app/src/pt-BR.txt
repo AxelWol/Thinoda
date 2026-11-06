@@ -891,3 +891,4 @@ Fill color|Cor de preenchimento
 No fill|Sem preenchimento
 Outline color|Cor do contorno
 Outline width|Espessura do contorno
+Drag onto the board or press Shift+Enter to insert|Arraste para o quadro ou pressione Shift+Enter para inserir

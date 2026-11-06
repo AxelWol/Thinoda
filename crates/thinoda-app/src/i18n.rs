@@ -574,6 +574,10 @@ const DE: &[(&str, &str)] = &[
     ("No fill", "Keine Füllung"),
     ("Outline color", "Konturfarbe"),
     ("Outline width", "Konturbreite"),
+    (
+        "Drag onto the board or press Shift+Enter to insert",
+        "Auf das Board ziehen oder mit Umschalt+Eingabe einfügen",
+    ),
     ("Card", "Karte"),
     ("Rotation", "Drehung"),
     ("Custom color", "Benutzerdefinierte Farbe"),
@@ -4342,6 +4346,7 @@ mod tests {
             "No fill",
             "Outline color",
             "Outline width",
+            "Drag onto the board or press Shift+Enter to insert",
             "Card",
             "Width",
             "Height",

@@ -57,5 +57,6 @@ pub use render::{
 };
 pub use view::{
     AddControlLabels, BoardLabels, BoardTool, CanvasOutput, MapCanvas, MapView, NewTopicTitles,
-    ObjectSelection, TitleEditContinuation, protect_ime_candidate_keys, shortcut_bindings,
+    ObjectSelection, ShapeDrop, TitleEditContinuation, protect_ime_candidate_keys,
+    shortcut_bindings,
 };

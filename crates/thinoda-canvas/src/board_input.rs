@@ -30,6 +30,8 @@ pub(super) struct State {
     pub(super) armed_hover: bool,
     /// Unobscured screen position for the armed shape's ghost preview.
     pub(super) ghost: Option<Pos2>,
+    /// Shape dragged from a library and where it would drop.
+    pub(super) drop_ghost: Option<(ShapeKind, Pos2)>,
     /// Unselected shape whose draw.io-style direction arrows are shown on hover.
     hover_shape: Option<CanvasObjectId>,
     /// Open quick-shape picker of a direction arrow.
@@ -368,6 +370,27 @@ impl MapView {
     }
 
     /// Whether the active shape or connector label differs from its original text.
+    /// Inserts a default-size `kind` shape into free space as one undoable
+    /// edit: right of the selection, else near the viewport centre. The new
+    /// shape is selected and revealed; the active tool is unchanged.
+    pub fn insert_board_shape(
+        &mut self,
+        doc: &mut Document,
+        kind: ShapeKind,
+    ) -> EditResult<CanvasObjectId> {
+        self.try_commit_edit(doc)?;
+        self.try_commit_board_label(doc)?;
+        let layout = self.layout_for(doc);
+        let scene = thinoda_core::scene::build_scene(doc.sheet(), &layout);
+        let size = default_size(BoardTool::Shape(kind));
+        let center = insert_spot(doc.sheet(), self, &scene, size);
+        let rect = thinoda_core::Rect::from_center_size(center, size);
+        let id = doc.add_canvas_object(CanvasObject::shape(kind, rect))?;
+        select_hit(self, doc.sheet(), SceneHit::Object(id), false);
+        self.reveal_board_object(id);
+        Ok(id)
+    }
+
     pub fn has_board_label_changes(&self) -> bool {
         self.board_input
             .label
@@ -880,6 +903,70 @@ fn create_at(
         )
     });
     create(doc, view, tool, rect, ends)
+}
+
+const INSERT_GAP: f32 = 40.0;
+
+/// Snapped centre nearest `preferred` where a `size` item overlaps no topic,
+/// card or shape, searching rings of grid cells and preferring the same row
+/// and the right-hand side (draw.io inserts beside content, never on it).
+fn free_spot(sheet: &Sheet, scene: &Scene, preferred: Vec2, size: Vec2) -> Vec2 {
+    let blocked = |center: Vec2| {
+        let target = thinoda_core::Rect::from_center_size(center, size).expand(8.0);
+        scene.items.iter().any(|item| {
+            let solid = match item.id {
+                SceneId::Topic(_) => true,
+                SceneId::Object(id) => sheet
+                    .canvas
+                    .object(id)
+                    .is_some_and(|object| !object.is_connector()),
+                SceneId::Zone(_) => false,
+            };
+            solid && item.bounds.intersects(&target)
+        })
+    };
+    let step = Vec2::new(size.x + INSERT_GAP, size.y + INSERT_GAP);
+    for ring in 0..=8_i32 {
+        let mut cells: Vec<_> = (-ring..=ring)
+            .flat_map(|dy| (-ring..=ring).map(move |dx| (dx, dy)))
+            .filter(|(dx, dy)| dx.abs().max(dy.abs()) == ring)
+            .collect();
+        cells.sort_by_key(|&(dx, dy)| (dy.abs(), dx < 0, dx.abs(), dy < 0));
+        for (dx, dy) in cells {
+            let center = snapped(
+                sheet,
+                preferred + Vec2::new(dx as f32 * step.x, dy as f32 * step.y),
+            );
+            if !blocked(center) {
+                return center;
+            }
+        }
+    }
+    snapped(sheet, preferred)
+}
+
+/// Free insertion centre right of the selection, else near the viewport centre.
+fn insert_spot(sheet: &Sheet, view: &MapView, scene: &Scene, size: Vec2) -> Vec2 {
+    let selection = scene
+        .items
+        .iter()
+        .filter(|item| match item.id {
+            SceneId::Topic(id) => selected(view, SceneHit::Topic(id)),
+            SceneId::Object(id) => selected(view, SceneHit::Object(id)),
+            SceneId::Zone(_) => false,
+        })
+        .map(|item| item.bounds)
+        .reduce(|a, b| a.union(&b));
+    let preferred = selection.map_or_else(
+        || view.xf().sheet(view.canvas_rect.center()),
+        |bounds| {
+            Vec2::new(
+                bounds.min.x + bounds.size.x + INSERT_GAP + size.x / 2.0,
+                bounds.center().y,
+            )
+        },
+    );
+    free_spot(sheet, scene, preferred, size)
 }
 
 /// True when an armed shape must select rather than create at `point`: topics,
@@ -2441,6 +2528,31 @@ pub(super) fn interact(
     if show_quick(ui, doc, view, scene, out) {
         return true;
     }
+    view.board_input.drop_ghost = None;
+    if let Some(drop) = egui::DragAndDrop::payload::<ShapeDrop>(&ctx) {
+        // A library shape previews where it lands and is created on release;
+        // Escape cancels (egui clears the payload) and the tool is unchanged.
+        let point = ctx
+            .input(|input| input.pointer.latest_pos())
+            .filter(|point| {
+                ui.is_enabled()
+                    && !view.board_input.is_active()
+                    && canvas_point_unobscured(ui, response, *point)
+            });
+        if !ctx.input(|input| input.pointer.any_released()) {
+            view.board_input.drop_ghost = point.map(|point| (drop.0, point));
+        } else if let Some(point) = point {
+            egui::DragAndDrop::clear_payload(&ctx);
+            if prepare_edit(doc, view, out)
+                && let Err(error) =
+                    create_at(doc, view, BoardTool::Shape(drop.0), view.xf().sheet(point))
+            {
+                out.error = Some(error);
+            }
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+        }
+        return true;
+    }
     if view.board_input.suppress_until_release {
         if !ctx.input(|input| input.pointer.primary_down()) {
             view.board_input.suppress_until_release = false;
@@ -3185,8 +3297,13 @@ pub(super) fn keyboard(
                 || input.consume_key(Modifiers::NONE, Key::Space)
         }) && prepare_edit(doc, view, out)
         {
-            let point = view.xf().sheet(view.canvas_rect.center());
-            if let Err(error) = create_at(doc, view, view.board_tool, point) {
+            let tool = view.board_tool;
+            let point = if tool == BoardTool::Connector {
+                view.xf().sheet(view.canvas_rect.center())
+            } else {
+                insert_spot(doc.sheet(), view, scene, default_size(tool))
+            };
+            if let Err(error) = create_at(doc, view, tool, point) {
                 out.error = Some(error);
             }
             return true;
@@ -3401,15 +3518,19 @@ pub(super) fn paint(
         }
     }
 
-    if let BoardTool::Shape(kind) = view.board_tool
-        && view.board_input.gesture.is_none()
-        && view.board_input.creation_press.is_none()
-        && let Some(pointer) = view.board_input.ghost
-    {
+    let armed_ghost = match view.board_tool {
+        BoardTool::Shape(kind)
+            if view.board_input.gesture.is_none() && view.board_input.creation_press.is_none() =>
+        {
+            view.board_input.ghost.map(|pointer| (kind, pointer))
+        }
+        _ => None,
+    };
+    if let Some((kind, pointer)) = view.board_input.drop_ghost.or(armed_ghost) {
         let center = snapped(sheet, xf.sheet(pointer));
         let ghost = xf.rect(thinoda_core::Rect::from_center_size(
             center,
-            default_size(view.board_tool),
+            default_size(BoardTool::Shape(kind)),
         ));
         let point = |p: Vec2| ghost.min + vec2(p.x * ghost.width(), p.y * ghost.height());
         let stroke = Stroke::new(1.5, view.accent.gamma_multiply(0.6));
