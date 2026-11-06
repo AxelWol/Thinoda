@@ -183,6 +183,12 @@ fn localize_model_error_in(language: Lang, error: &str) -> &str {
     }
 }
 
+/// Whether a dynamic label key has German and all additional-locale entries.
+#[cfg(test)]
+pub(crate) fn has_translations(en: &str) -> bool {
+    german().contains_key(en) && additional().contains_key(en)
+}
+
 /// Translated title-row button labels for [`thinoda_ui::Dialog`].
 pub fn dialog_labels() -> thinoda_ui::DialogLabels {
     thinoda_ui::DialogLabels {
@@ -3715,6 +3721,39 @@ const DE: &[(&str, &str)] = &[
         "Hierarchieänderungen sind vorgemerkt. „Übernehmen“ validiert das gesamte Dokument; „Abbrechen“ behält die ursprüngliche Hierarchie bei.",
     ),
     ("Review hierarchy changes", "Hierarchieänderungen prüfen"),
+    ("Add", "Hinzufügen"),
+    ("Format", "Format"),
+    ("Layers", "Ebenen"),
+    ("Protection", "Schutz"),
+    ("Draw", "Zeichnen"),
+    ("Canvas settings", "Zeichenflächeneinstellungen"),
+    ("Grid", "Raster"),
+    ("Menu usage", "Menünutzung"),
+    ("Count context-menu use", "Kontextmenü-Nutzung zählen"),
+    (
+        "Optional. Counts stay on this device, are never uploaded and never reorder menus.",
+        "Optional. Die Zählungen bleiben auf diesem Gerät, werden nie hochgeladen und ändern nie die Menüreihenfolge.",
+    ),
+    ("Show counts", "Zählungen anzeigen"),
+    ("Hide counts", "Zählungen ausblenden"),
+    ("Clear counts", "Zählungen löschen"),
+    (
+        "Clear all menu usage counts?",
+        "Alle Menünutzungszählungen löschen?",
+    ),
+    ("No counts recorded yet.", "Noch keine Zählungen erfasst."),
+    (
+        "Could not update menu usage counts",
+        "Menünutzungszählungen konnten nicht aktualisiert werden",
+    ),
+    (
+        "Could not read menu usage counts",
+        "Menünutzungszählungen konnten nicht gelesen werden",
+    ),
+    (
+        "Could not clear menu usage counts",
+        "Menünutzungszählungen konnten nicht gelöscht werden",
+    ),
 ];
 
 #[cfg(test)]

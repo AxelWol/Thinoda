@@ -431,7 +431,7 @@ and at most 1024 bytes; transformed outlines are bounded to 64 KiB/500 lines.
 ## Zones
 
 Select one or more floating root topics and choose **Insert > Create Zone** or
-**Create Zone** in the context menu. Central-tree topics cannot become Zone
+**Zones > Create Zone** in the context menu. Central-tree topics cannot become Zone
 members. The frame initially includes the selected topics and their visible
 descendants. **Apply** saves the name and frame as one undoable change;
 **Cancel** discards the draft.

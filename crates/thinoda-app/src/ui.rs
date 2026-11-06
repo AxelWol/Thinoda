@@ -21,6 +21,7 @@ use crate::{
         CenterMode, CloseIntent, Cmd, EXPORT_MENU, FocusField, FormatTab, SettingsTab,
         SidebarFamily, ThinodaApp,
     },
+    context_menus::CtxEntry,
     i18n::{self, t},
     quick_styles::{StyleColor, StyleTargets},
 };
@@ -3055,6 +3056,10 @@ impl ThinodaApp {
         }
     }
 
+    pub(crate) fn has_card_text_target(&self) -> bool {
+        self.card_text_target().is_some()
+    }
+
     fn card_text_target(&self) -> Option<(CardTextTarget, bool)> {
         let doc = self.doc()?;
         let view = &doc.view;
@@ -4258,301 +4263,220 @@ impl ThinodaApp {
     }
 
     fn context_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
-        if matches!(
-            self.doc().and_then(|d| d.view.selected_object),
-            Some(thinoda_canvas::ObjectSelection::Zone(_))
-        ) {
-            menu_button(ui, t("Zone"), |ui| {
-                for (command, label) in Self::zone_menu_commands() {
-                    if ui
-                        .add_enabled(
-                            self.command_available(&command),
-                            egui::Button::new(t(label)),
-                        )
+        let (context, entries) = self.canvas_context_menu();
+        let mut card_text = false;
+        self.context_entries(ui, &entries, cmd, &mut card_text);
+        let key = if card_text {
+            Some(crate::menu_usage::card_text_key(context))
+        } else {
+            cmd.as_ref()
+                .and_then(|command| crate::menu_usage::key(context, command))
+        };
+        if let Some(key) = key {
+            self.record_menu_usage(&key);
+        }
+    }
+
+    /// Renders context-menu rows; enablement always comes from `command_available`.
+    fn context_entries(
+        &self,
+        ui: &mut Ui,
+        entries: &[CtxEntry],
+        cmd: &mut Option<Cmd>,
+        card_text: &mut bool,
+    ) {
+        for entry in entries {
+            match entry {
+                CtxEntry::Separator => {
+                    ui.separator();
+                }
+                CtxEntry::Caption(text) => {
+                    widgets::caption(ui, t(text));
+                }
+                CtxEntry::Submenu {
+                    label,
+                    icon,
+                    entries,
+                } => {
+                    let text = t(label);
+                    let title = match icon {
+                        Some(icon) => format!("{icon} {text}"),
+                        None => text.to_owned(),
+                    };
+                    menu_button(ui, title, |ui| {
+                        self.context_entries(ui, entries, cmd, card_text);
+                    })
+                    .response
+                    .accessible_name(text);
+                }
+                CtxEntry::Command {
+                    label,
+                    command,
+                    checked,
+                } => {
+                    let label = t(label);
+                    let enabled = self.command_available(command);
+                    let clicked = if let Some(checked) = checked {
+                        let mut value = *checked;
+                        ui.add_enabled(enabled, egui::Checkbox::new(&mut value, label))
+                            .clicked()
+                    } else {
+                        let shortcut = Self::shortcut_hint_for_mode(ui.ctx(), command, self.mode);
+                        let icon = crate::command_icons::command_glyph(command);
+                        ui.add_enabled_ui(enabled, |ui| {
+                            thinoda_ui::ribbon::menu_item(ui, Some(icon), label, shortcut)
+                        })
+                        .inner
+                        .accessible_name(label)
                         .clicked()
-                    {
-                        *cmd = Some(command);
+                    };
+                    if clicked {
+                        *cmd = Some(command.clone());
                         ui.close();
                     }
                 }
-            });
+                CtxEntry::CardText => {
+                    let Some((target, enabled)) = self.card_text_target() else {
+                        continue;
+                    };
+                    let label = card_text_label();
+                    if ui
+                        .add_enabled_ui(enabled, |ui| {
+                            thinoda_ui::ribbon::menu_item(
+                                ui,
+                                Some(icons::BOARD_TEXT.into()),
+                                label,
+                                None,
+                            )
+                        })
+                        .inner
+                        .accessible_name(label)
+                        .clicked()
+                        && widgets::touch_activation_allowed(ui.ctx())
+                    {
+                        Self::open_card_text_toolbar(ui.ctx(), self.current_viewport, target);
+                        *card_text = true;
+                        ui.close();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Counts one context-menu activation when the user opted in; never reorders menus.
+    fn record_menu_usage(&mut self, key: &str) {
+        if !self.settings.collect_menu_usage {
             return;
         }
-        if let Some(object) = self.doc().and_then(|d| d.view.selected_object) {
-            let label = match object {
-                thinoda_canvas::ObjectSelection::Relationship(_) => "Delete Relationship",
-                thinoda_canvas::ObjectSelection::Boundary(_) => "Delete Boundary",
-                thinoda_canvas::ObjectSelection::Summary(_) => "Delete Summary",
-                thinoda_canvas::ObjectSelection::Zone(_) => "Remove Zone",
-            };
-            if matches!(object, thinoda_canvas::ObjectSelection::Summary(_)) {
-                widgets::caption(
-                    ui,
-                    t("Deletes the summary topic and its children, not the covered branches."),
-                );
-            }
-            if ui.button(t(label)).clicked() {
-                *cmd = Some(Cmd::Canvas(Action::Delete));
-                ui.close();
-            }
+        let Some(paths) = self.services.paths.as_ref() else {
             return;
-        }
-        let has_sel = self.doc().is_some_and(|d| !d.view.selection.is_empty());
-        let single = self.doc().is_some_and(|d| d.view.selection.len() == 1);
-        let non_root = self
-            .doc()
-            .is_some_and(|d| has_sel && !d.view.selection.contains(&d.doc.sheet().root));
-        let summary_topic = self.doc().is_some_and(|d| {
-            single
-                && d.doc
-                    .sheet()
-                    .summaries
-                    .iter()
-                    .any(|s| Some(s.topic) == d.view.primary())
-        });
-        let has_parent = self.doc().is_some_and(|d| {
-            single
-                && d.view
-                    .primary()
-                    .and_then(|id| d.doc.sheet().parent(id))
-                    .is_some()
-        });
-        let has_children = self.doc().is_some_and(|d| {
-            d.view
-                .selection
-                .iter()
-                .any(|id| !d.doc.sheet().children(*id).is_empty())
-        });
-        let has_link = self.doc().is_some_and(|d| {
-            d.view
-                .primary()
-                .and_then(|id| d.doc.sheet().topic(id))
-                .is_some_and(|t| t.hyperlink.is_some())
-        });
-        let mode = self.mode;
-        let fim_edit = self.command_available(&Cmd::EditFimNode);
-        let fim_child = self.command_available(&Cmd::AddFimChild);
-        let fim_sibling = self.command_available(&Cmd::InsertFimBefore);
-        let mut item = |ui: &mut Ui, label: &str, c: Cmd, enabled: bool| {
-            let shortcut = Self::shortcut_hint_for_mode(ui.ctx(), &c, mode);
-            let icon = crate::command_icons::command_glyph(&c);
-            if ui
-                .add_enabled_ui(enabled, |ui| {
-                    thinoda_ui::ribbon::menu_item(ui, Some(icon), label, shortcut)
-                })
-                .inner
-                .accessible_name(label)
-                .clicked()
-            {
-                *cmd = Some(c);
-                ui.close();
-            }
         };
-        if fim_edit {
-            item(ui, t("Edit FIM node"), Cmd::EditFimNode, true);
-            item(ui, t("Add FIM child"), Cmd::AddFimChild, fim_child);
-            item(
-                ui,
-                t("Insert FIM node before"),
-                Cmd::InsertFimBefore,
-                fim_sibling,
-            );
-            item(
-                ui,
-                t("Insert FIM node after"),
-                Cmd::InsertFimAfter,
-                fim_sibling,
-            );
-            ui.separator();
+        if let Err(error) = crate::menu_usage::record(paths, key) {
+            self.toasts.warning(format!(
+                "{}: {error}",
+                t("Could not update menu usage counts")
+            ));
         }
-        item(ui, t("Topic"), Cmd::Canvas(Action::InsertSibling), has_sel);
-        item(ui, t("Subtopic"), Cmd::Canvas(Action::InsertChild), has_sel);
-        item(
-            ui,
-            t("Parent Topic"),
-            Cmd::Canvas(Action::InsertParent),
-            single && non_root,
-        );
-        ui.separator();
-        item(
-            ui,
-            t("Relationship"),
-            Cmd::Canvas(Action::StartRelationship),
-            single,
-        );
-        item(ui, t("Summary"), Cmd::Canvas(Action::AddSummary), has_sel);
-        item(ui, t("Boundary"), Cmd::Canvas(Action::AddBoundary), has_sel);
-        menu_button(ui, t("Zone"), |ui| {
-            for (command, label) in Self::zone_menu_commands() {
-                let available = self.command_available(&command);
-                item(ui, t(label), command, available);
-            }
-        });
-        item(ui, t("To-Do"), Cmd::Canvas(Action::ToggleTodo), has_sel);
-        if single {
-            ui.separator();
-            item(
-                ui,
-                t("Edit hyperlink"),
-                Cmd::EditField(FocusField::Hyperlink),
-                self.command_available(&Cmd::EditField(FocusField::Hyperlink)),
-            );
-            item(
-                ui,
-                t("Edit notes"),
-                Cmd::EditField(FocusField::Notes),
-                self.command_available(&Cmd::EditField(FocusField::Notes)),
-            );
-            if let Some((target, enabled)) = self.card_text_target() {
-                let label = card_text_label();
-                if ui
-                    .add_enabled_ui(enabled, |ui| {
-                        thinoda_ui::ribbon::menu_item(
-                            ui,
-                            Some(icons::BOARD_TEXT.into()),
-                            label,
-                            None,
-                        )
-                    })
-                    .inner
-                    .accessible_name(label)
-                    .clicked()
-                    && widgets::touch_activation_allowed(ui.ctx())
-                {
-                    Self::open_card_text_toolbar(ui.ctx(), self.current_viewport, target);
-                    ui.close();
-                }
-            }
-            item(ui, t("Topic style"), Cmd::TopicStyle, true);
-            item(
-                ui,
-                t("Labels"),
-                Cmd::Labels,
-                self.command_available(&Cmd::Labels),
-            );
-            item(
-                ui,
-                t("Local Image"),
-                Cmd::LocalImage,
-                self.command_available(&Cmd::LocalImage),
-            );
-            item(
-                ui,
-                t("Attachment"),
-                Cmd::Attachment,
-                self.command_available(&Cmd::Attachment),
-            );
-            item(
-                ui,
-                t("Save/Download attachment"),
-                Cmd::SaveAttachment,
-                self.command_available(&Cmd::SaveAttachment),
-            );
-        }
-        ui.separator();
-        menu_button(ui, t("Styles"), |ui| {
-            for (label, command) in [
-                ("Indent", Cmd::Canvas(Action::Indent)),
-                ("Outdent", Cmd::Canvas(Action::Outdent)),
-                ("Copy Style", Cmd::CopyStyle),
-                ("Paste Style", Cmd::PasteStyle),
-                ("Reset Style", Cmd::ResetStyle),
-                ("Save Quick Style…", Cmd::SaveQuickStyle),
-            ] {
-                let available = self.command_available(&command);
-                item(ui, t(label), command, available);
-            }
-        });
-        ui.separator();
-        menu_button(ui, t("Select"), |ui| {
-            for (action, label) in Self::selection_commands() {
-                let command = Cmd::Canvas(action);
-                let available = self.command_available(&command);
-                item(ui, t(label), command, available);
-            }
-        });
-        menu_button(ui, t("Board"), |ui| {
-            for (command, label) in Self::context_board_commands() {
-                let available = self.command_available(&command);
-                item(ui, t(label), command, available);
-            }
-        });
-        menu_button(ui, t("Arrange"), |ui| {
-            for (action, label) in Self::arrangement_commands() {
-                let command = Cmd::Canvas(action);
-                let available = self.command_available(&command);
-                item(ui, t(label), command, available);
-            }
-        });
-        menu_button(ui, t("Tools"), |ui| {
-            for (command, label) in Self::board_tool_commands() {
-                let available = self.command_available(&command);
-                item(ui, t(label), command, available);
-            }
-        });
-        ui.menu_button(format!("{} {}", icons::AI, t("AI")), |ui| {
-            scroll_menu(ui, |ui| {
-                for a in crate::ai::AiCommand::ALL {
-                    item(
-                        ui,
-                        t(a.label()),
-                        Cmd::Ai(a),
-                        self.command_available(&Cmd::Ai(a)),
-                    );
-                }
+    }
+
+    /// Opt-in, local-only context-menu counts: toggle, review and clear.
+    fn menu_usage_section(&mut self, ui: &mut Ui, activation_allowed: bool) {
+        // Counts need a local config directory, which the web app does not have.
+        let Some(paths) = self.services.paths.clone() else {
+            return;
+        };
+        widgets::section(ui, t("Menu usage"), true, |ui| {
+            widgets::property_field(ui, t("Count context-menu use"), |ui| {
+                widgets::toggle(
+                    ui,
+                    &mut self.settings.collect_menu_usage,
+                    t("Count context-menu use"),
+                )
             });
-        })
-        .response
-        .accessible_name(t("AI"));
-        if has_link {
-            item(ui, t("Open Link"), Cmd::OpenLink, true);
-        }
-        ui.separator();
-        item(ui, t("Cut"), Cmd::Canvas(Action::Cut), non_root);
-        item(ui, t("Copy"), Cmd::Canvas(Action::Copy), has_sel);
-        item(ui, t("Paste"), Cmd::MenuPaste, true);
-        item(ui, t("Duplicate"), Cmd::Canvas(Action::Duplicate), non_root);
-        if summary_topic {
             widgets::caption(
                 ui,
-                t("Deletes the summary topic and its children, not the covered branches."),
+                t(
+                    "Optional. Counts stay on this device, are never uploaded and never reorder menus.",
+                ),
             );
-        }
-        item(
-            ui,
-            t(if summary_topic {
-                "Delete Summary"
-            } else {
-                "Delete"
-            }),
-            Cmd::Canvas(Action::Delete),
-            non_root,
-        );
-        item(
-            ui,
-            t("Delete Topic Only"),
-            Cmd::Canvas(Action::DeleteKeepChildren),
-            has_parent,
-        );
-        ui.separator();
-        item(
-            ui,
-            t("Collapse / Expand"),
-            Cmd::Canvas(Action::ToggleCollapse),
-            has_children,
-        );
-        item(ui, t("Expand All"), Cmd::Canvas(Action::ExpandAll), true);
-        item(
-            ui,
-            t("Collapse All"),
-            Cmd::Canvas(Action::CollapseAll),
-            true,
-        );
-        item(ui, t("Fit Map"), Cmd::Canvas(Action::Fit), true);
-        ui.separator();
-        let command = Cmd::NewSheetFromTopic;
-        let available = self.command_available(&command);
-        item(ui, t("New Sheet from Topic"), command, available);
+            let shown_id = egui::Id::unique("thinoda_menu_usage_counts");
+            let confirm_id = egui::Id::unique("thinoda_menu_usage_confirm_clear");
+            let mut shown = ui.data(|d| d.get_temp::<Vec<(String, u32)>>(shown_id));
+            let mut confirm = ui.data(|d| d.get_temp::<bool>(confirm_id).unwrap_or(false));
+            ui.horizontal_wrapped(|ui| {
+                let toggle = if shown.is_some() {
+                    t("Hide counts")
+                } else {
+                    t("Show counts")
+                };
+                if ui.button(toggle).clicked() && activation_allowed {
+                    shown = if shown.is_some() {
+                        None
+                    } else {
+                        match crate::menu_usage::load(&paths) {
+                            Ok(counts) => Some(crate::menu_usage::ranked(&counts)),
+                            Err(error) => {
+                                self.toasts.warning(format!(
+                                    "{}: {error}",
+                                    t("Could not read menu usage counts")
+                                ));
+                                None
+                            }
+                        }
+                    };
+                }
+                if !confirm {
+                    if ui.button(t("Clear counts")).clicked() && activation_allowed {
+                        confirm = true;
+                    }
+                } else {
+                    ui.label(t("Clear all menu usage counts?"));
+                    if ui.button(t("Clear")).clicked() && activation_allowed {
+                        confirm = false;
+                        match crate::menu_usage::clear(&paths) {
+                            Ok(()) => {
+                                if let Some(counts) = shown.as_mut() {
+                                    counts.clear();
+                                }
+                            }
+                            Err(error) => {
+                                self.toasts.warning(format!(
+                                    "{}: {error}",
+                                    t("Could not clear menu usage counts")
+                                ));
+                            }
+                        }
+                    }
+                    if ui.button(t("Cancel")).clicked() && activation_allowed {
+                        confirm = false;
+                    }
+                }
+            });
+            if let Some(counts) = &shown {
+                if counts.is_empty() {
+                    widgets::caption(ui, t("No counts recorded yet."));
+                } else {
+                    egui::Grid::new("menu_usage_grid")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for (key, count) in counts {
+                                ui.label(key);
+                                ui.label(count.to_string());
+                                ui.end_row();
+                            }
+                        });
+                }
+            }
+            ui.data_mut(|d| {
+                match shown {
+                    Some(counts) => {
+                        d.insert_temp(shown_id, counts);
+                    }
+                    None => d.remove::<Vec<(String, u32)>>(shown_id),
+                }
+                d.insert_temp(confirm_id, confirm);
+            });
+        });
     }
 
     fn home(&mut self, ui: &mut Ui) {
@@ -5435,24 +5359,25 @@ impl ThinodaApp {
                             return;
                         }
                         scroll_menu(ui, |ui| {
-                            if ui.button(t("Rename Sheet")).clicked() && touch_allowed {
-                                cmd = Some(Cmd::RenameSheet);
-                            }
-                            if ui.button(t("Duplicate Sheet")).clicked() && touch_allowed {
-                                cmd = Some(Cmd::DuplicateSheet);
-                            }
-                            ui.separator();
-                            for (label, command) in [
-                                ("Copy Sheet", Cmd::CopySheet),
-                                ("Paste Sheet", Cmd::PasteSheet),
-                                ("Save Sheet As…", Cmd::SaveSheetAs),
-                                ("New Sheet", Cmd::NewSheet),
+                            // Create, edit, clipboard, order, export, then the destructive row.
+                            for group in [
+                                &[("New Sheet", Cmd::NewSheet)][..],
+                                &[
+                                    ("Rename Sheet", Cmd::RenameSheet),
+                                    ("Duplicate Sheet", Cmd::DuplicateSheet),
+                                ],
+                                &[
+                                    ("Copy Sheet", Cmd::CopySheet),
+                                    ("Paste Sheet", Cmd::PasteSheet),
+                                ],
                             ] {
-                                if ui.button(t(label)).clicked() && touch_allowed {
-                                    cmd = Some(command);
+                                for (label, command) in group {
+                                    if ui.button(t(label)).clicked() && touch_allowed {
+                                        cmd = Some(command.clone());
+                                    }
                                 }
+                                ui.separator();
                             }
-                            ui.separator();
                             if ui
                                 .add_enabled(i > 0, egui::Button::new(t("Move Left")))
                                 .clicked()
@@ -5499,6 +5424,11 @@ impl ThinodaApp {
                                     }
                                 }
                             }
+                            ui.separator();
+                            if ui.button(t("Save Sheet As…")).clicked() && touch_allowed {
+                                cmd = Some(Cmd::SaveSheetAs);
+                            }
+                            ui.separator();
                             if ui
                                 .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
                                 .clicked()
@@ -8154,6 +8084,7 @@ impl ThinodaApp {
                             },
                         );
                     });
+                    self.menu_usage_section(ui, activation_allowed);
                 }
                 if self.dialogs.settings_tab == SettingsTab::Ai {
                     credentials_saved =

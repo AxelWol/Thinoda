@@ -359,9 +359,20 @@ those system-owned controls. WinGet publishing remains paused.
   expose color, width, opacity and stroke type controls, while erasers expose
   their radius. Selected-topic actions move to avoid visible cards, frame
   titles and toolbars. If they cannot fit, use the main menu or the topic's
-  context menu instead. **Board** is a first-level main-menu category; the
-  canvas context menu also has Board and a Styles submenu. Board commands
-  provide grid, snapping, grouping, locking, arrangement and a minimap. Native
+  context menu instead. **Board** is a first-level main-menu category. Board
+  commands provide grid, snapping, grouping, locking, arrangement and a minimap.
+- The canvas context menu adapts to what you right-click. Topics show
+  Topic/Subtopic/Parent Topic, the clipboard and Collapse/Expand first, then the
+  Add, Structure, Format, Arrange, Select, Zones, AI and View submenus,
+  **Command Palette…** and Delete last. Board objects show the clipboard, Format,
+  Group/Ungroup and Lock/Unlock directly, plus Arrange, Layers, Zones and View.
+  Blank canvas offers Floating Topic (at the clicked point), Paste, Add, Draw,
+  Select, View and AI: Generate Map. Unavailable actions stay visible but
+  disabled so items keep their place. The main menu and command palette list
+  every command unchanged.
+- Settings > Editor > **Menu usage** can optionally count context-menu use on
+  desktop. It is off by default; counts stay in the local `menu_usage.json`,
+  are never uploaded and never reorder menus. Show or clear them there. Native
   files use version 6 when board
   features are present; other formats may show an itemized warning before
   exporting content they cannot retain. Frame clipping is visual, not secure
