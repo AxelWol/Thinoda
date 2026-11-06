@@ -800,6 +800,32 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   localization suites passed 24 and 27 tests respectively; strict native and
   Wasm app Clippy checks passed.
 
+### Native cut verification checkpoint: critique
+
+- Structured native cuts now verify both the plain text and the Thinoda rich
+  payload before deleting the selection. Two HTML reads bracket the text read;
+  changed, missing, sanitized, malformed, oversized or unavailable readback
+  cancels the cut and reports that the original remains. Line-ending
+  normalization matches the browser policy. Native copies retain their
+  existing HTML verification behavior.
+- These are separate synchronous OS calls, not an atomic clipboard lease or a
+  cancellable operation. Another application can replace the clipboard after
+  verification, and a slow native clipboard can still block the UI. If the
+  operation returns after 30 seconds, the original is retained, but this
+  elapsed-time check cannot interrupt a blocked call. Arboard reads allocate
+  before Thinoda can apply its size checks. Plain text expanded beyond the
+  limit by CRLF conversion is conservatively rejected. Ordinary topic clipboard
+  payloads still use a session-only token: after the originating process exits,
+  another instance may receive only the plain-text fallback. Real Windows,
+  macOS, X11 and Wayland clipboard acceptance remains open.
+- Fake-transport regressions exercise changed text or rich data, missing,
+  sanitized and malformed HTML, read denial and an intervening clipboard change.
+  They also cover formatted-card cut/paste/undo and ordinary-topic token cuts.
+  The focused clipboard suite passed 27 tests, with strict native and Wasm app
+  Clippy checks. Five synthetic browser cut regressions also passed against the
+  current production-Wasm build in each of Chromium, Firefox and WebKit. These
+  checks do not claim real OS ownership, permissions or cross-process fidelity.
+
 ### Resource-union checkpoint: critique
 
 - Merging embedded resources previously revalidated and rehashed the growing

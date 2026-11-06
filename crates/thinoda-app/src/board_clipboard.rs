@@ -85,8 +85,10 @@ pub(crate) struct Snapshot {
     html: Option<String>,
 }
 
-#[cfg(any(test, target_arch = "wasm32"))]
 fn verify_cut_snapshot(prepared: &PreparedCopy, snapshot: &Snapshot) -> Result<(), String> {
+    if snapshot.text.len() > MAX_BOARD_CLIPBOARD_BYTES {
+        return Err("clipboard text exceeds the size limit".into());
+    }
     if snapshot.text != prepared.text
         && snapshot.text.replace("\r\n", "\n") != prepared.text.replace("\r\n", "\n")
     {
@@ -383,7 +385,7 @@ impl crate::app::ThinodaApp {
                     return;
                 }
                 if let Some(guard) = prepared.cut {
-                    if delayed && prepared.started.elapsed() > MAX_PENDING_CUT {
+                    if prepared.started.elapsed() > MAX_PENDING_CUT {
                         self.toasts.warning(format!(
                             "{}: clipboard verification took too long",
                             crate::i18n::t("Cut cancelled; original content was kept")
@@ -781,6 +783,17 @@ mod tests {
         ] {
             assert!(verify_cut_snapshot(&prepared, &snapshot(text, html)).is_err());
         }
+        assert_eq!(
+            verify_cut_snapshot(
+                &prepared,
+                &snapshot(
+                    "x".repeat(MAX_BOARD_CLIPBOARD_BYTES + 1),
+                    Some(prepared.html.clone())
+                )
+            )
+            .unwrap_err(),
+            "clipboard text exceeds the size limit"
+        );
 
         let token = RichClipboard::TopicToken("0123456789abcdef".into());
         let token_copy = PreparedCopy {
@@ -1034,6 +1047,134 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn native_cut_retains_original_when_clipboard_readback_is_unreliable() {
+        use crate::app::Cmd;
+
+        for scenario in [
+            "text",
+            "missing-html",
+            "sanitized-html",
+            "malformed-html",
+            "changed-rich",
+            "read-denied",
+            "changed-during-read",
+        ] {
+            let (mut app, clipboard) = app_with_fake_clipboard();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            {
+                let mut fake = clipboard.borrow_mut();
+                match scenario {
+                    "text" => fake.written_text = Some("Different text".into()),
+                    "missing-html" => fake.written_html = Some(None),
+                    "sanitized-html" => fake.written_html = Some(Some("<p>Same text</p>".into())),
+                    "malformed-html" => {
+                        fake.written_html =
+                            Some(Some("<pre data-thinoda-board-v1='xz'></pre>".into()));
+                    }
+                    "changed-rich" => {
+                        fake.written_html = Some(Some(
+                            make_html("", &RichClipboard::Board("other".into())).unwrap(),
+                        ));
+                    }
+                    "read-denied" => fake.fail_read = true,
+                    "changed-during-read" => {
+                        fake.read_html_after = Some(Some("<p>Changed clipboard</p>".into()));
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            app.exec(&egui::Context::default(), Cmd::Canvas(Action::Cut));
+
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before, "{scenario}");
+            assert!(
+                app.toasts.texts().any(|text| {
+                    text.contains(crate::i18n::t("Cut cancelled; original content was kept"))
+                }),
+                "{scenario}"
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_formatted_card_cut_verifies_then_pastes_and_undoes() {
+        use crate::app::Cmd;
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = sheet
+            .add_card(
+                "Styled card",
+                Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(thinoda_core::CardKind::Text, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .update_range("Styled card", 0..6, |style| style.bold = Some(true))
+            .unwrap();
+        let formatting = sheet.topic(card).unwrap().inline_text.clone();
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        app.docs = vec![OpenDoc::new(Workbook::new(sheet))];
+        app.doc_mut().unwrap().view.select_only(card);
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let ctx = egui::Context::default();
+
+        clipboard.borrow_mut().written_text = Some("Different text".into());
+        app.exec(&ctx, Cmd::Canvas(Action::Cut));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+
+        clipboard.borrow_mut().written_text = None;
+        app.exec(&ctx, Cmd::Canvas(Action::Cut));
+        assert!(!app.doc().unwrap().doc.sheet().contains(card));
+        app.exec(&ctx, Cmd::MenuPaste);
+        let doc = app.doc().unwrap();
+        let pasted = doc.view.primary().unwrap();
+        assert_ne!(pasted, card);
+        assert_eq!(
+            doc.doc.sheet().topic(pasted).unwrap().inline_text,
+            formatting
+        );
+
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert!(!app.doc().unwrap().doc.sheet().contains(pasted));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_topic_cut_verifies_session_token_before_deletion() {
+        use crate::app::Cmd;
+
+        let mut sheet = Sheet::new("Map", "Root");
+        let topic = sheet.add_child(sheet.root, None, "Topic");
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        app.docs = vec![OpenDoc::new(Workbook::new(sheet))];
+        app.doc_mut().unwrap().view.select_only(topic);
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let ctx = egui::Context::default();
+
+        clipboard.borrow_mut().written_text = Some("Different text".into());
+        app.exec(&ctx, Cmd::Canvas(Action::Cut));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+
+        clipboard.borrow_mut().written_text = None;
+        app.exec(&ctx, Cmd::Canvas(Action::Cut));
+        assert!(!app.doc().unwrap().doc.sheet().contains(topic));
+        assert!(matches!(
+            read_html(clipboard.borrow().html.as_deref().unwrap()).unwrap(),
+            Some(RichClipboard::TopicToken(_))
+        ));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn external_identical_text_invalidates_all_view_caches() {
         use crate::app::Cmd;
         let (mut app, clipboard) = app_with_fake_clipboard();
@@ -1137,27 +1278,29 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn delayed_cut_cannot_delete_after_verification_expires() {
-        let (mut app, _) = app_with_fake_clipboard();
-        let before = app.doc().unwrap().doc.workbook().clone();
-        let mut prepared = prepare_copy(app.doc_mut().unwrap(), true).unwrap().unwrap();
-        prepared.started = Instant::now() - MAX_PENDING_CUT - std::time::Duration::from_secs(1);
-        app.clipboard_bridge.generation = 1;
-        app.finish_clipboard(
-            &egui::Context::default(),
-            Completion::Write {
-                generation: 1,
-                prepared,
-                result: Ok(()),
-            },
-            true,
-        );
-        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
-        assert!(
-            app.toasts
-                .texts()
-                .any(|text| text.contains("clipboard verification took too long"))
-        );
+    fn cut_cannot_delete_after_verification_expires() {
+        for delayed in [false, true] {
+            let (mut app, _) = app_with_fake_clipboard();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let mut prepared = prepare_copy(app.doc_mut().unwrap(), true).unwrap().unwrap();
+            prepared.started = Instant::now() - MAX_PENDING_CUT - std::time::Duration::from_secs(1);
+            app.clipboard_bridge.generation = 1;
+            app.finish_clipboard(
+                &egui::Context::default(),
+                Completion::Write {
+                    generation: 1,
+                    prepared,
+                    result: Ok(()),
+                },
+                delayed,
+            );
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+            assert!(
+                app.toasts
+                    .texts()
+                    .any(|text| text.contains("clipboard verification took too long"))
+            );
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

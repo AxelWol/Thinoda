@@ -63,6 +63,9 @@ Structured browser cuts now fail closed on missing, changed, denied or
 timed-out rich readback, but cannot lock or cancel the system clipboard;
 compatibility and remaining host acceptance are described in the
 [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
+Native cuts also fail closed when text or rich readback differs, with remaining
+OS-ownership and session-token limitations in the
+[native critique](FREEFORM.md#native-cut-verification-checkpoint-critique).
 New Sheet from Topic now preserves card branches and owned resources in a
 rootless destination, while warning about surrounding context left in the
 source. See the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)

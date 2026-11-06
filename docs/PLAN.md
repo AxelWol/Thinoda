@@ -55,6 +55,9 @@ Structured browser cuts now require bounded rich clipboard readback and time
 out without deleting the original when verification fails. Browser permission,
 sanitization and non-atomic clipboard ownership still require real-host
 acceptance; see the [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
+Native cuts also verify both text and rich data across a stable HTML read;
+the [native critique](FREEFORM.md#native-cut-verification-checkpoint-critique)
+records their synchronous, non-atomic and session-token limitations.
 New Sheet from Topic preserves card branches as rootless sheets, including
 summary-owned resources, while reporting surrounding context left in the
 source; the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)
