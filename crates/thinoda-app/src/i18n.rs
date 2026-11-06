@@ -363,6 +363,14 @@ const DE: &[(&str, &str)] = &[
         "Ein Teil der Freihandeingabe wurde abgelehnt. Diese Geste kann nicht erneut ausgeführt werden; kopieren Sie ihre Messwerte oder verwerfen Sie sie.",
     ),
     (
+        "Pen input could not be matched. No stroke was started; dismiss this message and try again.",
+        "Die Stifteingabe konnte nicht zugeordnet werden. Es wurde kein Strich begonnen; schließen Sie diese Meldung und versuchen Sie es erneut.",
+    ),
+    (
+        "Touch pointer input could not be matched. Check the gesture or dismiss this message.",
+        "Die Berührungszeigereingabe konnte nicht zugeordnet werden. Prüfen Sie die Geste oder schließen Sie diese Meldung.",
+    ),
+    (
         "The ink gesture could not be completed. Retry it or discard it.",
         "Die Freihandgeste konnte nicht abgeschlossen werden. Versuchen Sie es erneut oder verwerfen Sie sie.",
     ),
@@ -4379,6 +4387,8 @@ mod tests {
             "Resolve pending ink before continuing. Retry, copy, or discard it.",
             "The pointer is still down. Release it before retrying.",
             "Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it.",
+            "Pen input could not be matched. No stroke was started; dismiss this message and try again.",
+            "Touch pointer input could not be matched. Check the gesture or dismiss this message.",
             "The ink gesture could not be completed. Retry it or discard it.",
             "The ink gesture was interrupted. Retry it or discard it.",
             "Ink input details",

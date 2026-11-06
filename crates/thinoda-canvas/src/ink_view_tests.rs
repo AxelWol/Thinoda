@@ -478,6 +478,74 @@ fn batched_cancel_allows_new_touch_or_mouse_ink_after_explicit_discard() {
 }
 
 #[test]
+fn touch_pointer_metadata_stays_aligned_when_cancel_splits_the_frame() {
+    let mut h = harness(board());
+    tool(&mut h, BoardTool::Pen);
+    let start = point(&h, Vec2::new(-100.0, -100.0));
+    let end = start + vec2(60.0, 40.0);
+    touch(&mut h, egui::TouchPhase::Start, start, Some(0.5));
+    assert!(h.state_mut().view.cancel_ink());
+    let cancel = egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Cancel,
+        pos: start,
+        force: None,
+    };
+    let down = egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    };
+    let events = [cancel, down];
+    let record = crate::touch_input::TouchPointerRecord {
+        phase: crate::pen_input::PointerPhase::Press(PointerButton::Primary),
+        position: start,
+        is_touch: true,
+    };
+    assert_eq!(
+        crate::touch_input::publish_pointer_frame(
+            &h.ctx,
+            egui::ViewportId::ROOT,
+            &events,
+            &[record],
+            false,
+            &[],
+            false,
+        ),
+        None
+    );
+    h.input_mut().events.extend(events);
+    h.run_steps(1);
+    assert!(!h.state().view.has_pending_ink_gesture());
+    assert!(h.state().doc.sheet().canvas.objects.is_empty());
+
+    h.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(2),
+        phase: egui::TouchPhase::Start,
+        pos: start,
+        force: Some(0.4),
+    });
+    h.run_steps(1);
+    h.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(2),
+        phase: egui::TouchPhase::End,
+        pos: end,
+        force: Some(0.7),
+    });
+    h.run_steps(2);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+    assert!(
+        h.state().ink_errors.is_empty(),
+        "{:?}",
+        h.state().ink_errors
+    );
+}
+
+#[test]
 fn second_touch_retains_stroke_and_yields_to_pinch_navigation() {
     let mut h = harness(board());
     tool(&mut h, BoardTool::Pen);
@@ -741,6 +809,97 @@ fn rejected_editor_commit_reports_the_touch_start_and_preserves_the_draft() {
     assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
     touch(&mut h, egui::TouchPhase::End, start, Some(0.75));
     assert!(!h.state().view.has_pending_ink_gesture());
+}
+
+#[test]
+fn ambiguous_touch_frame_does_not_draw_over_a_rejected_label_draft() {
+    let mut sheet = board();
+    let id = sheet
+        .add_canvas_object(CanvasObject::shape(
+            thinoda_core::ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        ))
+        .unwrap();
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(2);
+    let draft = "x".repeat(thinoda_core::board::MAX_BOARD_TEXT_CHARS + 1);
+    h.get_by_label("Board object label").type_text(&draft);
+    h.run_steps(2);
+    tool(&mut h, BoardTool::Pen);
+    assert_eq!(
+        h.state().view.board_label_draft(),
+        Some((id, "", draft.as_str()))
+    );
+    let start = point(&h, Vec2::new(-200.0, -180.0));
+    let end = start + vec2(60.0, 40.0);
+    let events = [
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase: egui::TouchPhase::Start,
+            pos: start,
+            force: Some(0.3),
+        },
+        egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase: egui::TouchPhase::Move,
+            pos: end,
+            force: Some(0.6),
+        },
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerGone,
+        egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase: egui::TouchPhase::End,
+            pos: end,
+            force: Some(0.7),
+        },
+    ];
+    let issue = crate::touch_input::TouchPointerIssue::QueueOverflow;
+    assert_eq!(
+        crate::touch_input::publish_pointer_frame(
+            &h.ctx,
+            egui::ViewportId::ROOT,
+            &events,
+            &[],
+            true,
+            &[],
+            false,
+        ),
+        Some(issue)
+    );
+    h.input_mut().events.extend(events);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().ink_errors,
+        [InkControllerError::UncorrelatedTouchInput {
+            issue,
+            position: start
+        }]
+    );
+    assert_eq!(
+        h.state().view.board_label_draft(),
+        Some((id, "", draft.as_str()))
+    );
+    assert!(!h.state().view.has_pending_ink_gesture());
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
 }
 
 #[test]

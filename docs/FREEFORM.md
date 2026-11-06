@@ -134,7 +134,7 @@ with the reason.
 | Freehand pen with mouse, touch, pen | Adapt | Implemented as canvas `Ink`; real input-device acceptance remains open |
 | Pen styles: pen, marker, pencil, fountain pen, watercolour, crayon | Adapt / Later | Pen and highlighter are implemented; textured brushes remain later |
 | Width, colour, opacity | Adapt | Implemented per stroke |
-| Pressure sensitivity | Later | egui reports `Touch.force` only; no pen type, tilt, eraser or hover. Optional, never required (5.5) |
+| Pressure sensitivity | Adapt / Later | Optional touch and correlated browser-pen pressure is stored, but does not affect stroke width; physical devices, tilt, eraser end and hover remain open (5.5) |
 | Object eraser | Adapt | Implemented; removes whole strokes |
 | Pixel eraser (split strokes) | Adapt | Implemented with atomic stroke splitting and undo |
 | Lasso selection | Adapt | Implemented with the shared selection model |
@@ -522,12 +522,14 @@ harness replaces device or assistive-technology testing.
 
 - Mouse and touch are supported drawing inputs, but real-device and
   cross-platform acceptance remain open. Pressure is **optional metadata**:
-  egui 0.37 delivers `Touch.force` but no pen identity, tilt, eraser end or
-  hover, so drawing must never depend on it.
-- Spike before promising pressure: Windows Ink, macOS tablet events, Linux
-  libinput, browser Pointer Events (`pressure`, `pointerType = "pen"`) through
-  winit/eframe. Palm rejection and "draw with pen only" are out until the spike
-  shows reliable pen identification.
+  egui 0.37 supplies `Touch.force` but no pen identity. The web host now
+  conservatively correlates browser pen Pointer Events with egui pointer input;
+  unmatched input is rejected or interrupted rather than attributed to a mouse.
+  Pressure is persisted, but does not yet affect the rendered stroke.
+- Native Windows Ink, macOS tablet and Linux libinput pen identity and pressure
+  still need platform investigation. Tilt, eraser end, hover, palm rejection
+  and "draw with pen only" remain unsupported; physical devices and browser
+  engines must be verified before promising their fidelity.
 
 ### 5.6 Scenes
 
@@ -1086,14 +1088,41 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - Ink gestures commit atomically, and pending or rejected gestures are exposed
   for retry or cancellation rather than silently discarded. Pending ink is not
   crash-recoverable until it is committed.
-- A touch-host regression now checks captured style and pressure through one
-  stroke, undo/redo and native save/reopen; invalid pressure on release leaves
-  the accepted samples pending instead of committing part of the stroke. A
-  Chromium DevTools-generated pen sequence also creates exactly one saved
-  stroke. At this checkpoint the browser exposes the simulated pen pressure,
-  but the saved stroke does not retain it; pressure does not affect rendering.
-  Firefox and WebKit do not run that Chromium-specific pen synthesis. None of
-  these checks establishes physical-stylus fidelity, palm rejection or latency.
+- A touch-host regression checks captured style and pressure through one stroke,
+  undo/redo and native save/reopen; invalid pressure leaves accepted samples
+  pending. A browser bridge uses trusted pen pointer events and only pairs
+  movement with a compatible mouse event when timestamp, target, coordinates
+  and button state agree. Records and frame events are bounded, scoped to one
+  viewport/frame and consumed once. Matcher-detected mismatches and overflow
+  interrupt existing ink or reject a new start with localized feedback and
+  quarantine the ambiguous stream until release, cancellation or focus/pointer
+  loss. A later input-hook rewrite is rejected too, but cannot retroactively
+  quarantine the matcher. A native host regression checks matched pen metadata
+  through commit, history and save/reopen.
+- The web bridge also distinguishes captured touch pointer buttons from proven
+  eframe-synthesized touch buttons, using matching touch records and frame-local
+  event order; ambiguous ownership is rejected instead of becoming mouse ink.
+  Only a proven absent JavaScript `Touch.force` becomes optional. Invalid force
+  remains invalid and blocks a partial commit. A follow-up review found that
+  suppressing ambiguous pointer buttons alone still allowed a batched touch
+  start and end to draw. Both touch and pen correlation failures now block the
+  touch start until that contact ends, retain earlier accepted samples, and
+  report the rejection. Regressions include a rejected label draft and a fresh
+  gesture after release. Browser fault injection reproduced the unwanted stroke
+  on the earlier build and verified rejection followed by a valid gesture on
+  the rebuilt app. The focused production-browser matrix passed in Chromium,
+  Firefox and WebKit; two Chromium-DevTools-only pen cases were skipped in the
+  latter engines. These tests cover synthetic force values and trusted emulated
+  touchscreen taps, not physical devices.
+- **Pressure-bridge critique:** the Chromium DevTools pen probe verifies
+  simulated input, not a physical stylus. Exact event pairing may vary by
+  browser, OS or device and can conservatively interrupt a stroke; Firefox and
+  WebKit cannot run the Chromium-specific pen synthesis. An interrupted stroke
+  retains earlier accepted samples for an explicit retry or discard, but
+  uncorrelated samples cannot be recovered and retry can produce an incomplete
+  stroke. Pending ink is not crash-recoverable. Pressure still does not affect
+  rendering, and tilt, eraser-end behavior, palm rejection, latency, screen
+  readers and real-device acceptance remain open.
 - Pixel erasing can split strokes while retaining their metadata and undo
   behavior. Sixteen focused canvas tests cover geometry, limits, atomicity,
   grouping and undo. A production-browser regression checks the saved
@@ -1121,8 +1150,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Hidden clipping frames retain their clip without painting their background.
   Focused core, player and SVG/PNG/PDF/PowerPoint tests cover the policy; a
   2,000-connector fixture checks iterative propagation, not a device performance
-  budget. The browser Pitch and PowerPoint checks exercise viewport slides, not
-  source-only isolation, and the presenter's Map still exposes the full map.
+  budget. A fixed-crop browser fixture checks source Zone, branch, context and
+  View slides in Pitch and PowerPoint, including dependent connectors,
+  unassigned objects, viewport pixels and source preservation. The presenter's
+  Map still exposes the full map.
 - Editable branch/Zone PowerPoint slides now rotate card components and
   multiline shape labels around their owning card or shape, preserving image
   bytes and source data. The canvas rotates shape labels around the same pivot;
@@ -1302,9 +1333,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   before retry can leave a stale copy for the next launch. The warning can be
   dismissed. This is not a durable cleanup journal, a transactional browser
   lease, or a fix for localStorage quota and large-board recovery.
-- Board now shares its command list between the first-level main menu and the
-  canvas context menu. Styles groups the requested topic/style commands, Board
-  sits between Select and Arrange, and New Sheet from Topic is last. Native-menu
+- The earlier menu checkpoint shared Board commands between the first-level
+  main menu and the canvas context menu. Styles grouped the requested topic/style
+  commands, Board sat between Select and Arrange, and New Sheet from Topic was
+  last. Native-menu
   and ribbon snapshots now include the selected board objects, preventing a
   stale action from affecting a different board selection. The underlying
   command availability, shortcut bindings and edit transactions are reused.

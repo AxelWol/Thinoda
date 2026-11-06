@@ -34,6 +34,7 @@ pub fn main() {
             show_error("Thinoda could not find its drawing canvas.");
             return;
         };
+        let input_canvas = canvas.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -41,7 +42,11 @@ pub fn main() {
                 Box::new(move |cc| {
                     thinoda_app::install_context(&cc.egui_ctx);
                     crate::cursor::install(&cc.egui_ctx);
-                    Ok(Box::new(ThinodaApp::launch(startup, &[])))
+                    Ok(Box::new(crate::browser_input::WebApp::new(
+                        ThinodaApp::launch(startup, &[]),
+                        &input_canvas,
+                        &cc.egui_ctx,
+                    )))
                 }),
             )
             .await;

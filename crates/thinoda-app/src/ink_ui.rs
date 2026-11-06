@@ -45,6 +45,8 @@ impl InkFeedback {
 fn contains_unaccepted_sample(error: &InkControllerError) -> bool {
     match error {
         InkControllerError::StartWhilePending { .. }
+        | InkControllerError::UncorrelatedPenInput { .. }
+        | InkControllerError::UncorrelatedTouchInput { .. }
         | InkControllerError::BlockedByEditor { .. }
         | InkControllerError::InvalidSettings { .. }
         | InkControllerError::InvalidTransform { .. }
@@ -67,6 +69,12 @@ fn guidance(error: &InkControllerError) -> &'static str {
         }
         InkControllerError::BlockedByEditor { .. } => {
             "Finish the active text editor before drawing again."
+        }
+        InkControllerError::UncorrelatedPenInput { .. } => {
+            "Pen input could not be matched. No stroke was started; dismiss this message and try again."
+        }
+        InkControllerError::UncorrelatedTouchInput { .. } => {
+            "Touch pointer input could not be matched. Check the gesture or dismiss this message."
         }
         InkControllerError::InvalidSample(_)
         | InkControllerError::InvalidPathSample(_)

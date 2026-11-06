@@ -3,6 +3,8 @@ Ink settings|Configurações da entrada à mão livre
 Ink is not saved or included in crash recovery until it is finished.|A entrada à mão livre não é salva nem incluída na recuperação após falha até o gesto terminar.
 The pointer is still down. Release it before retrying.|O ponteiro ainda está pressionado. Solte-o antes de tentar novamente.
 Accepted samples|Amostras aceitas
+Pen input could not be matched. No stroke was started; dismiss this message and try again.|Não foi possível identificar a entrada da caneta. Nenhum traço foi iniciado; feche esta mensagem e tente novamente.
+Touch pointer input could not be matched. Check the gesture or dismiss this message.|Não foi possível identificar a entrada do ponteiro de toque. Verifique o gesto ou feche esta mensagem.
 # Regional wording for the offline board guide.
 On boards, Alt-drag or Alt+arrow duplicates movable items (Shift makes arrow steps larger). Ctrl+Alt+Left/Right rotates by 1° (Shift: 15°); use Command+Option on macOS. Locked items and groups cannot be duplicated by these gestures.|Nos quadros, Alt+arrastar ou Alt+seta duplica itens móveis (Shift aumenta o passo das setas). Ctrl+Alt+Esquerda/Direita gira 1° (Shift: 15°); no macOS, use Command+Option. Itens e grupos bloqueados não podem ser duplicados por esses gestos.
 Pen and Highlighter draw freehand. Adjust Ink color, Ink width and Opacity, or Eraser radius for erasing; settings are captured when each gesture begins.|Caneta e Marca-texto desenham à mão livre. Ajuste Cor da tinta, Espessura do traço e Opacidade ou, para apagar, Raio da borracha; as configurações são capturadas no início de cada gesto.

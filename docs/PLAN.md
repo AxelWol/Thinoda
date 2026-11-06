@@ -40,12 +40,16 @@ commands and document semantics. Deliver in independently verified slices:
    persistence support rather than decorative placeholders.
 
 **F5/F6 continuation:** touch stroke pressure and atomic rejection have focused
-host coverage, and a Chromium-synthesized pen produces one saved stroke. That
-browser currently drops the simulated pen's pressure before persistence; a
-pressure-input bridge and real-device validation remain open. Source-only
-scene isolation now uses the same object and connector policy in the editor,
-Pitch and exports. Unassigned objects remain crop-visible without expanding
-source auto-fit; clipping is not redaction. See the F5/F6 critiques in
+host coverage. A conservative web bridge preserves Chromium-synthesized pen
+pressure through a saved stroke and distinguishes correlated touch pointers
+from mouse input; ambiguous streams are rejected or interrupted. Only a
+verified absent touch force becomes optional. Pressure remains metadata rather
+than rendered width. Physical-device and non-Chromium pen verification remain
+open.
+Source-only scene isolation uses the same object and connector policy in the
+editor, Pitch and exports. Unassigned objects remain crop-visible without
+expanding source auto-fit; a fixed-crop browser fixture covers Pitch and
+PowerPoint, and clipping is not redaction. See the F5/F6 critiques in
 [FREEFORM.md](FREEFORM.md#f5-ink-checkpoint-critique) and
 [PRESENTATIONS.md](PRESENTATIONS.md#scene-object-isolation-follow-up).
 Pending-ink crash recovery, realistic performance, accessibility and broader
@@ -215,21 +219,17 @@ Generated PNG/JPEG fixtures cover pixel order, visual sizing, native round-trips
 exported media and insufficient output budgets. Real-camera, external Office,
 browser accessibility and physical-device acceptance remain open.
 
-**2026-11-03 menu and recovery continuation (implemented locally):** Board is
-at the first level of the shared main menu. The canvas context menu groups
-Indent, Outdent and the four style actions under Styles, places Board between
-Select and Arrange, and ends with New Sheet from Topic. The main menu, ribbon,
-native menu and context menu reuse Board commands, availability and shortcuts.
-Localized short-window navigation, command dispatch and selection ownership have
-focused coverage. Failed recovery-copy cleanup is reported and retried after a
-saved document closes without discarding newer edits or changing the recovery
-manager's ownership and pending-write contracts.
-
-**Completed user-directed context-menu change:** the canvas context menu now
-places board-tool commands in a scrollable Tools submenu between Arrange and AI.
-The Board submenu retains non-tool commands, the first-level main Board menu
-remains unchanged, and each command keeps the existing availability and dispatch
-rules. A short-viewport interaction test verifies Tools and Pen stay reachable.
+**Menu and recovery continuation:** Board remains at the first level of the
+shared main menu. The earlier uniform canvas context menu has since been
+replaced by the develop branch's target-specific Blank, Topic, Board,
+Annotation and Zone menus. On blank canvas, Add provides object tools and Draw
+provides pen, highlighter, lasso and erasers; selected targets expose their
+relevant commands, with the command palette as an escape hatch. Optional local
+usage counts do not reorder the menus. Localized short-window navigation,
+command dispatch and selection ownership have focused coverage. Failed
+recovery-copy cleanup is reported and retried after a saved document closes
+without discarding newer edits or changing the recovery manager's ownership and
+pending-write contracts.
 
 **Completed user-directed Zone-color change:** the Zone editor now controls
 frame and background colors independently. New Zones receive a deterministic
@@ -346,7 +346,7 @@ implemented feature is not treated as fully validated.
 | Final integration | ⬜ Open | Re-run the integrated native/Wasm/browser matrix after the remaining acceptance gates |
 | Publish reviewed checkpoints | ⬜ Open | Publish a reviewed, tested checkpoint without claiming the open workstreams complete |
 | Add Moodboard starter | ✅ Complete locally | Six independent image cards and an ideas note; richer collage behavior remains out of scope |
-| Move board tools to context menu | ✅ Complete locally | Tools are in the scrollable canvas context-menu submenu |
+| Move board tools to context menu | ✅ Complete locally | The newer target-specific blank-canvas menu groups drawing tools under Draw |
 | Add editable and automatic Zone colors | ✅ Complete locally | Independent frame/background colors and deterministic new-Zone accents preserve legacy behavior |
 
 ## Current next-value state (2026-10-30)

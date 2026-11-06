@@ -538,14 +538,21 @@ impl MapView {
         ctx: &egui::Context,
     ) -> crate::ink_controller::InkFrameOutput {
         let frame = (ctx.viewport_id(), ctx.cumulative_frame_nr());
-        let events = if self.ink_events_frame == Some(frame) {
-            Vec::new()
+        let (events, pen) = if self.ink_events_frame == Some(frame) {
+            (Vec::new(), crate::pen_input::PenFrameData::default())
         } else {
-            ctx.input(|input| input.events.clone())
+            let events = ctx.input(|input| input.events.clone());
+            // Hidden tabs observe releases without consuming the active canvas's metadata.
+            let mut pen = crate::pen_input::peek(ctx, frame.0, &events);
+            let touch = crate::touch_input::peek_pointer_frame(ctx, frame.0, &events);
+            pen.touch_pointers = touch.pointers;
+            pen.touch_issue = touch.issue;
+            (events, pen)
         };
         self.ink_events_frame = Some(frame);
         let transform = self.xf();
-        self.ink_controller.suspend(doc, transform, &events)
+        self.ink_controller
+            .suspend_with_pen(doc, transform, &events, &pen)
     }
 
     /// Explicitly discard the pending gesture and suppress its held pointer until release.

@@ -24,11 +24,15 @@ remain open. An opt-in synthetic 50-image/ink fixture verifies browser save
 round trips, but does not close those gates. An isolated AccessKit probe
 identifies mixed-event focus, dropped input, selection/IME and rapid-refocus
 text-replacement hazards; it is not an application bridge.
-The F5 follow-up verifies touch stroke persistence and a Chromium-synthesized
-pen stroke, but that browser path currently loses simulated pen pressure.
+The F5 follow-up verifies touch stroke persistence, rejects ambiguous touch
+pointer ownership and preserves pressure for a Chromium-synthesized pen
+through a conservative browser input bridge.
+Pressure-dependent rendering, native pen identity and real-device/browser-engine
+fidelity remain open.
 F6 source-only scenes now share object visibility across editor, Pitch and
-exports; branch/Zone browser, real-device and updated Office acceptance remain
-open. Pending ink is still excluded from crash recovery.
+exports; a fixed-crop browser fixture covers branch/Zone isolation, while
+broader browser, real-device and updated Office acceptance remain open. Pending
+ink is still excluded from crash recovery.
 Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
 limitations. A separate asynchronous discovery draft remains gated by
@@ -38,12 +42,13 @@ Integrated cloud providers stay
 disabled and paused until publisher registrations are complete; see
 [FREEFORM.md](FREEFORM.md) for phase critiques.
 
-**Completed user requests:** board tools are available from a scrollable canvas
-context-menu Tools submenu between Arrange and AI, while other Board actions
-and the first-level Board menu remain unchanged. The Zone editor exposes separate
-frame/background colors and uses a deterministic accent cycle for new Zones;
-template frames keep their explicit palettes and older Zone data retains its
-previous fill semantics. See the completed design and critique in [PLAN.md](PLAN.md).
+**Completed user requests:** the first-level Board menu remains available; the
+newer target-specific blank-canvas context menu groups creation tools under Add
+and drawing tools under Draw. Other targets expose their relevant actions. The
+Zone editor exposes separate frame/background colors and uses a deterministic
+accent cycle for new Zones; template frames keep their explicit palettes and
+older Zone data retains its previous fill semantics. See the design and critique
+in [PLAN.md](PLAN.md).
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout
