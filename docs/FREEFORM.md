@@ -1177,6 +1177,12 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   and ribbon snapshots now include the selected board objects, preventing a
   stale action from affecting a different board selection. The underlying
   command availability, shortcut bindings and edit transactions are reused.
+- The canvas context menu was later regrouped by target (topic, board object,
+  blank canvas, Zone, annotation) into Add, Structure, Format, Arrange, Layers,
+  Zones, Select, AI, View and Draw submenus with Command Palette… as an escape
+  hatch and Delete last; Board commands appear directly (Group/Ungroup,
+  Lock/Unlock) instead of in a Board submenu. Optional, local-only
+  context-menu usage counts can be enabled in Settings > Editor.
 - The localized menu matrix covers short windows and scaling, popup bounds,
   first/last command reachability, context submenu order and command dispatch.
   It exercises a selected board shape's lock action and verifies its resulting
