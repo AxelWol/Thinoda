@@ -9,6 +9,14 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## draw.io diagram support (2026-11-05)
+
+⬜ Planned. [DRAWIO.md](DRAWIO.md) holds the research (app.diagrams.net 32.6.10,
+file format), the concept (native board model + lossless round-trip contract,
+`.drawio` editable in place, Apache-2.0 generic libraries bundled, vendor sets
+downloaded on demand) and phases 0–14. Phase 1 changes shape placement on all
+boards to draw.io behaviour and ships independently of file support.
+
 ## Current Freeform and web-startup status
 
 **2026-11-03 contextual board editing request (in progress):** use the supplied

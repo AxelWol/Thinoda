@@ -305,6 +305,15 @@ over the existing recovery-backed notes field. Existing notes are not
 automatically converted. Structured rich-note persistence, plain-text search
 projection, export fidelity and rendered equations remain open; see PLAN.
 
+### P1 — draw.io diagram support (user request, 2026-11-05)
+
+⬜ Planned; concept, support matrix and 15-phase plan in [DRAWIO.md](DRAWIO.md)
+(reviewed twice, findings resolved in its §7). Next: Phase 0 fixture corpus,
+ADR/issue, consumer + interaction inventory, benchmark targets; then Phase 1
+draw.io-style shape placement (pick/drag, hover-edit, click-empty create,
+direction arrows, quick-shape popover, floating edge/shape toolbars,
+connectors ending on true shape outlines) for every board.
+
 ### P1 — CLI generation providers (user request, 2026-10-26)
 
 🟡 Partial implementation in the current worktree; see the
