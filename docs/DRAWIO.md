@@ -1,3 +1,5 @@
+_Last updated: 2026-11-06 07:56:21 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # draw.io (diagrams.net) support: research, concept and phase plan
 
 Status: ⬜ planned (Phase 0 documentation landed). Tracked in [BACKLOG](BACKLOG.md#p1--drawio-diagram-support-user-request-2026-11-05) and [PLAN](PLAN.md#drawio-diagram-support-2026-11-05).
