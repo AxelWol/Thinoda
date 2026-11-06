@@ -259,6 +259,24 @@ class WorkflowContractTests(unittest.TestCase):
             job(source, "package"),
         )
 
+    def test_intel_ticket_transport_workaround_is_limited_to_github_hosted_runners(self):
+        source = (WORKFLOWS / "package-target.yml").read_text(encoding="utf-8")
+        package = job(source, "package")
+        name = "      - name: Route macOS Intel ticket lookups over TCP\n"
+        workaround = package.split(name, 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn(
+            "if: inputs.os == 'macos-15-intel' && "
+            "inputs.target == 'x86_64-apple-darwin' && "
+            "runner.environment == 'github-hosted'",
+            workaround,
+        )
+        self.assertIn("set -euo pipefail", workaround)
+        self.assertIn("block return out quick proto udp from any to any port 443", workaround)
+        self.assertIn("sudo pfctl -f -", workaround)
+        self.assertIn("sudo pfctl -E", workaround)
+        self.assertLess(package.index(name), package.index("Build, sign and notarize macOS installers"))
+        self.assertLess(package.index(name), package.index("Verify macOS downloads and installed app signatures"))
+
     def test_acceptance_campaigns_keep_sanitizers_and_failure_evidence(self):
         source = (WORKFLOWS / "importer-campaign.yml").read_text(encoding="utf-8")
         self.assertIn("target: [xmind, freemind, opml]", source)
