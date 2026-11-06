@@ -269,6 +269,8 @@ pub(super) struct LabelEdit {
     sheet: usize,
     sheet_identity: SheetIdentity,
     focus_requested: bool,
+    /// Started by typing: the draft holds the typed text and the caret must follow it.
+    seeded: bool,
     ime_composing: bool,
 }
 
@@ -447,6 +449,7 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
         sheet: doc.active_index(),
         sheet_identity: sheet_identity(doc),
         focus_requested: false,
+        seeded: false,
         ime_composing: false,
     });
     true
@@ -3510,6 +3513,7 @@ pub(super) fn keyboard(
         {
             if let Some(edit) = &mut view.board_input.label {
                 edit.text = text;
+                edit.seeded = true;
             }
             return true;
         }
@@ -3893,18 +3897,20 @@ pub(super) fn show_label_editor(
         ui.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
         return;
     }
-    let background = object
-        .style
-        .fill
-        .map(color32)
-        .unwrap_or_else(|| sheet_background(doc.sheet(), view.dark));
+    // Match the rendered label: same contrast colour, backdrop, size and centring.
+    let (text_color, background) =
+        crate::render::board_label_colors(doc.sheet(), &object.style, view.dark);
     ui.painter().rect_filled(rect, 2.0, background);
+    let font_size = crate::render::shape_label_font_size(view.zoom).max(10.0);
     let edit = view.board_input.label.as_mut().unwrap();
     let text_edit = TextEdit::multiline(&mut edit.text)
         .id(edit_id)
-        .font(FontId::proportional((12.0 * view.zoom).max(10.0)))
+        .font(FontId::proportional(font_size))
+        .text_color(text_color)
         .frame(egui::Frame::NONE)
+        .align(egui::Align2::CENTER_CENTER)
         .desired_width(rect.width().max(40.0))
+        .min_size(rect.size())
         .desired_rows(1)
         .return_key(Some(egui::KeyboardShortcut::new(
             Modifiers::SHIFT,
@@ -3932,14 +3938,17 @@ pub(super) fn show_label_editor(
     } else if !edit.focus_requested && !out.minimap_blocks_keyboard {
         edit.focus_requested = true;
         ui.memory_mut(|memory| memory.request_focus(edit_id));
-        let end = edit.text.chars().count();
+        let end = egui::text::CCursor::new(edit.text.chars().count());
+        // Select an existing label for replacement, but never the character just typed.
+        let start = if edit.seeded {
+            end
+        } else {
+            egui::text::CCursor::new(0)
+        };
         let mut state = output.state.clone();
         state
             .cursor
-            .set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(end),
-            )));
+            .set_char_range(Some(egui::text::CCursorRange::two(start, end)));
         state.store(ui.ctx(), edit_id);
     } else if output.response.lost_focus()
         && let Err(error) = view.try_commit_board_label(doc)

@@ -866,12 +866,14 @@ is a PNG/JPEG picture of an image card. Tests: `inline_png_and_svg_images_become
 `remote_and_unsupported_images_stay_placeholders_with_their_source`,
 `image_cards_round_trip_their_pixels_and_size`; corpus still 89/89.
 
-**Shape label editing (user-reported bug, in progress).** Typing on a selected shape
+**Shape label editing (user-reported bug, fixed).** Typing on a selected shape
 swallowed the first character (the seeded character was selected and replaced by the next
 keystroke), the editor used the default UI text colour (unreadable on light fills in dark
 mode) and was aligned top-left while the rendered label is centred. Fix: keep the cursor
 after the seeded text, use the renderer's contrast colour and composited fill, centre the
-editor both ways and match the label font size; regression tests in `board_tests.rs`.
+editor both ways and match the label font size (`render::board_label_colors` is shared by
+the renderer and the editor). Tests: `typing_on_a_selected_shape_keeps_every_character`,
+`label_editor_text_contrasts_with_the_shape_fill_in_both_themes`.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

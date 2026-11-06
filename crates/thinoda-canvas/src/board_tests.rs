@@ -3102,6 +3102,60 @@ fn rotated_shape_label_editor_tracks_the_label_and_keeps_keyboard_editing() {
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
+#[test]
+fn typing_on_a_selected_shape_keeps_every_character() {
+    for (steps, original) in [(1, ""), (1, "Old"), (2, "Old"), (3, "T")] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, original);
+        let mut h = harness(sheet);
+        let name = if original.is_empty() {
+            "Rectangle".to_owned()
+        } else {
+            format!("Rectangle: {original}")
+        };
+        h.get_by_label(&name).focus();
+        h.run_steps(2);
+        for ch in ["T", "e", "s", "t"] {
+            h.input_mut().events.push(egui::Event::Text(ch.into()));
+            h.run_steps(steps);
+        }
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().label(),
+            "Test",
+            "steps={steps}, original={original:?}"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn label_editor_text_contrasts_with_the_shape_fill_in_both_themes() {
+    let sheet = board();
+    let luminance = |c: egui::Color32| {
+        0.2126 * f32::from(c.r()) + 0.7152 * f32::from(c.g()) + 0.0722 * f32::from(c.b())
+    };
+    for dark in [false, true] {
+        for fill in [
+            Some(thinoda_core::Color::rgb(255, 245, 200)),
+            Some(thinoda_core::Color::rgb(30, 40, 60)),
+            None,
+        ] {
+            let style = thinoda_core::board::ObjectStyle {
+                fill,
+                ..Default::default()
+            };
+            let (text, background) = crate::render::board_label_colors(&sheet, &style, dark);
+            assert_eq!(background.a(), 255, "the editor backdrop is opaque");
+            assert!(
+                (luminance(text) - luminance(background)).abs() > 100.0,
+                "dark={dark}, fill={fill:?}: {text:?} on {background:?}"
+            );
+        }
+    }
+}
+
 fn rotated_image_card(angle: f32) -> (Sheet, TopicId) {
     let mut bytes = std::io::Cursor::new(Vec::new());
     image::DynamicImage::new_rgb8(160, 80)

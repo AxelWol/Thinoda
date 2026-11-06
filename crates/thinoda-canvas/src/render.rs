@@ -23,7 +23,7 @@ use thinoda_core::{
 
 pub(crate) const RELATIONSHIP_SEGMENTS: usize = 32;
 
-fn shape_label_font_size(zoom: f32) -> f32 {
+pub(crate) fn shape_label_font_size(zoom: f32) -> f32 {
     (12.0 * zoom).max(7.0)
 }
 
@@ -1046,6 +1046,21 @@ fn ink_tessellated_mesh(
     Some(mesh)
 }
 
+/// Resolve a board label's text colour and the opaque backdrop it is judged against.
+pub(crate) fn board_label_colors(
+    sheet: &Sheet,
+    style: &thinoda_core::board::ObjectStyle,
+    dark: bool,
+) -> (Color32, Color32) {
+    let page = core_color32(sheet_background(sheet, dark));
+    let background = style.fill.map_or(page, |fill| fill.over(page));
+    let text = style
+        .text_color
+        .map(color32)
+        .unwrap_or_else(|| color32(Color::highest_contrast_on(background)));
+    (text, color32(background))
+}
+
 fn opacity_color(color: Color32, opacity: f32) -> Color32 {
     color.gamma_multiply(opacity.clamp(0.0, 1.0))
 }
@@ -1177,11 +1192,7 @@ fn paint_canvas_object(
             if !label.is_empty() {
                 let text_rect = shape_label_rect(*shape, object.rect);
                 let font = FontId::proportional(shape_label_font_size(z));
-                let text_color = object.style.text_color.map(color32).unwrap_or_else(|| {
-                    let page = core_color32(sheet_background(sheet, opts.dark));
-                    let background = object.style.fill.map_or(page, |fill| fill.over(page));
-                    color32(Color::highest_contrast_on(background))
-                });
+                let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
                 let text_color = opacity_color(text_color, object.style.opacity);
                 let galley = painter.layout_no_wrap(label.clone(), font, text_color);
                 let center = xf.pos(rotate_around(
