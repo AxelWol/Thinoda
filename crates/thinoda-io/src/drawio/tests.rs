@@ -590,6 +590,154 @@ fn unsupported_content_is_reported_not_dropped_silently() {
     );
 }
 
+fn tiny_png(width: u32, height: u32) -> Vec<u8> {
+    let image = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn b64(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn image_cards(sheet: &Sheet) -> Vec<&thinoda_core::Topic> {
+    sheet
+        .topics
+        .values()
+        .filter(|t| t.card.is_some_and(|c| c.kind == CardKind::Image))
+        .collect()
+}
+
+#[test]
+fn inline_png_and_svg_images_become_transparent_image_cards() {
+    let png = tiny_png(40, 20);
+    let svg = b64(br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle cx="5" cy="5" r="4" fill="blue"/></svg>"#);
+    let xml = page(&format!(
+        r#"
+        <mxCell id="p" value="Logo" style="shape=image;verticalLabelPosition=bottom;image=data:image/png,{};" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="80" as="geometry"/></mxCell>
+        <mxCell id="s" style="shape=image;imageAspect=0;image=data:image/svg+xml,{svg};" vertex="1" parent="1"><mxGeometry x="200" y="10" width="60" height="30" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=classic;" edge="1" parent="1" source="p" target="s"><mxGeometry relative="1" as="geometry"/></mxCell>
+        "#,
+        b64(&png)
+    ));
+    let sheet = clean(&xml);
+    let cards = image_cards(&sheet);
+    assert_eq!(cards.len(), 2);
+    let logo = cards.iter().find(|t| t.title == "Logo").unwrap();
+    // 2:1 pixels fitted into an 80x80 cell keep their aspect.
+    assert_eq!(logo.image_size, Some(Vec2::new(80.0, 40.0)));
+    assert_eq!(logo.card.unwrap().color, Some(Color::TRANSPARENT));
+    let resource = sheet.resources.get(logo.image.as_deref().unwrap()).unwrap();
+    assert_eq!(resource.media_type, "image/png");
+    assert_eq!(resource.bytes(), png.as_slice());
+    let vector = cards.iter().find(|t| t.title.is_empty()).unwrap();
+    assert_eq!(
+        vector.image_size,
+        Some(Vec2::new(60.0, 30.0)),
+        "imageAspect=0 stretches"
+    );
+    let raster = sheet
+        .resources
+        .get(vector.image.as_deref().unwrap())
+        .unwrap();
+    let decoded = thinoda_core::images::decode(raster.bytes()).unwrap();
+    assert_eq!((decoded.width, decoded.height), (120, 120));
+    assert!(
+        decoded.rgba.chunks(4).any(|p| p[2] > 200 && p[3] == 255),
+        "circle rendered"
+    );
+    assert_eq!(
+        connectors(&sheet).len(),
+        1,
+        "edges still attach to image cards"
+    );
+    sheet.validate().unwrap();
+}
+
+#[test]
+fn remote_and_unsupported_images_stay_placeholders_with_their_source() {
+    let svgz = b64(&[0x1f, 0x8b, 8, 0, 0, 0, 0, 0]);
+    let file_ref = b64(br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image width="4" height="4" xlink:href="Cargo.toml"/></svg>"#);
+    let xml = page(&format!(
+        r#"
+        <mxCell id="r" style="shape=image;image=https://example.com/a.png;" vertex="1" parent="1"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="l" style="shape=image;image=img/lib/azure2/compute/VM.svg;" vertex="1" parent="1"><mxGeometry y="20" width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="g" style="shape=image;image=data:image/gif,R0lGODlhAQABAAAAACw=;" vertex="1" parent="1"><mxGeometry y="40" width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="z" style="shape=image;image=data:image/svg+xml,{svgz};" vertex="1" parent="1"><mxGeometry y="60" width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="b" style="shape=image;image=data:image/png,bm90IGEgcG5n;" vertex="1" parent="1"><mxGeometry y="80" width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="f" style="shape=image;image=data:image/svg+xml,{file_ref};" vertex="1" parent="1"><mxGeometry y="100" width="10" height="10" as="geometry"/></mxCell>
+        "#
+    ));
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Resources]);
+    let sheet = &report.workbook.sheets[0];
+    let mut alts: Vec<_> = shapes(sheet).iter().map(|o| o.alt_text.clone()).collect();
+    alts.sort();
+    assert_eq!(
+        alts,
+        vec![
+            "",
+            "",
+            "",
+            "https://example.com/a.png",
+            "img/lib/azure2/compute/VM.svg"
+        ],
+        "data URIs are not echoed into alt text"
+    );
+    // The SVG referencing a local file still renders, but without reading the file.
+    let cards = image_cards(sheet);
+    assert_eq!(cards.len(), 1);
+    let raster = sheet
+        .resources
+        .get(cards[0].image.as_deref().unwrap())
+        .unwrap();
+    let decoded = thinoda_core::images::decode(raster.bytes()).unwrap();
+    assert!(
+        decoded.rgba.chunks(4).all(|p| p[3] == 0),
+        "file href was not loaded"
+    );
+}
+
+#[test]
+fn image_cards_round_trip_their_pixels_and_size() {
+    let png = tiny_png(30, 30);
+    let xml = page(&format!(
+        r#"<mxCell id="p" value="Pic" style="shape=image;image=data:image/png,{};" vertex="1" parent="1"><mxGeometry x="10" y="10" width="50" height="50" as="geometry"/></mxCell>"#,
+        b64(&png)
+    ));
+    let book = load(&xml).workbook;
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(exported.contains("shape=image;thinodaCard=image;"));
+    assert!(exported.contains(&format!("image=data:image/png,{};", b64(&png))));
+    let again = roundtrip(&book);
+    let before = image_cards(&book.sheets[0]);
+    let after = image_cards(&again.sheets[0]);
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].image_size, before[0].image_size);
+    assert_eq!(after[0].card, before[0].card);
+    let bytes = |sheet: &Sheet, topic: &thinoda_core::Topic| {
+        sheet
+            .resources
+            .get(topic.image.as_deref().unwrap())
+            .unwrap()
+            .bytes()
+            .to_vec()
+    };
+    assert_eq!(bytes(&again.sheets[0], after[0]), png);
+    assert_eq!(bytes(&book.sheets[0], before[0]), png);
+
+    // The public gate accepts card pictures but still refuses resources draw.io would drop.
+    let opts = crate::ExportOptions::default();
+    crate::export_bytes(&book, crate::Format::DrawIo, &opts).unwrap();
+    let mut lossy = book.clone();
+    let sheet = &mut lossy.sheets[0];
+    let reference = before[0].image.clone();
+    let root = sheet.root;
+    sheet.topic_mut(root).unwrap().image = reference;
+    assert!(crate::export_bytes(&lossy, crate::Format::DrawIo, &opts).is_err());
+}
+
 #[test]
 fn hostile_inputs_are_rejected() {
     let dtd = "<!DOCTYPE mxfile [<!ENTITY x \"boom\">]><mxfile><diagram>&x;</diagram></mxfile>";

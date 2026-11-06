@@ -23,7 +23,9 @@ use thinoda_core::{
         MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE,
         MIN_STROKE_WIDTH, ObjectStyle, ShapeKind, SheetRootMode, normalize_rotation, rotate_around,
     },
+    images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
+    resources::{MAX_RESOURCE_BYTES, Resource},
 };
 
 /// Largest accepted input and inflated diagram text.
@@ -513,7 +515,10 @@ impl Style {
             || self.num("fontSize").is_some_and(|v| v != 11.0 && v != 12.0)
             || self.num("fontStyle").is_some_and(|v| v != 0.0)
             || self.get("align").is_some_and(|v| v != "center")
-            || self.get("verticalAlign").is_some_and(|v| v != "middle")
+            || self.get("verticalAlign").is_some_and(|v| {
+                // Thinoda image cards caption beneath the picture.
+                v != "middle" && !(v == "bottom" && self.get("thinodaCard") == Some("image"))
+            })
             || (edge
                 && (self.get("jumpStyle").is_some_and(|v| v != "none")
                     || ["startArrow", "endArrow"]
@@ -1189,8 +1194,31 @@ impl<'a> PageImport<'a> {
                 object
             }
             Kind::Image => {
+                let source = style.get("image").unwrap_or_default();
+                if let Some((resource, pixels)) = inline_image(source, rect.size) {
+                    let keep_aspect = style.get("imageAspect") != Some("0");
+                    let (card_rect, size) = image_card_rect(rect, pixels, &label, keep_aspect);
+                    let image = CardImage {
+                        resource,
+                        size,
+                        plain: true,
+                    };
+                    return self.card(
+                        index,
+                        CardKind::Image,
+                        card_rect,
+                        label,
+                        context,
+                        Some(image),
+                    );
+                }
+                // Remote and library images are never fetched; keep their source as alt text.
                 self.warn(ImportWarning::Resources);
-                shape_object(ShapeKind::Rectangle, rect, style.rotation(), label)
+                let mut object = shape_object(ShapeKind::Rectangle, rect, style.rotation(), label);
+                if object.alt_text.is_empty() && !source.starts_with("data:") {
+                    object.alt_text = source.chars().take(MAX_IMAGE_ALT_CHARS).collect();
+                }
+                object
             }
             Kind::Unknown | Kind::Container | Kind::Group => {
                 if kind == Kind::Unknown {
@@ -1228,7 +1256,29 @@ impl<'a> PageImport<'a> {
                 object.band = style.band();
                 object
             }
-            Kind::Card(card_kind) => return self.card(index, card_kind, rect, label, context),
+            Kind::Card(card_kind) => {
+                let image = (card_kind == CardKind::Image)
+                    .then(|| style.get("image"))
+                    .flatten()
+                    .and_then(|source| inline_image(source, rect.size))
+                    .map(|(resource, pixels)| {
+                        let stored = Vec2::new(
+                            style.num("thinodaImageWidth").unwrap_or(0.0),
+                            style.num("thinodaImageHeight").unwrap_or(0.0),
+                        );
+                        let size = if images::valid_size(stored) {
+                            stored
+                        } else {
+                            image_card_rect(rect, pixels, &label, true).1
+                        };
+                        CardImage {
+                            resource,
+                            size,
+                            plain: false,
+                        }
+                    });
+                return self.card(index, card_kind, rect, label, context, image);
+            }
         };
         self.add_object(index, object, context)
             .map(BoardMember::Object)
@@ -1241,6 +1291,7 @@ impl<'a> PageImport<'a> {
         rect: Rect,
         label: String,
         context: Context,
+        image: Option<CardImage>,
     ) -> Option<BoardMember> {
         let cell = &self.cells[index];
         let style = &cell.style;
@@ -1252,7 +1303,13 @@ impl<'a> PageImport<'a> {
             ),
         );
         card.rotation = normalize_rotation(style.rotation());
-        card.color = style.color("fillColor", "fillOpacity").filter(|c| c.a > 0);
+        card.color = style
+            .color("fillColor", "fillOpacity")
+            .filter(|c| c.a > 0 || kind == CardKind::Image);
+        // draw.io image cells have no background, so keep the card see-through.
+        if image.as_ref().is_some_and(|image| image.plain) {
+            card.color = Some(card.color.unwrap_or(Color::TRANSPARENT));
+        }
         if cell.tooltip.is_some() {
             self.warn(ImportWarning::Other);
         }
@@ -1262,6 +1319,13 @@ impl<'a> PageImport<'a> {
                     topic.style.fill = card.color;
                     topic.style.text_color = style.color("fontColor", "textOpacity");
                     topic.hyperlink = cell.link.clone();
+                }
+                if let Some(image) = image
+                    && let Err(error) =
+                        images::set_image(&mut self.sheet, id, Some((image.resource, image.size)))
+                {
+                    log::warn!("draw.io image {} skipped: {error}", cell.id);
+                    self.warn(ImportWarning::Resources);
                 }
                 self.register(index, Item::Card(id), context, style.flag("locked"));
                 Some(BoardMember::Card(id))
@@ -1436,6 +1500,130 @@ impl<'a> PageImport<'a> {
         }
         self.sheet
     }
+}
+
+/// Longest image source kept as alt text on a placeholder.
+const MAX_IMAGE_ALT_CHARS: usize = 500;
+/// Longest side, in pixels, of a rasterised inline SVG image.
+const MAX_SVG_RASTER: f32 = 1024.0;
+
+/// An embedded image for an imported image card.
+struct CardImage {
+    resource: Resource,
+    size: Vec2,
+    /// A native draw.io image cell (transparent card), not a Thinoda card.
+    plain: bool,
+}
+
+/// Decodes a draw.io inline image (`data:<type>,<base64>`) into a PNG/JPEG resource and
+/// its pixel size. SVG is rasterised; other types and every non-`data:` source (remote
+/// URLs, draw.io library paths) are rejected, so nothing is ever fetched.
+fn inline_image(source: &str, display: Vec2) -> Option<(Resource, Vec2)> {
+    let (media, payload) = source.strip_prefix("data:")?.split_once(',')?;
+    let media = media.strip_suffix(";base64").unwrap_or(media);
+    if payload.len() > MAX_RESOURCE_BYTES / 3 * 4 + 4 {
+        return None;
+    }
+    let base64 = || {
+        base64::engine::general_purpose::STANDARD
+            .decode(payload.trim())
+            .ok()
+    };
+    match media.to_ascii_lowercase().as_str() {
+        "image/png" | "image/jpeg" | "image/jpg" => {
+            let bytes = base64()?;
+            let decoded = images::decode(&bytes).ok()?;
+            let name = match decoded.media_type {
+                "image/png" => "draw.io image.png",
+                _ => "draw.io image.jpg",
+            };
+            let pixels = Vec2::new(decoded.width as f32, decoded.height as f32);
+            Some((Resource::new(name, decoded.media_type, bytes).ok()?, pixels))
+        }
+        "image/svg+xml" => {
+            let svg = base64().or_else(|| percent_decode(payload).map(String::into_bytes))?;
+            let (png, pixels) = rasterize_svg(&svg, display)?;
+            Some((
+                Resource::new("draw.io image.png", "image/png", png).ok()?,
+                pixels,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Renders untrusted SVG to PNG at about twice its display size. External and file
+/// references are refused; compressed SVGZ is rejected to rule out inflation bombs.
+fn rasterize_svg(svg: &[u8], display: Vec2) -> Option<(Vec<u8>, Vec2)> {
+    use image::ImageEncoder;
+    use resvg::{tiny_skia, usvg};
+    if svg.starts_with(&[0x1f, 0x8b]) {
+        return None;
+    }
+    let mut options = usvg::Options {
+        fontdb: crate::fonts::database(),
+        ..Default::default()
+    };
+    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    let tree = usvg::Tree::from_data(svg, &options).ok()?;
+    let size = tree.size();
+    let longest = size.width().max(size.height());
+    let target = (display.x.max(display.y) * 2.0).clamp(64.0, MAX_SVG_RASTER);
+    if !longest.is_finite() || longest <= 0.0 || !target.is_finite() {
+        return None;
+    }
+    let scale = target / longest;
+    let width = (size.width() * scale).round().clamp(1.0, MAX_SVG_RASTER) as u32;
+    let height = (size.height() * scale).round().clamp(1.0, MAX_SVG_RASTER) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(
+            width as f32 / size.width(),
+            height as f32 / size.height(),
+        ),
+        &mut pixmap.as_mut(),
+    );
+    // tiny-skia stores premultiplied alpha; PNG expects straight alpha.
+    let mut rgba = pixmap.take();
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        let alpha = u16::from(pixel[3]);
+        if alpha > 0 && alpha < 255 {
+            for channel in &mut pixel[..3] {
+                *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+            }
+        }
+    }
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    Some((png, Vec2::new(width as f32, height as f32)))
+}
+
+/// Image card geometry for a draw.io image cell: the image keeps the cell size (fitted to
+/// its aspect unless `imageAspect=0`) and the card adds room for the caption beneath.
+fn image_card_rect(rect: Rect, pixels: Vec2, label: &str, keep_aspect: bool) -> (Rect, Vec2) {
+    let mut size = if keep_aspect && pixels.x > 0.0 && pixels.y > 0.0 {
+        pixels * (rect.size.x / pixels.x).min(rect.size.y / pixels.y)
+    } else {
+        rect.size
+    };
+    let longest = size.x.max(size.y);
+    if longest > MAX_DISPLAY_SIZE {
+        size = size * (MAX_DISPLAY_SIZE / longest);
+    }
+    let size = Vec2::new(size.x.max(1.0), size.y.max(1.0));
+    let lines = label.lines().count().max(1) as f32;
+    let card = Vec2::new(
+        (size.x + 28.0).max(MIN_CARD_SIZE),
+        size.y + 6.0 + lines * 27.0 + 34.0,
+    );
+    // Card content is centred vertically; align the image with the original cell.
+    let content = size.y + 6.0 + lines * 18.0;
+    let top = rect.center().y - size.y / 2.0 - (card.y - content) / 2.0;
+    let min = Vec2::new(rect.center().x - card.x / 2.0, top);
+    (Rect::from_min_size(min, card), size)
 }
 
 fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning>) -> Sheet {
@@ -2074,11 +2262,34 @@ impl<'a> PageWriter<'a> {
             return;
         };
         let (parent, origin) = self.parent(BoardMember::Card(id));
-        let mut style = String::from(match card.kind {
-            CardKind::Sticky => "shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;",
-            CardKind::Text => "text;thinodaCard=text;",
-            CardKind::Image => "shape=note;thinodaCard=image;backgroundOutline=1;size=14;",
+        let image = topic
+            .image
+            .as_deref()
+            .and_then(|reference| self.sheet.resources.get(reference).ok())
+            .filter(|resource| matches!(resource.media_type.as_str(), "image/png" | "image/jpeg"));
+        let mut style = String::from(match (card.kind, image) {
+            (CardKind::Sticky, _) => "shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;",
+            (CardKind::Text, _) => "text;thinodaCard=text;",
+            (CardKind::Image, None) => "shape=note;thinodaCard=image;backgroundOutline=1;size=14;",
+            (CardKind::Image, Some(_)) => {
+                "shape=image;thinodaCard=image;imageAspect=1;verticalAlign=bottom;"
+            }
         });
+        if let Some(resource) = image {
+            // draw.io's style syntax reserves `;`, so inline images omit `;base64`.
+            style.push_str(&format!(
+                "image=data:{},{};",
+                resource.media_type,
+                base64::engine::general_purpose::STANDARD.encode(resource.bytes())
+            ));
+            if let Some(size) = topic.image_size {
+                style.push_str(&format!(
+                    "thinodaImageWidth={};thinodaImageHeight={};",
+                    num(size.x),
+                    num(size.y)
+                ));
+            }
+        }
         style.push_str("whiteSpace=wrap;html=1;");
         color_keys(
             &mut style,

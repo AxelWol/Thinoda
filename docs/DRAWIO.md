@@ -852,6 +852,27 @@ Gap analysis from the corpus (8,180 vertices, 1,876 edges) sets the fidelity ord
 4. **HTML labels** — near-universal styled spans (Phase 9 rich text).
 5. **Custom data** — `object`/`UserObject` attributes such as C4 metadata (Phase 9).
 
+**Inline images (fidelity slice 1).** `shape=image` cells (and `image=` on other vertices)
+with a `data:` URI become Thinoda image cards: PNG/JPEG bytes are validated and stored as
+sheet resources; SVG (base64 or percent-encoded) is rasterised with usvg at 2× display
+size (64–1024 px) using the bundled fonts and a resolver that never reads files or the
+network, and SVGZ is refused. The card is transparent (draw.io images have no fill), fits
+the picture to the cell unless `imageAspect=0`, and keeps the cell's top-left so edges stay
+attached. Remote, `img/lib/...`, GIF and undecodable sources stay labelled placeholders
+whose alt text is the source URL (data URIs are not echoed) and raise the Resources
+warning. Export writes `shape=image;thinodaCard=image;image=data:<mime>,<base64>` plus the
+display size, and the export gate allows resources for draw.io only when every resource
+is a PNG/JPEG picture of an image card. Tests: `inline_png_and_svg_images_become_transparent_image_cards`,
+`remote_and_unsupported_images_stay_placeholders_with_their_source`,
+`image_cards_round_trip_their_pixels_and_size`; corpus still 89/89.
+
+**Shape label editing (user-reported bug, in progress).** Typing on a selected shape
+swallowed the first character (the seeded character was selected and replaced by the next
+keystroke), the editor used the default UI text colour (unreadable on light fills in dark
+mode) and was aligned top-left while the rendered label is centred. Fix: keep the cursor
+after the seeded text, use the renderer's contrast colour and composited fill, centre the
+editor both ways and match the label font size; regression tests in `board_tests.rs`.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

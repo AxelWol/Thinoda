@@ -745,6 +745,7 @@ pub fn export_bytes_with_consent_and_visual_context(
     );
     if book.sheets.iter().any(|sheet| {
         !sheet.resources.is_empty()
+            && !(format == Format::DrawIo && drawio_keeps_resources(sheet))
             && (!supports_embedded_resources
                 || (format == Format::PowerPoint
                     && (sheet
@@ -869,6 +870,32 @@ fn equation_notes_outside_outline(sheet: &thinoda_core::Sheet) -> bool {
 
 /// Formats without per-symbol color support. XMind retains the Thinoda metadata payload,
 /// but its standard icons do not display custom colors in other applications.
+/// draw.io inlines the PNG/JPEG pictures of image cards; any other resource use would be lost.
+fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
+    let card_images: HashSet<&str> = sheet
+        .topics
+        .values()
+        .filter(|topic| {
+            topic.parent.is_none()
+                && topic
+                    .card
+                    .is_some_and(|card| card.kind == thinoda_core::board::CardKind::Image)
+        })
+        .filter_map(|topic| topic.image.as_deref())
+        .collect();
+    sheet.topics.values().all(|topic| {
+        topic.attachment.is_none()
+            && topic
+                .image
+                .as_deref()
+                .is_none_or(|image| card_images.contains(image))
+    }) && sheet.resources.entries.iter().all(|(id, resource)| {
+        matches!(resource.media_type.as_str(), "image/png" | "image/jpeg")
+            && card_images
+                .contains(format!("{}{id}", thinoda_core::resources::RESOURCE_PREFIX).as_str())
+    })
+}
+
 pub fn symbol_color_loss(book: &Workbook, format: Format) -> bool {
     !matches!(
         format,
