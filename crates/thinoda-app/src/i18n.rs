@@ -1874,6 +1874,7 @@ const DE: &[(&str, &str)] = &[
     ("Contact", "Kontakt"),
     ("Write an email", "E-Mail schreiben"),
     ("Open in web browser", "Im Webbrowser öffnen"),
+    ("Thinoda on GitHub", "Thinoda auf GitHub"),
     ("All sheets", "Alle Blätter"),
     ("Include labels", "Beschriftungen einbeziehen"),
     ("Replaces topic titles only.", "Ersetzt nur Thementitel."),

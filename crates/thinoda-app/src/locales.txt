@@ -1132,6 +1132,7 @@ Deletes the summary topic and its children, not the covered branches.|Elimina el
 Contact|Contacto|Contact|Kontakt|Contact|Contacto|Contatto|Kontakt
 Write an email|Escribir un correo|Écrire un e-mail|Skriv en e-mail|E-mail schrijven|Escrever um e-mail|Scrivi un'e-mail|Napisz e-mail
 Open in web browser|Abrir en el navegador|Ouvrir dans le navigateur|Åbn i webbrowser|Openen in webbrowser|Abrir no navegador|Apri nel browser|Otwórz w przeglądarce
+Thinoda on GitHub|Thinoda en GitHub|Thinoda sur GitHub|Thinoda på GitHub|Thinoda op GitHub|Thinoda no GitHub|Thinoda su GitHub|Thinoda na GitHubie
 All sheets|Todas las hojas|Toutes les feuilles|Alle ark|Alle bladen|Todas as folhas|Tutti i fogli|Wszystkie arkusze
 Include labels|Incluir etiquetas|Inclure les étiquettes|Medtag etiketter|Labels meenemen|Incluir etiquetas|Includi etichette|Uwzględnij etykiety
 Replaces topic titles only.|Solo sustituye los títulos de temas.|Remplace uniquement les titres des sujets.|Erstatter kun emnetitler.|Vervangt alleen onderwerptitels.|Substitui apenas os títulos dos tópicos.|Sostituisce solo i titoli dei nodi.|Zastępuje tylko tytuły węzłów.

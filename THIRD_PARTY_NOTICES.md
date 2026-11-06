@@ -186,6 +186,13 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
 DEALINGS IN THE FONT SOFTWARE.
 ```
 
+## Embedded GitHub mark
+
+The "Thinoda on GitHub" status-bar link embeds the `mark-github` path from
+GitHub Primer Octicons (<https://github.com/primer/octicons>), MIT License,
+Copyright (c) GitHub Inc. The GitHub logo is a trademark of GitHub, Inc. and
+is used only to link to Thinoda's GitHub repository.
+
 ## Embedded W3C schemas
 
 The `xsd-schema` dependency includes unmodified W3C `xml.xsd` and `xlink.xsd`

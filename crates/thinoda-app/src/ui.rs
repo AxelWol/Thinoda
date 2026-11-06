@@ -4593,6 +4593,14 @@ impl ThinodaApp {
                     .frame(egui::Frame::NONE)
                     .show(ui, |ui| {
                         ui.separator();
+                        let side = ui.spacing().interact_size.y;
+                        egui::Panel::right("home_github_badge")
+                            .exact_size(side)
+                            .resizable(false)
+                            .frame(egui::Frame::NONE)
+                            .show(ui, |ui| {
+                                crate::brand::github_badge(ui, side);
+                            });
                         ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add_enabled(
@@ -5349,13 +5357,19 @@ impl ThinodaApp {
         ui.horizontal_centered(|ui| {
             let add_width = ui.spacing().interact_size.x;
             let height = ui.spacing().interact_size.y;
-            let gaps = if self.settings.show_status_bar {
-                2.0
-            } else {
-                1.0
-            };
-            let width =
-                (ui.available_width() - add_width - gaps * ui.spacing().item_spacing.x).max(0.0);
+            let show_badge = ui.available_width() >= crate::brand::GITHUB_BADGE_MIN_BAR_WIDTH;
+            let badge_width = if show_badge { height } else { 0.0 };
+            let gaps =
+                1.0 + if self.settings.show_status_bar {
+                    1.0
+                } else {
+                    0.0
+                } + if show_badge { 1.0 } else { 0.0 };
+            let width = (ui.available_width()
+                - add_width
+                - badge_width
+                - gaps * ui.spacing().item_spacing.x)
+                .max(0.0);
             let tabs_width = if self.settings.show_status_bar {
                 // Keep a whole truncated tab visible between the arrows and status controls.
                 let min_tabs_width = 2.0 * (height + ui.spacing().item_spacing.x)
@@ -5684,6 +5698,11 @@ impl ThinodaApp {
                             t("Saved")
                         },
                     );
+                });
+            }
+            if show_badge {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    crate::brand::github_badge(ui, badge_width);
                 });
             }
         });

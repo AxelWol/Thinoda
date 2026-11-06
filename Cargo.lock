@@ -4867,6 +4867,7 @@ dependencies = [
  "log",
  "pulldown-cmark",
  "raw-window-handle",
+ "resvg",
  "rfd",
  "semver",
  "serde_json",

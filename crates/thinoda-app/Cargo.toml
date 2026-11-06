@@ -35,6 +35,7 @@ egui.workspace = true
 eframe.workspace = true
 rfd.workspace = true
 image.workspace = true
+resvg.workspace = true
 uuid.workspace = true
 log.workspace = true
 anyhow.workspace = true

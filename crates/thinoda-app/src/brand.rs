@@ -26,6 +26,87 @@ fn texture(ctx: &egui::Context, large: bool) -> Option<egui::TextureHandle> {
     Some(tex)
 }
 
+/// Tooltip and accessible name of the GitHub corner badge.
+pub const GITHUB_BADGE_LABEL: &str = "Thinoda on GitHub";
+/// Narrower status bars drop the badge so sheet tabs and status controls keep their room.
+pub const GITHUB_BADGE_MIN_BAR_WIDTH: f32 = 480.0;
+
+/// Primer Octicons `mark-github-16` (MIT License, Copyright (c) 2026 GitHub Inc.).
+const GITHUB_MARK_PATH: &str = "M6.766 11.328c-2.063-.25-3.516-1.734-3.516-3.656 0-.781.281-1.625.75-2.188-.203-.515-.172-1.609.063-2.062.625-.078 1.468.25 1.968.703.594-.187 1.219-.281 1.985-.281.765 0 1.39.094 1.953.265.484-.437 1.344-.765 1.969-.687.218.422.25 1.515.046 2.047.5.593.766 1.39.766 2.203 0 1.922-1.453 3.375-3.547 3.64.531.344.89 1.094.89 1.954v1.625c0 .468.391.734.86.547C13.781 14.359 16 11.53 16 8.03 16 3.61 12.406 0 7.984 0 3.563 0 0 3.61 0 8.031a7.88 7.88 0 0 0 5.172 7.422c.422.156.828-.125.828-.547v-1.25c-.219.094-.5.156-.75.156-1.031 0-1.64-.562-2.078-1.609-.172-.422-.36-.672-.719-.719-.187-.015-.25-.093-.25-.187 0-.188.313-.328.625-.328.453 0 .844.281 1.25.86.313.452.64.655 1.031.655s.641-.14 1-.5c.266-.265.47-.5.657-.656";
+
+/// White GitHub mark rasterised at `px` physical pixels; tinted when painted.
+fn github_mark(ctx: &egui::Context, px: u32) -> Option<egui::TextureHandle> {
+    let id = egui::Id::unique(("thinoda_github_mark", px));
+    if let Some(tex) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(tex);
+    }
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{px}" height="{px}" viewBox="0 0 16 16"><path fill="#fff" d="{GITHUB_MARK_PATH}"/></svg>"##
+    );
+    let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(px, px)?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
+    let size = [px as usize, px as usize];
+    let color = egui::ColorImage::from_rgba_premultiplied(size, pixmap.data());
+    let tex = ctx.load_texture("thinoda_github_mark", color, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
+    Some(tex)
+}
+
+/// Small GitHub mark in the lower-right corner; opens the project page when activated.
+pub fn github_badge(ui: &mut egui::Ui, side: f32) -> egui::Response {
+    let ctx = ui.ctx().clone();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+    let label = t(GITHUB_BADGE_LABEL);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    if ui.is_rect_visible(rect) {
+        let palette = thinoda_ui::Palette::of(&ctx);
+        let active = response.hovered() || response.has_focus();
+        let grow = ctx.animate_bool_with_time(response.id, active, 0.12);
+        if active {
+            ui.painter()
+                .rect_filled(rect, rect.height() / 2.0, palette.surface_alt);
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect,
+                rect.height() / 2.0,
+                egui::Stroke::new(1.5, palette.accent),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let mark = side * (0.62 + 0.08 * grow);
+        let px = (side * 0.7 * ui.pixels_per_point())
+            .ceil()
+            .clamp(8.0, 256.0) as u32;
+        let tint = if active {
+            palette.text
+        } else {
+            palette.text_muted
+        };
+        if let Some(tex) = github_mark(&ctx, px) {
+            let image_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(mark, mark));
+            ui.painter().image(
+                tex.id(),
+                image_rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                tint,
+            );
+        }
+    }
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(format!("{label}\n{PROJECT_URL}"));
+    if response.clicked() && thinoda_ui::widgets::touch_activation_allowed(&ctx) {
+        ctx.open_url(egui::OpenUrl::new_tab(PROJECT_URL));
+    }
+    response
+}
+
 /// Draws the Thinoda logo at `size` logical points.
 pub fn logo(ui: &mut egui::Ui, size: f32) -> egui::Response {
     let large = size * ui.pixels_per_point() > 64.0;

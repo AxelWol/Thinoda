@@ -629,6 +629,17 @@ plain polyline without a loss row), clipboard interop, drag-and-drop of
 `.drawio.png` (still inserted as a picture; `.drawio.svg` opens as a diagram), and the
 fixture corpus from Phase 0.
 
+**UX addition — GitHub corner mark (user request, 2026-11-05).** Like diagrams.net's
+lower-right GitHub kitten, Thinoda shows the GitHub mark (Primer Octicons
+`mark-github`, MIT; notice in THIRD_PARTY_NOTICES) at the far right of the status bar
+and of the home screen's template actions. It is a real button: muted until hovered or
+focused, a translated tooltip and accessible name (*Thinoda on GitHub*, all UI
+languages) plus the URL, Enter/Space or click opens <https://github.com/AxelWol/Thinoda>
+through the guarded URL opener, and it never edits the document. Status bars narrower
+than 480 pt omit it so sheet tabs and status controls keep their room; it stays
+reachable from the home screen and About. Covered by `tests/github_badge.rs` and
+`tests/bottom_bar.rs`.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.
