@@ -590,6 +590,127 @@ fn unsupported_content_is_reported_not_dropped_silently() {
     );
 }
 
+fn kinds_by_label(sheet: &Sheet) -> Vec<(String, ShapeKind)> {
+    shapes(sheet)
+        .iter()
+        .filter_map(|o| match &o.kind {
+            CanvasObjectKind::Shape { shape, label } => Some((label.clone(), *shape)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn built_in_shape_aliases_map_to_their_thinoda_equivalents() {
+    let cell = |id: &str, style: &str, y: u32| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="{style}" vertex="1" parent="1"><mxGeometry y="{y}" width="40" height="20" as="geometry"/></mxCell>"#
+        )
+    };
+    let exact = [
+        ("pr", "shape=partialRectangle;"),
+        ("br", "shape=mxgraph.basic.rect;"),
+        ("bs", "shape=mxgraph.bootstrap.rect;"),
+        ("bt", "shape=mxgraph.bootstrap.rrect;"),
+        ("dl", "shape=delay;"),
+    ];
+    let cells: String = exact
+        .iter()
+        .enumerate()
+        .map(|(n, (id, style))| cell(id, style, n as u32 * 30))
+        .collect();
+    let sheet = clean(&page(&cells));
+    use ShapeKind as S;
+    assert_eq!(
+        kinds_by_label(&sheet),
+        vec![
+            ("pr".into(), S::Rectangle),
+            ("br".into(), S::Rectangle),
+            ("bs".into(), S::Rectangle),
+            ("bt".into(), S::RoundedRectangle),
+            ("dl".into(), S::Delay),
+        ]
+    );
+
+    let approximate = [
+        ("fo", "shape=folder;"),
+        ("cu", "shape=cube;"),
+        ("me", "shape=message;"),
+        ("uf", "shape=umlFrame;"),
+        ("es", "shape=endState;"),
+        ("pc", "shape=mxgraph.basic.partConcEllipse;"),
+        ("ar", "shape=mxgraph.arrows2.arrow;"),
+        ("ps", "shape=partialRectangle;top=0;left=0;"),
+    ];
+    let cells: String = approximate
+        .iter()
+        .enumerate()
+        .map(|(n, (id, style))| cell(id, style, n as u32 * 30))
+        .collect();
+    let report = load(&page(&cells));
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::Formatting],
+        "approximations are formatting losses, not unknown content"
+    );
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(
+        kinds_by_label(sheet),
+        vec![
+            ("fo".into(), S::Rectangle),
+            ("cu".into(), S::Rectangle),
+            ("me".into(), S::Rectangle),
+            ("uf".into(), S::Rectangle),
+            ("es".into(), S::Ellipse),
+            ("pc".into(), S::Ellipse),
+            ("ar".into(), S::Arrow),
+            ("ps".into(), S::Rectangle),
+        ]
+    );
+    let partial = shapes(sheet).last().copied().unwrap();
+    assert_eq!(
+        partial.style.stroke,
+        Some(Color::TRANSPARENT),
+        "a rectangle with hidden sides drops its outline rather than inventing lines"
+    );
+}
+
+#[test]
+fn waypoints_become_small_dots_in_the_stroke_color() {
+    let xml = page(
+        r##"
+        <mxCell id="a" value="A" vertex="1" parent="1"><mxGeometry x="0" y="40" width="40" height="40" as="geometry"/></mxCell>
+        <mxCell id="w" style="shape=waypoint;fillStyle=solid;size=6;strokeColor=#FF0000;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="e" edge="1" parent="1" source="a" target="w"><mxGeometry relative="1" as="geometry"/></mxCell>
+        "##,
+    );
+    let sheet = clean(&xml);
+    let dot = shapes(&sheet)
+        .into_iter()
+        .find(|o| {
+            matches!(
+                o.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::Ellipse,
+                    ..
+                }
+            )
+        })
+        .expect("waypoint dot");
+    assert_eq!(
+        dot.rect,
+        Rect::from_center_size(Vec2::new(110.0, 60.0), Vec2::new(6.0, 6.0))
+    );
+    let red = Color::rgba(255, 0, 0, 255);
+    assert_eq!(dot.style.fill, Some(red));
+    assert_eq!(dot.style.stroke, Some(red));
+    assert_eq!(
+        connectors(&sheet).len(),
+        1,
+        "edges still attach to the waypoint"
+    );
+}
+
 fn tiny_png(width: u32, height: u32) -> Vec<u8> {
     let image = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255]));
     let mut out = std::io::Cursor::new(Vec::new());

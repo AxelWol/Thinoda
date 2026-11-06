@@ -875,6 +875,19 @@ editor both ways and match the label font size (`render::board_label_colors` is 
 the renderer and the editor). Tests: `typing_on_a_selected_shape_keeps_every_character`,
 `label_editor_text_contrasts_with_the_shape_fill_in_both_themes`.
 
+**Built-in shape aliases (fidelity slice 2).** Measured on the corpus, the most frequent
+unmapped built-ins now import as the nearest Thinoda shape instead of an "unknown"
+rectangle. Exact: `partialRectangle` (all sides), `mxgraph.basic.rect`,
+`mxgraph.bootstrap.rect`/`rrect`, `delay`. Approximated, reported as a Formatting loss:
+`folder`, `cube`, `message`, `umlFrame` → rectangle; `endState`,
+`mxgraph.basic.partConcEllipse` → ellipse; `mxgraph.arrows2.arrow` → arrow; a
+`partialRectangle` with hidden sides drops its outline rather than drawing invented lines.
+`waypoint` becomes a 6 px dot in the stroke colour at the cell centre, and edges still
+attach to it. Dedicated outlines (folder tab, cube depth, envelope, UML actor/frame tab,
+partial sides) need new `ShapeKind`s and stay with Phase 4/13. Tests:
+`built_in_shape_aliases_map_to_their_thinoda_equivalents`,
+`waypoints_become_small_dots_in_the_stroke_color`; corpus still 89/89.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

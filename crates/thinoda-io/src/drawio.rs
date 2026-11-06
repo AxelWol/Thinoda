@@ -771,6 +771,10 @@ enum Kind {
     /// Shape, its base orientation in degrees relative to draw.io's east-facing
     /// default, and whether a quarter turn leaves the outline unchanged.
     Shape(ShapeKind, f32, bool),
+    /// A built-in shape drawn as the nearest Thinoda shape (a formatting loss).
+    Approx(ShapeKind, f32, bool),
+    /// A connection point drawn as a small dot in the stroke color.
+    Waypoint,
     Text,
     Line,
     Image,
@@ -817,6 +821,21 @@ fn classify(style: &Style) -> Kind {
         | "mxgraph.flowchart.start_1"
         | "mxgraph.flowchart.start_2"
         | "mxgraph.flowchart.on-page_reference" => symmetric(S::Ellipse),
+        "partialRectangle"
+            if PARTIAL_SIDES
+                .iter()
+                .any(|side| style.get(side) == Some("0")) =>
+        {
+            Kind::Approx(S::Rectangle, 0.0, true)
+        }
+        "partialRectangle" | "mxgraph.basic.rect" | "mxgraph.bootstrap.rect" => {
+            symmetric(S::Rectangle)
+        }
+        "mxgraph.bootstrap.rrect" => symmetric(S::RoundedRectangle),
+        "waypoint" => Kind::Waypoint,
+        "folder" | "cube" | "message" | "umlFrame" => Kind::Approx(S::Rectangle, 0.0, true),
+        "endState" | "mxgraph.basic.partConcEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
+        "mxgraph.arrows2.arrow" => Kind::Approx(S::Arrow, 0.0, false),
         "rhombus" => symmetric(S::Diamond),
         "triangle" => shape(S::Triangle, 90.0),
         "mxgraph.flowchart.extract_or_measurement" => shape(S::Triangle, 0.0),
@@ -843,13 +862,19 @@ fn classify(style: &Style) -> Kind {
         "mxgraph.flowchart.data" => shape(S::Data, 0.0),
         "mxgraph.flowchart.manual_input" => shape(S::ManualInput, 0.0),
         "mxgraph.flowchart.preparation" => shape(S::Preparation, 0.0),
-        "mxgraph.flowchart.delay" => shape(S::Delay, 0.0),
+        "delay" | "mxgraph.flowchart.delay" => shape(S::Delay, 0.0),
         "mxgraph.flowchart.off-page_reference" | "offPageConnector" => {
             shape(S::OffPageConnector, 0.0)
         }
         _ => Kind::Unknown,
     }
 }
+
+/// draw.io `partialRectangle` side flags; any `0` hides that side's outline.
+const PARTIAL_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
+
+/// draw.io draws waypoints as fixed-size dots regardless of the cell geometry.
+const WAYPOINT_SIZE: f32 = 6.0;
 
 fn direction_degrees(style: &Style) -> f32 {
     match style.get("direction") {
@@ -1174,7 +1199,10 @@ impl<'a> PageImport<'a> {
             object
         };
         let object = match kind {
-            Kind::Shape(shape, base, symmetric) => {
+            Kind::Shape(shape, base, symmetric) | Kind::Approx(shape, base, symmetric) => {
+                if matches!(kind, Kind::Approx(..)) {
+                    self.warn(ImportWarning::Formatting);
+                }
                 let total = if symmetric {
                     0.0
                 } else {
@@ -1185,7 +1213,20 @@ impl<'a> PageImport<'a> {
                 } else {
                     rect
                 };
-                shape_object(shape, frame, total + style.rotation(), label)
+                let mut object = shape_object(shape, frame, total + style.rotation(), label);
+                if style.shape() == "partialRectangle" && matches!(kind, Kind::Approx(..)) {
+                    object.style.stroke = Some(Color::TRANSPARENT);
+                }
+                object
+            }
+            Kind::Waypoint => {
+                let frame =
+                    Rect::from_center_size(rect.center(), Vec2::new(WAYPOINT_SIZE, WAYPOINT_SIZE));
+                let mut object = shape_object(ShapeKind::Ellipse, frame, 0.0, label);
+                let color = object.style.stroke.unwrap_or(Color::BLACK);
+                object.style.fill = Some(color);
+                object.style.stroke = Some(color);
+                object
             }
             Kind::Text => {
                 let mut object = shape_object(ShapeKind::Rectangle, rect, style.rotation(), label);
