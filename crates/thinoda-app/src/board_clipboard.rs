@@ -159,6 +159,21 @@ impl ClipboardBridge {
         }
     }
 
+    /// Writes plain text, cancelling any pending cut from an earlier write.
+    fn write_text(&mut self, ctx: &egui::Context, text: String) -> Result<(), String> {
+        self.generation = self.generation.wrapping_add(1);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = ctx;
+            self.transport.write_text(&text)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            ctx.copy_text(text);
+            Ok(())
+        }
+    }
+
     fn read(
         &mut self,
         ctx: &egui::Context,
@@ -306,7 +321,89 @@ pub(crate) fn paste(
     }
 }
 
+/// Encodes the selection as draw.io clipboard text without changing the document.
+pub(crate) fn prepare_drawio_copy(doc: &mut OpenDoc) -> Result<Option<String>, String> {
+    doc.view
+        .try_commit_edit(&mut doc.doc)
+        .map_err(localize_error)?;
+    doc.view
+        .try_commit_board_label(&mut doc.doc)
+        .map_err(localize_error)?;
+    if doc.doc.sheet().fim.is_some() {
+        return Ok(None);
+    }
+    let Some(payload) = doc
+        .view
+        .selection_board_payload(&doc.doc)
+        .map_err(localize_error)?
+    else {
+        return Ok(None);
+    };
+    thinoda_io::drawio_clipboard::encode(&payload)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// Pastes draw.io clipboard text as one undoable edit centred in the view.
+///
+/// Returns whether some draw.io content was simplified.
+pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<bool, String> {
+    if doc.doc.sheet().fim.is_some() {
+        return Err("draw.io content cannot be pasted into a FIM sheet".into());
+    }
+    let pasted = thinoda_io::drawio_clipboard::decode(text).map_err(|error| error.to_string())?;
+    doc.view
+        .paste_foreign_board(
+            &mut doc.doc,
+            &pasted.payload,
+            pasted.bounds,
+            "Paste from draw.io",
+        )
+        .map_err(localize_error)?;
+    Ok(!pasted.warnings.is_empty())
+}
+
 impl crate::app::ThinodaApp {
+    /// Copies the selection so it can be pasted into draw.io (diagrams.net).
+    pub(crate) fn copy_as_drawio(&mut self, ctx: &egui::Context) {
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        let text = match prepare_drawio_copy(doc) {
+            Ok(Some(text)) => text,
+            Ok(None) => {
+                self.toasts.warning(crate::i18n::t("Not possible here"));
+                return;
+            }
+            Err(error) => {
+                self.toasts.error(format!(
+                    "{}: {}",
+                    crate::i18n::t("Could not copy"),
+                    crate::i18n::localize_model_error(&error)
+                ));
+                return;
+            }
+        };
+        // The OS clipboard no longer holds Thinoda data.
+        for doc in &mut self.docs {
+            doc.view.invalidate_clipboard();
+        }
+        match self.clipboard_bridge.write_text(ctx, text) {
+            Ok(()) => {
+                self.toasts.info(crate::i18n::t(
+                    "Copied for draw.io; paste it into a diagram",
+                ));
+            }
+            Err(error) => {
+                self.toasts.error(format!(
+                    "{}: {}",
+                    crate::i18n::t("Could not copy"),
+                    crate::i18n::localize_model_error(&error)
+                ));
+            }
+        }
+    }
+
     /// Unified entry point for menu, configured shortcut and canvas events.
     pub(crate) fn clipboard_action(&mut self, ctx: &egui::Context, action: Action) {
         match action {
@@ -485,6 +582,25 @@ impl crate::app::ThinodaApp {
                 let Some(doc) = self.docs.get_mut(self.active) else {
                     return;
                 };
+                if rich.is_none() && thinoda_io::drawio_clipboard::looks_like_drawio(&snapshot.text)
+                {
+                    match paste_drawio(doc, &snapshot.text) {
+                        Ok(true) => {
+                            self.toasts.warning(crate::i18n::t(
+                                "Pasted from draw.io; some content was simplified",
+                            ));
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            self.toasts.error(format!(
+                                "{}: {}",
+                                crate::i18n::t("Could not paste draw.io content"),
+                                crate::i18n::localize_model_error(&error)
+                            ));
+                        }
+                    }
+                    return;
+                }
                 match paste(doc, snapshot.text, rich) {
                     Ok(true) if legacy_topic => {
                         self.toasts.warning(crate::i18n::t(
@@ -1946,5 +2062,105 @@ mod tests {
         app.doc_mut().unwrap().discard_pending_ink();
         app.clipboard_action(&ctx, Action::Paste(None));
         assert_eq!(app.doc().unwrap().doc.sheet().canvas.objects.len(), 2);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    const DRAWIO_MODEL: &str = concat!(
+        r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+        r#"<mxCell id="a" value="Start" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">"#,
+        r#"<mxGeometry x="100" y="100" width="120" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" value="End" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">"#,
+        r#"<mxGeometry x="300" y="100" width="100" height="60" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="e" style="endArrow=classic;html=1;" edge="1" parent="1" source="a" target="b">"#,
+        r#"<mxGeometry relative="1" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel>"#
+    );
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn empty_board_app() -> (crate::app::ThinodaApp, Rc<RefCell<native::FakeClipboard>>) {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        app.docs = vec![OpenDoc::new(Workbook::new(sheet))];
+        app.active = 0;
+        (app, clipboard)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn board_item_count(app: &crate::app::ThinodaApp) -> usize {
+        let sheet = app.doc().unwrap().doc.sheet();
+        sheet.topics.len() + sheet.canvas.objects.len()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_text_pastes_as_one_undoable_selection() {
+        use crate::app::Cmd;
+        for text in [
+            DRAWIO_MODEL.to_owned(),
+            thinoda_io::drawio_clipboard::encode_uri_component(DRAWIO_MODEL),
+        ] {
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let items = board_item_count(&app);
+            {
+                let mut fake = clipboard.borrow_mut();
+                fake.text = text;
+                fake.html = None;
+            }
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            assert_eq!(board_item_count(&app), items + 3);
+            let doc = app.doc().unwrap();
+            assert!(doc.view.selection.len() + doc.view.board_selection.len() >= 2);
+            assert!(doc.view.board_clipboard().is_none());
+
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn copy_as_drawio_writes_plain_encoded_model_that_pastes_back() {
+        use crate::app::Cmd;
+        let (mut app, clipboard) = empty_board_app();
+        {
+            let mut fake = clipboard.borrow_mut();
+            fake.text = DRAWIO_MODEL.to_owned();
+            fake.html = None;
+        }
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        let items = board_item_count(&app);
+
+        app.exec(&ctx, Cmd::CopyAsDrawio);
+        let text = clipboard.borrow().text.clone();
+        assert!(text.starts_with("%3CmxGraphModel"), "{text}");
+        assert!(clipboard.borrow().html.is_none());
+        assert_eq!(board_item_count(&app), items);
+
+        app.exec(&ctx, Cmd::MenuPaste);
+        assert_eq!(board_item_count(&app), items + 3);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn malformed_drawio_text_reports_an_error_without_editing() {
+        use crate::app::Cmd;
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        {
+            let mut fake = clipboard.borrow_mut();
+            fake.text = "<mxGraphModel><root><mxCell".into();
+            fake.html = None;
+        }
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains(crate::i18n::t("Could not paste draw.io content")))
+        );
     }
 }

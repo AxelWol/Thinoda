@@ -155,6 +155,7 @@ impl ThinodaApp {
             ("Redo", Cmd::Canvas(Action::Redo)),
             ("Cut", Cmd::Canvas(Action::Cut)),
             ("Copy", Cmd::Canvas(Action::Copy)),
+            ("Copy as draw.io", Cmd::CopyAsDrawio),
             ("Paste", Cmd::MenuPaste),
             ("Duplicate", Cmd::Canvas(Action::Duplicate)),
             ("Delete", Cmd::Canvas(Action::Delete)),

@@ -206,7 +206,7 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
     decompress_to_vec_with_limit(data, MAX_BYTES).ok()
 }
 
-fn percent_decode(text: &str) -> Option<String> {
+pub(crate) fn percent_decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

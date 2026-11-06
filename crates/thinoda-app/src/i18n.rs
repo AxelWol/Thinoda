@@ -3850,6 +3850,19 @@ const DE: &[(&str, &str)] = &[
         "Paste would exceed a topic depth of 256 levels.",
         "Das Einfügen würde eine Thementiefe von 256 Ebenen überschreiten.",
     ),
+    ("Copy as draw.io", "Als draw.io kopieren"),
+    (
+        "Copied for draw.io; paste it into a diagram",
+        "Für draw.io kopiert; in ein Diagramm einfügen",
+    ),
+    (
+        "Pasted from draw.io; some content was simplified",
+        "Aus draw.io eingefügt; einige Inhalte wurden vereinfacht",
+    ),
+    (
+        "Could not paste draw.io content",
+        "draw.io-Inhalt konnte nicht eingefügt werden",
+    ),
 ];
 
 #[cfg(test)]
@@ -4513,6 +4526,10 @@ mod tests {
             "Eraser radius",
             "Collapse board toolbar",
             "Expand board toolbar",
+            "Copy as draw.io",
+            "Copied for draw.io; paste it into a diagram",
+            "Pasted from draw.io; some content was simplified",
+            "Could not paste draw.io content",
         ];
 
         for key in shape_names.chain(command_names).chain(other_labels) {

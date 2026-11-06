@@ -808,6 +808,29 @@ content, so it never creates a shape there (no ghost) and a drag from it still c
 Phase 1 is complete apart from the web drag-and-drop browser test, which follows with
 the web build checks.
 
+**Phase 11 (clipboard slice) — paste from draw.io, copy as draw.io.** draw.io copies a
+selection as `encodeURIComponent(<mxGraphModel>…)` plain text and reads either that form
+or raw XML back. Thinoda now matches both directions:
+- **Paste:** *Paste* (menu, Ctrl/Cmd+V, context menu) recognises clipboard text that
+  starts with `<mxGraphModel`, `<mxfile` or their `%3C`-encoded forms when no Thinoda rich
+  data is present. `thinoda_io::drawio_clipboard::decode` runs it through the hardened
+  import codec (same 16 MiB cap) and the result lands centred in the visible board area as
+  one "Paste from draw.io" undo step, selected. If the importer had to simplify anything, a
+  warning toast says so; malformed data shows an error toast and leaves the sheet alone.
+  FIM sheets refuse the paste.
+- **Copy:** *Edit ▸ Copy as draw.io* (also in the board item context menu and the ribbon's
+  Clipboard group) exports the selected board items through the export codec and writes the
+  `encodeURIComponent` form as plain text, so pasting in diagrams.net yields editable
+  cells. Ordinary *Copy* is unchanged (readable text plus Thinoda's private rich format).
+- Limits: container membership from draw.io (Thinoda zones) is not part of a board
+  clipboard fragment, so pasted children arrive as free items; multi-page `mxfile` text
+  pastes its first page.
+- Tests: `drawio_clipboard` unit tests in thinoda-io (detection, plain/encoded decode,
+  round trip, rejection, JS-compatible encoding) and
+  `drawio_clipboard_text_pastes_as_one_undoable_selection`,
+  `copy_as_drawio_writes_plain_encoded_model_that_pastes_back` and
+  `malformed_drawio_text_reports_an_error_without_editing` in the app.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

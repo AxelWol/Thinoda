@@ -58,6 +58,22 @@ impl Transport {
         Ok(())
     }
 
+    /// Writes plain text only, replacing any rich representation.
+    pub(super) fn write_text(&mut self, text: &str) -> Result<(), String> {
+        if let Some(fake) = &self.fake {
+            let mut fake = fake.borrow_mut();
+            if fake.fail_write {
+                return Err("clipboard write denied".into());
+            }
+            fake.text = text.to_owned();
+            fake.html = None;
+            return Ok(());
+        }
+        self.clipboard()?
+            .set_text(text)
+            .map_err(|error| error.to_string())
+    }
+
     pub(super) fn read(&mut self, event_text: Option<&str>) -> Result<Snapshot, String> {
         if let Some(fake) = &self.fake {
             let fake = fake.borrow();

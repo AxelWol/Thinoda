@@ -74,6 +74,54 @@ impl MapView {
         self.set_board_clipboard(Some(payload));
         Ok(pasted)
     }
+
+    /// Pastes board content converted from another application, centred in
+    /// the visible canvas as one undoable edit.
+    ///
+    /// `bounds` are the content's sheet-space bounds in `payload`. The
+    /// payload is not kept as an internal clipboard because the OS clipboard
+    /// still holds the foreign representation.
+    pub fn paste_foreign_board(
+        &mut self,
+        doc: &mut Document,
+        payload: &BoardClipboardPayload,
+        bounds: Option<thinoda_core::Rect>,
+        label: &str,
+    ) -> EditResult<bool> {
+        self.invalidate_clipboard();
+        payload.validate().map_err(EditError::Invalid)?;
+        if self.has_title_changes() {
+            self.try_commit_edit(doc)?;
+        }
+        self.try_commit_board_label(doc)?;
+        self.prune_selection(doc.sheet());
+        let delta = bounds.map_or(PASTE_OFFSET, |bounds| {
+            let target = self.visible_sheet_center() - bounds.center();
+            Vec2::new(target.x.round(), target.y.round())
+        });
+        paste_board_at(doc, self, payload, delta, label)
+    }
+
+    /// Copies the current selection as a board fragment without changing any
+    /// clipboard, for hosts that export it in another format.
+    pub fn selection_board_payload(
+        &mut self,
+        doc: &Document,
+    ) -> EditResult<Option<BoardClipboardPayload>> {
+        let Some(prepared) =
+            clipboard::prepare_board_selection(doc.sheet(), &self.selection, &self.board_selection)
+                .map_err(EditError::Invalid)?
+        else {
+            return Ok(None);
+        };
+        let layout = self.layout_for(doc);
+        prepared.copy(&layout).map(Some).map_err(EditError::Invalid)
+    }
+
+    /// Sheet-space point shown at the centre of the canvas.
+    pub fn visible_sheet_center(&self) -> Vec2 {
+        Vec2::new(-self.offset.x / self.zoom, -self.offset.y / self.zoom)
+    }
 }
 
 /// Ordinary floating topics are not board members and retain their existing behavior.

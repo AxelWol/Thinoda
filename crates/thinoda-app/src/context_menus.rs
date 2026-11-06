@@ -383,9 +383,11 @@ impl ThinodaApp {
             submenus.push(self.ai_menu());
         }
         submenus.push(self.view_menu());
+        let mut clipboard = clipboard();
+        clipboard.insert(2, cmd("Copy as draw.io", Cmd::CopyAsDrawio));
         grouped(vec![
             create,
-            clipboard(),
+            clipboard,
             vec![self.format_menu(target)],
             organize,
             submenus,

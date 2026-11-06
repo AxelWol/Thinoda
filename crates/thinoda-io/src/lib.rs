@@ -5,6 +5,7 @@
 //! (including outlined text); JPEG always uses an opaque background.
 mod board_export;
 mod drawio;
+pub mod drawio_clipboard;
 pub mod fim;
 pub mod fonts;
 mod formats;

@@ -151,6 +151,8 @@ pub enum Cmd {
     OpenLink,
     ShowInFolder,
     MenuPaste,
+    /// Copy the selection as a draw.io (diagrams.net) clipboard model.
+    CopyAsDrawio,
     SetTheme(SettingsTheme),
     /// Focus a topic property field in the Format panel (Ctrl+K / Ctrl+Shift+N).
     EditField(FocusField),
@@ -1511,6 +1513,7 @@ impl ThinodaApp {
                 }
                 self.clipboard_action(ctx, Action::Paste(None));
             }
+            Cmd::CopyAsDrawio => self.copy_as_drawio(ctx),
             Cmd::Ai(a) => self.start_ai(a),
             Cmd::AiChat => self.toggle_ai_chat(),
             Cmd::EditField(f) => {

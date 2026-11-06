@@ -83,6 +83,7 @@ impl Cmd {
             Self::OpenLink => "topic.open-link",
             Self::ShowInFolder => "file.show-in-folder",
             Self::MenuPaste => "edit.paste",
+            Self::CopyAsDrawio => "edit.copy-drawio",
             Self::SetTheme(ThemeMode::System) => "appearance.system",
             Self::SetTheme(ThemeMode::Light) => "appearance.light",
             Self::SetTheme(ThemeMode::Dark) => "appearance.dark",
@@ -281,6 +282,7 @@ impl ThinodaApp {
             Cmd::Canvas(Action::Copy),
             Cmd::Canvas(Action::Cut),
             Cmd::MenuPaste,
+            Cmd::CopyAsDrawio,
         ]);
         commands.extend(Format::EXPORTABLE.iter().copied().map(Cmd::Export));
         let mut registry = Vec::new();

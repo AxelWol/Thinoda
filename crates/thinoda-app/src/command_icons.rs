@@ -133,6 +133,7 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::Export(_) => (I::EXPORT, None, T::File),
         Cmd::Import => (I::IMPORT, None, T::File),
         Cmd::MenuPaste => (I::PASTE, None, T::Edit),
+        Cmd::CopyAsDrawio => (I::COPY, Some(I::EXPORT), T::Edit),
         Cmd::PasteSheet => (I::PASTE, Some(I::SHEET), T::Edit),
         Cmd::CopySheet => (I::COPY, Some(I::SHEET), T::Edit),
         Cmd::DuplicateSheet => (I::DUPLICATE, Some(I::SHEET), T::Create),

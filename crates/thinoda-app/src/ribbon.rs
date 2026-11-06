@@ -119,7 +119,8 @@ fn command_groups<'a>(
                 Cmd::Import | Cmd::Print | Cmd::ShowInFolder => t("Export"),
                 Cmd::Canvas(Action::Undo | Action::Redo) => t("Editing"),
                 Cmd::Canvas(Action::Copy | Action::Cut | Action::Duplicate | Action::Delete)
-                | Cmd::MenuPaste => t("Clipboard"),
+                | Cmd::MenuPaste
+                | Cmd::CopyAsDrawio => t("Clipboard"),
                 Cmd::Canvas(Action::SelectAll) | Cmd::Find | Cmd::FindReplace | Cmd::Palette => {
                     t("Select")
                 }

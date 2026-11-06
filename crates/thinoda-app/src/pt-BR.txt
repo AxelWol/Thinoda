@@ -897,3 +897,7 @@ No fill|Sem preenchimento
 Outline color|Cor do contorno
 Outline width|Espessura do contorno
 Drag onto the board or press Shift+Enter to insert|Arraste para o quadro ou pressione Shift+Enter para inserir
+Copy as draw.io|Copiar como draw.io
+Copied for draw.io; paste it into a diagram|Copiado para o draw.io; cole em um diagrama
+Pasted from draw.io; some content was simplified|Colado do draw.io; parte do conteúdo foi simplificada
+Could not paste draw.io content|Não foi possível colar o conteúdo do draw.io
