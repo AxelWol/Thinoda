@@ -118,6 +118,8 @@ pub struct BoardLabels {
     pub connect_left: String,
     /// Tooltip line explaining the direction-arrow modifiers.
     pub connect_hint: String,
+    /// Shape-picker footer line explaining how to open it.
+    pub quick_hint: String,
     pub label_editor: String,
 }
 
@@ -154,6 +156,7 @@ impl Default for BoardLabels {
             connect_down: "Add connected shape below".into(),
             connect_left: "Add connected shape to the left".into(),
             connect_hint: "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.".into(),
+            quick_hint: "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.".into(),
             label_editor: "Board object label".into(),
         }
     }

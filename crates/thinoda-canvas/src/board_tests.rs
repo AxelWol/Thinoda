@@ -5357,3 +5357,239 @@ fn hover_arrows_show_on_eligible_unselected_shapes() {
     assert_eq!(h.query_all_by_label("Add connected shape above").count(), 1);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
+
+fn tile_open(h: &Harness<'_, State>) -> bool {
+    h.query_by_label("Diamond").is_some()
+}
+
+#[test]
+fn quick_picker_opens_on_arrow_hover_and_inserts_the_chosen_shape() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let before = h.state().doc.workbook().clone();
+
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    h.hover_at(arrow);
+    h.run_steps(10);
+    assert!(!tile_open(&h), "the picker waits for the pointer to rest");
+    h.run_steps(40);
+    assert!(tile_open(&h));
+    // The source's own kind comes first.
+    assert!(h.query_by_label("Rectangle").is_some());
+
+    // Leaving both the arrow and the picker closes it without editing.
+    h.hover_at(point(&h, Vec2::new(-500.0, -400.0)));
+    h.run_steps(3);
+    assert!(!tile_open(&h));
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.hover_at(arrow);
+    h.run_steps(50);
+    assert!(tile_open(&h));
+    let tile = h.get_by_label("Diamond").rect().center();
+    h.hover_at(tile);
+    h.run_steps(3);
+    assert!(tile_open(&h), "moving into the picker keeps it open");
+    assert_eq!(
+        h.state().view.board_input.quick.as_ref().unwrap().preview,
+        Some(ShapeKind::Diamond)
+    );
+    click(&mut h, tile, Modifiers::NONE);
+    h.run_steps(2);
+    assert!(!tile_open(&h));
+
+    let sheet = h.state().doc.sheet().clone();
+    assert_eq!(sheet.canvas.objects.len(), 3);
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    let object = sheet.canvas.object(clone).unwrap();
+    assert_eq!(object.rect.center(), Vec2::new(200.0, 0.0));
+    let CanvasObjectKind::Shape { shape, label, .. } = &object.kind else {
+        panic!("clone is not a shape");
+    };
+    assert_eq!(*shape, ShapeKind::Diamond);
+    assert!(label.is_empty());
+    assert_eq!(
+        connector_ends(&sheet, connectors(&sheet)[0]),
+        (Endpoint::Object(source), Endpoint::Object(clone))
+    );
+    assert_eq!(h.state().doc.undo_label(), Some("Add connected shape"));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn quick_picker_opens_on_press_and_hold_without_clicking_the_arrow() {
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let before = h.state().doc.workbook().clone();
+
+    let arrow = arrow_center(&h, "Add connected shape below");
+    h.hover_at(arrow);
+    h.event(egui::Event::PointerButton {
+        pos: arrow,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(45);
+    assert!(tile_open(&h));
+    h.event(egui::Event::PointerButton {
+        pos: arrow,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(3);
+    assert!(tile_open(&h), "releasing the hold keeps the picker open");
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(!tile_open(&h));
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().view.board_selection.len(), 1);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn quick_picker_keyboard_navigation_inserts_and_escape_refocuses_the_arrow() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    // Keep the pointer away so only the keyboard drives the picker.
+    h.hover_at(point(&h, Vec2::new(-500.0, -400.0)));
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let label = "Add connected shape below";
+
+    h.get_by_label(label).focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F10);
+    h.run_steps(3);
+    assert!(tile_open(&h));
+    assert!(h.get_by_label("Rectangle").is_focused());
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(!tile_open(&h));
+    assert!(h.get_by_label(label).is_focused());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F10);
+    h.run_steps(3);
+    for _ in 0..2 {
+        h.key_press(Key::ArrowRight);
+        h.run_steps(2);
+    }
+    assert!(h.get_by_label("Ellipse").is_focused());
+    h.key_press(Key::ArrowDown);
+    h.run_steps(2);
+    assert!(h.get_by_label("Cylinder").is_focused());
+    h.key_press(Key::ArrowUp);
+    h.run_steps(2);
+    assert!(h.get_by_label("Ellipse").is_focused());
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert!(!tile_open(&h));
+
+    let sheet = h.state().doc.sheet().clone();
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    let object = sheet.canvas.object(clone).unwrap();
+    assert_eq!(object.rect.center(), Vec2::new(0.0, 160.0));
+    assert!(matches!(
+        object.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Ellipse,
+            ..
+        }
+    ));
+    assert_eq!(
+        connector_ends(&sheet, connectors(&sheet)[0]),
+        (Endpoint::Object(source), Endpoint::Object(clone))
+    );
+    assert_eq!(h.state().doc.undo_label(), Some("Add connected shape"));
+    // Focus follows the new shape's arrow, ready to chain.
+    let focused = h
+        .query_all_by_label(label)
+        .find(|node| node.is_focused())
+        .expect("focused arrow");
+    assert!(focused.rect().center().y > point(&h, Vec2::new(0.0, 200.0)).y);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn quick_picker_outside_click_closes_without_acting_on_the_board() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let before = h.state().doc.workbook().clone();
+    h.get_by_label("Add connected shape above").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F10);
+    h.run_steps(3);
+    assert!(tile_open(&h));
+
+    let outside = point(&h, Vec2::new(-400.0, 300.0));
+    click(&mut h, outside, Modifiers::NONE);
+    h.run_steps(3);
+    assert!(!tile_open(&h));
+    assert_eq!(h.state().view.board_selection, vec![source]);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn quick_picker_keeps_its_arrow_clickable_and_draggable() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let target = shape(&mut sheet, 300.0, 250.0, "Target");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    h.hover_at(arrow);
+    h.run_steps(45);
+    assert!(tile_open(&h));
+    let end = point(&h, Vec2::new(300.0, 250.0));
+    drag(&mut h, arrow, end);
+    finish_drag(&mut h, end);
+    assert!(!tile_open(&h));
+    let sheet = h.state().doc.sheet().clone();
+    let edges = connectors(&sheet);
+    assert_eq!(edges.len(), 1);
+    assert_eq!(
+        connector_ends(&sheet, edges[0]),
+        (Endpoint::Object(source), Endpoint::Object(target))
+    );
+    assert!(h.state_mut().doc.undo());
+
+    h.run_steps(30);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let arrow = arrow_center(&h, "Add connected shape above");
+    h.hover_at(arrow);
+    h.run_steps(45);
+    assert!(tile_open(&h));
+    click(&mut h, arrow, Modifiers::NONE);
+    h.run_steps(3);
+    assert!(!tile_open(&h));
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    let object = h.state().doc.sheet().canvas.object(clone).unwrap();
+    assert_eq!(object.rect.center(), Vec2::new(0.0, -160.0));
+    assert_eq!(h.state().doc.undo_label(), Some("Add connected shape"));
+    // Still resting on the clicked arrow does not reopen the picker.
+    h.run_steps(60);
+    assert!(!tile_open(&h));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}

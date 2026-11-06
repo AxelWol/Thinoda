@@ -310,8 +310,10 @@ shape-library items (29 built-ins, bundled/vendor stencils, library images):
   "not empty" (click selects, never creates on top).
 - **Touch/pen** (no hover): tap empty = create; the created/selected shape shows the same
   affordances; tap a shape = select; long-press on an object opens the context menu as
-  today. Direction arrows: tap = default clone+connect; each arrow has a small visible
-  "more" chevron that opens the quick-shape popover (no long-press stealing); tested.
+  today. Direction arrows: tap = default clone+connect; press-and-hold on an arrow
+  (0.6 s without moving) opens the quick-shape popover. This replaces the planned
+  "more" chevron: the hold is limited to the arrow, so the object long-press context
+  menu is unaffected, and the arrows stay uncluttered; tested.
 - **Undo**: separate gestures are separate history entries (create, move, rotate, label
   edit). Each **compound quick action** — click-empty create, clone+connect, quick-shape
   insert+connect, drop-on-empty create+connect — is **one atomic edit / one undo entry**;
@@ -347,6 +349,13 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   drop target or a free end, Ctrl/Cmd+drag = connected clone at the drop point. Keyboard:
   each arrow is a Tab stop after the selection's resize/rotate handles; Enter/Space (with
   the same modifiers) activates it and keeps focus on the new shape's arrow for chaining.
+  Quick-shape popover (1b part 2): resting the mouse 0.6 s on an arrow, holding it down
+  the same time (touch), or Shift+F10 on a focused arrow opens a 5×2 tile picker beside
+  the arrow — the source's own kind first, then common draw.io shapes; hovering or
+  focusing a tile ghosts that shape and its connector at the target slot; click/Enter
+  inserts it connected (one undo entry). Arrow keys/Tab move between tiles, Esc closes
+  and refocuses the arrow, a click outside closes without acting on the board, and the
+  mouse-opened picker closes when the pointer leaves the arrow and picker.
   Alt+Shift+Arrow and similar draw.io shortcuts stay unmapped because Alt+Arrow already
   duplicates in Thinoda.
 - **Connect from outline**: hovering near a shape's outline highlights it; dragging from
@@ -688,14 +697,31 @@ and topics get none):
   rotate handles ("Add connected shape above/to the right/below/to the left").
   Enter/Space activate them (Ctrl/Cmd and Shift variants included) and focus the same
   arrow on the result. Hover-only arrows are not focusable and use separate widget ids.
-  A translated tooltip explains the click, modifier and drag variants.
+  The quick-shape picker footer (translated) explains the click, modifier and drag
+  variants and how to open the picker, replacing the earlier tooltip.
 - Touch: tapping an arrow behaves like a click.
 - The rotate handle moved to the top-right corner (draw.io's position) so it no longer
   collides with the up arrow.
 - Tests: `direction_arrow_*` and `hover_arrows_*` in `board_tests.rs`, and
   `connected_object_is_one_undoable_edit_and_rolls_back_on_failure` in `document.rs`.
 
-Remaining Phase 1 slices: quick-shape popover on the arrows (1b part 2), shape-aware
+**Phase 1b part 2 — quick-shape popover.** Resting the mouse 0.6 s on an arrow,
+pressing and holding it (touch path; a release after the hold no longer clicks), or
+Shift+F10 on a focused arrow opens an egui popup beside the arrow, aligned to its
+direction. It lists ten tiles (the source's own kind first, then rectangle, rounded
+rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, cloud,
+document), each an AccessKit button named after the translated shape. Hovering or
+focusing a tile paints a ghost of that shape plus a dashed connector at the slot the
+arrow would fill. Clicking a tile or pressing Enter/Space inserts the clone with that
+shape, connected, as one "Add connected shape" undo entry; keyboard use then focuses
+the same arrow on the new shape. Tab/Shift+Tab and the arrow keys move between tiles
+(wrapping horizontally, by row vertically). Esc closes and refocuses the arrow; a click
+outside closes it without acting on the board; a mouse-opened picker closes when the
+pointer leaves the arrow and picker. The picker also closes when the document, sheet,
+camera or tool changes or an editor opens. Resting again on the same arrow needs the
+pointer to leave it first. Tests: `quick_picker_*` in `board_tests.rs`.
+
+Remaining Phase 1 slices: shape-aware
 perimeters (1c), floating edge/shape toolbars (1d), tile drag-and-drop and keyboard
 insert at a free spot (1e).
 
@@ -744,4 +770,4 @@ insert at a free spot (1e).
 | R6 | major | Undo rules contradicted compound quick actions | Compound actions = one atomic undo entry |
 | R7 | major | "Full fidelity" vs placeholders | Three-tier support matrix with release gates (§1) |
 | R8 | major | "Cap before decoding" not implementable for deflate | Incremental chunked inflate with in-flight ceiling |
-| R9 | minor | No touch gesture for quick-shape popover | Visible chevron on arrows; long-press unchanged |
+| R9 | minor | No touch gesture for quick-shape popover | Press-and-hold on the arrow itself (implemented in 1b part 2 instead of the chevron); object long-press unchanged |

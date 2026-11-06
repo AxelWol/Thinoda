@@ -32,6 +32,30 @@ pub(super) struct State {
     pub(super) ghost: Option<Pos2>,
     /// Unselected shape whose draw.io-style direction arrows are shown on hover.
     hover_shape: Option<CanvasObjectId>,
+    /// Open quick-shape picker of a direction arrow.
+    pub(super) quick: Option<QuickShapes>,
+    /// Direction arrow under the mouse and when resting there began; `None`
+    /// after a press or a closed picker, until the pointer leaves the arrow.
+    arrow_hover: Option<((SceneId, ArrowDir), Option<f64>)>,
+}
+
+/// draw.io-style shape picker shown next to a direction arrow.
+pub(super) struct QuickShapes {
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    /// Screen rect of the arrow the picker belongs to.
+    anchor: Rect,
+    /// Opened by resting the mouse, so it closes once the pointer leaves.
+    hover: bool,
+    /// Arrow to refocus when the picker was opened from the keyboard.
+    return_focus: Option<Id>,
+    focus_first: bool,
+    /// Tile under the pointer or focus, previewed on the board.
+    pub(super) preview: Option<ShapeKind>,
+    state: u64,
+    sheet: usize,
+    sheet_identity: SheetIdentity,
+    camera: (EVec2, f32, Rect),
 }
 
 struct RotationPivot {
@@ -221,6 +245,10 @@ enum GestureKind {
         dir: ArrowDir,
         anchor: Vec2,
         current: Vec2,
+        /// Input time of the press, for press-and-hold.
+        since: f64,
+        /// Moved far enough to become a drag; holding no longer opens the picker.
+        far: bool,
     },
 }
 
@@ -906,6 +934,16 @@ impl ArrowDir {
         }
     }
 
+    /// The reverse direction.
+    fn opposite(self) -> ArrowDir {
+        match self {
+            ArrowDir::Up => ArrowDir::Down,
+            ArrowDir::Right => ArrowDir::Left,
+            ArrowDir::Down => ArrowDir::Up,
+            ArrowDir::Left => ArrowDir::Right,
+        }
+    }
+
     /// Bounds extent along the direction.
     fn extent(self, bounds: thinoda_core::Rect) -> f32 {
         match self {
@@ -984,6 +1022,31 @@ const ARROW_GAP: f32 = 80.0;
 const ARROW_MIN_SCREEN: f32 = 40.0;
 /// Screen movement turning an arrow press into a drag.
 const ARROW_DRAG: f32 = 8.0;
+/// Seconds the mouse rests on, or a press holds, an arrow before its shape picker opens.
+const QUICK_DELAY: f64 = 0.6;
+/// Shapes offered by the picker after the source's own kind.
+const QUICK_SHAPES: [ShapeKind; 10] = [
+    ShapeKind::Rectangle,
+    ShapeKind::RoundedRectangle,
+    ShapeKind::Ellipse,
+    ShapeKind::Diamond,
+    ShapeKind::Triangle,
+    ShapeKind::Hexagon,
+    ShapeKind::Parallelogram,
+    ShapeKind::Cylinder,
+    ShapeKind::Cloud,
+    ShapeKind::Document,
+];
+const QUICK_COLUMNS: usize = 5;
+const QUICK_TILE: f32 = 40.0;
+
+fn arrow_point(view: &MapView, object: &CanvasObject, dir: ArrowDir) -> Vec2 {
+    dir.side(object.rotated_bounds()) + dir.unit() * (ARROW_OFFSET / view.zoom)
+}
+
+fn arrow_rect(view: &MapView, point: Vec2) -> Rect {
+    Rect::from_center_size(view.xf().pos(point), vec2(28.0, 28.0))
+}
 
 /// Shapes offering direction arrows: single, unlocked and ungrouped.
 fn arrow_source(sheet: &Sheet, id: CanvasObjectId) -> Option<&CanvasObject> {
@@ -1021,7 +1084,7 @@ fn arrow_controls(
         .map(|dir| Control {
             item,
             kind: ControlKind::Arrow(dir),
-            point: dir.side(bounds) + dir.unit() * (ARROW_OFFSET / view.zoom),
+            point: arrow_point(view, object, dir),
             rect: object.rect,
             rotation: object.rotation,
             hover,
@@ -1046,7 +1109,7 @@ fn update_hover_shape(
     response: &Response,
     over_controls: bool,
 ) {
-    if over_controls || view.board_input.is_active() {
+    if over_controls || view.board_input.is_active() || view.board_input.quick.is_some() {
         return;
     }
     let xf = view.xf();
@@ -1441,6 +1504,360 @@ fn arrow_drop(
     Ok(true)
 }
 
+fn quick_popup_id() -> Id {
+    MapCanvas::id().with("quick-shapes")
+}
+
+fn quick_tile_id(index: usize) -> Id {
+    quick_popup_id().with(("tile", index))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_quick(
+    ctx: &egui::Context,
+    doc: &Document,
+    view: &mut MapView,
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    anchor: Rect,
+    hover: bool,
+    return_focus: Option<Id>,
+) {
+    view.board_input.quick = Some(QuickShapes {
+        source,
+        dir,
+        anchor,
+        hover,
+        return_focus,
+        focus_first: return_focus.is_some(),
+        preview: None,
+        state: doc.state_id(),
+        sheet: doc.active_index(),
+        sheet_identity: sheet_identity(doc),
+        camera: (view.offset, view.zoom, view.canvas_rect),
+    });
+    view.board_input.arrow_hover = Some(((SceneId::Object(source), dir), None));
+    egui::Popup::open_id(ctx, quick_popup_id());
+    ctx.request_repaint();
+}
+
+fn close_quick(ctx: &egui::Context, view: &mut MapView) {
+    if let Some(quick) = view.board_input.quick.take() {
+        // Resting on the same arrow must not reopen it at once.
+        view.board_input.arrow_hover = Some(((SceneId::Object(quick.source), quick.dir), None));
+        egui::Popup::close_id(ctx, quick_popup_id());
+    }
+}
+
+/// The source's own kind first, then common draw.io shapes.
+fn quick_shapes(source: ShapeKind) -> Vec<ShapeKind> {
+    let mut list = vec![source];
+    list.extend(QUICK_SHAPES.into_iter().filter(|shape| *shape != source));
+    list.truncate(QUICK_SHAPES.len());
+    list
+}
+
+/// Where a connected shape added from `dir` lands, as a rect.
+fn quick_target(
+    sheet: &Sheet,
+    scene: &Scene,
+    source: &CanvasObject,
+    dir: ArrowDir,
+) -> thinoda_core::Rect {
+    let center = source.rotated_bounds().center() + clone_offset(sheet, scene, source, dir);
+    thinoda_core::Rect::from_center_size(center, source.rect.size)
+}
+
+/// Adds a `shape` copy of `source` connected in `dir`, as one undoable edit.
+fn quick_insert(
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    shape: ShapeKind,
+) -> EditResult<bool> {
+    let Some(object) = arrow_source(doc.sheet(), source).cloned() else {
+        return Ok(false);
+    };
+    let target = quick_target(doc.sheet(), scene, &object, dir);
+    let mut clone = arrow_clone(&object, target.center());
+    if let CanvasObjectKind::Shape { shape: kind, .. } = &mut clone.kind {
+        *kind = shape;
+    }
+    let center = object.rotated_bounds().center();
+    let (id, _) = doc.add_connected_canvas_object(
+        clone,
+        CanvasConnector::new(Endpoint::Object(source), Endpoint::Point(center)),
+    )?;
+    select_hit(view, doc.sheet(), SceneHit::Object(id), false);
+    Ok(true)
+}
+
+#[derive(Default)]
+struct QuickResult {
+    chosen: Option<ShapeKind>,
+    preview: Option<ShapeKind>,
+    focused: bool,
+}
+
+fn quick_content(
+    ui: &mut Ui,
+    title: &str,
+    hint: &str,
+    tiles: &[(ShapeKind, String)],
+    focus_first: bool,
+    accent: Color32,
+) -> QuickResult {
+    let gap = 4.0;
+    let width = QUICK_COLUMNS as f32 * (QUICK_TILE + gap) - gap;
+    ui.set_max_width(width);
+    ui.label(egui::RichText::new(title).strong());
+    let mut result = QuickResult::default();
+    let count = tiles.len();
+    let focused = ui.memory(|memory| (0..count).find(|i| memory.has_focus(quick_tile_id(*i))));
+    if let Some(index) = focused {
+        result.focused = true;
+        ui.memory_mut(|memory| {
+            memory.set_focus_lock_filter(
+                quick_tile_id(index),
+                EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                },
+            )
+        });
+        let next = ui.input_mut(|input| {
+            if input.consume_key(Modifiers::SHIFT, Key::Tab)
+                || input.consume_key(Modifiers::NONE, Key::ArrowLeft)
+            {
+                Some((index + count - 1) % count)
+            } else if input.consume_key(Modifiers::NONE, Key::Tab)
+                || input.consume_key(Modifiers::NONE, Key::ArrowRight)
+            {
+                Some((index + 1) % count)
+            } else if input.consume_key(Modifiers::NONE, Key::ArrowDown) {
+                Some((index + QUICK_COLUMNS).min(count - 1))
+            } else if input.consume_key(Modifiers::NONE, Key::ArrowUp) {
+                Some(index.saturating_sub(QUICK_COLUMNS))
+            } else {
+                None
+            }
+        });
+        if let Some(next) = next {
+            ui.memory_mut(|memory| memory.request_focus(quick_tile_id(next)));
+        }
+    } else if focus_first && count > 0 {
+        ui.memory_mut(|memory| memory.request_focus(quick_tile_id(0)));
+    }
+    for (row, chunk) in tiles.chunks(QUICK_COLUMNS).enumerate() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (column, (shape, name)) in chunk.iter().enumerate() {
+                let index = row * QUICK_COLUMNS + column;
+                let (_, rect) = ui.allocate_space(vec2(QUICK_TILE, QUICK_TILE));
+                let response = ui.interact(rect, quick_tile_id(index), Sense::click());
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+                let hot = response.hovered() || response.has_focus();
+                let visuals = ui.style().interact(&response);
+                let fill = if hot {
+                    visuals.bg_fill
+                } else {
+                    ui.visuals().faint_bg_color
+                };
+                ui.painter().rect(
+                    rect.shrink(0.5),
+                    6.0,
+                    fill,
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                    StrokeKind::Inside,
+                );
+                if response.has_focus() {
+                    ui.painter().rect_stroke(
+                        rect.shrink(2.0),
+                        5.0,
+                        Stroke::new(2.0, accent),
+                        StrokeKind::Inside,
+                    );
+                }
+                let icon = Rect::from_center_size(
+                    rect.center(),
+                    vec2(QUICK_TILE * 0.62, QUICK_TILE * 0.5),
+                );
+                let point = |p: Vec2| icon.min + vec2(p.x * icon.width(), p.y * icon.height());
+                let stroke = Stroke::new(1.5, ui.visuals().text_color());
+                ui.painter().add(egui::Shape::closed_line(
+                    shape.unit_outline().into_iter().map(point).collect(),
+                    stroke,
+                ));
+                for detail in shape.unit_details() {
+                    ui.painter().add(egui::Shape::line(
+                        detail.into_iter().map(point).collect(),
+                        stroke,
+                    ));
+                }
+                if hot {
+                    result.preview = Some(*shape);
+                }
+                if response.on_hover_text(name).clicked() {
+                    result.chosen = Some(*shape);
+                }
+            }
+        });
+    }
+    ui.add(egui::Label::new(egui::RichText::new(hint).small().weak()).wrap());
+    result
+}
+
+/// Shows the open shape picker and applies its choice; returns whether it
+/// consumed this frame's board input.
+fn show_quick(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    out: &mut CanvasOutput,
+) -> bool {
+    let ctx = ui.ctx().clone();
+    let Some(quick) = view.board_input.quick.as_ref() else {
+        return false;
+    };
+    let kind = arrow_source(doc.sheet(), quick.source).and_then(|object| match object.kind {
+        CanvasObjectKind::Shape { shape, .. } => Some(shape),
+        _ => None,
+    });
+    let stale = quick.state != doc.state_id()
+        || quick.sheet != doc.active_index()
+        || quick.sheet_identity != sheet_identity(doc)
+        || quick.camera != (view.offset, view.zoom, view.canvas_rect)
+        || !egui::Popup::is_id_open(&ctx, quick_popup_id())
+        || !matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_))
+        || view.editing.is_some()
+        || view.editing_board_object().is_some()
+        || !ui.is_enabled();
+    let Some(kind) = kind.filter(|_| !stale) else {
+        close_quick(&ctx, view);
+        return false;
+    };
+    let (source, dir, anchor, hover, return_focus, focus_first) = (
+        quick.source,
+        quick.dir,
+        quick.anchor,
+        quick.hover,
+        quick.return_focus,
+        quick.focus_first,
+    );
+    let title = control_label(view, ControlKind::Arrow(dir));
+    let hint = format!(
+        "{}\n{}",
+        view.board_labels.connect_hint, view.board_labels.quick_hint
+    );
+    let tiles: Vec<_> = quick_shapes(kind)
+        .into_iter()
+        .map(|shape| {
+            let name = view
+                .board_labels
+                .shape_names
+                .get(&shape)
+                .cloned()
+                .unwrap_or_else(|| view.board_labels.shape.clone());
+            (shape, name)
+        })
+        .collect();
+    let align = match dir {
+        ArrowDir::Up => egui::RectAlign::TOP,
+        ArrowDir::Right => egui::RectAlign::RIGHT,
+        ArrowDir::Down => egui::RectAlign::BOTTOM,
+        ArrowDir::Left => egui::RectAlign::LEFT,
+    };
+    if let Some(origin) = ctx.input(|input| {
+        input
+            .pointer
+            .primary_pressed()
+            .then(|| input.pointer.press_origin())
+            .flatten()
+            .filter(|origin| anchor.contains(*origin))
+    }) {
+        // The arrow stays live under its picker: a press starts the usual
+        // click/drag gesture, as in draw.io.
+        close_quick(&ctx, view);
+        if let Some(object) = arrow_source(doc.sheet(), source) {
+            let start = view.xf().sheet(origin);
+            let kind = GestureKind::Arrow {
+                source,
+                dir,
+                anchor: dir.side(object.rotated_bounds()),
+                current: start,
+                since: ctx.input(|input| input.time),
+                far: false,
+            };
+            view.board_input.gesture = Some(gesture(doc, view, kind, start));
+        }
+        return true;
+    }
+    let accent = view.accent;
+    let shown = egui::Popup::new(quick_popup_id(), ctx.clone(), anchor, ui.layer_id())
+        .kind(egui::PopupKind::Popup)
+        .open_memory(None)
+        .align(align)
+        .gap(6.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .accessible_name(title.clone())
+        .show(|ui| quick_content(ui, &title, &hint, &tiles, focus_first, accent));
+    let Some(shown) = shown else {
+        close_quick(&ctx, view);
+        return false;
+    };
+    let result = shown.inner;
+    if let Some(shape) = result.chosen {
+        close_quick(&ctx, view);
+        if prepare_edit(doc, view, out) {
+            match quick_insert(doc, view, scene, source, dir, shape) {
+                Ok(true) if return_focus.is_some() => {
+                    focus_next_arrow(ui, view, doc.sheet(), scene, dir);
+                }
+                Ok(_) => {}
+                Err(error) => out.error = Some(error),
+            }
+        }
+        return false;
+    }
+    if !egui::Popup::is_id_open(&ctx, quick_popup_id()) {
+        close_quick(&ctx, view);
+        if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+            if let Some(id) = return_focus {
+                ctx.memory_mut(|memory| memory.request_focus(id));
+            }
+        } else if ctx.input(|input| input.pointer.any_down()) {
+            view.board_input.suppress_until_release = true;
+        }
+        // The input that closed the picker must not also act on the board.
+        return true;
+    }
+    let rect = shown.response.rect;
+    if hover
+        && !result.focused
+        && !ctx
+            .pointer_hover_pos()
+            .is_some_and(|pointer| anchor.union(rect).expand(12.0).contains(pointer))
+    {
+        close_quick(&ctx, view);
+        if ctx.input(|input| input.pointer.any_down()) {
+            // A press dragged out of the picker must not reach the board.
+            view.board_input.suppress_until_release = true;
+            return true;
+        }
+        return false;
+    }
+    if let Some(quick) = view.board_input.quick.as_mut() {
+        quick.preview = result.preview;
+        quick.focus_first &= !result.focused;
+    }
+    true
+}
+
 fn arrow(ui: &Ui, accept: impl Fn(Vec2, Modifiers) -> bool) -> Option<(Vec2, Modifiers)> {
     for (modifiers, step) in [
         (Modifiers::COMMAND.plus(Modifiers::SHIFT), 10.0),
@@ -1535,6 +1952,12 @@ fn keyboard_control(
         let SceneId::Object(source) = control.item else {
             return;
         };
+        if ui.input_mut(|input| input.consume_key(Modifiers::SHIFT, Key::F10)) {
+            let anchor = arrow_rect(view, control.point);
+            let focus = Some(control_id(control));
+            open_quick(ui.ctx(), doc, view, source, dir, anchor, false, focus);
+            return;
+        }
         // Enter/Space act like a click; modifiers pick the same variants.
         for modifiers in [Modifiers::COMMAND, Modifiers::SHIFT, Modifiers::NONE] {
             if ui.input_mut(|input| {
@@ -1624,11 +2047,16 @@ fn interact_controls(
 ) -> bool {
     view.board_input.control_focused = false;
     if !enabled {
+        if let Some((_, since)) = view.board_input.arrow_hover.as_mut() {
+            *since = None;
+        }
         return view.board_input.is_active();
     }
     let mut blocked = view.board_input.is_active();
+    let mut arrow_hovered = false;
+    let now = ui.input(|input| input.time);
     for control in controls(view, doc.sheet(), layout, scene) {
-        let rect = Rect::from_center_size(view.xf().pos(control.point), vec2(28.0, 28.0));
+        let rect = arrow_rect(view, control.point);
         if !view.canvas_rect.intersects(rect) {
             continue;
         }
@@ -1637,12 +2065,32 @@ fn interact_controls(
         } else {
             Sense::click_and_drag() | Sense::FOCUSABLE
         };
-        let mut response = ui.interact(rect, control_id(control), sense);
+        let response = ui.interact(rect, control_id(control), sense);
         let label = control_label(view, control.kind);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
-        if matches!(control.kind, ControlKind::Arrow(_)) && view.board_input.gesture.is_none() {
-            response =
-                response.on_hover_text(format!("{label}\n{}", view.board_labels.connect_hint));
+        if let ControlKind::Arrow(dir) = control.kind
+            && let SceneId::Object(source) = control.item
+            && response.hovered()
+            && view.board_input.gesture.is_none()
+        {
+            // Resting the mouse on an arrow opens its shape picker, which
+            // also explains the arrow; a press restarts only after leaving.
+            let key = (control.item, dir);
+            let since = match view.board_input.arrow_hover {
+                Some((previous, since)) if previous == key => since,
+                _ => Some(now),
+            }
+            .filter(|_| !ui.input(|input| input.pointer.any_down() || input.pointer.any_click()));
+            view.board_input.arrow_hover = Some((key, since));
+            arrow_hovered = true;
+            if let Some(since) = since {
+                if now - since >= QUICK_DELAY {
+                    open_quick(ui.ctx(), doc, view, source, dir, rect, true, None);
+                    return true;
+                }
+                ui.ctx()
+                    .request_repaint_after_secs((QUICK_DELAY - (now - since)) as f32);
+            }
         }
         blocked |= response.hovered()
             || response.is_pointer_button_down_on()
@@ -1696,6 +2144,8 @@ fn interact_controls(
                         dir,
                         anchor: dir.side(bounds),
                         current: start,
+                        since: now,
+                        far: false,
                     }
                 }
             };
@@ -1725,6 +2175,9 @@ fn interact_controls(
             view.board_input.control_focused = true;
             keyboard_control(ui, doc, view, layout, scene, control, out);
         }
+    }
+    if !arrow_hovered && view.board_input.quick.is_none() {
+        view.board_input.arrow_hover = None;
     }
     blocked
 }
@@ -1813,6 +2266,34 @@ fn update_gesture(
             GestureKind::Endpoint { point: p, .. } | GestureKind::Arrow { current: p, .. } => {
                 *p = current;
             }
+        }
+    }
+    if release.is_none()
+        && !drag.canceled
+        && ctx.input(|input| input.pointer.primary_down())
+        && let GestureKind::Arrow {
+            source,
+            dir,
+            current,
+            since,
+            far,
+            ..
+        } = &mut drag.kind
+    {
+        // Pressing and holding an arrow (the touch path to the shape picker).
+        *far |= (*current - drag.origin).length() * view.zoom >= ARROW_DRAG;
+        if !*far {
+            let now = ctx.input(|input| input.time);
+            if now - *since >= QUICK_DELAY {
+                let (source, dir) = (*source, *dir);
+                if let Some(object) = arrow_source(doc.sheet(), source) {
+                    let anchor = arrow_rect(view, arrow_point(view, object, dir));
+                    open_quick(ctx, doc, view, source, dir, anchor, false, None);
+                    view.board_input.suppress_until_release = true;
+                }
+                return true;
+            }
+            ctx.request_repaint_after_secs((QUICK_DELAY - (now - *since)) as f32);
         }
     }
     if release.is_some() {
@@ -1947,6 +2428,7 @@ pub(super) fn interact(
     let ctx = ui.ctx().clone();
     if view.board_input.last_tool != view.board_tool {
         view.board_input.cancel_gesture();
+        close_quick(&ctx, view);
         view.board_input.last_tool = view.board_tool;
     }
     if view.board_input.connector.as_ref().is_some_and(|pending| {
@@ -1955,6 +2437,9 @@ pub(super) fn interact(
             || pending.state != doc.state_id()
     }) {
         view.board_input.connector = None;
+    }
+    if show_quick(ui, doc, view, scene, out) {
+        return true;
     }
     if view.board_input.suppress_until_release {
         if !ctx.input(|input| input.pointer.primary_down()) {
@@ -2880,7 +3365,12 @@ pub(super) fn paint(
             if view.board_input.gesture.is_some() {
                 continue;
             }
-            let hot = focused || pointer.is_some_and(|pointer| pointer.distance(center) <= 14.0);
+            let picking = view.board_input.quick.as_ref().is_some_and(|quick| {
+                SceneId::Object(quick.source) == control.item && quick.dir == dir
+            });
+            let hot = focused
+                || picking
+                || pointer.is_some_and(|pointer| pointer.distance(center) <= 14.0);
             let unit = dir.unit();
             let forward = vec2(unit.x, unit.y);
             let normal = vec2(-forward.y, forward.x);
@@ -2928,6 +3418,36 @@ pub(super) fn paint(
             stroke,
         ));
         for detail in kind.unit_details() {
+            painter.add(egui::Shape::line(
+                detail.into_iter().map(point).collect(),
+                stroke,
+            ));
+        }
+    }
+
+    if let Some(quick) = &view.board_input.quick
+        && let Some(shape) = quick.preview
+        && let Some(object) = arrow_source(sheet, quick.source)
+    {
+        // Where the hovered or focused picker tile would land.
+        let target = quick_target(sheet, scene, object, quick.dir);
+        let stroke = Stroke::new(1.5, view.accent.gamma_multiply(0.6));
+        painter.add(egui::Shape::dashed_line(
+            &[
+                xf.pos(quick.dir.side(object.rotated_bounds())),
+                xf.pos(quick.dir.opposite().side(target)),
+            ],
+            stroke,
+            6.0,
+            4.0,
+        ));
+        let ghost = xf.rect(target);
+        let point = |p: Vec2| ghost.min + vec2(p.x * ghost.width(), p.y * ghost.height());
+        painter.add(egui::Shape::closed_line(
+            shape.unit_outline().into_iter().map(point).collect(),
+            stroke,
+        ));
+        for detail in shape.unit_details() {
             painter.add(egui::Shape::line(
                 detail.into_iter().map(point).collect(),
                 stroke,

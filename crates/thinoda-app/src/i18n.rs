@@ -550,6 +550,10 @@ const DE: &[(&str, &str)] = &[
         "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.",
         "Klicken fügt eine verbundene Kopie hinzu; Strg+Klick fügt nur eine Kopie hinzu; Umschalt+Klick fügt nur einen Verbinder hinzu. Ziehen verbindet mit einem anderen Element; Strg+Ziehen legt eine verbundene Kopie ab. Unter macOS Befehlstaste verwenden.",
     ),
+    (
+        "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.",
+        "Einen Pfeil gedrückt halten oder auf einem fokussierten Pfeil Umschalt+F10 drücken, um die Form zu wählen.",
+    ),
     ("Board object label", "Beschriftung des Board-Objekts"),
     (
         "Select one board object to edit its properties.",
@@ -4306,6 +4310,7 @@ mod tests {
             "Add connected shape below",
             "Add connected shape to the left",
             "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.",
+            "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.",
             "Board object label",
             "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
             "Click or drag to pan. Arrow keys move the view; Shift makes larger steps.",
