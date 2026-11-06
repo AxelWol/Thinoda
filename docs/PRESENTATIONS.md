@@ -255,8 +255,11 @@ Synthetic regressions cover source, context and View slides, unassigned objects,
 ink, connector chains, hidden and unrevealed topics, clipping frames, object
 order, SVG, PNG, PDF and PowerPoint output. A 2,000-connector reversed chain
 checks iterative exclusion propagation rather than general performance.
-Production-browser Pitch and PowerPoint checks passed in Chromium, Firefox and
-WebKit for viewport slides; they do not exercise source-only isolation.
+Production-browser checks in Chromium, Firefox and WebKit exercise fixed-crop
+source Zone and branch, context and View slides in Pitch and PowerPoint. They
+inspect rendered colors, editable object inclusion, dependent connectors, the
+flattened viewport image and source preservation. This fixture does not
+establish every crop, browser device or Office rendering combination.
 
 This preserves the existing crop behavior for unassigned objects rather than
 turning every unrelated free object into an auto-fit target. The presenter's
