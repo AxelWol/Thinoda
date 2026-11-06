@@ -40,6 +40,8 @@ declare global {
 type Topic = {
     id: number;
     title: string;
+    children?: number[];
+    style?: { bold?: boolean; [key: string]: unknown };
     image?: string;
     card?: { kind: string; color?: string };
     inline_text?: {
@@ -58,6 +60,7 @@ type BoardObject = {
 };
 
 type BoardSheet = {
+    root: number;
     root_mode: string;
     floating: number[];
     topics: Record<string, Topic>;
@@ -181,8 +184,8 @@ async function paste(page: Page) {
     await page.waitForTimeout(300);
 }
 
-test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
+test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
         const state: TestClipboard = {
             items: [], writes: 0, writeAttempts: 0, plainWrites: 0, reads: 0, textReads: 0,
             oversizedBlobReads: 0, rejectWrites: false, readMode: "normal",
@@ -325,6 +328,22 @@ test("rich mixed-board clipboard remaps connections and carries images across do
     expect(copied.text).toContain("Clipboard shape");
     expect(copied.html).toContain("data-thinoda-board-v1=");
 
+    await page.evaluate(({ html }) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob(["Different text"], { type: "text/plain" }),
+            "text/html": new Blob([html], { type: "text/html" }),
+        })];
+    }, copied);
+    await paste(page);
+    const rejected = archive(await saveAs(page, "clipboard-board-rejected.thinoda"));
+    expect(rejected.content.sheets).toEqual(source.content.sheets);
+    await page.evaluate(({ text, html }) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([text], { type: "text/plain" }),
+            "text/html": new Blob([html], { type: "text/html" }),
+        })];
+    }, copied);
+
     await paste(page);
     const duplicated = archive(await saveAs(page, "clipboard-duplicated.thinoda"));
     const duplicateSheet = duplicated.content.sheets[0];
@@ -465,6 +484,69 @@ test("identical external text does not reuse an earlier rich board selection", a
     expect(added[0].title).toBe("Clipboard plain replacement");
     expect(added[0].card).toBeUndefined();
     expect(afterSheet.floating).toContain(added[0].id);
+});
+
+test("topic clipboard preserves a styled branch in a separate app instance", async ({ page }) => {
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Quick Style: Warning");
+    const source = archive(await saveAs(page, "clipboard-topic-source.thinoda"));
+    const sourceSheet = source.content.sheets[source.content.active_sheet];
+    const sourceTopic = sourceSheet.topics[String(sourceSheet.root)];
+    expect(sourceTopic.style?.bold).toBe(true);
+    expect(sourceTopic.children?.length).toBeGreaterThan(0);
+
+    await copyOrCut(page, "copy");
+    const data = await page.evaluate(async () => {
+        const item = window.__thinodaTestClipboard.items[0];
+        return {
+            text: await (await item.getType("text/plain")).text(),
+            html: await (await item.getType("text/html")).text(),
+        };
+    });
+    expect(data.html).toContain("data-thinoda-topic-v2");
+
+    const target = await page.context().newPage();
+    await target.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(target.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await target.locator("#thinoda_canvas").focus();
+    await target.keyboard.press("Control+n");
+    await frames(target);
+    const before = archive(await saveAs(target, "clipboard-topic-target-before.thinoda"));
+    const setClipboard = (text: string, html = data.html) => target.evaluate(({ text, html }) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([text], { type: "text/plain" }),
+            "text/html": new Blob([html], { type: "text/html" }),
+        })];
+    }, { text, html });
+    await setClipboard("Different text");
+    await paste(target);
+    const rejected = archive(await saveAs(target, "clipboard-topic-target-rejected.thinoda"));
+    expect(rejected.content.sheets).toEqual(before.content.sheets);
+
+    await setClipboard(data.text, data.html.slice(0, data.html.indexOf(">")));
+    await paste(target);
+    const malformed = archive(await saveAs(target, "clipboard-topic-target-malformed.thinoda"));
+    expect(malformed.content.sheets).toEqual(before.content.sheets);
+
+    await setClipboard(data.text);
+    await paste(target);
+
+    const after = archive(await saveAs(target, "clipboard-topic-target-after.thinoda"));
+    const beforeSheet = before.content.sheets[before.content.active_sheet];
+    const afterSheet = after.content.sheets[after.content.active_sheet];
+    const pasted = Object.values(afterSheet.topics).find(topic =>
+        !beforeSheet.topics[String(topic.id)] && topic.title === sourceTopic.title);
+    expect(pasted?.style).toEqual(sourceTopic.style);
+    expect(pasted?.children?.length).toBe(sourceTopic.children?.length);
+
+    await target.locator("#thinoda_canvas").focus();
+    await target.keyboard.press("Control+z");
+    await frames(target);
+    const undone = archive(await saveAs(target, "clipboard-topic-target-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+    await target.close();
 });
 
 test("a rejected browser clipboard write does not cut board content", async ({ page }) => {

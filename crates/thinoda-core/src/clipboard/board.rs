@@ -12,6 +12,7 @@ use crate::geometry::Vec2;
 use crate::layout::Layout;
 use crate::model::{Sheet, Subtree, Topic, TopicId, valid_position};
 use crate::scene::{SceneGeometry, SceneId, build_scene, topic_anchor_rect};
+use crate::schedule::Weekday;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
@@ -54,7 +55,8 @@ impl BoardClipboardPayload {
         self.fragment.canvas.objects.iter().map(|object| object.id)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    /// Validates the current payload, including any changes to its public text.
+    pub fn validate(&self) -> Result<(), String> {
         if self.text.trim().is_empty() {
             return Err("board clipboard text must not be empty".into());
         }
@@ -443,6 +445,10 @@ pub fn copy_board_selection(
         .filter(|(id, _)| owned.contains(id))
         .map(|(id, task)| (*id, task.clone()))
         .collect();
+    if !fragment.scheduling.tasks.is_empty() {
+        // The source calendar is not copied; the destination is checked on paste.
+        fragment.scheduling.calendar.working_weekdays = Weekday::ALL.into();
+    }
     fragment.scheduling.dependencies = sheet
         .scheduling
         .dependencies
@@ -667,6 +673,7 @@ pub fn paste_floating_subtrees(
         .ok_or("board clipboard exhausts available IDs")?;
     let mut fragment = Sheet::new("", "");
     fragment.root_mode = SheetRootMode::Hidden;
+    fragment.scheduling.calendar.working_weekdays = Weekday::ALL.into();
     let mut previous_height = 0.0;
     let mut y = origin.y;
     for (index, subtree) in subtrees.iter().enumerate() {

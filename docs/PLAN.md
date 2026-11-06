@@ -57,7 +57,15 @@ sanitization and non-atomic clipboard ownership still require real-host
 acceptance; see the [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
 Native cuts also verify both text and rich data across a stable HTML read;
 the [native critique](FREEFORM.md#native-cut-verification-checkpoint-critique)
-records their synchronous, non-atomic and session-token limitations.
+records their synchronous and non-atomic limitations. Portable ordinary-topic
+clipboard work replaces the old session-only token for new copies, checks task
+compatibility with the destination calendar, and retains explicit privacy and
+host-acceptance caveats in the
+[topic critique](FREEFORM.md#portable-topic-clipboard-checkpoint-critique).
+The next clipboard safety audit must cover mixed-board payload depth,
+external plain-text outline parsing and the legacy unbounded copy API. Preserve
+valid outline behavior, reject over-limit inputs before recursive traversal or
+document mutation, and test exact boundaries, undo and explicit failure feedback.
 New Sheet from Topic preserves card branches as rootless sheets, including
 summary-owned resources, while reporting surrounding context left in the
 source; the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)

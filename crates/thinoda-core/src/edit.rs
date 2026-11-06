@@ -943,6 +943,27 @@ impl Sheet {
 
     /// Pastes subtrees as children of `parent` (fresh ids). Returns the new roots.
     pub fn paste(&mut self, parent: TopicId, subtrees: &[Subtree]) -> EditResult<Vec<TopicId>> {
+        if subtrees
+            .iter()
+            .any(|subtree| !subtree.tasks.is_empty() || !subtree.dependencies.is_empty())
+        {
+            let mut candidate = self.clone();
+            let roots = candidate.paste_subtrees(parent, subtrees)?;
+            candidate
+                .scheduling
+                .validate(&candidate)
+                .map_err(|error| EditError::Invalid(error.to_string()))?;
+            *self = candidate;
+            return Ok(roots);
+        }
+        self.paste_subtrees(parent, subtrees)
+    }
+
+    fn paste_subtrees(
+        &mut self,
+        parent: TopicId,
+        subtrees: &[Subtree],
+    ) -> EditResult<Vec<TopicId>> {
         if self.fim.is_some() && !subtrees.is_empty() {
             return Err(EditError::Invalid(
                 "FIM subtree paste requires an explicit identity and dependency decision; use Duplicate or Shared definition".into(),

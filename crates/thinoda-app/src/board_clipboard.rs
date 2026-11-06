@@ -1,13 +1,14 @@
 //! Portable clipboard markup shared by the desktop and browser transports.
 //!
 //! The readable text travels in the clipboard's `text/plain` representation.
-//! A separate `text/html` representation carries this app's opaque board data
-//! or a session-only topic token. The marker is never inferred from plain text.
+//! A separate `text/html` representation carries this app's opaque board or
+//! topic data. Older session-only topic tokens are recognized for a warned
+//! plain-text fallback. The marker is never inferred from plain text.
 
 use thinoda_canvas::{Action, ObjectSelection, apply_action};
 use thinoda_core::{
     CanvasObjectId, TopicId,
-    clipboard::{self, ClipboardPayload, MAX_BOARD_CLIPBOARD_BYTES},
+    clipboard::{self, MAX_BOARD_CLIPBOARD_BYTES, MAX_TOPIC_CLIPBOARD_DEPTH},
 };
 use web_time::Instant;
 
@@ -27,6 +28,7 @@ pub(crate) fn install_web_event_capture() {
 
 const BOARD_ATTRIBUTE: &str = "data-thinoda-board-v1";
 const TOPIC_ATTRIBUTE: &str = "data-thinoda-topic-v1";
+const TOPIC_PAYLOAD_ATTRIBUTE: &str = "data-thinoda-topic-v2";
 // Hex encoding takes two bytes per board byte; HTML escaping of visible text
 // takes at most five bytes per text byte. Leave room for the wrapper.
 const MAX_HTML_BYTES: usize = 7 * MAX_BOARD_CLIPBOARD_BYTES + 1024;
@@ -37,7 +39,9 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 pub(crate) enum RichClipboard {
     /// Validated again by the core board clipboard decoder when pasted.
     Board(String),
-    /// Unpredictable identifier for a legacy topic payload held by this app.
+    /// Validated again by the core topic clipboard decoder when pasted.
+    Topic(String),
+    /// An older session-only token whose rich data is no longer available.
     TopicToken(String),
 }
 
@@ -75,7 +79,6 @@ pub(crate) struct PreparedCopy {
     pub(crate) text: String,
     pub(crate) html: String,
     pub(crate) rich: RichClipboard,
-    pub(crate) topic: Option<ClipboardPayload>,
     pub(crate) cut: Option<DocumentGuard>,
     started: Instant,
 }
@@ -89,9 +92,7 @@ fn verify_cut_snapshot(prepared: &PreparedCopy, snapshot: &Snapshot) -> Result<(
     if snapshot.text.len() > MAX_BOARD_CLIPBOARD_BYTES {
         return Err("clipboard text exceeds the size limit".into());
     }
-    if snapshot.text != prepared.text
-        && snapshot.text.replace("\r\n", "\n") != prepared.text.replace("\r\n", "\n")
-    {
+    if !same_clipboard_text(&snapshot.text, &prepared.text) {
         return Err("clipboard text changed".into());
     }
     let html = snapshot
@@ -103,6 +104,10 @@ fn verify_cut_snapshot(prepared: &PreparedCopy, snapshot: &Snapshot) -> Result<(
         Some(_) => Err("clipboard rich content changed".into()),
         None => Err("clipboard HTML no longer contains Thinoda data".into()),
     }
+}
+
+fn same_clipboard_text(left: &str, right: &str) -> bool {
+    left == right || left.replace("\r\n", "\n") == right.replace("\r\n", "\n")
 }
 
 pub(crate) enum Completion {
@@ -125,7 +130,6 @@ fn localize_error(error: thinoda_core::EditError) -> String {
 
 #[derive(Default)]
 pub(crate) struct ClipboardBridge {
-    topic: Option<(String, ClipboardPayload)>,
     generation: u64,
     #[cfg(not(target_arch = "wasm32"))]
     transport: native::Transport,
@@ -186,19 +190,6 @@ impl ClipboardBridge {
         }
     }
 
-    fn accept_write(&mut self, generation: u64, prepared: &PreparedCopy) -> bool {
-        if generation != self.generation {
-            return false;
-        }
-        self.topic = match (&prepared.rich, &prepared.topic) {
-            (RichClipboard::TopicToken(token), Some(payload)) => {
-                Some((token.clone(), payload.clone()))
-            }
-            _ => None,
-        };
-        true
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn headless() -> Self {
         Self {
@@ -237,28 +228,21 @@ pub(crate) fn prepare_copy(doc: &mut OpenDoc, cut: bool) -> Result<Option<Prepar
         .clipboard_out
         .take()
         .ok_or("copy did not produce clipboard text")?;
-    let (rich, topic) = if let Some(board) = doc.view.board_clipboard() {
-        (
-            RichClipboard::Board(clipboard::encode_board_payload(board)?),
-            None,
-        )
+    let rich = if let Some(board) = doc.view.board_clipboard() {
+        RichClipboard::Board(clipboard::encode_board_payload(board)?)
     } else {
         let payload = doc
             .view
             .clipboard
-            .clone()
+            .as_ref()
             .ok_or("copy did not produce clipboard content")?;
-        (
-            RichClipboard::TopicToken(uuid::Uuid::new_v4().simple().to_string()),
-            Some(payload),
-        )
+        RichClipboard::Topic(clipboard::encode_topic_payload(payload)?)
     };
     let html = make_html(&text, &rich)?;
     Ok(Some(PreparedCopy {
         text,
         html,
         rich,
-        topic,
         cut: cut.then(|| DocumentGuard::capture(doc)),
         started: Instant::now(),
     }))
@@ -281,32 +265,97 @@ pub(crate) fn complete_cut(doc: &mut OpenDoc, guard: &DocumentGuard) -> Result<(
     }
 }
 
+fn validate_topic_destination(
+    doc: &OpenDoc,
+    payload: &clipboard::ClipboardPayload,
+) -> Result<(), String> {
+    let sheet = doc.doc.sheet();
+    if !sheet.root_mode.is_central() {
+        return Ok(());
+    }
+
+    let mut parent = doc
+        .view
+        .selection
+        .iter()
+        .rev()
+        .copied()
+        .find(|id| sheet.contains(*id))
+        .unwrap_or(sheet.root);
+    let mut root_depth = 1;
+    while let Some(next) = sheet.topic(parent).and_then(|topic| topic.parent) {
+        root_depth += 1;
+        if root_depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+            return Err(format!(
+                "pasted topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+            ));
+        }
+        parent = next;
+    }
+
+    for subtree in &payload.subtrees {
+        let topics: std::collections::HashMap<_, _> = subtree
+            .topics
+            .iter()
+            .map(|topic| (topic.id, topic))
+            .collect();
+        let root = topics
+            .get(&subtree.root)
+            .ok_or("topic clipboard subtree root is missing")?;
+        if root.card.is_some() {
+            return Err("card presentation requires a floating destination".into());
+        }
+        let mut pending = vec![(subtree.root, root_depth)];
+        while let Some((id, depth)) = pending.pop() {
+            if depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+                return Err(format!(
+                    "pasted topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+                ));
+            }
+            let topic = topics.get(&id).ok_or("topic clipboard child is missing")?;
+            pending.extend(topic.children.iter().map(|child| (*child, depth + 1)));
+        }
+    }
+    Ok(())
+}
+
 /// Apply a clipboard snapshot, never reusing an internal payload for plain text.
 pub(crate) fn paste(
     doc: &mut OpenDoc,
     text: String,
     rich: Option<RichClipboard>,
-    topic: Option<(&str, &ClipboardPayload)>,
 ) -> Result<bool, String> {
     match rich {
-        Some(RichClipboard::Board(encoded)) => doc
-            .view
-            .paste_encoded_board(&mut doc.doc, &encoded)
-            .map_err(localize_error),
-        Some(RichClipboard::TopicToken(token)) => {
+        Some(RichClipboard::Board(encoded)) => {
             doc.view.invalidate_clipboard();
-            if let Some((_, payload)) = topic.filter(|(owned, _)| *owned == token) {
-                doc.view.clipboard = Some(payload.clone());
-                apply_action(&mut doc.doc, &mut doc.view, Action::Paste(None))
-                    .map_err(localize_error)
-            } else {
-                // This token came from another app session (or expired).
-                apply_action(&mut doc.doc, &mut doc.view, Action::Paste(Some(text)))
-                    .map_err(localize_error)
+            let payload = clipboard::decode_board_payload(&encoded)?;
+            if text.len() > MAX_BOARD_CLIPBOARD_BYTES || !same_clipboard_text(&text, &payload.text)
+            {
+                return Err("clipboard text does not match rich board data".into());
             }
+            doc.view
+                .paste_board_payload(&mut doc.doc, payload)
+                .map_err(localize_error)
         }
-        None => apply_action(&mut doc.doc, &mut doc.view, Action::Paste(Some(text)))
-            .map_err(localize_error),
+        Some(RichClipboard::Topic(encoded)) => {
+            doc.view.invalidate_clipboard();
+            let payload = clipboard::decode_topic_payload(&encoded)?;
+            if text.len() > MAX_BOARD_CLIPBOARD_BYTES || !same_clipboard_text(&text, &payload.text)
+            {
+                return Err("clipboard text does not match rich topic data".into());
+            }
+            validate_topic_destination(doc, &payload)?;
+            doc.view.clipboard = Some(payload);
+            let result = apply_action(&mut doc.doc, &mut doc.view, Action::Paste(None));
+            if !matches!(&result, Ok(true)) {
+                doc.view.invalidate_clipboard();
+            }
+            result.map_err(localize_error)
+        }
+        Some(RichClipboard::TopicToken(_)) | None => {
+            apply_action(&mut doc.doc, &mut doc.view, Action::Paste(Some(text)))
+                .map_err(localize_error)
+        }
     }
 }
 
@@ -326,7 +375,12 @@ impl crate::app::ThinodaApp {
                         return;
                     }
                     Err(error) => {
-                        self.toasts.error(format!("Could not copy: {error}"));
+                        let message = if cut {
+                            crate::i18n::t("Cut cancelled; original content was kept")
+                        } else {
+                            "Could not copy"
+                        };
+                        self.toasts.error(format!("{message}: {error}"));
                         return;
                     }
                 };
@@ -377,7 +431,7 @@ impl crate::app::ThinodaApp {
                     self.toasts.error(format!("{message}: {error}"));
                     return;
                 }
-                if !self.clipboard_bridge.accept_write(generation, &prepared) {
+                if generation != self.clipboard_bridge.generation {
                     if prepared.cut.is_some() {
                         self.toasts
                             .warning("Cut cancelled because a newer copy was requested");
@@ -467,21 +521,25 @@ impl crate::app::ThinodaApp {
                     }
                 };
                 // Cached view payloads never prove OS ownership, including in
-                // other tabs. A topic token is accepted only from actual HTML.
+                // other tabs. Rich content must come from actual HTML.
                 for doc in &mut self.docs {
                     doc.view.invalidate_clipboard();
                 }
-                let topic = self
-                    .clipboard_bridge
-                    .topic
-                    .as_ref()
-                    .map(|(token, payload)| (token.as_str(), payload));
+                let legacy_topic = matches!(&rich, Some(RichClipboard::TopicToken(_)));
                 let Some(doc) = self.docs.get_mut(self.active) else {
                     return;
                 };
-                if let Err(error) = paste(doc, snapshot.text, rich, topic) {
-                    self.toasts
-                        .error(format!("Could not paste clipboard data: {error}"));
+                match paste(doc, snapshot.text, rich) {
+                    Ok(true) if legacy_topic => {
+                        self.toasts.warning(crate::i18n::t(
+                            "Older Thinoda clipboard data is unavailable; pasted text only",
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        self.toasts
+                            .error(format!("Could not paste clipboard data: {error}"));
+                    }
                 }
             }
         }
@@ -492,6 +550,7 @@ impl crate::app::ThinodaApp {
 pub(crate) fn make_html(text: &str, rich: &RichClipboard) -> Result<String, String> {
     let (attribute, payload) = match rich {
         RichClipboard::Board(value) => (BOARD_ATTRIBUTE, value),
+        RichClipboard::Topic(value) => (TOPIC_PAYLOAD_ATTRIBUTE, value),
         RichClipboard::TopicToken(value) => (TOPIC_ATTRIBUTE, value),
     };
     if text.len() > MAX_BOARD_CLIPBOARD_BYTES || payload.len() > MAX_BOARD_CLIPBOARD_BYTES {
@@ -545,6 +604,9 @@ pub(crate) fn read_html(html: &str) -> Result<Option<RichClipboard>, String> {
             continue;
         }
         let Some(end) = tag_end(&bytes[start..]) else {
+            if marker_in_tag(&html[start..])?.is_some() {
+                return Err("invalid Thinoda clipboard markup".into());
+            }
             break;
         };
         let end = start + end;
@@ -594,6 +656,24 @@ fn marker_in_tag(tag: &str) -> Result<Option<RichClipboard>, String> {
             break;
         }
         let name = &tag[start..cursor];
+        let is_board = name.eq_ignore_ascii_case(BOARD_ATTRIBUTE);
+        let is_topic = name.eq_ignore_ascii_case(TOPIC_PAYLOAD_ATTRIBUTE);
+        let is_topic_token = name.eq_ignore_ascii_case(TOPIC_ATTRIBUTE);
+        if !is_board
+            && !is_topic
+            && !is_topic_token
+            && ["data-thinoda-board-v", "data-thinoda-topic-v"]
+                .iter()
+                .any(|prefix| {
+                    name.get(..prefix.len())
+                        .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+                        && name.get(prefix.len()..).is_some_and(|version| {
+                            !version.is_empty() && version.bytes().all(|byte| byte.is_ascii_digit())
+                        })
+                })
+        {
+            return Err("unsupported Thinoda clipboard marker".into());
+        }
         while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
             cursor += 1;
         }
@@ -606,7 +686,11 @@ fn marker_in_tag(tag: &str) -> Result<Option<RichClipboard>, String> {
                 cursor += 1;
                 let start = cursor;
                 let Some(length) = bytes[start..].iter().position(|byte| *byte == quote) else {
-                    return Err("invalid clipboard HTML attribute".into());
+                    return if is_board || is_topic || is_topic_token || result.is_some() {
+                        Err("invalid clipboard HTML attribute".into())
+                    } else {
+                        Ok(None)
+                    };
                 };
                 cursor += length + 1;
                 Some(&tag[start..start + length])
@@ -623,14 +707,14 @@ fn marker_in_tag(tag: &str) -> Result<Option<RichClipboard>, String> {
         } else {
             None
         };
-        let is_board = name.eq_ignore_ascii_case(BOARD_ATTRIBUTE);
-        let is_topic = name.eq_ignore_ascii_case(TOPIC_ATTRIBUTE);
-        if !is_board && !is_topic {
+        if !is_board && !is_topic && !is_topic_token {
             continue;
         }
         let decoded = decode_hex(value.ok_or("invalid Thinoda clipboard marker")?)?;
         let marker = if is_board {
             RichClipboard::Board(decoded)
+        } else if is_topic {
+            RichClipboard::Topic(decoded)
         } else {
             RichClipboard::TopicToken(decoded)
         };
@@ -733,12 +817,11 @@ mod tests {
                 &mut doc,
                 prepared.text.clone(),
                 Some(RichClipboard::Board(old)),
-                None
             )
             .is_err()
         );
         assert_eq!(doc.doc.workbook(), &before);
-        assert!(paste(&mut doc, prepared.text, Some(rich), None).unwrap());
+        assert!(paste(&mut doc, prepared.text, Some(rich)).unwrap());
         let pasted = doc.view.selection[0];
         assert_ne!(pasted, card);
         assert_eq!(
@@ -800,7 +883,6 @@ mod tests {
             text: "topic".into(),
             html: make_html("topic", &token).unwrap(),
             rich: token,
-            topic: None,
             cut: None,
             started: Instant::now(),
         };
@@ -871,6 +953,10 @@ mod tests {
             read_html("<pre title=\" data-thinoda-board-v1='61' >\">ordinary text</pre>").unwrap(),
             None
         );
+        assert_eq!(
+            read_html("<pre title=\" data-thinoda-topic-v2='61'").unwrap(),
+            None
+        );
         assert_eq!(read_html("<p>external text</p>").unwrap(), None);
     }
 
@@ -882,6 +968,13 @@ mod tests {
             "<pre data-thinoda-board-v1='ff'></pre>",
             "<pre data-thinoda-board-v1='61' data-thinoda-board-v1='62'></pre>",
             "<pre data-thinoda-board-v1='61' data-thinoda-topic-v1='62'></pre>",
+            "<pre data-thinoda-topic-v1='61' data-thinoda-topic-v2='62'></pre>",
+            "<pre data-thinoda-topic-v2='61'></pre><pre data-thinoda-board-v1='62'></pre>",
+            "<pre data-thinoda-topic-v2='61",
+            "<pre data-thinoda-board-v1='61'",
+            "<pre data-thinoda-topic-v1=61",
+            "<pre data-thinoda-topic-v3='61'></pre>",
+            "<pre data-thinoda-board-v2='61'></pre>",
         ] {
             assert!(read_html(html).is_err(), "{html}");
         }
@@ -902,10 +995,21 @@ mod tests {
         assert_eq!(rich, Some(prepared.rich));
         let mut target = OpenDoc::new(Workbook::new(Sheet::new("Target", "Root")));
         let before = target.doc.workbook().clone();
-        assert!(paste(&mut target, prepared.text, rich, None).unwrap());
+        assert!(paste(&mut target, prepared.text.replace('\n', "\r\n"), rich).unwrap());
         assert_eq!(target.doc.sheet().canvas.objects.len(), 1);
         assert_eq!(target.doc.sheet().canvas.objects[0].label(), "Same text");
         assert!(target.doc.undo());
+        assert_eq!(target.doc.workbook(), &before);
+    }
+
+    #[test]
+    fn board_paste_rejects_changed_text_without_editing() {
+        let mut source = board_with_shape();
+        let prepared = prepare_copy(&mut source, false).unwrap().unwrap();
+        let mut target = OpenDoc::new(Workbook::new(Sheet::new("Target", "Root")));
+        let before = target.doc.workbook().clone();
+
+        assert!(paste(&mut target, "Different text".into(), Some(prepared.rich)).is_err());
         assert_eq!(target.doc.workbook(), &before);
     }
 
@@ -944,7 +1048,7 @@ mod tests {
         let mut source = board_with_shape();
         let prepared = prepare_copy(&mut source, false).unwrap().unwrap();
         assert!(source.view.board_clipboard().is_some());
-        assert!(paste(&mut source, prepared.text, None, None).unwrap());
+        assert!(paste(&mut source, prepared.text, None).unwrap());
         assert_eq!(source.doc.sheet().canvas.objects.len(), 1);
         assert!(source.view.board_clipboard().is_none());
         let pasted = source.doc.sheet().topic(source.view.selection[0]).unwrap();
@@ -952,49 +1056,322 @@ mod tests {
     }
 
     #[test]
-    fn session_token_is_required_for_legacy_topic_fidelity() {
+    fn topic_payload_survives_without_a_session_cache_and_supports_undo() {
         let mut sheet = Sheet::new("Map", "Root");
         let root = sheet.root;
         let child = sheet.add_child(root, None, "Same text");
+        sheet.add_child(child, None, "Nested");
         sheet.topic_mut(child).unwrap().style.bold = Some(true);
+        sheet.topic_mut(child).unwrap().notes = Some(thinoda_core::notes::NoteContent::markdown(
+            "**Notes**".into(),
+        ));
         let mut source = OpenDoc::new(Workbook::new(sheet));
         source.view.select_only(child);
         let prepared = prepare_copy(&mut source, false).unwrap().unwrap();
-        let RichClipboard::TopicToken(token) = prepared.rich.clone() else {
-            panic!("expected topic token");
-        };
-        let payload = prepared.topic.as_ref().unwrap();
+        assert!(matches!(&prepared.rich, RichClipboard::Topic(_)));
+        assert_eq!(
+            read_html(&prepared.html).unwrap(),
+            Some(prepared.rich.clone())
+        );
+
         let mut target = OpenDoc::new(Workbook::new(Sheet::new("Other", "Root")));
+        let before = target.doc.workbook().clone();
         assert!(
             paste(
                 &mut target,
-                prepared.text.clone(),
-                Some(prepared.rich),
-                Some((&token, payload)),
+                prepared.text.replace('\n', "\r\n"),
+                Some(prepared.rich.clone())
             )
             .unwrap()
         );
+        let pasted = target.doc.sheet().topic(target.view.selection[0]).unwrap();
+        assert_eq!(pasted.style.bold, Some(true));
         assert_eq!(
-            target
-                .doc
-                .sheet()
-                .topic(target.view.selection[0])
-                .unwrap()
-                .style
-                .bold,
-            Some(true)
+            pasted.notes,
+            Some(thinoda_core::notes::NoteContent::markdown(
+                "**Notes**".into()
+            ))
         );
-        assert!(paste(&mut target, prepared.text, None, Some((&token, payload))).unwrap());
         assert_eq!(
-            target
+            target.doc.sheet().topic(pasted.children[0]).unwrap().title,
+            "Nested"
+        );
+        let after = target.doc.workbook().clone();
+        assert!(target.doc.undo());
+        assert_eq!(target.doc.workbook(), &before);
+        assert!(target.doc.redo());
+        assert_eq!(target.doc.workbook(), &after);
+
+        let mut plain_target = OpenDoc::new(Workbook::new(Sheet::new("Plain", "Root")));
+        assert!(paste(&mut plain_target, prepared.text, None).unwrap());
+        assert_eq!(
+            plain_target
                 .doc
                 .sheet()
-                .topic(target.view.selection[0])
+                .topic(plain_target.view.selection[0])
                 .unwrap()
                 .style
                 .bold,
             None
         );
+    }
+
+    #[test]
+    fn portable_topic_clipboard_preserves_blank_and_whitespace_titles() {
+        for title in ["", "  ", "\t"] {
+            let mut sheet = Sheet::new("Source", "Root");
+            let topic = sheet.add_child(sheet.root, None, title);
+            let mut source = OpenDoc::new(Workbook::new(sheet));
+            source.view.select_only(topic);
+            let prepared = prepare_copy(&mut source, false).unwrap().unwrap();
+            let mut target = OpenDoc::new(Workbook::new(Sheet::new("Target", "Root")));
+
+            assert!(paste(&mut target, prepared.text, Some(prepared.rich)).unwrap());
+            assert_eq!(
+                target
+                    .doc
+                    .sheet()
+                    .topic(target.view.selection[0])
+                    .unwrap()
+                    .title,
+                title
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_topic_style_cannot_delete_a_cut_selection() {
+        let mut sheet = Sheet::new("Source", "Root");
+        let topic = sheet.add_child(sheet.root, None, "Invalid font");
+        sheet.topic_mut(topic).unwrap().style.font_size = Some(0.0);
+        let mut source = OpenDoc::new(Workbook::new(sheet));
+        source.view.select_only(topic);
+        let before = source.doc.workbook().clone();
+
+        assert!(prepare_copy(&mut source, true).is_err());
+        assert_eq!(source.doc.workbook(), &before);
+    }
+
+    #[test]
+    fn deep_topic_selection_is_rejected_before_copy_or_cut() {
+        let mut sheet = Sheet::new("Source", "Root");
+        let selected = sheet.add_child(sheet.root, None, "Selected");
+        let mut parent = selected;
+        for _ in 0..=MAX_TOPIC_CLIPBOARD_DEPTH {
+            parent = sheet.add_child(parent, None, "Child");
+        }
+        let mut source = OpenDoc::new(Workbook::new(sheet));
+        source.view.select_only(selected);
+        let before = source.doc.workbook().clone();
+        for cut in [false, true] {
+            assert!(matches!(
+                prepare_copy(&mut source, cut),
+                Err(error) if error.contains("depth")
+            ));
+            assert_eq!(source.doc.workbook(), &before);
+        }
+    }
+
+    #[test]
+    fn portable_topic_paste_checks_depth_against_destination_ancestry() {
+        let mut source = Sheet::new("Source", "Root");
+        let copied = source.add_child(source.root, None, "Parent");
+        source.add_child(copied, None, "Child");
+        let payload = clipboard::copy_topics(&source, &[copied]).unwrap();
+        let encoded = clipboard::encode_topic_payload(&payload).unwrap();
+
+        for (parent_depth, should_succeed) in [(254, true), (255, false)] {
+            let mut sheet = Sheet::new("Destination", "Root");
+            let mut parent = sheet.root;
+            for _ in 0..parent_depth {
+                parent = sheet.add_child(parent, None, "Ancestor");
+            }
+            let mut destination = OpenDoc::new(Workbook::new(sheet));
+            destination.view.select_only(parent);
+            let before = destination.doc.workbook().clone();
+            let result = paste(
+                &mut destination,
+                payload.text.clone(),
+                Some(RichClipboard::Topic(encoded.clone())),
+            );
+            if should_succeed {
+                assert!(result.unwrap());
+            } else {
+                assert!(result.unwrap_err().contains("depth"));
+                assert_eq!(destination.doc.workbook(), &before);
+                assert!(destination.view.clipboard.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn portable_card_payload_cannot_silently_lose_its_presentation() {
+        let mut source = Sheet::new("Source", "Root");
+        let card = source
+            .add_card(
+                "Card",
+                Vec2::new(40.0, 60.0),
+                thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let payload = clipboard::copy_topics(&source, &[card]).unwrap();
+        let encoded = clipboard::encode_topic_payload(&payload).unwrap();
+        let mut destination = OpenDoc::new(Workbook::new(Sheet::new("Destination", "Root")));
+        let before = destination.doc.workbook().clone();
+
+        assert!(
+            paste(
+                &mut destination,
+                payload.text.clone(),
+                Some(RichClipboard::Topic(encoded.clone()))
+            )
+            .is_err()
+        );
+        assert_eq!(destination.doc.workbook(), &before);
+        assert!(destination.view.clipboard.is_none());
+
+        let mut board = Sheet::new("Board", "");
+        board.root_mode = SheetRootMode::Hidden;
+        let mut destination = OpenDoc::new(Workbook::new(board));
+        assert!(
+            paste(
+                &mut destination,
+                payload.text,
+                Some(RichClipboard::Topic(encoded))
+            )
+            .unwrap()
+        );
+        let pasted = destination.view.selection[0];
+        assert_eq!(
+            destination.doc.sheet().topic(pasted).unwrap().card,
+            source.topic(card).unwrap().card
+        );
+    }
+
+    #[test]
+    fn topic_paste_rejects_changed_text_or_invalid_payload_without_editing() {
+        let mut sheet = Sheet::new("Map", "Root");
+        let child = sheet.add_child(sheet.root, None, "Same text");
+        let mut source = OpenDoc::new(Workbook::new(sheet));
+        source.view.select_only(child);
+        let prepared = prepare_copy(&mut source, false).unwrap().unwrap();
+        let RichClipboard::Topic(encoded) = prepared.rich else {
+            panic!("expected topic payload");
+        };
+        let mut target = OpenDoc::new(Workbook::new(Sheet::new("Other", "Root")));
+        let before = target.doc.workbook().clone();
+
+        assert!(
+            paste(
+                &mut target,
+                "Changed text".into(),
+                Some(RichClipboard::Topic(encoded.clone()))
+            )
+            .is_err()
+        );
+        assert_eq!(target.doc.workbook(), &before);
+        assert!(
+            paste(
+                &mut target,
+                prepared.text,
+                Some(RichClipboard::Topic(format!("invalid{encoded}")))
+            )
+            .is_err()
+        );
+        assert_eq!(target.doc.workbook(), &before);
+    }
+
+    #[test]
+    fn rejected_topic_paste_does_not_leave_a_cached_payload() {
+        let mut sheet = Sheet::new("Map", "Root");
+        let child = sheet.add_child(sheet.root, None, "Source");
+        let mut source = OpenDoc::new(Workbook::new(sheet));
+        source.view.select_only(child);
+        let prepared = prepare_copy(&mut source, false).unwrap().unwrap();
+        let xml = format!(
+            "<x:xdatenfelder.stammdatenschema.0102 xmlns:x='{}'><x:stammdatenschema><x:identifikation><x:id>S1</x:id><x:version>1.0.0</x:version></x:identifikation><x:name>Schema</x:name></x:stammdatenschema></x:xdatenfelder.stammdatenschema.0102>",
+            thinoda_core::fim::Dialect::Xdf3.namespace()
+        );
+        let sheet = thinoda_core::fim::FimDocument::parse(xml.as_bytes())
+            .unwrap()
+            .into_sheet()
+            .unwrap();
+        let mut target = OpenDoc::new(Workbook::new(sheet));
+        let before = target.doc.workbook().clone();
+
+        assert!(paste(&mut target, prepared.text, Some(prepared.rich)).is_err());
+        assert_eq!(target.doc.workbook(), &before);
+        assert!(target.view.clipboard.is_none());
+    }
+
+    #[test]
+    fn portable_topic_paste_rejects_incompatible_destination_calendars() {
+        let mut sheet = Sheet::new("Source", "Root");
+        let topic = sheet.add_child(sheet.root, None, "Scheduled");
+        sheet
+            .scheduling
+            .calendar
+            .working_weekdays
+            .insert(thinoda_core::Weekday::Saturday);
+        sheet
+            .set_task(
+                topic,
+                Some(thinoda_core::Task {
+                    start_date: Some("2024-03-02".parse().unwrap()),
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+        let mut source = OpenDoc::new(Workbook::new(sheet));
+        source.view.select_only(topic);
+        let prepared = prepare_copy(&mut source, false).unwrap().unwrap();
+        let mut target = OpenDoc::new(Workbook::new(Sheet::new("Target", "Root")));
+        let before = target.doc.workbook().clone();
+
+        assert!(
+            paste(
+                &mut target,
+                prepared.text.clone(),
+                Some(prepared.rich.clone())
+            )
+            .unwrap_err()
+            .contains("nonworking")
+        );
+        assert_eq!(target.doc.workbook(), &before);
+        assert!(target.view.clipboard.is_none());
+
+        target
+            .doc
+            .edit_sheet("Allow Saturday", |sheet| {
+                sheet
+                    .scheduling
+                    .calendar
+                    .working_weekdays
+                    .insert(thinoda_core::Weekday::Saturday);
+                Ok(())
+            })
+            .unwrap();
+        assert!(paste(&mut target, prepared.text, Some(prepared.rich)).unwrap());
+        assert_eq!(target.doc.sheet().scheduling.tasks.len(), 1);
+        target.doc.workbook().validate().unwrap();
+    }
+
+    #[test]
+    fn older_topic_token_falls_back_to_plain_text() {
+        let token = RichClipboard::TopicToken("0123456789abcdef".into());
+        let html = make_html("Legacy topic", &token).unwrap();
+        let mut target = OpenDoc::new(Workbook::new(Sheet::new("Other", "Root")));
+        assert!(
+            paste(
+                &mut target,
+                "Legacy topic".into(),
+                read_html(&html).unwrap()
+            )
+            .unwrap()
+        );
+        let pasted = target.doc.sheet().topic(target.view.selection[0]).unwrap();
+        assert_eq!(pasted.title, "Legacy topic");
+        assert_eq!(pasted.style.bold, None);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1005,6 +1382,115 @@ mod tests {
         app.active = 0;
         app.clipboard_bridge = ClipboardBridge::with_fake(fake.clone());
         (app, fake)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cut_preparation_failure_retains_the_draft_and_reports_cancellation() {
+        use crate::app::Cmd;
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = sheet
+            .add_card(
+                "Styled",
+                Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .update_range("Styled", 0..3, |style| style.bold = Some(true))
+            .unwrap();
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        app.docs = vec![OpenDoc::new(Workbook::new(sheet))];
+        let doc = app.doc_mut().unwrap();
+        doc.view.select_only(card);
+        doc.view.begin_edit(doc.doc.sheet(), card, false);
+        doc.view.set_editing_text("Uncommitted");
+        let before = doc.doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::Canvas(Action::Cut));
+
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.view.editing_text(), Some("Uncommitted"));
+        assert!(clipboard.borrow().html.is_none());
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text
+                    .contains(crate::i18n::t("Cut cancelled; original content was kept")))
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn older_topic_token_warns_when_only_text_can_be_pasted() {
+        use crate::app::Cmd;
+
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        app.docs = vec![OpenDoc::new(Workbook::new(Sheet::new("Map", "Root")))];
+        let token = RichClipboard::TopicToken("0123456789abcdef".into());
+        {
+            let mut clipboard = clipboard.borrow_mut();
+            clipboard.text = "Legacy topic".into();
+            clipboard.html = Some(make_html(&clipboard.text, &token).unwrap());
+        }
+
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+
+        assert!(
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topics
+                .values()
+                .any(|topic| topic.title == "Legacy topic")
+        );
+        assert!(app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+            "Older Thinoda clipboard data is unavailable; pasted text only"
+        ))));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_topic_copy_survives_a_new_app_instance() {
+        use crate::app::Cmd;
+
+        let mut sheet = Sheet::new("Source", "Root");
+        let topic = sheet.add_child(sheet.root, None, "Styled topic");
+        sheet.topic_mut(topic).unwrap().style.bold = Some(true);
+        sheet.add_child(topic, None, "Nested topic");
+        let (mut source, clipboard) = app_with_fake_clipboard();
+        source.docs = vec![OpenDoc::new(Workbook::new(sheet))];
+        source.doc_mut().unwrap().view.select_only(topic);
+        source.exec(&egui::Context::default(), Cmd::Canvas(Action::Copy));
+        assert!(matches!(
+            read_html(clipboard.borrow().html.as_deref().unwrap()).unwrap(),
+            Some(RichClipboard::Topic(_))
+        ));
+        drop(source);
+
+        let mut target = crate::app::ThinodaApp::headless();
+        target.docs = vec![OpenDoc::new(Workbook::new(Sheet::new("Target", "Root")))];
+        target.active = 0;
+        target.clipboard_bridge = ClipboardBridge::with_fake(clipboard);
+        let before = target.doc().unwrap().doc.workbook().clone();
+        target.exec(&egui::Context::default(), Cmd::MenuPaste);
+        let doc = target.doc().unwrap();
+        let pasted = doc.doc.sheet().topic(doc.view.selection[0]).unwrap();
+        assert_eq!(pasted.title, "Styled topic");
+        assert_eq!(pasted.style.bold, Some(true));
+        assert_eq!(
+            doc.doc.sheet().topic(pasted.children[0]).unwrap().title,
+            "Nested topic"
+        );
+        target.exec(&egui::Context::default(), Cmd::Canvas(Action::Undo));
+        assert_eq!(target.doc().unwrap().doc.workbook(), &before);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1147,7 +1633,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn native_topic_cut_verifies_session_token_before_deletion() {
+    fn native_topic_cut_verifies_self_contained_payload_before_deletion() {
         use crate::app::Cmd;
 
         let mut sheet = Sheet::new("Map", "Root");
@@ -1167,7 +1653,7 @@ mod tests {
         assert!(!app.doc().unwrap().doc.sheet().contains(topic));
         assert!(matches!(
             read_html(clipboard.borrow().html.as_deref().unwrap()).unwrap(),
-            Some(RichClipboard::TopicToken(_))
+            Some(RichClipboard::Topic(_))
         ));
         app.exec(&ctx, Cmd::Canvas(Action::Undo));
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);

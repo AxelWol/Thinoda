@@ -814,10 +814,11 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   operation returns after 30 seconds, the original is retained, but this
   elapsed-time check cannot interrupt a blocked call. Arboard reads allocate
   before Thinoda can apply its size checks. Plain text expanded beyond the
-  limit by CRLF conversion is conservatively rejected. Ordinary topic clipboard
-  payloads still use a session-only token: after the originating process exits,
-  another instance may receive only the plain-text fallback. Real Windows,
-  macOS, X11 and Wayland clipboard acceptance remains open.
+  limit by CRLF conversion is conservatively rejected. At this checkpoint,
+  ordinary topic payloads still used a session-only token; the later
+  [portable-topic continuation](#portable-topic-clipboard-checkpoint-critique)
+  replaces that token for new copies. Real Windows, macOS, X11 and Wayland
+  clipboard acceptance remains open.
 - Fake-transport regressions exercise changed text or rich data, missing,
   sanitized and malformed HTML, read denial and an intervening clipboard change.
   They also cover formatted-card cut/paste/undo and ordinary-topic token cuts.
@@ -825,6 +826,63 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Clippy checks. Five synthetic browser cut regressions also passed against the
   current production-Wasm build in each of Chromium, Firefox and WebKit. These
   checks do not claim real OS ownership, permissions or cross-process fidelity.
+
+### Portable topic clipboard checkpoint: critique
+
+- Ordinary topic selections now have a self-contained, versioned rich HTML
+  representation rather than an in-process token. It carries the selected
+  subtrees, styles, notes, tasks, internal task dependencies and referenced
+  embedded resources, subject to a 16 MiB serialized limit. Invalid or
+  unsupported rich data, or mismatched plain and rich text, is rejected rather
+  than reused from a previous internal clipboard. Blank titles remain valid.
+- The versioned decoder rejects unknown or duplicate JSON fields and validates
+  subtree ownership, resource references, scheduling and render-related style
+  dimensions. A selection is limited to 20,000 topics and 256 edges of depth;
+  app paste into a central map also counts the destination ancestry against the
+  depth limit. The canvas copy path checks those source limits before building
+  its recursive plain-text outline. Explicit font sizes must be positive and
+  at most 256, stroke widths at most 200, and widths and padding at most
+  1,000,000. These bounds
+  can reject unusual legacy styles or trees that the older document model
+  accepts; copy and cut report the error rather than changing the document.
+  Tiny positive imported font sizes remain stored unchanged, but canvas glyphs
+  use a 0.01-point minimum to prevent renderer underflow. At that subpixel size
+  the canvas may differ from exports or scaled layout.
+- A crafted topic-format card cannot be attached as an ordinary child with its
+  card presentation silently discarded; it must be pasted to a floating board.
+  Normal card copies use the board format. The existing floating-subtree
+  allocator can reject source topic IDs near the maximum `u64` value, even
+  though the topic codec and central-map paste support those IDs.
+- These depth checks apply to the portable topic path, not to the existing
+  unbounded `copy_topics` compatibility API, mixed-board payloads or external
+  plain-text outline parsing. Those separate entry points still need their own
+  stack-safety review; the new checks are not a general document-depth limit.
+- Topic and board paste use the destination calendar for copied tasks. A
+  nonworking start date or an exceeded task/dependency limit rejects the
+  scheduled insertion atomically. The source calendar is not copied with a
+  selection. The app commits pending drafts before requesting clipboard data,
+  even if a later paste is rejected; the separate board-payload API validates
+  its input before committing a pending title draft.
+- This changes clipboard privacy: the HTML representation can expose copied
+  notes, task details and embedded file bytes to other clipboard readers, even
+  though the visible plain text does not show them. HTML sanitization can remove
+  the private marker, leaving only a lossy plain-text paste. Older Thinoda
+  versions may likewise paste only text from the new representation; new
+  versions warn when they encounter an older session-only token. No marker or
+  matching plain text proves the provenance or ownership of clipboard data.
+- The rich representation is hex-encoded in HTML, so its temporary memory use
+  exceeds the serialized payload limit. Native reads can allocate before the
+  application checks the size; browser and native readback are not atomic.
+  These limits and the cut-verification caveats above still apply, and real
+  cross-process, clipboard-permission and sanitization acceptance remains open.
+- The core library and 19 focused codec/scheduling integration tests passed;
+  the canvas library passed 378 tests with two ignored, and the app library
+  passed 723 with two ignored. Strict native workspace and Wasm lint checks,
+  including the optional cloud build, and the production Wasm build passed.
+  Ten clipboard, branch and cut regressions passed in each of Chromium,
+  Firefox and WebKit using synthetic clipboard events and isolated in-page data.
+  The separate browser pages are not independent OS processes sharing a real
+  clipboard; native-host and trusted-event acceptance remain open.
 
 ### Resource-union checkpoint: critique
 

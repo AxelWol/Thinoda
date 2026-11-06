@@ -6,6 +6,11 @@ use thinoda_core::{TextMeasure, geometry::Vec2};
 /// Extra width factor used to simulate bold text (egui's default fonts have no bold face).
 pub(crate) const BOLD_WIDTH: f32 = 1.04;
 
+// Subnormal imported sizes can underflow egui's glyph scale to zero.
+pub(crate) fn render_font_size(size: f32) -> f32 {
+    size.max(0.01)
+}
+
 pub(crate) fn font_family(ctx: &Context, name: Option<&str>) -> FontFamily {
     match name {
         Some("monospace") => FontFamily::Monospace,
@@ -46,7 +51,7 @@ impl TextMeasure for EguiMeasure {
         max_width: f32,
         family: Option<&str>,
     ) -> Vec2 {
-        let font = FontId::new(font_size, font_family(&self.ctx, family));
+        let font = FontId::new(render_font_size(font_size), font_family(&self.ctx, family));
         let g = self.ctx.fonts_mut(|f| {
             f.layout(
                 text.to_owned(),

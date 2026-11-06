@@ -51,6 +51,20 @@ impl MapView {
     pub fn paste_encoded_board(&mut self, doc: &mut Document, encoded: &str) -> EditResult<bool> {
         self.invalidate_clipboard();
         let payload = clipboard::decode_board_payload(encoded).map_err(EditError::Invalid)?;
+        self.paste_board_payload(doc, payload)
+    }
+
+    /// Pastes a validated board representation obtained from the clipboard.
+    ///
+    /// The caller must establish that it came from the clipboard's separate
+    /// board format, rather than inferring ownership from plain text.
+    pub fn paste_board_payload(
+        &mut self,
+        doc: &mut Document,
+        payload: BoardClipboardPayload,
+    ) -> EditResult<bool> {
+        self.invalidate_clipboard();
+        payload.validate().map_err(EditError::Invalid)?;
         if self.has_title_changes() {
             self.try_commit_edit(doc)?;
         }

@@ -5,10 +5,14 @@ use crate::outline::{OutlineNode, parse_indented_text, to_indented_text, to_outl
 use serde::{Deserialize, Serialize};
 
 mod board;
+mod topic;
 pub use board::{
     BoardClipboardPayload, BoardPasteResult, MAX_BOARD_CLIPBOARD_BYTES, ResolvedBoardPaste,
     copy_board_selection, decode_board_payload, encode_board_payload, paste_board_selection,
     paste_floating_subtrees, resolve_board_paste,
+};
+pub use topic::{
+    MAX_TOPIC_CLIPBOARD_DEPTH, TOPIC_CLIPBOARD_PREFIX, decode_topic_payload, encode_topic_payload,
 };
 
 const SHEET_PREFIX: &str = "THINODA-SHEET-1\n";
@@ -112,27 +116,47 @@ pub fn copy_topics(sheet: &Sheet, ids: &[TopicId]) -> Option<ClipboardPayload> {
     if sheet.fim.is_some() {
         return None;
     }
-    let roots: Vec<TopicId> = ids
-        .iter()
+    let roots = topic_copy_roots(sheet, ids);
+    if roots.is_empty() {
+        return None;
+    }
+    Some(copy_topic_roots(sheet, &roots))
+}
+
+/// Copies topics after checking the portable clipboard's source count, depth and text limits.
+pub fn try_copy_topics(sheet: &Sheet, ids: &[TopicId]) -> Result<Option<ClipboardPayload>, String> {
+    if sheet.fim.is_some() {
+        return Ok(None);
+    }
+    let roots = topic_copy_roots(sheet, ids);
+    if roots.is_empty() {
+        return Ok(None);
+    }
+    topic::validate_source_selection(sheet, &roots)?;
+    Ok(Some(copy_topic_roots(sheet, &roots)))
+}
+
+fn topic_copy_roots(sheet: &Sheet, ids: &[TopicId]) -> Vec<TopicId> {
+    ids.iter()
         .copied()
         .filter(|id| sheet.contains(*id) && !sheet.is_anchor(*id))
         .filter(|id| {
             !ids.iter()
                 .any(|o| o != id && sheet.ancestors(*id).contains(o))
         })
-        .collect();
-    if roots.is_empty() {
-        return None;
-    }
+        .collect()
+}
+
+fn copy_topic_roots(sheet: &Sheet, roots: &[TopicId]) -> ClipboardPayload {
     let subtrees: Vec<Subtree> = roots
         .iter()
         .filter_map(|r| sheet.copy_subtree(*r))
         .collect();
     let outlines: Vec<OutlineNode> = roots.iter().map(|r| to_outline(sheet, *r)).collect();
-    Some(ClipboardPayload {
+    ClipboardPayload {
         subtrees,
         text: to_indented_text(&outlines),
-    })
+    }
 }
 
 /// Builds subtrees from arbitrary text (each line becomes a topic).

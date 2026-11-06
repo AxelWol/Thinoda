@@ -64,8 +64,14 @@ timed-out rich readback, but cannot lock or cancel the system clipboard;
 compatibility and remaining host acceptance are described in the
 [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
 Native cuts also fail closed when text or rich readback differs, with remaining
-OS-ownership and session-token limitations in the
+OS-ownership limitations in the
 [native critique](FREEFORM.md#native-cut-verification-checkpoint-critique).
+The portable-topic continuation replaces session-only tokens for new copies,
+validates destination scheduling, and records metadata exposure, older-version
+fallback and real-host gaps in the
+[topic critique](FREEFORM.md#portable-topic-clipboard-checkpoint-critique).
+Mixed-board depth, plain-text outline parsing and the legacy copy API still need
+bounded, stack-safe handling with explicit rejection and compatibility tests.
 New Sheet from Topic now preserves card branches and owned resources in a
 rootless destination, while warning about surrounding context left in the
 source. See the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)

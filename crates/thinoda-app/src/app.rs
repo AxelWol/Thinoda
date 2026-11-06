@@ -956,7 +956,12 @@ impl ThinodaApp {
         if let Some(doc) = self.doc()
             && let Err(error) = doc.validate_pending_drafts()
         {
-            self.toasts.error(error.to_string());
+            let message = if matches!(&cmd, Cmd::Canvas(Action::Cut)) {
+                format!("{}: {error}", t("Cut cancelled; original content was kept"))
+            } else {
+                error
+            };
+            self.toasts.error(message);
             return;
         }
         if let Some(doc) = self.doc_mut()

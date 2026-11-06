@@ -4568,6 +4568,33 @@ fn invalid_encoded_board_payload_rejects_without_reusing_old_content() {
 }
 
 #[test]
+fn invalid_board_payload_does_not_commit_a_pending_title_draft() {
+    let mut sheet = board();
+    let shape = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let topic = sheet.add_floating("Original", Vec2::new(200.0, 0.0));
+    let mut h = harness(sheet);
+    let state = h.state_mut();
+    state.view.board_selection = vec![shape];
+    assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+    let mut payload = state.view.board_clipboard().unwrap().clone();
+    payload.text.clear();
+    state
+        .view
+        .begin_edit_with(state.doc.sheet(), topic, "Draft");
+    let before = state.doc.workbook().clone();
+
+    assert!(
+        state
+            .view
+            .paste_board_payload(&mut state.doc, payload)
+            .is_err()
+    );
+    assert_eq!(state.doc.workbook(), &before);
+    assert_eq!(state.view.editing_text(), Some("Draft"));
+    assert!(state.view.board_clipboard().is_none());
+}
+
+#[test]
 fn external_clipboard_change_invalidates_internal_and_pending_content() {
     let mut sheet = board();
     let object = shape(&mut sheet, 0.0, 0.0, "Board item");

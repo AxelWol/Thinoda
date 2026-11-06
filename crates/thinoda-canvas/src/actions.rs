@@ -668,7 +668,9 @@ pub fn apply_action(
             return Ok(doc.redo());
         }
         Action::Copy | Action::Cut => {
-            let Some(payload) = clipboard::copy_topics(doc.sheet(), &sel) else {
+            let Some(payload) =
+                clipboard::try_copy_topics(doc.sheet(), &sel).map_err(EditError::Invalid)?
+            else {
                 return Ok(false);
             };
             view.clipboard_out = Some(payload.text.clone());

@@ -1852,6 +1852,10 @@ const DE: &[(&str, &str)] = &[
         "Ausschneiden abgebrochen; der ursprüngliche Inhalt bleibt erhalten",
     ),
     (
+        "Older Thinoda clipboard data is unavailable; pasted text only",
+        "Ältere Thinoda-Zwischenablagedaten sind nicht verfügbar; nur Text wurde eingefügt",
+    ),
+    (
         "Could not paste sheet",
         "Blatt konnte nicht eingefügt werden",
     ),
