@@ -982,29 +982,9 @@ impl Sheet {
             topics,
             tasks,
             dependencies,
-            resources: crate::resources::ResourceStore {
-                entries: ids
-                    .iter()
-                    .flat_map(|id| {
-                        let topic = &self.topics[id];
-                        topic
-                            .image
-                            .as_deref()
-                            .into_iter()
-                            .chain(topic.attachment.as_ref().map(|a| a.resource.as_str()))
-                    })
-                    .filter_map(|reference| {
-                        reference.strip_prefix(crate::resources::RESOURCE_PREFIX)
-                    })
-                    .filter_map(|id| {
-                        self.resources
-                            .entries
-                            .get(id)
-                            .map(|resource| (id.to_owned(), resource.clone()))
-                    })
-                    .collect(),
-                ..Default::default()
-            },
+            resources: self
+                .resources
+                .for_topics(ids.iter().map(|id| &self.topics[id])),
         })
     }
 

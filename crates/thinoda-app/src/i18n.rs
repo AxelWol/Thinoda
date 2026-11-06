@@ -1831,6 +1831,10 @@ const DE: &[(&str, &str)] = &[
         "External relationships remain only in the original sheet",
         "Externe Beziehungen verbleiben nur im ursprünglichen Blatt",
     ),
+    (
+        "Some surrounding board, annotation or task context remains only in the original sheet",
+        "Ein Teil des umgebenden Board-, Anmerkungs- oder Aufgabenkontexts verbleibt nur im ursprünglichen Blatt",
+    ),
     ("Copy Sheet", "Blatt kopieren"),
     ("Paste Sheet", "Blatt einfügen"),
     (

@@ -679,6 +679,7 @@ Markers and task data|Marcadores e dados de tarefas
 None|Nenhum
 Not possible here|Não é possível aqui
 Cut cancelled; original content was kept|Recorte cancelado; o conteúdo original foi mantido
+Some surrounding board, annotation or task context remains only in the original sheet|Parte do contexto do quadro, das anotações ou das tarefas permanece apenas na folha original
 Other unsupported map data|Outros dados de mapa não compatíveis
 Rich notes|Notas formatadas
 Version|Versão

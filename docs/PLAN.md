@@ -55,6 +55,10 @@ Structured browser cuts now require bounded rich clipboard readback and time
 out without deleting the original when verification fails. Browser permission,
 sanitization and non-atomic clipboard ownership still require real-host
 acceptance; see the [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
+New Sheet from Topic preserves card branches as rootless sheets, including
+summary-owned resources, while reporting surrounding context left in the
+source; the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)
+records its deliberate board-context exclusions and draft-commit ordering.
 No editor controls are enabled: rich-aware undo/IME, grapheme-aware selection,
 list editing, external clipboard and loss handling, accessibility and mixed-style
 measurement/rendering remain open. An isolated, non-application span-editing

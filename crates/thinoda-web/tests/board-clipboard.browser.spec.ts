@@ -543,6 +543,32 @@ test("a timed-out browser cut ignores late clipboard writes and reads", async ({
     }
 });
 
+test("a formatted card branch creates a rootless sheet and supports undo and redo", async ({ page }) => {
+    const { formatted, card } = await formattedCardBoard(page);
+    await page.mouse.click(330, 545);
+    await frames(page);
+    await command(page, "New Sheet from Topic");
+    const created = archive(await saveAs(page, "card-branch-sheet.thinoda"));
+    expect(created.content.sheets).toHaveLength(3);
+    expect(created.content.sheets.slice(0, 2)).toEqual(formatted.content.sheets);
+    const sheet = created.content.sheets[2];
+    expect(sheet.root_mode).toBe("hidden");
+    expect(sheet.floating).toEqual([card.id]);
+    expect(sheet.topics[String(card.id)].inline_text).toEqual(card.inline_text);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "card-branch-sheet-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(formatted.content.sheets);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    const redone = archive(await saveAs(page, "card-branch-sheet-redo.thinoda"));
+    expect(redone.content.sheets).toEqual(created.content.sheets);
+});
+
 test("verified formatted card cut is undoable and pastes its inline formatting", async ({ page }) => {
     const { formatted, card } = await formattedCardBoard(page);
     await page.evaluate(() => { window.__thinodaTestClipboard.readMode = "wrapped"; });

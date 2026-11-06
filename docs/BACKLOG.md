@@ -63,6 +63,10 @@ Structured browser cuts now fail closed on missing, changed, denied or
 timed-out rich readback, but cannot lock or cancel the system clipboard;
 compatibility and remaining host acceptance are described in the
 [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
+New Sheet from Topic now preserves card branches and owned resources in a
+rootless destination, while warning about surrounding context left in the
+source. See the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)
+for exclusions, lock restrictions and draft ordering.
 An isolated history experiment estimates retained snapshot bytes but does not
 implement rich-aware board-card editing. An egui frame-rollback experiment
 preserves the draft on rejection but can discard other input and briefly expose

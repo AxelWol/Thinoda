@@ -661,10 +661,11 @@ mod tests {
             expected
         );
         assert_eq!(sheet, before);
-        assert_eq!(
-            sheet.copy_branch_as_sheet(card).unwrap_err().to_string(),
-            expected
-        );
+        let copied = sheet.copy_branch_as_sheet(card).unwrap();
+        assert_eq!(copied.root_mode, crate::SheetRootMode::Hidden);
+        assert_eq!(copied.floating, vec![card]);
+        assert_eq!(copied.topic(card), sheet.topic(card));
+        copied.validate().unwrap();
         assert_eq!(sheet, before);
 
         let subtree = sheet.copy_subtree(card).unwrap();

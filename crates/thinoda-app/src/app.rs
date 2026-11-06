@@ -1402,26 +1402,65 @@ impl ThinodaApp {
                     return;
                 }
                 let d = self.doc_mut().unwrap();
-                d.view.commit_edit(&mut d.doc);
+                if let Err(error) = d
+                    .commit_canvas_drafts()
+                    .and_then(|()| d.flush_inspector_edit(ctx))
+                {
+                    self.toasts.error(format!(
+                        "{}: {}",
+                        t("Not possible here"),
+                        i18n::localize_model_error(&error)
+                    ));
+                    return;
+                }
                 let topic = d.view.primary().unwrap();
+                let source = d.doc.sheet();
+                let owned = source.owned_subtree_ids(topic);
+                let external_relationships = source.relationships.iter().any(|relationship| {
+                    owned.contains(&relationship.from) != owned.contains(&relationship.to)
+                });
+                let external_dependencies =
+                    source.scheduling.dependencies.iter().any(|dependency| {
+                        owned.contains(&dependency.predecessor)
+                            != owned.contains(&dependency.successor)
+                    });
+                let mut enclosing_annotation = source
+                    .summaries
+                    .iter()
+                    .any(|summary| summary.topic == topic && !owned.contains(&summary.parent));
+                let mut current = topic;
+                while let Some(parent) = source.parent(current) {
+                    if let Some(index) = source.index_in_parent(current) {
+                        enclosing_annotation |= source.boundaries.iter().any(|boundary| {
+                            boundary.parent == parent
+                                && boundary.range.is_none_or(|range| range.contains(index))
+                        }) || source.summaries.iter().any(|summary| {
+                            summary.parent == parent && summary.range.contains(index)
+                        });
+                    }
+                    current = parent;
+                }
+                let surrounding_context = external_dependencies
+                    || enclosing_annotation
+                    || !source.zones.is_empty()
+                    || !source.canvas.is_empty()
+                    || !source.presentation.slides.is_empty();
                 match d.doc.sheet().copy_branch_as_sheet(topic) {
                     Ok(sheet) => {
-                        let external = d
-                            .doc
-                            .sheet()
-                            .relationships
-                            .iter()
-                            .filter(|r| sheet.contains(r.from) != sheet.contains(r.to))
-                            .count();
                         if let Err(error) = d.doc.add_sheet(sheet) {
                             self.toasts
                                 .error(format!("{}: {error}", t("Not possible here")));
                             return;
                         }
                         d.view.reset();
-                        if external > 0 {
+                        if external_relationships {
                             self.toasts.info(t(
                                 "External relationships remain only in the original sheet",
+                            ));
+                        }
+                        if surrounding_context {
+                            self.toasts.info(t(
+                                "Some surrounding board, annotation or task context remains only in the original sheet",
                             ));
                         }
                     }
@@ -2032,9 +2071,9 @@ impl ThinodaApp {
             }
             Cmd::NewSheetFromTopic => self.doc().is_some_and(|d| {
                 d.view.selection.len() == 1
-                    && d.view
-                        .primary()
-                        .is_some_and(|id| d.doc.sheet().contains(id))
+                    && d.view.primary().is_some_and(|id| {
+                        d.doc.sheet().contains(id) && !d.doc.sheet().is_anchor(id)
+                    })
             }),
             Cmd::CopyStyle => self.doc().is_some_and(|d| {
                 (d.view.board_selection.is_empty()
@@ -4497,6 +4536,185 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn app_with_sheet_branch_card(formatted: bool) -> (ThinodaApp, thinoda_core::TopicId) {
+        let mut sheet = thinoda_core::Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = sheet
+            .add_card(
+                "Styled card",
+                thinoda_core::Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        if formatted {
+            sheet
+                .topic_mut(card)
+                .unwrap()
+                .inline_text
+                .update_range("Styled card", 0..6, |style| style.bold = Some(true))
+                .unwrap();
+        }
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        doc.doc.add_sheet(sheet).unwrap();
+        doc.view.select_only(card);
+        (app, card)
+    }
+
+    #[test]
+    fn new_sheet_from_topic_preserves_rejected_formatted_title_draft() {
+        let (mut app, card) = app_with_sheet_branch_card(true);
+        let doc = app.doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), card, false);
+        doc.view.set_editing_text("Pending title");
+        let before = doc.doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.view.editing_text(), Some("Pending title"));
+        assert!(app.toasts.texts().any(|text| {
+            text.contains(t(
+                "Formatted card titles cannot be changed until rich-text editing is supported",
+            ))
+        }));
+    }
+
+    #[test]
+    fn new_sheet_from_topic_commits_inspector_draft_before_copying() {
+        let (mut app, card) = app_with_sheet_branch_card(false);
+        let doc = app.doc_mut().unwrap();
+        let source_index = doc.doc.active_index();
+        doc.inspector_edit = Some(crate::doc::InspectorEdit {
+            buffer_id: None,
+            sheet_index: source_index,
+            sheet_root: doc.doc.sheet().root,
+            topic: card,
+            field: crate::doc::InspectorField::Notes,
+            original: None,
+            format_notes: false,
+            text: "Pending notes".into(),
+        });
+        let old_count = doc.doc.workbook().sheets.len();
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        let doc = app.doc().unwrap();
+        assert!(doc.inspector_edit.is_none());
+        assert_eq!(doc.doc.workbook().sheets.len(), old_count + 1);
+        assert_eq!(
+            doc.doc.workbook().sheets[source_index]
+                .topic(card)
+                .unwrap()
+                .notes
+                .as_deref(),
+            Some("Pending notes")
+        );
+        assert_eq!(
+            doc.doc.sheet().topic(card).unwrap().notes.as_deref(),
+            Some("Pending notes")
+        );
+        assert_eq!(doc.doc.sheet().root_mode, SheetRootMode::Hidden);
+        app.exec(
+            &egui::Context::default(),
+            Cmd::Canvas(thinoda_canvas::Action::Undo),
+        );
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook().sheets.len(), old_count);
+        assert_eq!(
+            doc.doc.workbook().sheets[source_index]
+                .topic(card)
+                .unwrap()
+                .notes
+                .as_deref(),
+            Some("Pending notes")
+        );
+    }
+
+    #[test]
+    fn new_sheet_from_topic_preserves_conflicting_inspector_draft() {
+        let (mut app, card) = app_with_sheet_branch_card(false);
+        let doc = app.doc_mut().unwrap();
+        doc.inspector_edit = Some(crate::doc::InspectorEdit {
+            buffer_id: None,
+            sheet_index: doc.doc.active_index(),
+            sheet_root: doc.doc.sheet().root,
+            topic: card,
+            field: crate::doc::InspectorField::Notes,
+            original: None,
+            format_notes: false,
+            text: "Pending notes".into(),
+        });
+        doc.doc
+            .edit_sheet("Other edit", |sheet| {
+                sheet.set_notes(card, Some("Changed elsewhere".into()))
+            })
+            .unwrap();
+        let before = doc.doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.inspector_edit.as_ref().unwrap().text, "Pending notes");
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains("draft retained"))
+        );
+    }
+
+    #[test]
+    fn new_sheet_from_topic_reports_omitted_board_context_and_external_relationships() {
+        let mut sheet = thinoda_core::Sheet::new("Board", "Central");
+        let card = sheet
+            .add_card(
+                "Card",
+                thinoda_core::Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet.add_relationship(sheet.root, card).unwrap();
+        sheet
+            .create_zone(
+                "Zone",
+                vec![card],
+                thinoda_core::Rect::from_min_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(300.0, 300.0),
+                ),
+            )
+            .unwrap();
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        doc.doc.add_sheet(sheet).unwrap();
+        doc.view.select_only(card);
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        assert_eq!(app.doc().unwrap().doc.sheet().floating, vec![card]);
+        assert!(
+            app.toasts.texts().any(|text| {
+                text == t("External relationships remain only in the original sheet")
+            })
+        );
+        assert!(app.toasts.texts().any(|text| {
+            text == t(
+                "Some surrounding board, annotation or task context remains only in the original sheet",
+            )
+        }));
+        let doc = app.doc_mut().unwrap();
+        doc.view.select_only(doc.doc.sheet().root);
+        assert!(!app.command_available(&Cmd::NewSheetFromTopic));
+    }
 
     fn recovery_fixture() -> (tempfile::TempDir, Arc<RecoveryManager>, ThinodaApp) {
         let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();

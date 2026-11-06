@@ -1603,8 +1603,9 @@ rendering and accessibility are not production implementations.
   Mixed pastes and malformed subtrees containing formatted descendants are
   preflighted before IDs or content are inserted, and rejected branch-to-sheet
   operations leave the original intact. This is not a general validation guarantee
-  for arbitrary malformed public `Subtree` inputs. Supporting a rootless new sheet
-  for card branches remains open, including the older plain-card path.
+  for arbitrary malformed public `Subtree` inputs. At that checkpoint, rootless
+  sheets for card branches were still unsupported; the follow-up below addresses
+  both formatted and plain cards.
   `Sheet::attach_child` now returns `Result<TopicId, AttachChildError>` rather
   than a bare ID; the error owns the unchanged subtree. This is a public Rust API
   change, so downstream callers must handle rejection and retain or restore it.
@@ -1619,6 +1620,38 @@ rendering and accessibility are not production implementations.
   and native-export suites passed 493 tests; two existing tests were ignored.
   Native all-target and WebAssembly Clippy checks passed. This is not a completed
   full-workspace test run or cross-platform host acceptance.
+
+#### Card branch to sheet checkpoint: critique
+
+- New Sheet from Topic now keeps a selected Sticky, Text or Image card as a
+  floating root on a new rootless sheet, with a fresh blank anchor. Card
+  presentation, position, inline runs and list metadata, descendants, owned
+  boundaries and summaries, internal relationships and task dependencies are
+  retained. Resource selection includes recursively summary-owned topics, not
+  just the ordinary child tree. Plain branches taken from rootless boards become
+  ordinary central-root sheets. Theme, structure and board settings carry over.
+- A branch is not a copy of the whole board: Zones, free objects and connectors,
+  group membership and presentation slides stay in the source. Relationships
+  and task dependencies crossing the branch boundary and enclosing annotations
+  also stay there. The command reports these omissions; the board-context
+  warning is conservative and can appear for unrelated objects elsewhere on
+  the source sheet. The original source is not modified by the extraction.
+  Existing locked-card and FIM extraction restrictions are unchanged.
+- Canvas and inspector drafts are checked and committed before extraction;
+  rejected drafts remain available instead of being discarded by the view reset.
+  These commits are separate undo steps, so an earlier valid draft may already
+  have been committed if a later draft or the new-sheet operation fails. The
+  extraction itself is one undoable workbook change.
+- Core regressions cover all three card kinds, an embedded PNG, formatted and
+  plain text, internal and external task dependencies, a rootless ordinary
+  branch, mixed board context, and missing and summary-owned resources.
+  Headless app tests cover draft conflicts, native save/reopen and undo/redo.
+  A production-Wasm browser workflow checks formatted-card extraction and
+  undo/redo in Chromium, Firefox and WebKit using a synthetic in-page clipboard.
+  On Windows, 284 core and 376 canvas tests passed (two canvas tests ignored),
+  along with focused app tests and strict native/Wasm app linting. This does
+  not enable rich text editing or establish physical-device, screen-reader or
+  real clipboard acceptance.
 
 Duck check: the replacement primitive is a pure candidate operation, so a
 failed range, style, or list-boundary check cannot partially change the source.
