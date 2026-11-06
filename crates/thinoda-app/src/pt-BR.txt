@@ -874,3 +874,6 @@ Default value|Valor padrão
 Maximum file size (bytes)|Tamanho máximo do arquivo (bytes)
 Allowed media types|Tipos de mídia permitidos
 Review hierarchy changes|Revisar alterações da hierarquia
+Grid|Grade
+Canvas settings|Configurações da tela
+No counts recorded yet.|Ainda não há contagens registradas.

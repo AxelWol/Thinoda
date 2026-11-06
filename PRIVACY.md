@@ -91,6 +91,16 @@ per-file forgetting and global deletion are available in AI Chat; failed writes
 leave transcripts in memory. Deletion is not secure erasure of backups or
 provider-side copies. See [local history behavior](docs/AI-HISTORY.md).
 
+## Optional context-menu usage counts
+
+On desktop, Settings > Editor > Menu usage can count how often you use
+context-menu commands. It is off by default. Counts contain only the menu kind
+(topic, board object, blank canvas, Zone or annotation) and a command
+identifier, are stored in `menu_usage.json` in the
+local configuration directory, are never uploaded and never reorder menus.
+Turn the option off to stop counting, or use Clear counts to delete them. The
+web app does not record these counts.
+
 ## Optional cloud accounts
 
 Cloud accounts are optional and distinct from local synchronized folders.

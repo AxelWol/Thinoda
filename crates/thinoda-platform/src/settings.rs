@@ -467,6 +467,8 @@ pub struct Settings {
     pub spell_check: bool,
     pub check_for_updates: bool,
     pub confirm_on_delete: bool,
+    /// Opt-in, local-only context-menu activation counts; never reorders menus.
+    pub collect_menu_usage: bool,
     pub window: Option<WindowState>,
     pub last_open_dir: Option<PathBuf>,
     pub last_export_format: Option<String>,
@@ -515,6 +517,7 @@ impl Default for Settings {
             spell_check: false,
             check_for_updates: true,
             confirm_on_delete: true,
+            collect_menu_usage: false,
             window: None,
             last_open_dir: None,
             last_export_format: None,
