@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
-import { colorBounds, command, frames, saveAs, zipEntry } from "./board-browser-helpers";
+import { colorBounds, command, frames, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
 
 type Point = { x: number; y: number };
 type Frame = { min: Point; size: Point };
@@ -273,7 +273,8 @@ test("captured rootless board PowerPoint export requires consent and preserves i
     expect(sheetFrom(await saveAs(page, "after-powerpoint.thinoda"))).toEqual(baseline);
 });
 
-test("source-only Zone and branch scenes stay isolated in Pitch and PowerPoint", async ({ page }) => {
+test("source-only Zone and branch scenes stay isolated in Pitch and presentation exports", async ({ page }) => {
+    test.setTimeout(240_000);
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     await page.evaluate(() => {
@@ -293,6 +294,12 @@ test("source-only Zone and branch scenes stay isolated in Pitch and PowerPoint",
     const colors = [
         [0, 200, 122], [227, 35, 103], [34, 85, 217], [251, 122, 0], [159, 51, 229],
     ] as const;
+    const visibility = [
+        [true, false, true, false, false],
+        [false, false, true, false, false],
+        [true, true, true, true, true],
+        [true, true, true, true, true],
+    ] as const;
     await expect.poll(async () => {
         const counts = await colorBounds(page, await page.screenshot(), colors, 5);
         return Math.min(...counts.map(count => count.count));
@@ -304,12 +311,7 @@ test("source-only Zone and branch scenes stay isolated in Pitch and PowerPoint",
 
     await command(page, "Pitch");
     await page.waitForTimeout(500);
-    for (const [index, visible] of [
-        [true, false, true, false, false],
-        [false, false, true, false, false],
-        [true, true, true, true, true],
-        [true, true, true, true, true],
-    ].entries()) {
+    for (const [index, visible] of visibility.entries()) {
         if (index > 0) {
             await page.keyboard.press("ArrowRight");
             await frames(page);
@@ -322,6 +324,60 @@ test("source-only Zone and branch scenes stay isolated in Pitch and PowerPoint",
     }
     await page.keyboard.press("Escape");
     await frames(page);
+
+    await command(page, "Edit Presentation");
+    await page.mouse.move(1100, 900);
+    await page.mouse.wheel(0, 2200);
+    await frames(page);
+    await page.evaluate(() => { window.prompt = () => "scene-isolation.pdf"; });
+    await clickCanvasButton(page, 150, 931);
+    const pendingPdf = page.waitForEvent("download", { timeout: 60_000 });
+    await clickCanvasButton(page, 850, 711);
+    const pdfDownload = await pendingPdf;
+    expect(pdfDownload.suggestedFilename()).toBe("scene-isolation.pdf");
+    const pdf = await readFile(await pdfDownload.path());
+    expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(pdf.toString("latin1").match(/\/Type\s*\/Page\b/g)).toHaveLength(4);
+    await withPdfViewer(pdf, async viewer => {
+        await viewer.setViewportSize({ width: 1252, height: 900 });
+        for (const [index, visible] of visibility.entries()) {
+            const url = `http://127.0.0.1:9/scene-slide-${index + 1}.pdf`;
+            await viewer.route(url, route => route.fulfill({
+                status: 200, contentType: "application/pdf", body: pdf,
+            }));
+            const response = await viewer.goto(
+                `${url}#page=${index + 1}&view=Fit&toolbar=0&navpanes=0`,
+            );
+            expect(response?.status()).toBe(200);
+            await expect.poll(async () => {
+                const counts = await colorBounds(page, await viewer.screenshot(), colors, 5);
+                return counts.map(({ count }) => {
+                    if (count > 100) return true;
+                    if (count < 20) return false;
+                    return count;
+                });
+            }, { timeout: 30_000, message: `PDF slide ${index + 1} visibility` }).toEqual(visible);
+        }
+    });
+
+    await page.evaluate(() => { window.prompt = () => "scene-isolation-images.zip"; });
+    await clickCanvasButton(page, 260, 931);
+    const pendingImages = page.waitForEvent("download", { timeout: 60_000 });
+    await clickCanvasButton(page, 850, 711);
+    const imagesDownload = await pendingImages;
+    expect(imagesDownload.suggestedFilename()).toBe("scene-isolation-images.zip");
+    const images = await readFile(await imagesDownload.path());
+    for (const [index, visible] of visibility.entries()) {
+        const image = zipEntry(images, `slides/slide-${String(index + 1).padStart(3, "0")}.png`);
+        expect(image.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+        const counts = await colorBounds(page, image, colors, 5);
+        for (const [color, shouldShow] of visible.entries()) {
+            if (shouldShow) expect(counts[color].count, `image ${index + 1}, color ${color}`).toBeGreaterThan(100);
+            else expect(counts[color].count, `image ${index + 1}, color ${color}`).toBeLessThan(20);
+        }
+    }
+    await clickCanvasButton(page, 192, 963);
+    expect(sheetFrom(await saveAs(page, "scene-isolation-after-slide-exports.thinoda"))).toEqual(baseline);
 
     await page.evaluate(() => {
         window.__powerPointPrompts = [];

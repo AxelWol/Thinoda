@@ -256,10 +256,12 @@ ink, connector chains, hidden and unrevealed topics, clipping frames, object
 order, SVG, PNG, PDF and PowerPoint output. A 2,000-connector reversed chain
 checks iterative exclusion propagation rather than general performance.
 Production-browser checks in Chromium, Firefox and WebKit exercise fixed-crop
-source Zone and branch, context and View slides in Pitch and PowerPoint. They
-inspect rendered colors, editable object inclusion, dependent connectors, the
-flattened viewport image and source preservation. This fixture does not
-establish every crop, browser device or Office rendering combination.
+source Zone and branch, context and View slides in Pitch, PDF, slide images and
+PowerPoint. They inspect rendered colors, editable object inclusion, dependent
+connectors, the flattened viewport image and source preservation. PDF pages
+from each browser are inspected in Chromium's PDF viewer; the image archive is
+inspected directly. This fixture does not establish text-search accessibility,
+every crop, browser device, PDF viewer or Office rendering combination.
 
 This preserves the existing crop behavior for unassigned objects rather than
 turning every unrelated free object into an auto-fit target. The presenter's

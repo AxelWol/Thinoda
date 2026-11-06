@@ -31,8 +31,10 @@ Pressure-dependent rendering, native pen identity and real-device/browser-engine
 fidelity remain open.
 F6 source-only scenes now share object visibility across editor, Pitch and
 exports; a fixed-crop browser fixture covers branch/Zone isolation, while
-broader browser, real-device and updated Office acceptance remain open. Pending
-ink is still excluded from crash recovery.
+broader browser, PDF-viewer, real-device and updated Office acceptance remain
+open. The fixture checks Pitch, PDF, slide images and PowerPoint; exported PDF
+pages are inspected in Chromium's viewer. Pending ink is still excluded from
+crash recovery.
 Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
 limitations. A separate asynchronous discovery draft remains gated by

@@ -48,9 +48,9 @@ than rendered width. Physical-device and non-Chromium pen verification remain
 open.
 Source-only scene isolation uses the same object and connector policy in the
 editor, Pitch and exports. Unassigned objects remain crop-visible without
-expanding source auto-fit; a fixed-crop browser fixture covers Pitch and
-PowerPoint, and clipping is not redaction. See the F5/F6 critiques in
-[FREEFORM.md](FREEFORM.md#f5-ink-checkpoint-critique) and
+expanding source auto-fit; a fixed-crop browser fixture covers Pitch, PDF,
+slide-image and PowerPoint exports. Clipping is not redaction. See the critiques
+in [FREEFORM.md](FREEFORM.md#f5-ink-checkpoint-critique) and
 [PRESENTATIONS.md](PRESENTATIONS.md#scene-object-isolation-follow-up).
 Pending-ink crash recovery, realistic performance, accessibility and broader
 browser/Office/device acceptance remain open.

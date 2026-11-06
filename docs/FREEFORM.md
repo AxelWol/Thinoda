@@ -1113,7 +1113,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   the rebuilt app. The focused production-browser matrix passed in Chromium,
   Firefox and WebKit; two Chromium-DevTools-only pen cases were skipped in the
   latter engines. These tests cover synthetic force values and trusted emulated
-  touchscreen taps, not physical devices.
+  touchscreen taps, not physical devices. One earlier Chromium run showed a
+  generic bootstrap failure before reaching the canvas; 30 subsequent fresh
+  Chromium touch contexts started successfully, but the original cause remains
+  unestablished.
 - **Pressure-bridge critique:** the Chromium DevTools pen probe verifies
   simulated input, not a physical stylus. Exact event pairing may vary by
   browser, OS or device and can conservatively interrupt a stroke; Firefox and
@@ -1151,9 +1154,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Focused core, player and SVG/PNG/PDF/PowerPoint tests cover the policy; a
   2,000-connector fixture checks iterative propagation, not a device performance
   budget. A fixed-crop browser fixture checks source Zone, branch, context and
-  View slides in Pitch and PowerPoint, including dependent connectors,
-  unassigned objects, viewport pixels and source preservation. The presenter's
-  Map still exposes the full map.
+  View slides in Pitch, PDF, slide images and PowerPoint, including dependent
+  connectors, unassigned objects, viewport pixels and source preservation.
+  Chromium, Firefox and WebKit generated the exports; PDF pixels were inspected
+  in Chromium's viewer. The presenter's Map still exposes the full map.
 - Editable branch/Zone PowerPoint slides now rotate card components and
   multiline shape labels around their owning card or shape, preserving image
   bytes and source data. The canvas rotates shape labels around the same pivot;
