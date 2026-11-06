@@ -2504,7 +2504,9 @@ impl MapCanvas {
                 Drag::Zone { resize: true, .. } => egui::CursorIcon::ResizeNwSe,
                 Drag::Zone { .. } => egui::CursorIcon::Grabbing,
                 _ if space || view.board_tool == BoardTool::Hand => egui::CursorIcon::Grab,
-                _ if view.board_tool != BoardTool::Select => egui::CursorIcon::Crosshair,
+                _ if view.board_tool != BoardTool::Select && !view.board_input.armed_hover => {
+                    egui::CursorIcon::Crosshair
+                }
                 _ if zone_hover == Some(true) => egui::CursorIcon::ResizeNwSe,
                 _ if zone_hover == Some(false) => egui::CursorIcon::Grab,
                 _ if image_handle => image_resize::cursor(view, doc.sheet(), &layout),

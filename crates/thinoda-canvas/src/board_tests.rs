@@ -1147,6 +1147,159 @@ fn mouse_shape_creation_and_drag_are_each_single_undoable_edits() {
 }
 
 #[test]
+fn armed_shape_click_on_content_selects_and_shows_handles_without_creating() {
+    let mut sheet = board();
+    let existing = shape(&mut sheet, 0.0, 0.0, "Existing");
+    let mut h = harness(sheet);
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Ellipse));
+    let before = h.state().doc.workbook().clone();
+    let center = point(&h, Vec2::ZERO);
+    h.hover_at(center);
+    h.run_steps(2);
+    assert!(h.state().view.board_input.armed_hover);
+    assert_eq!(h.state().view.board_input.ghost, None);
+
+    click(&mut h, center, Modifiers::NONE);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().view.board_selection, vec![existing]);
+    assert_eq!(
+        h.state().view.board_tool,
+        BoardTool::Shape(ShapeKind::Ellipse)
+    );
+    assert!(h.query_by_label("Resize board item").is_some());
+    assert!(h.query_by_label("Rotate board item").is_some());
+
+    let end = center + vec2(70.0, 35.0);
+    drag(&mut h, center, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_drag(&mut h, end);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(existing)
+            .unwrap()
+            .rect
+            .min,
+        Vec2::new(10.0, -5.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn armed_shape_click_on_empty_space_creates_one_undoable_shape_and_shows_a_ghost() {
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Existing");
+    let mut h = harness(sheet);
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Ellipse));
+    let before = h.state().doc.workbook().clone();
+    let empty = point(&h, Vec2::new(-360.0, -240.0));
+    h.hover_at(empty);
+    h.run_steps(2);
+    assert!(!h.state().view.board_input.armed_hover);
+    assert_eq!(h.state().view.board_input.ghost, Some(empty));
+
+    click(&mut h, empty, Modifiers::NONE);
+    let objects = &h.state().doc.sheet().canvas.objects;
+    assert_eq!(objects.len(), 2);
+    assert!(objects.iter().any(|object| matches!(
+        object.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Ellipse,
+            ..
+        }
+    )));
+    assert_eq!(
+        h.state().view.board_tool,
+        BoardTool::Shape(ShapeKind::Ellipse)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+/// One-finger tap with the touch and pointer events of each phase in the same
+/// frame, as platform backends deliver them.
+fn tap(h: &mut Harness<'_, State>, position: Pos2) {
+    for (phase, pressed) in [
+        (egui::TouchPhase::Start, true),
+        (egui::TouchPhase::End, false),
+    ] {
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(position),
+            egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(1),
+                phase,
+                pos: position,
+                force: None,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+}
+
+#[test]
+fn armed_shape_touch_tap_selects_content_and_creates_on_empty_space() {
+    let mut sheet = board();
+    let existing = shape(&mut sheet, 0.0, 0.0, "Existing");
+    let mut h = harness(sheet);
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let center = point(&h, Vec2::ZERO);
+    tap(&mut h, center);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().view.board_selection, vec![existing]);
+
+    let empty = point(&h, Vec2::new(300.0, 220.0));
+    tap(&mut h, empty);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 2);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn armed_shape_exits_with_escape_or_v_and_edits_a_selection_with_enter() {
+    let mut sheet = board();
+    let existing = shape(&mut sheet, 0.0, 0.0, "Existing");
+    let mut h = harness(sheet);
+    for key in [Key::V, Key::Escape] {
+        set_tool(&mut h, BoardTool::Shape(ShapeKind::Hexagon));
+        // Keep repeated clicks on the same shape out of the double-click window.
+        h.run_steps(30);
+        let center = point(&h, Vec2::ZERO);
+        click(&mut h, center, Modifiers::NONE);
+        assert_eq!(h.state().view.board_selection, vec![existing]);
+        h.key_press(key);
+        h.run_steps(2);
+        assert_eq!(h.state().view.board_tool, BoardTool::Select, "{key:?}");
+        assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+    }
+
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Hexagon));
+    h.run_steps(30);
+    let center = point(&h, Vec2::ZERO);
+    click(&mut h, center, Modifiers::NONE);
+    assert_eq!(h.state().view.board_selection, vec![existing]);
+    let objects = h.state().doc.sheet().canvas.objects.len();
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), objects);
+    assert_eq!(h.state().view.editing_board_object(), Some(existing));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn touch_creates_and_moves_a_card_without_reparenting() {
     let mut h = harness(board());
     set_tool(&mut h, BoardTool::Sticky);

@@ -25,6 +25,11 @@ pub(super) struct State {
     control_focused: bool,
     focus_exit: Option<FocusExit>,
     focus_after_duplicate: Option<SceneId>,
+    /// An armed shape tool is hovering existing content or a handle, where a
+    /// click selects instead of creating (no ghost, no crosshair).
+    pub(super) armed_hover: bool,
+    /// Unobscured screen position for the armed shape's ghost preview.
+    pub(super) ghost: Option<Pos2>,
 }
 
 struct RotationPivot {
@@ -841,6 +846,21 @@ fn create_at(
     create(doc, view, tool, rect, ends)
 }
 
+/// True when an armed shape must select rather than create at `point`: topics,
+/// cards, objects, ink, annotations and frame edges or title bands are content.
+fn armed_target(
+    doc: &Document,
+    view: &MapView,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+) -> bool {
+    let tolerance = 6.0 / view.zoom;
+    scene.hit_test(point).is_some()
+        || hit_zone(doc.sheet(), point, tolerance).is_some()
+        || hit_object(doc.sheet(), layout, point, tolerance).is_some()
+}
+
 fn prepare_edit(doc: &mut Document, view: &mut MapView, out: &mut CanvasOutput) -> bool {
     if let Err(error) = view
         .try_commit_edit(doc)
@@ -881,7 +901,7 @@ fn control_id(control: Control) -> Id {
 }
 
 fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Vec<Control> {
-    if view.board_tool != BoardTool::Select
+    if !matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_))
         || view.editing.is_some()
         || view.editing_board_object().is_some()
         || view.selected_object.is_some()
@@ -1464,6 +1484,8 @@ pub(super) fn interact(
     out: &mut CanvasOutput,
 ) -> bool {
     view.observe_board_rotation_selection(doc);
+    view.board_input.armed_hover = false;
+    view.board_input.ghost = None;
     let ctx = ui.ctx().clone();
     if view.board_input.last_tool != view.board_tool {
         view.board_input.cancel_gesture();
@@ -1513,21 +1535,41 @@ pub(super) fn interact(
         }
         return true;
     }
-    if tool != BoardTool::Select {
+    let pressed_origin = ctx.input(|input| {
+        input.events[event_offset..]
+            .iter()
+            .find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+    });
+    // An armed shape behaves like Select over existing content and handles;
+    // only empty canvas creates. A press already creating keeps creating.
+    let armed = matches!(tool, BoardTool::Shape(_));
+    let on_content = |point: Pos2| {
+        canvas_point_unobscured(ui, response, point)
+            && armed_target(doc, view, layout, scene, view.xf().sheet(point))
+    };
+    let armed_idle =
+        armed && view.board_input.creation_press.is_none() && view.board_input.connector.is_none();
+    let armed_hover = armed_idle && (over_controls || pointer.is_some_and(on_content));
+    let armed_passthrough = armed_idle
+        && (over_controls
+            || pressed_origin
+                .or_else(|| ctx.input(|input| input.pointer.press_origin()))
+                .or_else(|| response.interact_pointer_pos())
+                .is_some_and(on_content));
+    view.board_input.armed_hover = armed_hover;
+    view.board_input.ghost = response.hover_pos().filter(|point| {
+        armed_idle && !armed_hover && canvas_point_unobscured(ui, response, *point)
+    });
+    if tool != BoardTool::Select && !armed_passthrough {
         let mut started_here = false;
-        let pressed_origin = ctx.input(|input| {
-            input.events[event_offset..]
-                .iter()
-                .find_map(|event| match event {
-                    egui::Event::PointerButton {
-                        pos,
-                        button: PointerButton::Primary,
-                        pressed: true,
-                        ..
-                    } => Some(*pos),
-                    _ => None,
-                })
-        });
         if view.board_input.creation_press.is_none()
             && let Some(origin) = pressed_origin
             && canvas_point_unobscured(ui, response, origin)
@@ -2183,7 +2225,17 @@ pub(super) fn keyboard(
             return true;
         }
     }
-    if view.board_tool != BoardTool::Select && view.board_tool != BoardTool::Hand {
+    let armed = matches!(view.board_tool, BoardTool::Shape(_));
+    if armed && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::V)) {
+        view.set_board_tool(BoardTool::Select);
+        return true;
+    }
+    // With a selection, an armed shape edits like Select (arrows, F2, typing);
+    // without one, Enter/Space still inserts the armed shape.
+    let armed_editing =
+        armed && !board_actions::selected_board_members(doc.sheet(), view).is_empty();
+    if view.board_tool != BoardTool::Select && view.board_tool != BoardTool::Hand && !armed_editing
+    {
         if ctx.input_mut(|input| {
             input.consume_key(Modifiers::NONE, Key::Enter)
                 || input.consume_key(Modifiers::NONE, Key::Space)
@@ -2369,6 +2421,30 @@ pub(super) fn paint(
             .memory(|memory| memory.has_focus(control_id(control)))
         {
             painter.circle_stroke(center, 9.0, Stroke::new(2.0, view.accent));
+        }
+    }
+
+    if let BoardTool::Shape(kind) = view.board_tool
+        && view.board_input.gesture.is_none()
+        && view.board_input.creation_press.is_none()
+        && let Some(pointer) = view.board_input.ghost
+    {
+        let center = snapped(sheet, xf.sheet(pointer));
+        let ghost = xf.rect(thinoda_core::Rect::from_center_size(
+            center,
+            default_size(view.board_tool),
+        ));
+        let point = |p: Vec2| ghost.min + vec2(p.x * ghost.width(), p.y * ghost.height());
+        let stroke = Stroke::new(1.5, view.accent.gamma_multiply(0.6));
+        painter.add(egui::Shape::closed_line(
+            kind.unit_outline().into_iter().map(point).collect(),
+            stroke,
+        ));
+        for detail in kind.unit_details() {
+            painter.add(egui::Shape::line(
+                detail.into_iter().map(point).collect(),
+                stroke,
+            ));
         }
     }
 

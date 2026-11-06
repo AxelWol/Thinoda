@@ -2162,10 +2162,9 @@ impl ThinodaApp {
             } else {
                 self.editing_toolbar(&ctx, center.response.rect)
             };
-            (
-                self.board_toolbar(&ctx, center.response.rect, editing_toolbar),
-                editing_toolbar,
-            )
+            let board_toolbar = self.board_toolbar(&ctx, center.response.rect, editing_toolbar);
+            self.armed_shape_hint(&ctx, center.response.rect);
+            (board_toolbar, editing_toolbar)
         } else {
             Self::close_connector_popups(&ctx, self.current_viewport);
             (None, None)

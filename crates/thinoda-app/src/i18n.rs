@@ -1881,6 +1881,10 @@ const DE: &[(&str, &str)] = &[
     ("Write an email", "E-Mail schreiben"),
     ("Open in web browser", "Im Webbrowser öffnen"),
     ("Thinoda on GitHub", "Thinoda auf GitHub"),
+    (
+        "Click empty space to add · Esc to finish",
+        "Zum Hinzufügen auf eine freie Stelle klicken · Esc zum Beenden",
+    ),
     ("All sheets", "Alle Blätter"),
     ("Include labels", "Beschriftungen einbeziehen"),
     ("Replaces topic titles only.", "Ersetzt nur Thementitel."),

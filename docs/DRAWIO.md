@@ -640,6 +640,31 @@ than 480 pt omit it so sheet tabs and status controls keep their room; it stays
 reachable from the home screen and About. Covered by `tests/github_badge.rs` and
 `tests/bottom_bar.rs`.
 
+**Phase 1a — armed-shape placement (draw.io behaviour).** Picking a shape tile now
+*arms* it instead of hijacking every click:
+
+- While a shape is armed, hovering existing content (board objects, frame edges and
+  title bands, mind-map topics, selection handles) shows the normal Select cursor and
+  hover feedback; pressing there selects, moves, resizes or rotates exactly like the
+  Select tool. Only a click or tap on empty space (a frame *interior* counts as empty)
+  creates the armed shape, as one undoable edit.   A translucent, snapped ghost outline of
+    the shape follows the pointer over empty space (no crosshair over content).
+- Exit rules: Esc or V returns to Select (so type-to-edit cannot start with "v" while
+  armed); clicking the armed tile again disarms it. With a board selection, Enter/Space
+  edit its label instead of creating another shape.
+- A translated hint chip under the toolbar (*Click empty space to add · Esc to finish*)
+  explains the mode. It is dismissible for the session, and hidden on canvases narrower
+  than 520 pt or shorter than 160 pt. egui has no live-region API, so it is not announced;
+  the armed tile's selected state remains the accessible signal.
+- Touch: a tap on content selects, a tap on empty space creates; drags behave as in
+  Select mode.
+- Tests: `armed_shape_*` in `board_tests.rs` (mouse, touch, keyboard, undo
+  granularity) and `armed_shape_hint_*` in `board_ui.rs`.
+
+Remaining Phase 1 slices: direction arrows and quick-shape popover (1b), shape-aware
+perimeters (1c), floating edge/shape toolbars (1d), tile drag-and-drop and keyboard
+insert at a free spot (1e).
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

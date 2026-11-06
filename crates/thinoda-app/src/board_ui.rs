@@ -19,6 +19,15 @@ use crate::{
     i18n::{self, t},
 };
 
+/// Hint shown while a shape tool is armed (draw.io-style placement).
+pub(crate) const ARMED_SHAPE_HINT: &str = "Click empty space to add · Esc to finish";
+/// Narrower canvases skip the hint so it never covers the minimap or toolbars.
+pub(crate) const ARMED_SHAPE_HINT_MIN_WIDTH: f32 = 520.0;
+
+fn armed_shape_hint_dismissed_id() -> egui::Id {
+    egui::Id::unique("thinoda_armed_shape_hint_dismissed")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ConnectorOwner {
     viewport: egui::ViewportId,
@@ -688,7 +697,13 @@ impl ThinodaApp {
                             row_height,
                             |ui| {
                                 if let Some(shape) = shape_library(ui, canvas, tool, t) {
-                                    command = Some(Cmd::BoardTool(BoardTool::Shape(shape)));
+                                    // Choosing the armed tile again finishes placing shapes.
+                                    command =
+                                        Some(Cmd::BoardTool(if tool == BoardTool::Shape(shape) {
+                                            BoardTool::Select
+                                        } else {
+                                            BoardTool::Shape(shape)
+                                        }));
                                     ui.close_kind(egui::UiKind::Menu);
                                 }
                             },
@@ -779,6 +794,38 @@ impl ThinodaApp {
             self.exec(ctx, command);
         }
         Some(toolbar.response.rect)
+    }
+
+    /// Bottom-centre hint while a shape is armed; dismissible for the session.
+    pub(crate) fn armed_shape_hint(&mut self, ctx: &Context, canvas: Rect) -> Option<Rect> {
+        let doc = self.doc()?;
+        if !matches!(doc.view.board_tool, BoardTool::Shape(_))
+            || canvas.width() < ARMED_SHAPE_HINT_MIN_WIDTH
+            || canvas.height() < 160.0
+            || ctx.data(|data| data.get_temp::<bool>(armed_shape_hint_dismissed_id())) == Some(true)
+        {
+            return None;
+        }
+        let mut dismiss = false;
+        let area = egui::Area::new(egui::Id::unique("thinoda_armed_shape_hint"))
+            .order(egui::Order::Middle)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(canvas.center().x, canvas.bottom() - 12.0))
+            .constrain_to(canvas)
+            .movable(false)
+            .show(ctx, |ui| {
+                widgets::card(ui).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        widgets::caption(ui, t(ARMED_SHAPE_HINT));
+                        let close = widgets::icon_button(ui, icons::CLOSE, t("Dismiss"), false);
+                        dismiss = close.clicked() && widgets::touch_activation_allowed(ctx);
+                    });
+                });
+            });
+        if dismiss {
+            ctx.data_mut(|data| data.insert_temp(armed_shape_hint_dismissed_id(), true));
+        }
+        Some(area.response.rect)
     }
 
     /// Shows properties for a selected free object instead of topic styling.
@@ -1856,6 +1903,77 @@ mod tests {
         assert_eq!(doc.doc.workbook(), &before);
         assert_eq!(doc.doc.state_id(), before_state);
         assert_eq!(doc.is_dirty(), before_dirty);
+    }
+
+    #[test]
+    fn armed_shape_hint_explains_placement_and_the_armed_tile_disarms() {
+        let mut harness = harness();
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+        let arm = |harness: &mut Harness<'_, ThinodaApp>| {
+            harness.get_by_label("Shape library").click();
+            harness.run_steps(4);
+            harness
+                .get_by_role_and_label(egui::Role::Button, "Pentagon")
+                .click();
+            harness.run_steps(3);
+        };
+        arm(&mut harness);
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Shape(ShapeKind::Pentagon)
+        );
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_some());
+
+        arm(&mut harness);
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Select
+        );
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+
+        arm(&mut harness);
+        harness.get_by_label("Dismiss").click();
+        harness.run_steps(3);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Shape(ShapeKind::Pentagon)
+        );
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Select);
+        harness.run_steps(2);
+        arm(&mut harness);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+    }
+
+    #[test]
+    fn armed_shape_hint_is_hidden_on_narrow_canvases() {
+        for (width, visible) in [(ARMED_SHAPE_HINT_MIN_WIDTH - 20.0, false), (700.0, true)] {
+            let mut app = ThinodaApp::headless();
+            app.doc_mut()
+                .unwrap()
+                .view
+                .set_board_tool(BoardTool::Shape(ShapeKind::Ellipse));
+            let mut harness = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    move |ui, app: &mut ThinodaApp| {
+                        let canvas = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 500.0));
+                        app.armed_shape_hint(ui.ctx(), canvas);
+                    },
+                    app,
+                );
+            harness.run_steps(3);
+            assert_eq!(
+                harness.query_by_label(ARMED_SHAPE_HINT).is_some(),
+                visible,
+                "{width}"
+            );
+        }
     }
 
     #[test]
