@@ -318,6 +318,8 @@ pub struct MapView {
     pub board_labels: BoardLabels,
     pub selected_object: Option<ObjectSelection>,
     pub context_marker: Option<(TopicId, usize)>,
+    /// Sheet position of the latest canvas secondary click, used by context actions.
+    pub context_point: Option<Vec2>,
     /// Source topic while the user is picking the target of a new relationship.
     pub relationship_from: Option<TopicId>,
     pub relationship_handle_labels: [String; 4],
@@ -381,6 +383,7 @@ impl Default for MapView {
             board_labels: BoardLabels::default(),
             selected_object: None,
             context_marker: None,
+            context_point: None,
             relationship_from: None,
             relationship_handle_labels: [
                 "Relationship start",
@@ -2075,6 +2078,7 @@ impl MapCanvas {
             view.context_marker = None;
             view.commit_edit(doc);
             let point = view.xf().sheet(p);
+            view.context_point = Some(point);
             if let Some(t) = scene_topic_hit(&scene, point) {
                 view.context_marker = layout.topics.get(&t).and_then(|topic| {
                     topic
