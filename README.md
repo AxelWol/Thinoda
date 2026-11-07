@@ -729,6 +729,8 @@ those system-owned controls. WinGet publishing remains paused.
   the image is **not redacted**. Conversion may simplify or omit features; review
   the export warnings and retain a `.thinoda` copy. Unsupported content can
   prevent export. Editable image export is not Save As or lossless save-back.
+  Import also recognizes legacy URI- or base64-encoded SVG diagrams and older
+  PNG diagram metadata.
   HTML exports with one embedded draw.io viewer can also be opened or dropped
   as converted copies; Thinoda never runs their scripts or loads remote URLs.
   Remote-only viewers and HTML containing multiple diagrams are not imported.

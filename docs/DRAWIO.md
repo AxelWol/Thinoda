@@ -909,6 +909,23 @@ devices or all existing content; unsupported FIM provenance, equations and
 resources can block export, and conversion losses remain possible. Multi-sheet
 embedded exports, lossless round trips and save-back remain future work.
 
+**Legacy embedded image compatibility and critique (partial Phase 11).**
+Opening SVG diagrams now accepts URI-encoded XML and base64-encoded XML or
+URI text, in addition to the previously supported compressed form. Diagram
+detection parses the decoded XML root, including declarations, rather than
+mistaking similarly named elements for diagrams. PNG import also recognizes
+the legacy `mxGraphModel` metadata keyword alongside `mxfile` in `tEXt`,
+`zTXt` and `iTXt` chunks; invalid `iTXt` compression flags and methods are
+rejected. Existing input and inflation limits still apply. Ordinary `.png`
+drops remain images; explicitly named `.drawio.png` drops remain documents.
+
+Synthetic regression cases cover these encodings, Unicode, bare graph models,
+invalid metadata and ordinary-image detection. The URI-encoded, four-page
+[`svgfile.svg`](https://github.com/jgraph/drawio-diagrams/blob/dev/diagrams/svgfile.svg)
+from the published draw.io examples also imported and validated all four pages.
+That check establishes compatibility with this container variant, not complete
+conversion fidelity: unsupported shapes and styles can still produce warnings.
+
 **Published link import checkpoint and critique (partial Phase 11).** **File >
 Import draw.io link…** and the command palette accept a self-contained `#R`
 fragment or an HTTP(S) URL containing one. The dialog decodes URI-encoded XML

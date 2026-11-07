@@ -526,6 +526,112 @@ fn svg_and_png_containers_are_detected_and_imported() {
 }
 
 #[test]
+fn legacy_svg_uri_and_base64_content_are_detected_and_imported() {
+    let label = "Legacy \u{fc}";
+    let model = page(&format!(
+        r#"<mxCell id="v" value="{label}" style="ellipse;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#
+    ));
+    let xml = format!("<?xml version=\"1.0\"?>{model}");
+    let uri = percent_encode(&xml);
+    let compressed = miniz_oxide::deflate::compress_to_vec(uri.as_bytes(), 6);
+    let encoded = [
+        ("URI", uri.clone()),
+        (
+            "base64 XML",
+            base64::engine::general_purpose::STANDARD.encode(xml.as_bytes()),
+        ),
+        (
+            "base64 URI",
+            base64::engine::general_purpose::STANDARD.encode(uri.as_bytes()),
+        ),
+        (
+            "base64 compressed",
+            base64::engine::general_purpose::STANDARD.encode(compressed),
+        ),
+    ];
+    for (encoding, content) in encoded {
+        let svg = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" content="{content}"/>"#);
+        assert_eq!(
+            detect_format(Path::new("legacy.svg"), svg.as_bytes()),
+            Some(Format::DrawIo),
+            "{encoding}"
+        );
+        let report = import(svg.as_bytes()).unwrap();
+        assert!(
+            report.warnings.is_empty(),
+            "{encoding}: {:?}",
+            report.warnings
+        );
+        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), label);
+    }
+
+    let unrelated = r#"<svg content="&lt;mxfileUnexpected/&gt;"/>"#;
+    assert_eq!(
+        detect_format(Path::new("picture.svg"), unrelated.as_bytes()),
+        Some(Format::Svg)
+    );
+    assert!(import(br#"<svg content="%3Cmxfile%ZZ"/>"#).is_err());
+}
+
+#[test]
+fn legacy_png_keyword_is_detected_and_imported() {
+    let label = "Legacy \u{fc}";
+    let model = page(&format!(
+        r#"<mxCell id="v" value="{label}" style="ellipse;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#
+    ));
+    let text = percent_encode(&model);
+    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 6);
+    for (kind, flag) in [(b"tEXt", 0), (b"zTXt", 1), (b"iTXt", 0), (b"iTXt", 1)] {
+        let mut data = b"mxGraphModel\0".to_vec();
+        match kind {
+            b"zTXt" => data.push(0),
+            b"iTXt" => data.extend_from_slice(&[flag, 0, 0, 0]),
+            _ => {}
+        }
+        data.extend_from_slice(if flag == 1 {
+            &compressed
+        } else if kind == b"tEXt" {
+            text.as_bytes()
+        } else {
+            model.as_bytes()
+        });
+        let mut png = PNG_SIGNATURE.to_vec();
+        png_chunk(&mut png, b"IHDR", &[0; 13]);
+        png_chunk(&mut png, kind, &data);
+        png_chunk(&mut png, b"IEND", &[]);
+        for name in ["legacy.png", "legacy.drawio.png"] {
+            assert_eq!(detect_format(Path::new(name), &png), Some(Format::DrawIo));
+        }
+        let report = import(&png).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), label);
+    }
+
+    let bare_model = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="Bare" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel>"#;
+    let mut text = b"mxGraphModel\0".to_vec();
+    text.extend_from_slice(percent_encode(bare_model).as_bytes());
+    let mut png = PNG_SIGNATURE.to_vec();
+    png_chunk(&mut png, b"tEXt", &text);
+    png_chunk(&mut png, b"IEND", &[]);
+    let report = import(&png).unwrap();
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Bare");
+
+    for (flag, method) in [(2, 0), (0, 1), (1, 1)] {
+        let mut data = b"mxGraphModel\0".to_vec();
+        data.extend_from_slice(&[flag, method, 0, 0]);
+        data.extend_from_slice(model.as_bytes());
+        let mut png = PNG_SIGNATURE.to_vec();
+        png_chunk(&mut png, b"iTXt", &data);
+        png_chunk(&mut png, b"IEND", &[]);
+        assert_eq!(
+            detect_format(Path::new("invalid.png"), &png),
+            Some(Format::Png)
+        );
+        assert!(import(&png).is_err());
+    }
+}
+
+#[test]
 fn png_compressed_and_international_text_chunks_import_diagrams() {
     let label = "Embedded \u{fc}";
     let model = page(&format!(

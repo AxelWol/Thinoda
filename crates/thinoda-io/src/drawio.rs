@@ -198,6 +198,10 @@ fn root_start(text: &str) -> Option<Element> {
     }
 }
 
+fn is_drawio_xml(text: &str) -> bool {
+    root_start(text).is_some_and(|root| matches!(root.name.as_str(), "mxfile" | "mxGraphModel"))
+}
+
 // ---------------------------------------------------------------------------------------
 // Containers and compression
 
@@ -244,7 +248,11 @@ fn decode_compressed(text: &str) -> Result<String, IoError> {
     let data = base64::engine::general_purpose::STANDARD
         .decode(cleaned.as_bytes())
         .map_err(|_| invalid("draw.io page is neither XML nor compressed diagram data"))?;
-    let raw = inflate(&data).ok_or_else(|| invalid("draw.io page data cannot be decompressed"))?;
+    decode_compressed_bytes(&data)
+}
+
+fn decode_compressed_bytes(data: &[u8]) -> Result<String, IoError> {
+    let raw = inflate(data).ok_or_else(|| invalid("draw.io page data cannot be decompressed"))?;
     let text = String::from_utf8(raw).map_err(|_| invalid("draw.io page data is not UTF-8"))?;
     Ok(uri_decode(text))
 }
@@ -290,7 +298,7 @@ fn latin1(bytes: &[u8]) -> String {
     bytes.iter().map(|&b| char::from(b)).collect()
 }
 
-/// Text of the `mxfile` PNG chunk written by draw.io (tEXt, zTXt or iTXt).
+/// Text of a draw.io PNG metadata chunk (tEXt, zTXt or iTXt).
 fn png_mxfile(bytes: &[u8]) -> Option<String> {
     if !bytes.starts_with(PNG_SIGNATURE) {
         return None;
@@ -305,7 +313,10 @@ fn png_mxfile(bytes: &[u8]) -> Option<String> {
             return None;
         }
         let data = &bytes[start..end];
-        if let Some(rest) = data.strip_prefix(b"mxfile\0") {
+        if let Some(rest) = data
+            .strip_prefix(b"mxfile\0")
+            .or_else(|| data.strip_prefix(b"mxGraphModel\0"))
+        {
             match kind {
                 b"tEXt" => return Some(latin1(rest)),
                 b"zTXt" => {
@@ -317,7 +328,10 @@ fn png_mxfile(bytes: &[u8]) -> Option<String> {
                 }
                 b"iTXt" => {
                     let (&flag, rest) = rest.split_first()?;
-                    let (_, rest) = rest.split_first()?;
+                    let (&method, rest) = rest.split_first()?;
+                    if flag > 1 || method != 0 {
+                        return None;
+                    }
                     let lang_end = rest.iter().position(|&b| b == 0)?;
                     let rest = &rest[lang_end + 1..];
                     let key_end = rest.iter().position(|&b| b == 0)?;
@@ -341,12 +355,41 @@ fn png_mxfile(bytes: &[u8]) -> Option<String> {
 }
 
 fn svg_content(content: &str) -> Result<String, IoError> {
-    let trimmed = content.trim_start();
+    let trimmed = content
+        .trim_start()
+        .trim_start_matches('\u{feff}')
+        .trim_start();
     if trimmed.starts_with('<') {
-        Ok(trimmed.to_owned())
-    } else {
-        decode_compressed(trimmed)
+        return Ok(trimmed.to_owned());
     }
+    if trimmed.starts_with('%') {
+        return percent_decode(trimmed)
+            .ok_or_else(|| invalid("SVG diagram has invalid URI encoding or UTF-8"));
+    }
+    let cleaned: String = trimmed
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(cleaned.as_bytes())
+        .map_err(|_| invalid("SVG diagram is neither XML nor valid base64"))?;
+    if let Ok(text) = std::str::from_utf8(&data) {
+        let text = text
+            .trim_start()
+            .trim_start_matches('\u{feff}')
+            .trim_start();
+        let xml = if text.starts_with('<') {
+            Some(text.to_owned())
+        } else if text.starts_with('%') {
+            percent_decode(text)
+        } else {
+            None
+        };
+        if let Some(xml) = xml.filter(|xml| is_drawio_xml(xml)) {
+            return Ok(xml);
+        }
+    }
+    decode_compressed_bytes(&data)
 }
 
 /// `true` when `bytes` hold a draw.io diagram, including SVG and PNG exports
@@ -362,12 +405,9 @@ pub(crate) fn sniff(bytes: &[u8]) -> bool {
     match root_start(text) {
         Some(root) => match root.name.as_str() {
             "mxfile" | "mxGraphModel" => true,
-            "svg" => root.attr("content").is_some_and(|content| {
-                svg_content(content).is_ok_and(|xml| {
-                    let xml = xml.trim_start();
-                    xml.starts_with("<mxfile") || xml.starts_with("<mxGraphModel")
-                })
-            }),
+            "svg" => root
+                .attr("content")
+                .is_some_and(|content| svg_content(content).is_ok_and(|xml| is_drawio_xml(&xml))),
             _ => false,
         },
         None => false,
@@ -383,9 +423,7 @@ pub(crate) fn sniff_html(bytes: &[u8]) -> bool {
     {
         return false;
     }
-    html::extract(bytes).is_ok_and(|xml| {
-        root_start(&xml).is_some_and(|root| matches!(root.name.as_str(), "mxfile" | "mxGraphModel"))
-    })
+    html::extract(bytes).is_ok_and(|xml| is_drawio_xml(&xml))
 }
 
 pub(crate) fn import_html(bytes: &[u8]) -> Result<ImportReport, IoError> {
