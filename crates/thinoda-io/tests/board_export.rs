@@ -240,6 +240,49 @@ fn classic_and_thin_markers_require_v12_and_extended_xmind_snapshots() {
 }
 
 #[test]
+fn marker_sizes_require_v13_and_size_aware_xmind_snapshots() {
+    let mut sheet = Sheet::new("Sized markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.end_marker_size = Some(12.5);
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(required_native_version(&book), 13);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 13);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":12,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("connector marker sizes require native format version 13")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-3")
+    );
+}
+
+#[test]
 fn connector_markers_render_in_svg_raster_and_presentation_exports() {
     let mut sheet = Sheet::new("Markers", "");
     sheet.root_mode = SheetRootMode::Hidden;
@@ -330,6 +373,60 @@ fn classic_markers_render_notches_in_visual_and_presentation_exports() {
     let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
     assert_eq!(slide.matches(&format!("Canvas object {id}")).count(), 3);
     assert!(slide.matches("<a:close/>").count() >= 2, "{slide}");
+}
+
+#[test]
+fn custom_marker_sizes_render_in_visual_and_presentation_exports() {
+    let mut sheet = Sheet::new("Sized markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    connector.start_marker_size = Some(0.0);
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.end_marker_size = Some(12.5);
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 100.0));
+    sheet
+        .add_presentation_slide(
+            "Markers",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 180.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let start = "M 4.24,-1.00 L 2.24,0.00 L 4.24,1.00 Z";
+    let end = "M 83.26,7.25 L 97.76,0.00 L 83.26,-7.25 L 86.89,0.00 Z";
+    assert!(svg.contains(start), "{svg}");
+    assert!(svg.contains(end), "{svg}");
+    assert!(svg.contains("M 4.24,0.00 L 86.89,0.00"), "{svg}");
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    assert!(slide.contains(start));
+    assert!(slide.contains(end));
+    let sized = export(&book, Format::Png);
+    let mut default = book.clone();
+    let CanvasObjectKind::Connector(connector) = &mut default.sheets[0].canvas.objects[0].kind
+    else {
+        panic!("expected connector");
+    };
+    connector.start_marker_size = None;
+    connector.end_marker_size = None;
+    assert_ne!(sized, export(&default, Format::Png));
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(slide.matches(&format!("Canvas object {id}")).count(), 3);
 }
 
 #[test]

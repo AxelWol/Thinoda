@@ -4,9 +4,9 @@
 
 use crate::board::{
     Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorMarkerKind,
-    ConnectorRoute, Endpoint, GridKind, ShapeKind, distance_to_outline, distance_to_polyline,
-    point_in_polygon, points_bounds, rotate_around, rotated_bounds, rotated_rect_contains,
-    shape_geometry,
+    ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, ShapeKind,
+    distance_to_outline, distance_to_polyline, point_in_polygon, points_bounds, rotate_around,
+    rotated_bounds, rotated_rect_contains, shape_geometry,
 };
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rotated_rect, cubic};
@@ -74,6 +74,7 @@ fn connector_marker_geometry(
     at_start: bool,
     kind: ConnectorMarkerKind,
     width: f32,
+    marker_size: f32,
 ) -> Option<ConnectorMarkerGeometry> {
     let tip = if at_start {
         *points.first()?
@@ -94,7 +95,7 @@ fn connector_marker_geometry(
     let direction = delta * (1.0 / delta.length());
     let normal = Vec2::new(-direction.y, direction.x);
     let offset = width * 1.118;
-    let size = 6.0 + width;
+    let size = marker_size + width;
     let tip = tip - direction * offset;
     let base = tip - direction * size;
     let classic = matches!(
@@ -369,10 +370,22 @@ fn object_item(
             SceneGeometry::Polyline {
                 markers: [
                     c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
-                        connector_marker_geometry(&points, true, marker.kind, c.width)
+                        connector_marker_geometry(
+                            &points,
+                            true,
+                            marker.kind,
+                            c.width,
+                            c.start_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                        )
                     }),
                     c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
-                        connector_marker_geometry(&points, false, marker.kind, c.width)
+                        connector_marker_geometry(
+                            &points,
+                            false,
+                            marker.kind,
+                            c.width,
+                            c.end_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                        )
                     }),
                 ],
                 points,

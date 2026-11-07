@@ -20,9 +20,10 @@ use thinoda_core::{
     board::{
         Band, BoardMember, CanvasConnector, CanvasGroupId, CanvasObject, CanvasObjectId,
         CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind, ConnectorRoute,
-        Endpoint, GridKind, InkStroke, InkTool, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE,
-        MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, ShapeKind,
-        SheetRootMode, normalize_rotation, rotate_around,
+        DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, InkStroke, InkTool,
+        MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE,
+        MIN_STROKE_WIDTH, ObjectStyle, ShapeKind, SheetRootMode, normalize_rotation, rotate_around,
+        valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -642,6 +643,13 @@ impl Style {
         Some(ConnectorMarker { kind })
     }
 
+    fn marker_size(&self, arrow_key: &str, size_key: &str) -> Option<f32> {
+        self.marker(arrow_key)?;
+        self.num(size_key)
+            .filter(|value| valid_connector_marker_size(*value))
+            .filter(|value| *value != DEFAULT_CONNECTOR_MARKER_SIZE)
+    }
+
     /// Visual details without a Thinoda equivalent.
     fn formatting_loss(&self, edge: bool) -> bool {
         const FLAGS: [&str; 7] = [
@@ -705,9 +713,17 @@ impl Style {
                     || ["startFill", "endFill"]
                         .iter()
                         .any(|key| differs_from(key, 1.0))
-                    || ["startSize", "endSize"]
+                    || [("startArrow", "startSize"), ("endArrow", "endSize")]
                         .iter()
-                        .any(|key| differs_from(key, 6.0))
+                        .any(|(arrow, key)| {
+                            self.get(key).is_some_and(|_| {
+                                self.num(key).is_none_or(|value| {
+                                    !valid_connector_marker_size(value)
+                                        || (value != DEFAULT_CONNECTOR_MARKER_SIZE
+                                            && self.marker(arrow).is_none())
+                                })
+                            })
+                        })
                     || ["sourcePerimeterSpacing", "targetPerimeterSpacing"]
                         .iter()
                         .any(|key| differs_from(key, 0.0))
@@ -1715,6 +1731,8 @@ impl<'a> PageImport<'a> {
         connector.arrow_start = style.start_arrow();
         connector.start_marker = style.marker("startArrow");
         connector.end_marker = style.marker("endArrow");
+        connector.start_marker_size = style.marker_size("startArrow", "startSize");
+        connector.end_marker_size = style.marker_size("endArrow", "endSize");
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
@@ -2502,6 +2520,12 @@ impl<'a> PageWriter<'a> {
                     if connector.start_marker.is_none() {
                         style.push_str("thinodaLegacyStartArrow=1;");
                     }
+                }
+                if let Some(size) = connector.start_marker_size {
+                    style.push_str(&format!("startSize={};", num(size)));
+                }
+                if let Some(size) = connector.end_marker_size {
+                    style.push_str(&format!("endSize={};", num(size)));
                 }
                 color_keys(&mut style, "strokeColor", "strokeOpacity", connector.color);
                 color_keys(

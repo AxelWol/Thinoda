@@ -48,6 +48,8 @@ const MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-1";
 const MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-1";
 const EXTENDED_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-2";
 const EXTENDED_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-2";
+const SIZED_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-3";
+const SIZED_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-3";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -69,7 +71,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_extended_connector_markers() {
+        tuple.serialize_element(if self.workbook.has_connector_marker_sizes() {
+            SIZED_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_extended_connector_markers() {
             EXTENDED_MARKER_INK_WORKBOOK_VERSION
         } else if self.workbook.has_connector_markers() {
             MARKER_INK_WORKBOOK_VERSION
@@ -134,7 +138,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_extended_connector_markers() {
+    let version = if workbook.has_connector_marker_sizes() {
+        SIZED_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_extended_connector_markers() {
         EXTENDED_MARKER_WORKBOOK_VERSION
     } else if workbook.has_connector_markers() {
         MARKER_WORKBOOK_VERSION
@@ -198,6 +204,8 @@ where
                 && version != MARKER_INK_WORKBOOK_VERSION
                 && version != EXTENDED_MARKER_WORKBOOK_VERSION
                 && version != EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                && version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -210,6 +218,8 @@ where
                 && version != MARKER_INK_WORKBOOK_VERSION
                 && version != EXTENDED_MARKER_WORKBOOK_VERSION
                 && version != EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                && version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -218,10 +228,20 @@ where
             }
             if version != EXTENDED_MARKER_WORKBOOK_VERSION
                 && version != EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                && version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_extended_connector_markers()
             {
                 return Err(A::Error::custom(
                     "classic and thin connector markers require an extended-marker recovery workbook",
+                ));
+            }
+            if version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
+                && workbook.has_connector_marker_sizes()
+            {
+                return Err(A::Error::custom(
+                    "connector marker sizes require a size-aware recovery workbook",
                 ));
             }
             if version == INLINE_WORKBOOK_VERSION && workbook.has_connector_waypoints() {
@@ -232,6 +252,7 @@ where
             let pending_ink = if version == INK_WORKBOOK_VERSION
                 || version == MARKER_INK_WORKBOOK_VERSION
                 || version == EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                || version == SIZED_MARKER_INK_WORKBOOK_VERSION
             {
                 let pending_ink: String = seq
                     .next_element()?
@@ -1234,6 +1255,59 @@ mod lock_tests {
                         .contains("classic and thin connector markers require an extended-marker recovery workbook")
                 );
             }
+        }
+    }
+
+    #[test]
+    fn marker_sizes_require_size_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        connector.end_marker_size = Some(12.5);
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    SIZED_MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    SIZED_MARKER_WORKBOOK_VERSION
+                }
+            );
+            value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                EXTENDED_MARKER_INK_WORKBOOK_VERSION
+            } else {
+                EXTENDED_MARKER_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector marker sizes require a size-aware recovery workbook")
+            );
         }
     }
 

@@ -717,6 +717,44 @@ fn classic_and_thin_marker_board_clipboards_require_version_five() {
 }
 
 #[test]
+fn sized_marker_board_clipboards_require_version_six() {
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.end_marker = Some(crate::ConnectorMarker {
+        kind: crate::ConnectorMarkerKind::Open,
+    });
+    connector.end_marker_size = Some(12.5);
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(SIZED_MARKER_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let forged = encoded.replacen("THINODA-BOARD-CLIPBOARD-6", "THINODA-BOARD-CLIPBOARD-5", 1);
+    assert!(
+        decode_board_payload(&forged)
+            .unwrap_err()
+            .contains("connector marker sizes require board clipboard version 6")
+    );
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    let CanvasObjectKind::Connector(connector) =
+        &destination.canvas.object(pasted.objects[0]).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.end_marker_size, Some(12.5));
+}
+
+#[test]
 fn connectors_keep_selected_targets_and_detach_external_targets_at_rendered_points() {
     let mut source = Sheet::new("Source", "Root");
     let external_topic = source.add_child(source.root, None, "External");

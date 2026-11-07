@@ -730,10 +730,11 @@ those system-owned controls. WinGet publishing remains paused.
   contain **only the current sheet**, both in the preview and in the embedded
   diagram. Their embedded data can include content outside the visible preview:
   the image is **not redacted**. Conversion may simplify or omit features; review
-  the warnings and retain the original file and a `.thinoda` copy. Default-sized
-  classic, open and filled block connector arrows, including thin variants, are
-  editable. Unsupported marker shapes, custom sizes and fills, and fixed-port
-  hints trigger a formatting warning. Existing Thinoda triangle arrows retain
+  the warnings and retain the original file and a `.thinoda` copy. Classic,
+  open and filled block connector arrows, including thin variants, support
+  independent start and end sizes from 0 to 999. Unsupported marker shapes,
+  sizes outside that range, custom fills, and fixed-port hints trigger a
+  formatting warning. Existing Thinoda triangle arrows retain
   their appearance in native files; exporting them for draw.io warns that their
   appearance is approximated.
   Unsupported content can prevent export. Editable image export is not Save As

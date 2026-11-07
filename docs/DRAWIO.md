@@ -195,8 +195,9 @@ Rules (each backed by a test):
    fresh ids and default envelope.
 
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
-  block connector markers, and v12 adds classic and thin markers. Every later
-  field or passthrough representation that a v12 reader cannot preserve must
+  block connector markers, v12 adds classic and thin markers, and v13 adds
+  marker sizes. Every later field or passthrough representation that a v13
+  reader cannot preserve must
   require a higher native version, with `required_native_version` choosing the
   oldest version that can represent the complete workbook. Older builds must
   reject that version instead of silently dropping data. Version sheet/board
@@ -556,7 +557,8 @@ connections arrive in Phase 8 without changing the gestures).
   `DrawIoPageExt`/`DrawIoCellExt`, ownership table, tombstones, marker migration.
 - `required_native_version` gates every field at the first version that supports
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
-  and thin markers, and subsequent additions need a higher version.
+  and thin markers, v13 covers marker sizes, and subsequent additions need a
+  higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1188,24 +1190,44 @@ loss report now discloses this. Thinoda-specific style hints retain the legacy
 triangle on a subsequent import if the corresponding arrow remains unchanged;
 changing its marker, size or fill takes precedence over that hint.
 
-**Critique and remaining work.** Six of the published marker types now have
-default-size representations, not the complete marker family. Custom sizes,
-unfilled markers, other shapes and fixed ports still require approximation
-warnings; those warnings remain generic. Older draw.io exports lack the legacy
+**Critique at this slice.** Six of the published marker types have
+default-size representations, not the complete marker family. At this
+checkpoint custom sizes, unfilled markers, other shapes and fixed ports
+required approximation warnings; the later marker-size slice addresses the
+first of these. Warnings remain generic. Older draw.io exports lack the legacy
 hints, and a third-party editor can remove them, so legacy identity cannot
 always be recovered from draw.io alone. Geometry, routing, XMind private-data
 and accessibility limitations described above remain. The source draw.io file
 and a native copy should still be retained; lossless save-back remains
 unimplemented.
 
-**Next connector priority: marker sizes.** A scan of all 89 supplied diagrams,
+**Marker sizes (partial Phases 3, 4 and 8).** A scan of all 89 supplied diagrams,
 including compressed pages, found non-default sizes on 219 classic arrow ends,
 36 open, 19 blockThin, 17 classicThin and 13 block ends.
 In the published editor the start and end size fields are independent, default
 to 6 pt, accept fractional values and clamp interactive input to 0–999 pt.
-Implement bounded per-end sizes with their own compatibility gates and shared
-render geometry before treating these examples as fully faithful. Keep warnings
-for malformed or out-of-range values and for unsupported fill/port settings.
+Thinoda now preserves bounded per-end sizes for supported marker shapes and uses
+them for canvas rendering, selection, lasso and visual exports. The inspector
+exposes each size independently and preserves it when switching between
+supported styles. Native v13, sheet clipboard v9, board clipboard v6, recovery
+envelopes with and without pending ink, and private XMind snapshots protect
+the new data from older readers. Default-sized markers keep their older formats.
+The published editor's marker paths were also checked at size 12.5 and stroke
+width 2 for all six supported styles, including their line-trimming positions.
+The affected library suites passed 1,855 tests with four ignored, the board
+export and I/O integration suites passed 61 with one ignored, and all 89
+supplied diagrams passed the corpus round trip. Native and WebAssembly Clippy
+passed with warnings denied. The production web build passed all 12 link-import
+journeys across Chromium, Firefox and WebKit, including sized-marker native
+save and the existing conversion-consent cases.
+
+**Critique and remaining work.** Sizes on a disabled or unsupported marker
+remain unrepresented and produce a formatting warning when non-default;
+out-of-range or malformed values also warn and are approximated. Legacy
+Thinoda triangles have no adjustable size. Sizes use finite `f32` values, so
+arbitrary source decimal precision is not lossless. The six supported shapes
+still do not cover hollow arrows, other marker families, fixed ports or the
+remaining routing and save-back limitations above.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

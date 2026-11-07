@@ -2204,16 +2204,27 @@ mod tests {
         use crate::app::Cmd;
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 
-        for (style, start, end) in [
+        for (style, start, end, start_size, end_size) in [
             (
                 "startArrow=block;endArrow=open",
                 ConnectorMarkerKind::Block,
                 ConnectorMarkerKind::Open,
+                None,
+                None,
             ),
             (
                 "startArrow=classicThin;endArrow=openThin",
                 ConnectorMarkerKind::ClassicThin,
                 ConnectorMarkerKind::OpenThin,
+                None,
+                None,
+            ),
+            (
+                "startArrow=classic;startSize=12.5;endArrow=open;endSize=0",
+                ConnectorMarkerKind::Classic,
+                ConnectorMarkerKind::Open,
+                Some(12.5),
+                Some(0.0),
             ),
         ] {
             let (mut app, clipboard) = empty_board_app();
@@ -2233,6 +2244,8 @@ mod tests {
                 .unwrap();
             assert_eq!(connector.start_marker.unwrap().kind, start);
             assert_eq!(connector.end_marker.unwrap().kind, end);
+            assert_eq!(connector.start_marker_size, start_size);
+            assert_eq!(connector.end_marker_size, end_size);
             assert!(!app.toasts.texts().any(|text| text.contains(crate::i18n::t(
                 "Pasted from draw.io; some content was simplified"
             ))));

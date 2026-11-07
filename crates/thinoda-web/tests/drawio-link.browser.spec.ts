@@ -23,6 +23,8 @@ type Sheet = {
                     arrow_end: boolean;
                     start_marker?: { kind: string };
                     end_marker?: { kind: string };
+                    start_marker_size?: number;
+                    end_marker_size?: number;
                 };
             };
         }[];
@@ -186,4 +188,34 @@ test("imports classic and thin markers without changing legacy arrows", async ({
     expect(connectors.some((connector) => connector?.arrow_end && !connector.end_marker)).toBe(true);
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
     expect(manifest.version).toBe(12);
+});
+
+test("imports independent marker sizes into a versioned native workbook", async ({ page }) => {
+    const xml = `<mxfile><diagram name="Sized markers"><mxGraphModel><root>`
+        + `<mxCell id="0"/><mxCell id="1" parent="0"/>`
+        + `<mxCell id="edge" style="startArrow=classic;startSize=12.5;endArrow=open;endSize=0;"`
+        + ` edge="1" parent="1"><mxGeometry relative="1" as="geometry">`
+        + `<mxPoint x="150" y="200" as="sourcePoint"/>`
+        + `<mxPoint x="450" y="200" as="targetPoint"/>`
+        + `</mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>`;
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await enterLink(page, `#R${encodeURIComponent(xml)}`);
+
+    const archive = await saveAs(page, "link-sized-markers.thinoda");
+    const content = contentFrom(archive);
+    const sheet = content.sheets[content.active_sheet];
+    expect(sheet.title).toBe("Sized markers");
+    const connector = sheet.canvas.objects.find((object) => object.kind.connector)?.kind.connector;
+    expect(connector).toMatchObject({
+        start_marker: { kind: "classic" },
+        start_marker_size: 12.5,
+        end_marker: { kind: "open" },
+        end_marker_size: 0,
+    });
+    const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
+    expect(manifest.version).toBe(13);
 });

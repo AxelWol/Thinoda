@@ -110,9 +110,10 @@ conversion warnings and keep a `.thinoda` copy; unsupported content can block
 export. These are export formats, not Save As or lossless save-back. See the
 [draw.io plan and current limitations](DRAWIO.md).
 
-Default-sized classic, open and filled block connector arrows, including thin
-variants, are editable in the connector inspector. Unsupported marker shapes,
-custom sizes and fills, and fixed-port hints trigger a formatting warning.
+Classic, open and filled block connector arrows, including thin variants, have
+independent start and end sizes from 0 to 999 in the connector inspector.
+Unsupported marker shapes, out-of-range sizes, custom fills, and fixed-port
+hints trigger a formatting warning.
 Existing Thinoda triangle arrows retain their native appearance; draw.io export
 warns that they will be approximated. Keep the original diagram.
 

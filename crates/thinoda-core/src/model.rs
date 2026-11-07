@@ -760,6 +760,11 @@ impl Sheet {
         self.canvas.has_extended_connector_markers()
     }
 
+    /// Whether the sheet needs marker-size-aware persistence.
+    pub fn has_connector_marker_sizes(&self) -> bool {
+        self.canvas.has_connector_marker_sizes()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2250,6 +2255,11 @@ impl Workbook {
         self.sheets
             .iter()
             .any(Sheet::has_extended_connector_markers)
+    }
+
+    /// Whether any sheet needs marker-size-aware persistence.
+    pub fn has_connector_marker_sizes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_marker_sizes)
     }
 
     pub fn active(&self) -> &Sheet {

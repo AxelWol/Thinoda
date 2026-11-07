@@ -2548,6 +2548,30 @@ mod tests {
     }
 
     #[test]
+    fn lasso_selects_sized_connector_marker_wings() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Sized markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        connector.end_marker_size = Some(12.5);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(83.0, 7.0, 1.5, 1.5)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
     fn lasso_respects_the_classic_arrow_notch() {
         use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
 

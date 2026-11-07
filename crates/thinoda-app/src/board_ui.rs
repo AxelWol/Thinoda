@@ -5,7 +5,10 @@ use thinoda_canvas::{BoardTool, MapView};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
     ConnectorRoute, InkTool, ObjectStyle, ShapeKind, TopicId,
-    board::{BoardMember, MAX_BOARD_COORDINATE, MIN_CARD_SIZE},
+    board::{
+        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, MAX_BOARD_COORDINATE,
+        MAX_CONNECTOR_MARKER_SIZE, MIN_CARD_SIZE,
+    },
 };
 use thinoda_ui::{
     icons,
@@ -240,6 +243,8 @@ pub(crate) enum BoardStyleClipboard {
         arrow_end: bool,
         start_marker: Option<ConnectorMarker>,
         end_marker: Option<ConnectorMarker>,
+        start_marker_size: Option<f32>,
+        end_marker_size: Option<f32>,
     },
     Ink {
         style: ObjectStyle,
@@ -262,6 +267,8 @@ impl BoardStyleClipboard {
                 arrow_end: connector.arrow_end,
                 start_marker: connector.start_marker,
                 end_marker: connector.end_marker,
+                start_marker_size: connector.start_marker_size,
+                end_marker_size: connector.end_marker_size,
             },
             CanvasObjectKind::Ink(ink) => Self::Ink {
                 style: object.style,
@@ -294,6 +301,8 @@ impl BoardStyleClipboard {
                     arrow_end,
                     start_marker,
                     end_marker,
+                    start_marker_size,
+                    end_marker_size,
                 },
                 CanvasObjectKind::Connector(connector),
             ) => {
@@ -305,6 +314,8 @@ impl BoardStyleClipboard {
                 connector.arrow_end = arrow_end;
                 connector.start_marker = start_marker;
                 connector.end_marker = end_marker;
+                connector.start_marker_size = start_marker_size;
+                connector.end_marker_size = end_marker_size;
             }
             (
                 Self::Ink {
@@ -1245,6 +1256,13 @@ impl ThinodaApp {
                         id,
                         arrow_start,
                         &mut connector.start_marker,
+                        &mut connector.start_marker_size,
+                    );
+                    marker_size_field(
+                        ui,
+                        "Start arrow size",
+                        arrow_start && connector.start_marker.is_some(),
+                        &mut connector.start_marker_size,
                     );
                     let mut arrow_end = connector.arrow_end;
                     if ui.checkbox(&mut arrow_end, t("Arrow at end")).changed() {
@@ -1256,6 +1274,13 @@ impl ThinodaApp {
                         id,
                         arrow_end,
                         &mut connector.end_marker,
+                        &mut connector.end_marker_size,
+                    );
+                    marker_size_field(
+                        ui,
+                        "End arrow size",
+                        arrow_end && connector.end_marker.is_some(),
+                        &mut connector.end_marker_size,
                     );
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
                     width_field(ui, &mut connector.width);
@@ -1290,6 +1315,8 @@ impl ThinodaApp {
                                 current.arrow_end = value.arrow_end;
                                 current.start_marker = value.start_marker;
                                 current.end_marker = value.end_marker;
+                                current.start_marker_size = value.start_marker_size;
+                                current.end_marker_size = value.end_marker_size;
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -2280,6 +2307,7 @@ fn marker_field(
     id: CanvasObjectId,
     enabled: bool,
     marker: &mut Option<ConnectorMarker>,
+    size: &mut Option<f32>,
 ) {
     let name = |marker: Option<ConnectorMarker>| match marker.map(|marker| marker.kind) {
         None => "Legacy triangle",
@@ -2322,6 +2350,32 @@ fn marker_field(
                 .response
         });
     });
+    if marker.is_none() {
+        *size = None;
+    }
+}
+
+fn marker_size_field(ui: &mut Ui, label: &'static str, enabled: bool, size: &mut Option<f32>) {
+    let mut value = size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE);
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            widgets::property_field(ui, t(label), |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut value)
+                        .range(0.0..=MAX_CONNECTOR_MARKER_SIZE)
+                        .speed(0.1),
+                )
+            })
+        })
+        .inner;
+    if enabled && response.changed() {
+        *size = (value != DEFAULT_CONNECTOR_MARKER_SIZE).then_some(value);
+    }
+    if !enabled {
+        response.on_disabled_hover_text(t(
+            "Enable an arrow and select a draw.io arrow style to set its size.",
+        ));
+    }
 }
 
 fn width_field(ui: &mut Ui, width: &mut f32) {
@@ -5272,6 +5326,95 @@ mod tests {
     }
 
     #[test]
+    fn connector_marker_size_inspector_is_accessible_and_undoable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Start arrow size")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("End arrow size").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("End arrow size").type_text("12.5");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.clone()
+        };
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Classic arrow").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Legacy triangle").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Arrow at end")
+            .click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness.run_steps(3);
+        for (text, expected) in [
+            ("6", None),
+            ("-10", Some(0.0)),
+            ("1000", Some(MAX_CONNECTOR_MARKER_SIZE)),
+        ] {
+            harness.get_by_label("End arrow size").click();
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.get_by_label("End arrow size").type_text(text);
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(3);
+            assert_eq!(current(harness.state()).end_marker_size, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn object_styles_copy_atomically_without_copying_content_or_geometry() {
         let mut app = ThinodaApp::headless();
         let ctx = Context::default();
@@ -5373,6 +5516,8 @@ mod tests {
         source.end_marker = Some(ConnectorMarker {
             kind: ConnectorMarkerKind::Open,
         });
+        source.start_marker_size = Some(12.5);
+        source.end_marker_size = Some(0.0);
         source.color = Some(Color::rgba(30, 60, 90, 255));
         source.width = 4.0;
         let source = doc
@@ -5441,6 +5586,8 @@ mod tests {
             connector.end_marker.unwrap().kind,
             ConnectorMarkerKind::Open
         );
+        assert_eq!(connector.start_marker_size, Some(12.5));
+        assert_eq!(connector.end_marker_size, Some(0.0));
         assert_eq!(connector.width, 4.0);
         assert!(app.doc_mut().unwrap().doc.undo());
         assert_eq!(

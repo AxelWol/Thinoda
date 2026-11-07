@@ -1,6 +1,9 @@
 # Regional wording overrides.
 Start arrow style|Estilo da seta inicial
 End arrow style|Estilo da seta final
+Start arrow size|Tamanho da seta inicial
+End arrow size|Tamanho da seta final
+Enable an arrow and select a draw.io arrow style to set its size.|Ative uma seta e selecione um estilo de seta do draw.io para definir o tamanho.
 Legacy triangle|Triângulo anterior
 Classic arrow|Seta clássica
 Thin classic arrow|Seta clássica estreita

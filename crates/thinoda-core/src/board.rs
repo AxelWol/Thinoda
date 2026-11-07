@@ -35,6 +35,9 @@ pub const MAX_BOARD_COORDINATE: f32 = 1_000_000.0;
 pub const MAX_BOARD_TEXT_CHARS: usize = 10_000;
 pub const MIN_STROKE_WIDTH: f32 = 0.1;
 pub const MAX_STROKE_WIDTH: f32 = 200.0;
+/// draw.io marker size in board units, before adding the stroke width.
+pub const DEFAULT_CONNECTOR_MARKER_SIZE: f32 = 6.0;
+pub const MAX_CONNECTOR_MARKER_SIZE: f32 = 999.0;
 pub const MIN_GRID_SIZE: f32 = 4.0;
 pub const MAX_GRID_SIZE: f32 = 512.0;
 pub const DEFAULT_GRID_SIZE: f32 = 24.0;
@@ -220,6 +223,14 @@ impl CanvasLayer {
             matches!(&object.kind, CanvasObjectKind::Connector(c)
                 if [c.start_marker, c.end_marker].into_iter().flatten()
                     .any(|marker| marker.kind.requires_extended_format()))
+        })
+    }
+
+    /// Whether this layer needs marker-size-aware persistence.
+    pub fn has_connector_marker_sizes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.start_marker_size.is_some() || c.end_marker_size.is_some())
         })
     }
 }
@@ -873,6 +884,11 @@ pub struct CanvasConnector {
     pub start_marker: Option<ConnectorMarker>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_marker: Option<ConnectorMarker>,
+    /// Size overrides apply only to explicit draw.io-compatible markers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_marker_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_marker_size: Option<f32>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -898,6 +914,10 @@ struct StoredCanvasConnector {
     #[serde(default)]
     end_marker: Option<ConnectorMarker>,
     #[serde(default)]
+    start_marker_size: Option<f32>,
+    #[serde(default)]
+    end_marker_size: Option<f32>,
+    #[serde(default)]
     label: String,
     #[serde(default)]
     color: Option<Color>,
@@ -918,6 +938,11 @@ impl<'de> Deserialize<'de> for CanvasConnector {
                 "connector marker conflicts with its arrow flag",
             ));
         }
+        if !valid_marker_size(stored.start_marker_size, stored.start_marker)
+            || !valid_marker_size(stored.end_marker_size, stored.end_marker)
+        {
+            return Err(serde::de::Error::custom("invalid connector marker size"));
+        }
         Ok(Self {
             from: stored.from,
             to: stored.to,
@@ -927,6 +952,8 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             arrow_end: stored.arrow_end,
             start_marker: stored.start_marker,
             end_marker: stored.end_marker,
+            start_marker_size: stored.start_marker_size,
+            end_marker_size: stored.end_marker_size,
             label: stored.label,
             color: stored.color,
             width: stored.width,
@@ -957,6 +984,8 @@ impl CanvasConnector {
             arrow_end: true,
             start_marker: None,
             end_marker: None,
+            start_marker_size: None,
+            end_marker_size: None,
             label: String::new(),
             color: None,
             width: default_connector_width(),
@@ -967,6 +996,7 @@ impl CanvasConnector {
         self.arrow_start = enabled;
         if !enabled {
             self.start_marker = None;
+            self.start_marker_size = None;
         }
     }
 
@@ -974,8 +1004,18 @@ impl CanvasConnector {
         self.arrow_end = enabled;
         if !enabled {
             self.end_marker = None;
+            self.end_marker_size = None;
         }
     }
+}
+
+/// Whether a numeric draw.io marker size can be represented safely.
+pub fn valid_connector_marker_size(size: f32) -> bool {
+    size.is_finite() && (0.0..=MAX_CONNECTOR_MARKER_SIZE).contains(&size)
+}
+
+fn valid_marker_size(size: Option<f32>, marker: Option<ConnectorMarker>) -> bool {
+    size.is_none_or(|size| marker.is_some() && valid_connector_marker_size(size))
 }
 
 fn connector_bounds(connector: &CanvasConnector) -> Option<Rect> {
@@ -1237,6 +1277,11 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
                 return Err(format!(
                     "connector {id} marker conflicts with its arrow flag"
                 ));
+            }
+            if !valid_marker_size(c.start_marker_size, c.start_marker)
+                || !valid_marker_size(c.end_marker_size, c.end_marker)
+            {
+                return Err(format!("connector {id} has an invalid marker size"));
             }
             if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
                 return Err(format!(

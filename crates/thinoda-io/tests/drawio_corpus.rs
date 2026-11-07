@@ -75,7 +75,15 @@ fn check_waypoints(before: &Workbook, after: &Workbook) -> Result<(), String> {
     Ok(())
 }
 
-fn markers(sheet: &Sheet) -> Vec<(Option<ConnectorMarkerKind>, Option<ConnectorMarkerKind>)> {
+#[derive(Debug, PartialEq)]
+struct MarkerSnapshot {
+    start: Option<ConnectorMarkerKind>,
+    end: Option<ConnectorMarkerKind>,
+    start_size: Option<f32>,
+    end_size: Option<f32>,
+}
+
+fn markers(sheet: &Sheet) -> Vec<MarkerSnapshot> {
     sheet
         .canvas
         .objects
@@ -84,10 +92,12 @@ fn markers(sheet: &Sheet) -> Vec<(Option<ConnectorMarkerKind>, Option<ConnectorM
             CanvasObjectKind::Connector(connector)
                 if connector.start_marker.is_some() || connector.end_marker.is_some() =>
             {
-                Some((
-                    connector.start_marker.map(|marker| marker.kind),
-                    connector.end_marker.map(|marker| marker.kind),
-                ))
+                Some(MarkerSnapshot {
+                    start: connector.start_marker.map(|marker| marker.kind),
+                    end: connector.end_marker.map(|marker| marker.kind),
+                    start_size: connector.start_marker_size,
+                    end_size: connector.end_marker_size,
+                })
             }
             _ => None,
         })
@@ -179,7 +189,7 @@ fn check(path: &Path) -> Result<String, String> {
         thinoda_io::drawio_clipboard::decode(&text).map_err(|e| format!("clipboard: {e}"))?;
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} warning kind(s)",
         book.sheets.len(),
         book.sheets
             .iter()
@@ -188,6 +198,13 @@ fn check(path: &Path) -> Result<String, String> {
         book.sheets
             .iter()
             .map(|sheet| markers(sheet).len())
+            .sum::<usize>(),
+        book.sheets
+            .iter()
+            .flat_map(markers)
+            .map(|marker| {
+                usize::from(marker.start_size.is_some()) + usize::from(marker.end_size.is_some())
+            })
             .sum::<usize>(),
         report.warnings.len()
     ))

@@ -1206,8 +1206,11 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         "startFill=0;",
         "endFill=0;",
         "startSize=12;",
-        "endSize=12;",
         "endSize=invalid;",
+        "endSize=-1;",
+        "endSize=1000;",
+        "endSize=NaN;",
+        "endArrow=none;endSize=12;",
         "exitX=0.25;",
         "exitY=0.5;",
         "exitDx=5;",
@@ -1235,6 +1238,7 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         "startArrow=none;endArrow=none;",
         "startArrow=classic;endArrow=classic;",
         "startFill=1;endFill=1;startSize=6;endSize=6;",
+        "startArrow=block;startSize=12.5;endSize=0;",
         "portConstraintRotation=0;perimeterSpacing=0;sourcePerimeterSpacing=0;targetPerimeterSpacing=0;",
     ] {
         let report = load(&edge(style));
@@ -1246,6 +1250,47 @@ fn connector_marker_and_port_approximations_require_confirmation() {
             "{style}: {:?}",
             restored.warnings
         );
+    }
+}
+
+#[test]
+fn custom_marker_sizes_round_trip_for_every_supported_shape() {
+    let names = [
+        "classic",
+        "classicThin",
+        "open",
+        "openThin",
+        "block",
+        "blockThin",
+    ];
+    for kind in names {
+        for size in [0.0, 6.0, 12.5, 999.0] {
+            let xml = page(&format!(
+                r#"<mxCell id="e" style="startArrow={kind};startSize={size};endArrow={kind};endSize=12.5;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert!(
+                report.warnings.is_empty(),
+                "{kind}, {size}: {:?}",
+                report.warnings
+            );
+            let connector = connectors(&report.workbook.sheets[0])[0];
+            assert_eq!(connector.start_marker_size, (size != 6.0).then_some(size));
+            assert_eq!(connector.end_marker_size, Some(12.5));
+            assert_eq!(crate::required_native_version(&report.workbook), 13);
+            let exported = export(&report.workbook).unwrap();
+            let restored = import(&exported).unwrap();
+            assert!(
+                restored.warnings.is_empty(),
+                "{kind}, {size}: {:?}",
+                restored.warnings
+            );
+            let restored = connectors(&restored.workbook.sheets[0])[0];
+            assert_eq!(restored.start_marker_size, connector.start_marker_size);
+            assert_eq!(restored.end_marker_size, connector.end_marker_size);
+            assert_eq!(restored.start_marker, connector.start_marker);
+            assert_eq!(restored.end_marker, connector.end_marker);
+        }
     }
 }
 
@@ -1377,20 +1422,19 @@ fn drawio_default_classic_and_legacy_triangle_are_distinct() {
         "thinodaLegacyEndArrow=1;endSize=12;",
     );
     let restored = load(&resized);
-    assert!(restored.warnings.contains(&ImportWarning::Formatting));
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    let connector = connectors(&restored.workbook.sheets[0])[0];
     assert_eq!(
-        connectors(&restored.workbook.sheets[0])[0]
-            .end_marker
-            .unwrap()
-            .kind,
+        connector.end_marker.unwrap().kind,
         ConnectorMarkerKind::Classic
     );
+    assert_eq!(connector.end_marker_size, Some(12.0));
 }
 
 #[test]
 fn supported_connector_markers_survive_link_and_clipboard_conversion() {
     let xml = page(
-        r#"<mxCell id="e" style="startArrow=block;endArrow=open;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+        r#"<mxCell id="e" style="startArrow=block;startSize=12.5;endArrow=open;endSize=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
     );
     let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
     let linked = crate::import_drawio_link(&link).unwrap();
@@ -1404,6 +1448,8 @@ fn supported_connector_markers_survive_link_and_clipboard_conversion() {
         connector.end_marker.unwrap().kind,
         ConnectorMarkerKind::Open
     );
+    assert_eq!(connector.start_marker_size, Some(12.5));
+    assert_eq!(connector.end_marker_size, Some(0.0));
 
     let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
     assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
@@ -1420,6 +1466,8 @@ fn supported_connector_markers_survive_link_and_clipboard_conversion() {
             connector.end_marker.unwrap().kind,
             ConnectorMarkerKind::Open
         );
+        assert_eq!(connector.start_marker_size, Some(12.5));
+        assert_eq!(connector.end_marker_size, Some(0.0));
     };
     assert_markers(&pasted.payload);
     let copy = crate::drawio_clipboard::encode(&pasted.payload).unwrap();
@@ -1444,7 +1492,7 @@ fn editable_drawio_images_preserve_supported_connector_markers() {
         ),
     ] {
         let report = load(&page(&format!(
-            r#"<mxCell id="e" style="startArrow={start};endArrow={end};" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+            r#"<mxCell id="e" style="startArrow={start};startSize=12.5;endArrow={end};endSize=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
         )));
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         for format in [Format::DrawIoSvg, Format::DrawIoPng] {
@@ -1458,6 +1506,8 @@ fn editable_drawio_images_preserve_supported_connector_markers() {
             let connector = connectors(&restored.workbook.sheets[0])[0];
             assert_eq!(connector.start_marker.unwrap().kind, start_kind);
             assert_eq!(connector.end_marker.unwrap().kind, end_kind);
+            assert_eq!(connector.start_marker_size, Some(12.5));
+            assert_eq!(connector.end_marker_size, Some(0.0));
         }
     }
 }
