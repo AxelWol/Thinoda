@@ -812,8 +812,19 @@ content, so it never creates a shape there (no ghost) and a drag from it still c
   `edge_to_edge_ends_meet_a_bent_target_on_its_path` and
   `polyline_midpoint_follows_length` in core.
 
-Phase 1 is complete apart from the web drag-and-drop browser test, which follows with
-the web build checks.
+**Phase 1e browser drag checkpoint and critique.** A debug-build regression
+drags a triangle from the library onto a board with an existing shape in
+headless Chromium, Firefox and WebKit. It checks the drop position, selection,
+direct-typing label editing including the first character, unchanged tool
+behavior, separate undo/redo for insertion and labeling, and no insertion after
+Escape or a drop over the toolbar. The keyboard-creation test also clears the
+previous sticky selection before arming a shape, matching the selection
+contract. Together with the native gesture tests, this closes the previously
+missing focused web drag check. The browser test uses a fixed viewport and
+coordinates because egui controls are not yet exposed as DOM accessibility
+targets; layout changes may require updating it. It exercises synthetic mouse
+input, not physical mouse, pen or touch devices. Assistive technology and
+broader device, browser and release-build acceptance remain open.
 
 **Phase 11 (clipboard slice) — paste from draw.io, copy as draw.io.** draw.io copies a
 selection as `encodeURIComponent(<mxGraphModel>…)` plain text and reads either that form

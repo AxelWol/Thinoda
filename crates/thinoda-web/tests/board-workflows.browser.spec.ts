@@ -786,6 +786,9 @@ test("keyboard creation, labeling and movement work on a rootless board", async 
     await input.pressSequentially("Keyboard idea");
     await page.keyboard.press("Enter");
     await frames(page);
+    // The first Escape leaves the sticky tool; the second clears its selection.
+    await page.keyboard.press("Escape");
+    await frames(page);
     await page.keyboard.press("Escape");
     await frames(page);
 
@@ -826,6 +829,103 @@ test("keyboard creation, labeling and movement work on a rootless board", async 
     await page.keyboard.press("Control+Shift+z");
     await frames(page);
     expect(sheetFrom(await saveAs(page, "keyboard-board-redo.thinoda"))).toEqual(moved);
+});
+
+test("a shape library drag creates one selected, undoable shape", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    await canvas.focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Hide central topic");
+    await page.keyboard.press("Escape");
+    await frames(page);
+    await command(page, "Shape tool");
+    await page.mouse.click(400, 1000);
+    await frames(page);
+    await command(page, "Select tool");
+    await page.mouse.click(200, 1100);
+    await frames(page);
+    const baseline = sheetFrom(await saveAs(page, "shape-library-before.thinoda"));
+    expect(baseline.canvas.objects).toHaveLength(1);
+    const reference = baseline.canvas.objects.find(object => object.kind.shape);
+    if (!reference) throw new Error("Missing reference shape");
+    expect(reference.kind.shape?.shape).toBe("rectangle");
+
+    // The browser canvas does not yet expose egui controls as DOM elements.
+    const startLibraryDrag = async () => {
+        await page.mouse.click(35, 275);
+        await frames(page);
+        await page.mouse.move(240, 370);
+        await page.mouse.down();
+        for (let step = 1; step <= 4; step++) {
+            await page.mouse.move(240, 370 + 6 * step);
+            await frames(page);
+        }
+    };
+    await startLibraryDrag();
+    await page.mouse.move(650, 900, { steps: 8 });
+    await frames(page);
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "shape-library-canceled.thinoda"))).toEqual(baseline);
+
+    await startLibraryDrag();
+    await page.mouse.move(35, 115, { steps: 8 });
+    await frames(page);
+    await page.mouse.up();
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "shape-library-obscured.thinoda"))).toEqual(baseline);
+
+    await startLibraryDrag();
+    await page.mouse.move(650, 900, { steps: 8 });
+    await frames(page);
+    await page.mouse.up();
+    await frames(page);
+
+    await canvas.focus();
+    await page.keyboard.type("B");
+    await frames(page);
+    const input = page.locator("input[type='text']");
+    await expect(input).toBeFocused();
+    await input.pressSequentially("rowser triangle");
+    await page.keyboard.press("Enter");
+    await frames(page);
+    const saved = sheetFrom(await saveAs(page, "shape-library-after.thinoda"));
+    const shapes = saved.canvas?.objects.filter(object => object.kind.shape) ?? [];
+    expect(shapes).toHaveLength(2);
+    const triangle = shapes.find(object => object.kind.shape?.shape === "triangle");
+    if (!triangle) throw new Error("Missing dragged triangle");
+    expect(triangle.kind.shape?.label).toBe("Browser triangle");
+    expect(triangle.rect.size).toEqual({ x: 160, y: 100 });
+    expect(triangle.rect.min.x + triangle.rect.size.x / 2
+        - reference.rect.min.x - reference.rect.size.x / 2).toBeCloseTo(250, 1);
+    expect(triangle.rect.min.y + triangle.rect.size.y / 2
+        - reference.rect.min.y - reference.rect.size.y / 2).toBeCloseTo(-100, 1);
+
+    await page.mouse.click(300, 1050);
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "shape-library-deselected.thinoda"))).toEqual(saved);
+
+    await canvas.focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const withoutLabel = sheetFrom(await saveAs(page, "shape-library-label-undo.thinoda"));
+    expect(withoutLabel.canvas.objects).toHaveLength(2);
+    expect(withoutLabel.canvas.objects.find(object => object.id === triangle.id)?.kind.shape?.label ?? "")
+        .toBe("");
+    await canvas.focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "shape-library-undo.thinoda"))).toEqual(baseline);
+    await canvas.focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "shape-library-redo.thinoda"))).toEqual(saved);
 });
 
 test("a fast mouse drag commits its full geometry", async ({ page }) => {
