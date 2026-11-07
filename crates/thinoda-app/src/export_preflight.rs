@@ -20,6 +20,10 @@ use crate::{
 };
 
 const TITLE: &str = "Board export changes";
+const EDITABLE_IMAGE_TITLE: &str = "Editable image export";
+pub(crate) const EDITABLE_IMAGE_SCOPE: &str =
+    "Only the current sheet is included; other sheets are not exported.";
+pub(crate) const EDITABLE_IMAGE_NOTICE: &str = "This image contains the editable diagram, including content outside the visible preview. It is not redacted.";
 const INTRO: &str = "The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.";
 const XMIND_METADATA: &str = "XMind stores a Thinoda-only copy of the complete board. Other apps may not display it and may discard it when saving. This export is not redacted.";
 
@@ -31,7 +35,7 @@ pub(crate) struct SaveConsent {
 
 impl SaveConsent {
     pub(crate) fn for_io(self, format: Format) -> bool {
-        if format == Format::DrawIo {
+        if format.is_drawio() {
             self.board
         } else {
             self.mindmanager
@@ -295,7 +299,7 @@ impl ThinodaApp {
         }
         let owner = Owner::of(doc);
         let losses = export_loss_report(doc.doc.workbook(), format, &ExportOptions::default());
-        if losses.is_empty() {
+        if losses.is_empty() && !format.is_drawio_image() {
             self.perform_preflight_export(
                 format,
                 allow_symbol_color_loss,
@@ -642,11 +646,16 @@ impl ThinodaApp {
         }
         let lines = loss_lines(&pending.losses, pending.format);
         let format = pending.format;
+        let title = if format.is_drawio_image() {
+            EDITABLE_IMAGE_TITLE
+        } else {
+            TITLE
+        };
         let mut accepted = false;
         let mut canceled = false;
         let touch = widgets::touch_activation_allowed(ctx);
         let loss_height = (ctx.content_rect().height() - 230.0).clamp(60.0, 360.0);
-        let response = Dialog::new(egui::Id::unique("board_export_preflight"), t(TITLE))
+        let response = Dialog::new(egui::Id::unique("board_export_preflight"), t(title))
             .labels(&i18n::dialog_labels())
             .modal(true)
             .close_on_backdrop(true)
@@ -657,16 +666,22 @@ impl ThinodaApp {
             .scroll(false)
             .show(ctx, |ui| {
                 ui.strong(t(format.label()));
-                ui.label(t(INTRO));
-                ui.add_space(8.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("board_export_losses")
-                    .max_height(loss_height)
-                    .show(ui, |ui| {
-                        for line in &lines {
-                            ui.label(line);
-                        }
-                    });
+                if format.is_drawio_image() {
+                    ui.label(t(EDITABLE_IMAGE_SCOPE));
+                    ui.label(t(EDITABLE_IMAGE_NOTICE));
+                }
+                if !lines.is_empty() {
+                    ui.label(t(INTRO));
+                    ui.add_space(8.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("board_export_losses")
+                        .max_height(loss_height)
+                        .show(ui, |ui| {
+                            for line in &lines {
+                                ui.label(line);
+                            }
+                        });
+                }
                 ui.add_space(12.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     accepted = widgets::primary_button(ui, t("Confirm")).clicked() && touch;

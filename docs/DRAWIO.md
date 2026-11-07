@@ -863,8 +863,8 @@ retain their separate 8 MiB per-image limit.
 
 The suffix deliberately disambiguates the drop: an ordinary `.png` containing
 draw.io data is still inserted as an image when dropped, but can be imported as
-a diagram through File › Open. This is not a general choice dialog, lossless
-save-back, or embedded-PNG export. Native drop and staging tests cover source
+a diagram through File › Open. This is not a general choice dialog or lossless
+save-back. Native drop and staging tests cover source
 preservation, invalid files, ordinary images and limits; browser tests use
 synthetic file drops in Chromium, Firefox and WebKit. They exercise a generated
 `zTXt` fixture and a labelled PNG exported from the published diagrams.net editor
@@ -873,6 +873,33 @@ uncompressed `iTXt` and Unicode. A filename collision and a leading-dot name
 remain document drops even when browser staging changes their suffix. The
 published fixture is a single simple shape, not evidence of complete format
 fidelity. Physical file-manager and device acceptance remain open.
+
+**Editable image export checkpoint and critique (partial Phase 11).** Export now
+offers **draw.io SVG (editable)** and **draw.io PNG (editable)**. Each contains
+the current sheet's ordinary visual preview and a draw.io conversion of that
+same sheet, embedded in the SVG root's `content` attribute or in a PNG `mxfile`
+text chunk. Other sheets are not included. Before choosing a destination the
+GUI always discloses this scope and warns that embedded data can extend beyond
+the preview and is not redacted; the CLI emits the same disclosure. The existing
+conversion-loss report and content safeguards also apply to the exported sheet.
+The source workbook and imported source file are not overwritten or marked
+saved. These formats are export-only: opening one imports a converted copy, and
+neither Save As nor lossless save-back is implemented.
+
+The published diagrams.net editor accepted and allowed editing a generated SVG
+and PNG containing a simple shape. Its PNG reader rejected an otherwise valid
+PNG when `mxfile` followed `IDAT`; placing the metadata directly after `IHDR`
+made it editable. The writer now checks its rendered container, size and PNG
+checksums, and a regression asserts that ordering. Compound-extension detection
+also preserves support for filenames containing non-Unicode characters. Browser
+tests cover disclosure and cancellation, downloads, metadata, source preservation
+and re-opening in Chromium, Firefox and WebKit. Their import wait is restricted
+to the canvas so a similarly colored sidebar swatch cannot give a false positive.
+This single-shape external-editor check
+does not establish fidelity for complex files, external editors, physical
+devices or all existing content; unsupported FIM provenance, equations and
+resources can block export, and conversion losses remain possible. Multi-sheet
+embedded exports, lossless round trips and save-back remain future work.
 
 **Corpus validation (docs/draw-io-examples).** `crates/thinoda-io/tests/drawio_corpus.rs`
 runs every `.drawio`/`.xml` file in the user-supplied example corpus (89 files from

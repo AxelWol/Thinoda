@@ -722,6 +722,14 @@ those system-owned controls. WinGet publishing remains paused.
 - XMind reopening honors edits made by other applications rather than silently
   restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
+- draw.io diagrams can be imported as converted copies and exported as `.drawio`
+  or editable `.drawio.svg` / `.drawio.png` images. The editable image exports
+  contain **only the current sheet**, both in the preview and in the embedded
+  diagram. Their embedded data can include content outside the visible preview:
+  the image is **not redacted**. Conversion may simplify or omit features; review
+  the export warnings and retain a `.thinoda` copy. Unsupported content can
+  prevent export. Editable image export is not Save As or lossless save-back.
+  See [draw.io support and limitations](docs/DRAWIO.md).
 - Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
   subset. PowerPoint export previews the first saved Pitch slide, reuses all

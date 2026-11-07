@@ -520,6 +520,256 @@ fn published_drawio_png_export_imports_its_embedded_diagram() {
 }
 
 #[test]
+fn editable_image_exports_embed_only_the_selected_sheet() {
+    let mut first = Sheet::new("First", "");
+    first.root_mode = SheetRootMode::Hidden;
+    first.board.grid = GridKind::Lines;
+    first
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(10.0, 20.0, 120.0, 60.0),
+            "First page secret",
+        ))
+        .unwrap();
+    let mut second = Sheet::new("Second", "");
+    second.root_mode = SheetRootMode::Hidden;
+    second.board.grid = GridKind::Lines;
+    let label = "A < B & \"C\" \u{fc}";
+    second
+        .add_canvas_object(shape(
+            ShapeKind::Ellipse,
+            rect(40.0, 50.0, 100.0, 80.0),
+            label,
+        ))
+        .unwrap();
+    let mut book = Workbook::new(first);
+    book.sheets.push(second);
+    let opts = ExportOptions {
+        sheet: Some(1),
+        ..Default::default()
+    };
+    for (format, name) in [
+        (Format::DrawIoSvg, "diagram.drawio.svg"),
+        (Format::DrawIoPng, "diagram.drawio.png"),
+    ] {
+        assert_eq!(Format::from_path(Path::new(name)), Some(format));
+        assert!(format.can_import() && format.can_export());
+        assert!(export_losses(&book, format, &opts).is_empty());
+        let bytes = export_bytes(&book, format, &opts).unwrap();
+        assert_eq!(detect_format(Path::new(name), &bytes), Some(Format::DrawIo));
+        if format == Format::DrawIoPng {
+            let first_chunk_len = u32::from_be_bytes(bytes[8..12].try_into().unwrap()) as usize;
+            let second_chunk = 8 + 12 + first_chunk_len;
+            assert_eq!(&bytes[second_chunk + 4..second_chunk + 8], b"tEXt");
+            assert_eq!(&bytes[second_chunk + 8..second_chunk + 15], b"mxfile\0");
+            let preview = image::load_from_memory(&bytes).unwrap().to_rgba8();
+            let plain = export_bytes(&book, Format::Png, &opts).unwrap();
+            assert_eq!(preview, image::load_from_memory(&plain).unwrap().to_rgba8());
+            let other = export_bytes(
+                &book,
+                Format::Png,
+                &ExportOptions {
+                    sheet: Some(0),
+                    ..opts.clone()
+                },
+            )
+            .unwrap();
+            assert_ne!(preview, image::load_from_memory(&other).unwrap().to_rgba8());
+        } else {
+            let svg = std::str::from_utf8(&bytes).unwrap();
+            resvg::usvg::Tree::from_str(svg, &Default::default()).unwrap();
+            let (_, visible) = svg
+                .strip_prefix("<svg content=\"")
+                .unwrap()
+                .split_once('"')
+                .unwrap();
+            let plain = export_bytes(&book, Format::Svg, &opts).unwrap();
+            assert_eq!(format!("<svg{visible}").as_bytes(), plain);
+            let other = export_bytes(
+                &book,
+                Format::Svg,
+                &ExportOptions {
+                    sheet: Some(0),
+                    ..opts.clone()
+                },
+            )
+            .unwrap();
+            assert_ne!(plain, other);
+        }
+        let report = import(&bytes).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(report.workbook.sheets.len(), 1);
+        assert_eq!(report.workbook.sheets[0].title, "Second");
+        let objects = shapes(&report.workbook.sheets[0]);
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].label(), label);
+        assert!(!String::from_utf8_lossy(&bytes).contains("First page secret"));
+    }
+}
+
+#[test]
+fn editable_image_exports_reject_invalid_render_containers_and_oversized_output() {
+    let sheet = Sheet::new("Board", "");
+    assert!(embedded_image_fits(MAX_BYTES - 3, 2, 1));
+    assert!(!embedded_image_fits(MAX_BYTES - 3, 3, 1));
+    assert!(!embedded_image_fits(usize::MAX, 1, 0));
+    for svg in [
+        "",
+        "<svg>",
+        "<svg xmlns=\"x\"><g></svg>",
+        "<svg content=\"existing\"></svg>",
+        "<svg xmlns=\"x\"></svg><svg xmlns=\"x\"></svg>",
+    ] {
+        assert!(embed_svg(svg.to_owned(), &sheet).is_err(), "{svg}");
+    }
+
+    let png = image::DynamicImage::new_rgba8(1, 1);
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    png.write_to(&mut buffer, image::ImageFormat::Png).unwrap();
+    let png = buffer.into_inner();
+    assert!(embed_png(png.clone(), &sheet).is_ok());
+    for invalid in [
+        vec![],
+        PNG_SIGNATURE.to_vec(),
+        [PNG_SIGNATURE, b"\0\0\0\0IEND\xaeB\x60\x82"].concat(),
+        png[..png.len() - 1].to_vec(),
+        {
+            let mut corrupted = png.clone();
+            corrupted[20] ^= 1;
+            corrupted
+        },
+        {
+            let mut trailing = png.clone();
+            trailing.push(0);
+            trailing
+        },
+    ] {
+        assert!(embed_png(invalid, &sheet).is_err());
+    }
+    let oversized_svg = format!("<svg xmlns=\"x\">{}</svg>", " ".repeat(MAX_BYTES));
+    assert!(
+        embed_svg(oversized_svg, &sheet)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit")
+    );
+    let oversized_png = {
+        let mut bytes = png;
+        bytes.resize(MAX_BYTES + 1, 0);
+        bytes
+    };
+    assert!(
+        embed_png(oversized_png, &sheet)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit")
+    );
+}
+
+#[test]
+fn editable_image_guards_apply_to_the_selected_sheet_only() {
+    let mut selected = Sheet::new("Selected", "");
+    selected.root_mode = SheetRootMode::Hidden;
+    selected.board.grid = GridKind::Lines;
+    selected.board.snap = false;
+    selected
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 100.0, 60.0),
+            "Selected",
+        ))
+        .unwrap();
+    let mut book = Workbook::new(selected);
+    book.sheets.push(Sheet::new("Other", "Root"));
+    let selected_opts = ExportOptions {
+        sheet: Some(0),
+        ..Default::default()
+    };
+    let other_opts = ExportOptions {
+        sheet: Some(1),
+        ..Default::default()
+    };
+
+    let mut equations = book.clone();
+    let sheet = &mut equations.sheets[1];
+    let source = thinoda_core::equations::replace_note("", Some("x^{2}")).unwrap();
+    sheet.set_markdown_notes(sheet.root, Some(source)).unwrap();
+
+    let mut resources = book.clone();
+    let sheet = &mut resources.sheets[1];
+    let resource = Resource::new("picture.png", "image/png", tiny_png(4, 4)).unwrap();
+    let root = sheet.root;
+    images::set_image(sheet, root, Some((resource, Vec2::new(4.0, 4.0)))).unwrap();
+
+    let mut symbols = book.clone();
+    let sheet = &mut symbols.sheets[1];
+    sheet
+        .toggle_marker_color(&[sheet.root], "star-red", Some(Color::rgb(20, 40, 60)))
+        .unwrap();
+
+    let fim_xml = format!(
+        "<x:xdatenfelder.datenfeld.0104 xmlns:x='{}'><x:header/><x:datenfeld><x:identifikation><x:id>F123</x:id><x:version>1.0.0</x:version></x:identifikation><x:name>Field</x:name></x:datenfeld></x:xdatenfelder.datenfeld.0104>",
+        thinoda_core::fim::Dialect::Xdf3.namespace()
+    );
+    let mut fim = book.clone();
+    fim.sheets[1] = thinoda_core::fim::FimDocument::parse(fim_xml.as_bytes())
+        .unwrap()
+        .into_sheet()
+        .unwrap();
+
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        for case in [&equations, &resources, &symbols, &fim] {
+            assert!(
+                crate::export_bytes_with_consent(case, format, &selected_opts, true).is_ok(),
+                "{format:?}: unselected sheet blocked export"
+            );
+        }
+        assert!(matches!(
+            crate::export_bytes_with_consent(&equations, format, &other_opts, true),
+            Err(IoError::EquationNotesUnsupported)
+        ));
+        assert!(
+            crate::export_bytes_with_consent(&resources, format, &other_opts, true)
+                .unwrap_err()
+                .to_string()
+                .contains("embedded resources")
+        );
+        assert!(!crate::symbol_color_loss_with_options(
+            &symbols,
+            format,
+            &selected_opts
+        ));
+        assert!(crate::symbol_color_loss_with_options(
+            &symbols,
+            format,
+            &other_opts
+        ));
+        assert!(
+            crate::export_bytes_with_consent(&symbols, format, &other_opts, true)
+                .unwrap_err()
+                .to_string()
+                .contains("symbol colors")
+        );
+        let accepted = ExportOptions {
+            allow_symbol_color_loss: true,
+            ..other_opts.clone()
+        };
+        assert!(crate::export_bytes_with_consent(&symbols, format, &accepted, true).is_ok());
+        assert!(
+            crate::export_bytes_with_consent(&fim, format, &other_opts, true)
+                .unwrap_err()
+                .to_string()
+                .contains("FIM")
+        );
+    }
+
+    assert!(matches!(
+        crate::export_bytes_with_consent(&equations, Format::DrawIo, &selected_opts, true),
+        Err(IoError::EquationNotesUnsupported)
+    ));
+}
+
+#[test]
 fn nested_connector_waypoints_import_and_round_trip_in_parent_coordinates() {
     let xml = page(
         r#"
@@ -627,23 +877,25 @@ fn waypoint_connector_attachments_export_at_path_midpoint_with_loss_warning() {
         .add_canvas_object(CanvasObject::connector(dependent))
         .unwrap();
     let book = Workbook::new(sheet);
-    assert_eq!(
-        export_losses(&book, Format::DrawIo, &ExportOptions::default()),
-        vec![ExportLoss::ConnectorAttachmentsDetached(1)]
-    );
-    assert!(matches!(
-        export_bytes(&book, Format::DrawIo, &ExportOptions::default()),
-        Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(1))
-    ));
-    let bytes =
-        crate::export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true)
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::ConnectorAttachmentsDetached(1)]
+        );
+        assert!(matches!(
+            export_bytes(&book, format, &ExportOptions::default()),
+            Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(1))
+        ));
+        let bytes =
+            crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap();
+        let restored = import(&bytes).unwrap().workbook;
+        let dependent = connectors(&restored.sheets[0])
+            .into_iter()
+            .find(|connector| connector.label == "Dependent")
             .unwrap();
-    let restored = import(&bytes).unwrap().workbook;
-    let dependent = connectors(&restored.sheets[0])
-        .into_iter()
-        .find(|connector| connector.label == "Dependent")
-        .unwrap();
-    assert_eq!(dependent.from, Endpoint::Point(Vec2::new(175.0, 0.0)));
+        assert_eq!(dependent.from, Endpoint::Point(Vec2::new(175.0, 0.0)));
+    }
 }
 
 #[test]
@@ -1037,13 +1289,20 @@ fn image_cards_round_trip_their_pixels_and_size() {
 
     // The public gate accepts card pictures but still refuses resources draw.io would drop.
     let opts = crate::ExportOptions::default();
-    crate::export_bytes(&book, crate::Format::DrawIo, &opts).unwrap();
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let encoded = crate::export_bytes(&book, format, &opts).unwrap();
+        let restored = import(&encoded).unwrap().workbook;
+        let card = image_cards(&restored.sheets[0])[0];
+        assert_eq!(bytes(&restored.sheets[0], card), png, "{format:?}");
+    }
     let mut lossy = book.clone();
     let sheet = &mut lossy.sheets[0];
     let reference = before[0].image.clone();
     let root = sheet.root;
     sheet.topic_mut(root).unwrap().image = reference;
-    assert!(crate::export_bytes(&lossy, crate::Format::DrawIo, &opts).is_err());
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert!(crate::export_bytes(&lossy, format, &opts).is_err());
+    }
 }
 
 #[test]

@@ -150,7 +150,7 @@ pub fn encode_uri_component(text: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(text.len() * 3 / 2);
     for &byte in text.as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
+        if uri_component_safe(byte) {
             out.push(char::from(byte));
         } else {
             out.push('%');
@@ -159,6 +159,16 @@ pub fn encode_uri_component(text: &str) -> String {
         }
     }
     out
+}
+
+fn uri_component_safe(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte)
+}
+
+pub(crate) fn encoded_uri_component_len(text: &str) -> Option<usize> {
+    text.bytes().try_fold(0usize, |length, byte| {
+        length.checked_add(if uri_component_safe(byte) { 1 } else { 3 })
+    })
 }
 
 #[cfg(test)]

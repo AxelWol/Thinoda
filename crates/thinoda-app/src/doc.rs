@@ -995,7 +995,9 @@ pub fn convert_with_consent(
         }
         return Err(format!("{} cannot be exported", format.label()));
     }
-    if thinoda_io::symbol_color_loss(&report.workbook, format) && !opts.allow_symbol_color_loss {
+    if thinoda_io::symbol_color_loss_with_options(&report.workbook, format, opts)
+        && !opts.allow_symbol_color_loss
+    {
         return Err(format!(
             "{} (--allow-symbol-color-loss)",
             t(crate::symbols::EXPORT_WARNING)
@@ -1038,6 +1040,13 @@ pub fn convert_with_consent(
             t(
                 "Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged."
             )
+        );
+    }
+    if format.is_drawio_image() {
+        log::warn!(
+            "{} {}",
+            t(crate::export_preflight::EDITABLE_IMAGE_SCOPE),
+            t(crate::export_preflight::EDITABLE_IMAGE_NOTICE)
         );
     }
     let bytes = thinoda_io::export_bytes_with_consent(&report.workbook, format, opts, allow_lossy)

@@ -46,6 +46,8 @@ pub enum Format {
     MindManagerXml,
     TextBundle,
     DrawIo,
+    DrawIoSvg,
+    DrawIoPng,
     Svg,
     Png,
     Jpeg,
@@ -69,6 +71,8 @@ impl Format {
         Self::MindManagerXml,
         Self::TextBundle,
         Self::DrawIo,
+        Self::DrawIoSvg,
+        Self::DrawIoPng,
         Self::Word,
     ];
     pub const EXPORTABLE: &'static [Format] = &[
@@ -83,6 +87,8 @@ impl Format {
         Self::MindManager,
         Self::TextBundle,
         Self::DrawIo,
+        Self::DrawIoSvg,
+        Self::DrawIoPng,
         Self::Svg,
         Self::Png,
         Self::Jpeg,
@@ -93,6 +99,13 @@ impl Format {
         Self::Csv,
     ];
     pub fn from_path(path: &Path) -> Option<Self> {
+        let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+        if name.ends_with(".drawio.svg") {
+            return Some(Self::DrawIoSvg);
+        }
+        if name.ends_with(".drawio.png") {
+            return Some(Self::DrawIoPng);
+        }
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
         Some(match ext.as_str() {
             "xdf2" => Self::FimXdf2,
@@ -132,6 +145,8 @@ impl Format {
             Self::MindManagerXml => &["xmmap"],
             Self::TextBundle => &["textpack", "textbundle"],
             Self::DrawIo => &["drawio", "dio"],
+            Self::DrawIoSvg => &["drawio.svg"],
+            Self::DrawIoPng => &["drawio.png"],
             Self::Svg => &["svg"],
             Self::Png => &["png"],
             Self::Jpeg => &["jpg", "jpeg"],
@@ -156,6 +171,8 @@ impl Format {
             Self::MindManagerXml => "MindManager XML",
             Self::TextBundle => "TextBundle",
             Self::DrawIo => "draw.io",
+            Self::DrawIoSvg => "draw.io SVG (editable)",
+            Self::DrawIoPng => "draw.io PNG (editable)",
             Self::Svg => "SVG",
             Self::Png => "PNG",
             Self::Jpeg => "JPEG",
@@ -171,6 +188,14 @@ impl Format {
     }
     pub fn can_export(&self) -> bool {
         Self::EXPORTABLE.contains(self)
+    }
+
+    pub fn is_drawio(self) -> bool {
+        matches!(self, Self::DrawIo | Self::DrawIoSvg | Self::DrawIoPng)
+    }
+
+    pub fn is_drawio_image(self) -> bool {
+        matches!(self, Self::DrawIoSvg | Self::DrawIoPng)
     }
 }
 
@@ -354,7 +379,9 @@ pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
     let named = Format::from_path(path);
     if matches!(
         named,
-        None | Some(Format::Svg | Format::Png | Format::DrawIo)
+        None | Some(
+            Format::Svg | Format::Png | Format::DrawIo | Format::DrawIoSvg | Format::DrawIoPng
+        )
     ) && drawio::sniff(bytes)
     {
         return Some(Format::DrawIo);
@@ -445,7 +472,7 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
         Format::TextBundle => formats::textbundle_import(bytes)?,
         Format::Word => office::docx_import(bytes)?,
         Format::FreeMind => formats::freemind_import_with_report(bytes)?,
-        Format::DrawIo => drawio::import(bytes)?,
+        Format::DrawIo | Format::DrawIoSvg | Format::DrawIoPng => drawio::import(bytes)?,
         _ => {
             let workbook = match format {
                 Format::Thinoda => formats::native_import(bytes)?,
@@ -523,9 +550,15 @@ fn import_read_policy(name: &Path) -> Option<ImportReadPolicy> {
         Some(Format::FimXdf2 | Format::FimXdf3) => Some(ImportReadPolicy::Fim),
         Some(Format::MindManager | Format::MindManagerXml) => Some(ImportReadPolicy::MindManager),
         None
-        | Some(Format::TextBundle | Format::Word | Format::DrawIo | Format::Svg | Format::Png) => {
-            Some(ImportReadPolicy::Archive)
-        }
+        | Some(
+            Format::TextBundle
+            | Format::Word
+            | Format::DrawIo
+            | Format::DrawIoSvg
+            | Format::DrawIoPng
+            | Format::Svg
+            | Format::Png,
+        ) => Some(ImportReadPolicy::Archive),
         _ => None,
     }
 }
@@ -646,7 +679,7 @@ pub fn export_bytes_with_consent_and_visual_context(
     allow_lossy: bool,
     visual: VisualExportContext,
 ) -> Result<Vec<u8>, IoError> {
-    if book.sheets.iter().any(|s| s.fim.is_some())
+    if exported_sheets(book, format, opts).any(|s| s.fim.is_some())
         && !matches!(
             format,
             Format::Thinoda
@@ -671,7 +704,7 @@ pub fn export_bytes_with_consent_and_visual_context(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
-    if format == Format::DrawIo
+    if format.is_drawio()
         && !allow_lossy
         && let Some(count) = export_losses(book, format, opts)
             .into_iter()
@@ -745,9 +778,7 @@ pub fn export_bytes_with_consent_and_visual_context(
                     return Err(IoError::EquationNotesUnsupported);
                 }
             }
-        } else if book
-            .sheets
-            .iter()
+        } else if exported_sheets(book, format, opts)
             .any(thinoda_core::equations::sheet_has_equations)
         {
             return Err(IoError::EquationNotesUnsupported);
@@ -763,9 +794,9 @@ pub fn export_bytes_with_consent_and_visual_context(
             | Format::Pdf
             | Format::PowerPoint
     );
-    if book.sheets.iter().any(|sheet| {
+    if exported_sheets(book, format, opts).any(|sheet| {
         !sheet.resources.is_empty()
-            && !(format == Format::DrawIo && drawio_keeps_resources(sheet))
+            && !(format.is_drawio() && drawio_keeps_resources(sheet))
             && (!supports_embedded_resources
                 || (format == Format::PowerPoint
                     && (sheet
@@ -780,7 +811,7 @@ pub fn export_bytes_with_consent_and_visual_context(
             "this format cannot yet preserve embedded resources; save as .thinoda to retain all bytes".into(),
         ));
     }
-    if symbol_color_loss(book, format) && !opts.allow_symbol_color_loss {
+    if symbol_color_loss_with_options(book, format, opts) && !opts.allow_symbol_color_loss {
         if format == Format::MindManager {
             return Err(IoError::MindManagerExportNeedsConfirmation);
         }
@@ -809,6 +840,14 @@ pub fn export_bytes_with_consent_and_visual_context(
         }
         Format::TextBundle => formats::textbundle_export(book, opts)?,
         Format::DrawIo => drawio::export(book)?,
+        Format::DrawIoSvg => drawio::embed_svg(
+            render::svg(book, opts, visual)?,
+            &book.sheets[export_sheet_index(book, opts)],
+        )?,
+        Format::DrawIoPng => drawio::embed_png(
+            render::raster(book, opts, image::ImageFormat::Png, visual)?,
+            &book.sheets[export_sheet_index(book, opts)],
+        )?,
         Format::Svg => render::svg(book, opts, visual)?.into_bytes(),
         Format::Png => render::raster(book, opts, image::ImageFormat::Png, visual)?,
         Format::Jpeg => render::raster(book, opts, image::ImageFormat::Jpeg, visual)?,
@@ -825,6 +864,27 @@ pub fn export_bytes_with_consent_and_visual_context(
         Format::Csv => office::csv(book, opts),
         _ => unreachable!(),
     })
+}
+
+fn export_sheet_index(book: &Workbook, opts: &ExportOptions) -> usize {
+    opts.sheet
+        .unwrap_or(book.active_sheet)
+        .min(book.sheets.len().saturating_sub(1))
+}
+
+fn exported_sheets<'a>(
+    book: &'a Workbook,
+    format: Format,
+    opts: &ExportOptions,
+) -> impl Iterator<Item = &'a thinoda_core::Sheet> {
+    let selected = format
+        .is_drawio_image()
+        .then(|| export_sheet_index(book, opts));
+    book.sheets
+        .iter()
+        .enumerate()
+        .filter(move |(index, _)| selected.is_none_or(|selected| selected == *index))
+        .map(|(_, sheet)| sheet)
 }
 
 /// Formats which do not preserve or render notes equations still refuse them.
@@ -917,6 +977,15 @@ fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
 }
 
 pub fn symbol_color_loss(book: &Workbook, format: Format) -> bool {
+    symbol_color_loss_with_options(book, format, &ExportOptions::default())
+}
+
+/// Whether the sheets selected by the export options lose custom symbol colors.
+pub fn symbol_color_loss_with_options(
+    book: &Workbook,
+    format: Format,
+    opts: &ExportOptions,
+) -> bool {
     !matches!(
         format,
         Format::Thinoda
@@ -926,9 +995,7 @@ pub fn symbol_color_loss(book: &Workbook, format: Format) -> bool {
             | Format::Jpeg
             | Format::Pdf
             | Format::PowerPoint
-    ) && book
-        .sheets
-        .iter()
+    ) && exported_sheets(book, format, opts)
         .any(|s| s.topics.values().any(|t| !t.marker_colors.is_empty()))
 }
 /// Atomically write an exported document next to its destination.

@@ -390,6 +390,8 @@ pub const EXPORT_MENU: &[Format] = &[
     Format::Opml,
     Format::TextBundle,
     Format::DrawIo,
+    Format::DrawIoSvg,
+    Format::DrawIoPng,
     Format::FreeMind,
     Format::XMind,
     Format::Csv,

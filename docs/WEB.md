@@ -102,6 +102,14 @@ features work differently:
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
 | Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |
 
+**Export > draw.io SVG (editable)** and **draw.io PNG (editable)** download an
+image containing an editable draw.io diagram for the current sheet only. The
+preview and the embedded diagram use the same sheet. Embedded content can extend
+outside the visible preview, so these images are not redacted. Review the
+conversion warnings and keep a `.thinoda` copy; unsupported content can block
+export. These are export formats, not Save As or lossless save-back. See the
+[draw.io plan and current limitations](DRAWIO.md).
+
 ## Durable browser documents (C1 platform integration)
 
 The platform provides `browser_storage::BrowserStorageProvider::new(backup)`

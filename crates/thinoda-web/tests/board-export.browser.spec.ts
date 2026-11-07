@@ -6,7 +6,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
-import { command, drag, frames, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
+import { colorBounds, command, drag, frames, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -108,6 +108,146 @@ async function confirmVisualPreflight(page: Page) {
     )).toBe("pointer");
     await page.mouse.click(865, 715);
     await frames(page);
+}
+
+async function confirmEditableImagePreflight(page: Page) {
+    // The mandatory disclosure is painted by egui rather than exposed as DOM buttons.
+    await page.mouse.move(865, 740);
+    await expect.poll(() => page.locator("#thinoda_canvas").evaluate(
+        (canvas) => (canvas as HTMLCanvasElement).style.cursor,
+    )).toBe("pointer");
+    await page.mouse.click(865, 740);
+    await frames(page);
+}
+
+for (const image of [
+    { extension: "svg", mime: "image/svg+xml", input: "editable.svg", name: "editable.drawio.svg" },
+    { extension: "png", mime: "image/png", input: "editable.PNG", name: "editable.drawio.png" },
+] as const) {
+    test(`editable draw.io ${image.extension} requires consent and reopens as a diagram`, async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await command(page, "Shape tool");
+        await page.mouse.click(650, 400);
+        await frames(page);
+        await command(page, "Quick Style: Warning");
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("F2");
+        await frames(page);
+        await expect(page.locator("input[type='text']")).toBeFocused();
+        await page.locator("input[type='text']").pressSequentially("Editable browser shape");
+        await page.keyboard.press("Enter");
+        await frames(page);
+
+        const baseline = sheetFrom(await saveAs(page, `editable-${image.extension}-before.thinoda`));
+        expect(baseline.root_mode).toBe("hidden");
+        expect(baseline.canvas.objects.some(
+            (object) => object.kind.shape?.label === "Editable browser shape",
+        )).toBe(true);
+
+        const downloads: string[] = [];
+        page.on("download", (download) => downloads.push(download.suggestedFilename()));
+        const label = `draw.io ${image.extension.toUpperCase()} (editable)`;
+
+        await setExportPrompt(page, image.input);
+        await command(page, label);
+        await page.waitForTimeout(300);
+        expect(await exportPrompts(page)).toEqual([]);
+        await page.keyboard.press("Escape");
+        await frames(page);
+        expect(await exportPrompts(page)).toEqual([]);
+        expect(downloads).toEqual([]);
+
+        await setExportPrompt(page, null);
+        await command(page, label);
+        await confirmEditableImagePreflight(page);
+        await expect.poll(async () => (await exportPrompts(page)).length).toBe(1);
+        expect(await exportPrompts(page)).toEqual([{
+            message: "File name",
+            suggested: expect.stringMatching(new RegExp(`\\.drawio\\.${image.extension}$`, "i")),
+        }]);
+        expect(downloads).toEqual([]);
+
+        await setExportPrompt(page, image.input);
+        await command(page, label);
+        const pending = page.waitForEvent("download", { timeout: 30_000 });
+        await confirmEditableImagePreflight(page);
+        const download = await pending;
+        expect(download.suggestedFilename()).toBe(image.name);
+        expect(downloads).toEqual([image.name]);
+        const bytes = await readFile(await download.path());
+
+        let embedded: string;
+        if (image.extension === "svg") {
+            const result = await page.evaluate((source) => {
+                const doc = new DOMParser().parseFromString(source, "image/svg+xml");
+                return {
+                    error: doc.querySelector("parsererror")?.textContent ?? null,
+                    root: doc.documentElement.localName,
+                    content: doc.documentElement.getAttribute("content"),
+                };
+            }, bytes.toString("utf8"));
+            expect(result.error).toBeNull();
+            expect(result.root).toBe("svg");
+            expect(result.content).not.toBeNull();
+            embedded = result.content!;
+        } else {
+            expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+            const chunks: { kind: string; data: Buffer }[] = [];
+            for (let offset = 8; offset < bytes.length;) {
+                const length = bytes.readUInt32BE(offset);
+                const kind = bytes.toString("ascii", offset + 4, offset + 8);
+                chunks.push({ kind, data: bytes.subarray(offset + 8, offset + 8 + length) });
+                offset += length + 12;
+            }
+            expect(chunks[0].kind).toBe("IHDR");
+            expect(chunks[1].kind).toBe("tEXt");
+            expect(chunks[1].data.subarray(0, 7)).toEqual(Buffer.from("mxfile\0"));
+            expect(chunks.findIndex((chunk) => chunk.kind === "IDAT")).toBeGreaterThan(1);
+            embedded = decodeURIComponent(chunks[1].data.subarray(7).toString("ascii"));
+        }
+        expect(embedded).toContain("<mxfile");
+        expect(embedded.match(/<diagram\b/g)).toHaveLength(1);
+        expect(embedded).toContain("Editable browser shape");
+        const dimensions = await page.evaluate(async ({ data, mime }) => {
+            const image = new Image();
+            image.src = `data:${mime};base64,${data}`;
+            await image.decode();
+            return [image.naturalWidth, image.naturalHeight];
+        }, { data: bytes.toString("base64"), mime: image.mime });
+        expect(dimensions.every((size) => size > 0)).toBe(true);
+        expect(sheetFrom(await saveAs(page, `editable-${image.extension}-after.thinoda`))).toEqual(baseline);
+
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        const shapePixels = async () => (
+            await colorBounds(
+                page,
+                await page.screenshot({ clip: { x: 400, y: 300, width: 500, height: 350 } }),
+                [[255, 237, 213]],
+                5,
+            )
+        )[0].count;
+        // Exclude the similarly colored Quick Style swatch in the side panel.
+        await expect.poll(shapePixels).toBeLessThan(200);
+        await page.evaluate(() => {
+            Object.defineProperty(window, "showOpenFilePicker", { configurable: true, value: undefined });
+        });
+        const chooser = page.waitForEvent("filechooser");
+        await command(page, "Open");
+        await (await chooser).setFiles({ name: image.name, mimeType: image.mime, buffer: bytes });
+        await expect.poll(shapePixels, { timeout: 30_000 }).toBeGreaterThan(2_000);
+        const reopened = sheetFrom(await saveAs(page, `editable-${image.extension}-reopened.thinoda`));
+        expect(reopened.root_mode).toBe("hidden");
+        expect(reopened.canvas.objects.some(
+            (object) => object.kind.shape?.label === "Editable browser shape",
+        )).toBe(true);
+    });
 }
 
 test("mixed rootless board SVG, PNG and JPEG exports require consent and preserve their objects", async ({ page }, testInfo) => {

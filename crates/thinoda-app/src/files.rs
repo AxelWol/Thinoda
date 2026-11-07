@@ -457,12 +457,25 @@ pub fn import_workbook(path: &Path) -> Result<Workbook, thinoda_io::IoError> {
 /// Normalizes a file name typed into the browser save prompt. Keeps an allowed
 /// extension the user typed, otherwise appends the first allowed one.
 pub fn web_save_name(input: &str, allowed: &[&str]) -> Option<String> {
+    let name = thinoda_platform::web::sanitize_file_name(input, "")?;
+    let lower = name.to_ascii_lowercase();
+    if allowed
+        .iter()
+        .any(|ext| lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())))
+    {
+        return Some(name);
+    }
     let default = allowed.first().copied().unwrap_or_default();
-    let keeps = input
-        .trim()
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| allowed.iter().any(|a| a.eq_ignore_ascii_case(ext)));
-    thinoda_platform::web::sanitize_file_name(input, if keeps { "" } else { default })
+    if default.is_empty() {
+        return Some(name);
+    }
+    if let Some((_, last)) = default.rsplit_once('.') {
+        let suffix = format!(".{}", last.to_ascii_lowercase());
+        if lower.ends_with(&suffix) && name.len() > suffix.len() {
+            return Some(format!("{}.{default}", &name[..name.len() - suffix.len()]));
+        }
+    }
+    Some(format!("{name}.{default}"))
 }
 
 /// Safe upload names in deduplication order: `name`, then `stem (2).ext` … `(999)`.
@@ -1836,6 +1849,27 @@ mod tests {
         );
         assert_eq!(web_save_name("  ..  ", &allowed), None);
         assert_eq!(web_save_name("shot", &["png"]).as_deref(), Some("shot.png"));
+        for (input, expected) in [
+            ("Plan", "Plan.drawio.png"),
+            ("Plan.drawio.png", "Plan.drawio.png"),
+            ("Plan.DRAWIO.PNG", "Plan.DRAWIO.PNG"),
+            ("Plan.png", "Plan.drawio.png"),
+            ("Plan.PNG", "Plan.drawio.png"),
+            ("Plan.jpeg", "Plan.jpeg.drawio.png"),
+        ] {
+            assert_eq!(
+                web_save_name(input, &["drawio.png"]).as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            web_save_name("Plan.svg", &["drawio.svg"]).as_deref(),
+            Some("Plan.drawio.svg")
+        );
+        assert_eq!(
+            web_save_name("Plan.DRAWIO.SVG", &["drawio.svg"]).as_deref(),
+            Some("Plan.DRAWIO.SVG")
+        );
     }
 
     #[test]

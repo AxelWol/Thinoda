@@ -111,6 +111,9 @@ Strikethrough notes|Tachar notas
 Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.|Não é possível tachar aqui. Selecione texto em um parágrafo fora de código ou encurte a nota.
 Cannot apply formatting to this selection. The formatting action was canceled.|Não é possível aplicar formatação a esta seleção. A ação de formatação foi cancelada.
 Board export changes|Alterações na exportação do quadro
+Editable image export|Exportar imagem editável
+Only the current sheet is included; other sheets are not exported.|Somente a planilha atual é incluída; as demais planilhas não são exportadas.
+This image contains the editable diagram, including content outside the visible preview. It is not redacted.|Esta imagem contém o diagrama editável, incluindo conteúdo fora da prévia visível. Os dados não foram ocultados.
 The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.|O formato selecionado altera ou omite conteúdo do quadro. O quadro na memória permanece inalterado; salve-o como Thinoda para preservá-lo.
 Shapes omitted|Formas omitidas
 Camera image metadata or color profiles may be omitted|Metadados ou perfis de cor das imagens da câmera podem ser omitidos

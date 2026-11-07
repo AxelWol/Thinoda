@@ -208,8 +208,11 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
     if matches!(format, Format::Thinoda) {
         return Vec::new();
     }
+    if format.is_drawio_image() {
+        return drawio_losses(selected_sheet(book, opts).map(|index| &book.sheets[index]));
+    }
     if format == Format::DrawIo {
-        return drawio_losses(book);
+        return drawio_losses(&book.sheets);
     }
     let sheets: Vec<(usize, &Sheet)> = match format {
         Format::XMind => book.sheets.iter().enumerate().collect(),
@@ -343,14 +346,14 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
 
 /// draw.io writes every sheet as a page. Board content round-trips; the mind-map
 /// structure is drawn but not editable as a map.
-fn drawio_losses(book: &Workbook) -> Vec<ExportLoss> {
+fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportLoss> {
     let mut flattened = 0;
     let mut details = 0;
     let mut slides = 0;
     let mut inline_text = 0;
     let mut connector_attachments = 0;
     let mut settings = false;
-    for sheet in &book.sheets {
+    for sheet in sheets {
         for (id, topic) in &sheet.topics {
             if topic.card.is_none() && !sheet.is_anchor(*id) {
                 flattened += 1;

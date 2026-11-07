@@ -2594,8 +2594,12 @@ impl<'a> PageWriter<'a> {
 
 /// Writes all sheets as uncompressed draw.io pages.
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
+    Ok(export_sheets(&book.sheets).into_bytes())
+}
+
+fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> String {
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
-    for (index, sheet) in book.sheets.iter().enumerate() {
+    for (index, sheet) in sheets.into_iter().enumerate() {
         let grid = if sheet.board.grid == GridKind::None {
             0
         } else {
@@ -2611,7 +2615,155 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         out.push_str("</root>\n</mxGraphModel>\n</diagram>\n");
     }
     out.push_str("</mxfile>\n");
-    Ok(out.into_bytes())
+    out
+}
+
+fn valid_rendered_svg(svg: &str) -> bool {
+    if svg.len() > MAX_BYTES || !svg.starts_with("<svg ") {
+        return false;
+    }
+    let mut reader = quick_xml::Reader::from_str(svg);
+    let mut depth = 0usize;
+    let mut seen_root = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(start)) => {
+                if depth == 0 {
+                    if seen_root || start.name().as_ref() != "svg" {
+                        return false;
+                    }
+                    for attr in start.attributes() {
+                        let Ok(attr) = attr else { return false };
+                        if attr.key.as_ref() == "content" {
+                            return false;
+                        }
+                    }
+                    seen_root = true;
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(_)) if depth == 0 => return false,
+            Ok(Event::End(_)) => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+            }
+            Ok(Event::Text(text)) if depth == 0 && !text.xml10_content().trim().is_empty() => {
+                return false;
+            }
+            Ok(Event::CData(_) | Event::GeneralRef(_)) if depth == 0 => return false,
+            Ok(Event::DocType(_)) | Err(_) => return false,
+            Ok(Event::Eof) => return seen_root && depth == 0,
+            _ => {}
+        }
+    }
+}
+
+fn embedded_image_fits(image: usize, payload: usize, overhead: usize) -> bool {
+    image
+        .checked_add(payload)
+        .and_then(|length| length.checked_add(overhead))
+        .is_some_and(|length| length <= MAX_BYTES)
+}
+
+pub(crate) fn embed_svg(mut svg: String, sheet: &Sheet) -> Result<Vec<u8>, IoError> {
+    if svg.len() > MAX_BYTES {
+        return Err(invalid("editable draw.io image exceeds size limit"));
+    }
+    if !valid_rendered_svg(&svg) {
+        return Err(invalid("rendered SVG is not a valid SVG document"));
+    }
+    let xml = export_sheets(std::iter::once(sheet));
+    let escaped_len = xml.chars().try_fold(0usize, |length, character| {
+        let size = match character {
+            '&' => 5,
+            '<' | '>' => 4,
+            '"' => 6,
+            '\n' | '\r' => 5,
+            '\t' => 4,
+            c if c < ' ' || c == '\u{fffe}' || c == '\u{ffff}' => 0,
+            c => c.len_utf8(),
+        };
+        length.checked_add(size)
+    });
+    if !escaped_len
+        .is_some_and(|length| embedded_image_fits(svg.len(), length, " content=\"\"".len()))
+    {
+        return Err(invalid("editable draw.io image exceeds size limit"));
+    }
+    svg.insert_str(4, &format!(" content=\"{}\"", esc(&xml)));
+    Ok(svg.into_bytes())
+}
+
+fn rendered_png_insertion(png: &[u8]) -> Option<usize> {
+    if png.len() > MAX_BYTES || !png.starts_with(PNG_SIGNATURE) {
+        return None;
+    }
+    let mut pos = PNG_SIGNATURE.len();
+    let mut has_data = false;
+    loop {
+        let header = png.get(pos..pos.checked_add(8)?)?;
+        let len = u32::from_be_bytes(header[..4].try_into().ok()?) as usize;
+        let kind = &header[4..];
+        let data_start = pos.checked_add(8)?;
+        let data_end = data_start.checked_add(len)?;
+        let end = data_end.checked_add(4)?;
+        let data = png.get(data_start..data_end)?;
+        let checksum = u32::from_be_bytes(png.get(data_end..end)?.try_into().ok()?);
+        if crc32fast::hash(png.get(pos + 4..data_end)?) != checksum {
+            return None;
+        }
+        if pos == PNG_SIGNATURE.len() {
+            if kind != b"IHDR" || len != 13 || data[..4] == [0; 4] || data[4..8] == [0; 4] {
+                return None;
+            }
+        } else if kind == b"IHDR" {
+            return None;
+        }
+        if matches!(kind, b"tEXt" | b"zTXt" | b"iTXt") && data.starts_with(b"mxfile\0") {
+            return None;
+        }
+        if kind == b"IDAT" && !data.is_empty() {
+            has_data = true;
+        }
+        if kind == b"IEND" {
+            // diagrams.net looks for editable metadata before the first IDAT.
+            return (len == 0 && has_data && end == png.len())
+                .then_some(PNG_SIGNATURE.len() + 12 + 13);
+        }
+        pos = end;
+    }
+}
+
+pub(crate) fn embed_png(mut png: Vec<u8>, sheet: &Sheet) -> Result<Vec<u8>, IoError> {
+    if png.len() > MAX_BYTES {
+        return Err(invalid("editable draw.io image exceeds size limit"));
+    }
+    let insertion = rendered_png_insertion(&png)
+        .ok_or_else(|| invalid("rendered PNG has no valid image and end chunk"))?;
+    let xml = export_sheets(std::iter::once(sheet));
+    let text_len = crate::drawio_clipboard::encoded_uri_component_len(&xml)
+        .and_then(|length| length.checked_add(b"mxfile\0".len()))
+        .ok_or_else(|| invalid("editable draw.io image exceeds size limit"))?;
+    if !embedded_image_fits(png.len(), text_len, 12) {
+        return Err(invalid("editable draw.io image exceeds size limit"));
+    }
+    let text_len = u32::try_from(text_len)
+        .map_err(|_| invalid("editable draw.io image exceeds size limit"))?;
+    let text = crate::drawio_clipboard::encode_uri_component(&xml);
+    let chunk_len = text_len as usize + 12;
+    let original_len = png.len();
+    png.resize(original_len + chunk_len, 0);
+    png.copy_within(insertion..original_len, insertion + chunk_len);
+    let chunk = &mut png[insertion..insertion + chunk_len];
+    chunk[..4].copy_from_slice(&text_len.to_be_bytes());
+    chunk[4..8].copy_from_slice(b"tEXt");
+    chunk[8..15].copy_from_slice(b"mxfile\0");
+    chunk[15..chunk_len - 4].copy_from_slice(text.as_bytes());
+    let checksum = crc32fast::hash(&chunk[4..chunk_len - 4]);
+    chunk[chunk_len - 4..].copy_from_slice(&checksum.to_be_bytes());
+    Ok(png)
 }
 
 #[cfg(test)]

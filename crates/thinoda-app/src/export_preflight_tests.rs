@@ -137,22 +137,24 @@ fn drawio_connector_attachment_loss_requires_localized_consent() {
     let book = connector_attachment_book();
     let options = ExportOptions::default();
     let key = "Connector-to-connector attachments detached";
-    let message = require_board_consent(&book, Format::DrawIo, &options, false).unwrap_err();
-    assert!(
-        i18n::Lang::ALL
-            .into_iter()
-            .any(|language| message.contains(&format!("1 — {}", i18n::t_in(language, key)))),
-        "{message}"
-    );
-    assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            i18n::Lang::ALL
+                .into_iter()
+                .any(|language| message.contains(&format!("1 — {}", i18n::t_in(language, key)))),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+        assert!(
+            !SaveConsent {
+                board: false,
+                mindmanager: true,
+            }
+            .for_io(format)
+        );
+    }
     assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
-    assert!(
-        !SaveConsent {
-            board: false,
-            mindmanager: true,
-        }
-        .for_io(Format::DrawIo)
-    );
     assert!(
         !SaveConsent {
             board: true,

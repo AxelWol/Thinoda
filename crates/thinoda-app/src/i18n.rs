@@ -1286,6 +1286,8 @@ const DE: &[(&str, &str)] = &[
     ("MindManager", "MindManager"),
     ("TextBundle", "TextBundle"),
     ("draw.io", "draw.io"),
+    ("draw.io SVG (editable)", "draw.io SVG (bearbeitbar)"),
+    ("draw.io PNG (editable)", "draw.io PNG (bearbeitbar)"),
     ("SVG", "SVG"),
     ("PNG", "PNG"),
     ("JPEG", "JPEG"),
@@ -2090,6 +2092,15 @@ const DE: &[(&str, &str)] = &[
         "Diese Auswahl kann nicht formatiert werden. Die Formatierungsaktion wurde abgebrochen.",
     ),
     ("Board export changes", "Änderungen beim Board-Export"),
+    ("Editable image export", "Bearbeitbares Bild exportieren"),
+    (
+        "Only the current sheet is included; other sheets are not exported.",
+        "Nur das aktuelle Blatt ist enthalten; andere Blätter werden nicht exportiert.",
+    ),
+    (
+        "This image contains the editable diagram, including content outside the visible preview. It is not redacted.",
+        "Dieses Bild enthält das bearbeitbare Diagramm, einschließlich Inhalten außerhalb der sichtbaren Vorschau. Es ist nicht geschwärzt.",
+    ),
     (
         "The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.",
         "Das gewählte Format verändert Board-Inhalte oder lässt sie weg. Das Board im Arbeitsspeicher bleibt unverändert; speichern Sie es als Thinoda, um es zu erhalten.",

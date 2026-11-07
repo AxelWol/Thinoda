@@ -771,6 +771,45 @@ fn detection_supports_paths_and_signatures() {
         Some(Format::FreeMind)
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn detection_preserves_extensions_on_non_unicode_names() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::Path};
+
+    for (name, expected) in [
+        (&b"map-\xff.xmind"[..], Format::XMind),
+        (&b"map-\xff.drawio.svg"[..], Format::DrawIoSvg),
+        (&b"map-\xff.drawio.png"[..], Format::DrawIoPng),
+    ] {
+        assert_eq!(
+            Format::from_path(Path::new(OsStr::from_bytes(name))),
+            Some(expected)
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn detection_preserves_extensions_on_non_unicode_names() {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
+
+    for (extension, expected) in [
+        (".xmind", Format::XMind),
+        (".drawio.svg", Format::DrawIoSvg),
+        (".drawio.png", Format::DrawIoPng),
+    ] {
+        let name = OsString::from_wide(
+            &"map-"
+                .encode_utf16()
+                .chain([0xd800])
+                .chain(extension.encode_utf16())
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(Format::from_path(Path::new(&name)), Some(expected));
+    }
+}
+
 #[test]
 fn importers_do_not_panic_on_truncated_or_random_bytes() {
     let formats = [
