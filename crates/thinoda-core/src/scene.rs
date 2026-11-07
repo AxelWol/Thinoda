@@ -56,10 +56,17 @@ pub enum SceneHit {
 /// Paint geometry for a non-default connector marker, in sheet coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConnectorMarkerGeometry {
-    /// Two wings and the tip, in path order.
-    pub points: [Vec2; 3],
+    points: [Vec2; 4],
+    point_count: usize,
     pub filled: bool,
     pub line_inset: f32,
+}
+
+impl ConnectorMarkerGeometry {
+    /// The marker outline, including the notch of a classic arrow.
+    pub fn points(&self) -> &[Vec2] {
+        &self.points[..self.point_count]
+    }
 }
 
 fn connector_marker_geometry(
@@ -90,15 +97,37 @@ fn connector_marker_geometry(
     let size = 6.0 + width;
     let tip = tip - direction * offset;
     let base = tip - direction * size;
-    let filled = kind == ConnectorMarkerKind::Block;
+    let classic = matches!(
+        kind,
+        ConnectorMarkerKind::Classic | ConnectorMarkerKind::ClassicThin
+    );
+    let thin = matches!(
+        kind,
+        ConnectorMarkerKind::ClassicThin
+            | ConnectorMarkerKind::OpenThin
+            | ConnectorMarkerKind::BlockThin
+    );
+    let filled = !matches!(
+        kind,
+        ConnectorMarkerKind::Open | ConnectorMarkerKind::OpenThin
+    );
+    let wing = size / if thin { 3.0 } else { 2.0 };
     Some(ConnectorMarkerGeometry {
         points: [
-            base + normal * (size / 2.0),
+            base + normal * wing,
             tip,
-            base - normal * (size / 2.0),
+            base - normal * wing,
+            tip - direction * (size * 0.75),
         ],
+        point_count: if classic { 4 } else { 3 },
         filled,
-        line_inset: if filled { size + offset } else { offset * 2.0 },
+        line_inset: if classic {
+            size * 0.75 + offset
+        } else if filled {
+            size + offset
+        } else {
+            offset * 2.0
+        },
     })
 }
 
@@ -208,11 +237,11 @@ impl SceneGeometry {
                 let radius = width / 2.0 + tolerance;
                 distance_to_polyline(p, points) <= radius
                     || markers.iter().flatten().any(|marker| {
-                        (marker.filled && point_in_polygon(p, &marker.points))
+                        (marker.filled && point_in_polygon(p, marker.points()))
                             || if marker.filled {
-                                distance_to_outline(p, &marker.points) <= radius
+                                distance_to_outline(p, marker.points()) <= radius
                             } else {
-                                distance_to_polyline(p, &marker.points) <= radius
+                                distance_to_polyline(p, marker.points()) <= radius
                             }
                     })
             }
@@ -449,7 +478,7 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
         } => {
             let mut bounds = points_bounds(points)?.expand(width / 2.0);
             for marker in markers.iter().flatten() {
-                if let Some(marker_bounds) = points_bounds(&marker.points) {
+                if let Some(marker_bounds) = points_bounds(marker.points()) {
                     bounds = bounds.union(&marker_bounds.expand(width / 2.0));
                 }
             }

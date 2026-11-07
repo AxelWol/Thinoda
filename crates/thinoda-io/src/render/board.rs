@@ -296,7 +296,7 @@ fn marker_primitive(
     color: Color,
 ) -> Prim {
     Prim::Path {
-        points: marker.points.to_vec(),
+        points: marker.points().to_vec(),
         closed: marker.filled,
         fill: marker.filled.then_some(color),
         stroke: Some((color, width)),

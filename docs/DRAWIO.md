@@ -194,9 +194,9 @@ Rules (each backed by a test):
 8. **Non-draw.io documents** never get these fields; a native sheet saved to draw.io gets
    fresh ids and default envelope.
 
-- **Native format gates:** v10 covers connector waypoints and v11 covers open
-  and block connector markers. Every later field or passthrough representation
-  that a v11 reader cannot preserve must
+- **Native format gates:** v10 covers connector waypoints, v11 covers open and
+  block connector markers, and v12 adds classic and thin markers. Every later
+  field or passthrough representation that a v12 reader cannot preserve must
   require a higher native version, with `required_native_version` choosing the
   oldest version that can represent the complete workbook. Older builds must
   reject that version instead of silently dropping data. Version sheet/board
@@ -251,13 +251,14 @@ Rules (each backed by a test):
 | Sheet | `DiagramPage { page_size, page_scale, grid, background, background_image, math, adaptive_colors }` in `BoardSettings`. |
 
 #### 3.2.3 Connector marker migration (compatibility-critical)
-- Keep `arrow_start`/`arrow_end` bools **as the serialized form** whenever the marker is
-  `None`/`Classic(filled, default size)`; add `start_marker`/`end_marker` fields that are
-  serialized **only** for non-default markers. Custom `Deserialize` helper reads both;
-  if both present and inconsistent → validation error. In-memory API is the new
-  `Marker`; bools derived. Files without new marker data retain their legacy
-  representation, and older Thinoda builds reject non-default markers through a
-  new version gate rather than silently ignoring them.
+- Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
+  triangles; add optional `start_marker`/`end_marker` fields for exact draw.io
+  shapes. `None` retains the historical Thinoda triangle and is distinct from
+  draw.io's notched `Classic`. Custom deserialization rejects inconsistent
+  booleans and markers. The eventual in-memory API derives booleans from
+  `Marker`; until then both are validated. Files without new marker data retain
+  their legacy representation, and older builds reject new marker variants
+  through version gates rather than silently ignoring them.
 - Same pattern for every other extended field: legacy representation preserved, new
   field present only when it carries information, `required_native_version` detects
   every new field (construct one workbook per new field and assert its minimum
@@ -554,8 +555,8 @@ connections arrive in Phase 8 without changing the gestures).
   Text/Image/Stencil/opaque kinds, style/connector/metadata fields, `DrawIoDocumentExt`/
   `DrawIoPageExt`/`DrawIoCellExt`, ownership table, tombstones, marker migration.
 - `required_native_version` gates every field at the first version that supports
-  it: v10 covers waypoints, v11 covers open/block markers, and subsequent
-  additions need a higher version.
+  it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
+  and thin markers, and subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1153,23 +1154,58 @@ match the tested straight and diagonal defaults. The underlying proportions
 can also be checked against the
 [mxGraph marker implementation](https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/shape/mxMarker.js).
 
-**Critique and remaining work.** This is two of the published marker types,
-not full marker fidelity. Other marker kinds, non-default sizes/fills and fixed
-ports still warn and are approximated; the generic warning does not identify
-individual edges. The existing classic marker remains a legacy triangle rather
-than draw.io's notched classic arrow and does not trigger a marker-specific
-warning. Geometry follows the published default marker proportions, but short
-overlapping markers collapse the connecting stroke and curved/elbow routing
-remains approximate; pixel-identical parity,
-physical-device and screen-reader acceptance have not been established. The
-current in-memory representation keeps booleans alongside optional kinds with
-validation, rather than the eventual derived marker API in §3.2.3. Lossless
-save-back, editable ports and the remaining marker families are still open.
+**Critique at this slice.** This covered only two published marker types. The
+then-existing classic arrow was a legacy triangle, not draw.io's notched arrow;
+the following slice addresses that distinction. Short overlapping markers still
+collapse the connecting stroke, curved/elbow routing remains approximate, and
+pixel-identical parity, physical-device and screen-reader acceptance have not
+been established. The in-memory representation keeps booleans alongside
+optional kinds with validation, rather than the eventual derived marker API in
+§3.2.3. Lossless save-back and editable ports remain open.
 As with other private-only board content, a Thinoda XMind snapshot is ignored
 when public content or embedded images were changed externally; importing then
 uses the public XMind representation, which cannot restore those markers.
 Unreadable legacy snapshots without recognizable marker fields can also fall
 back to public content; the original XMind file should be retained.
+
+**Classic and thin connector markers (partial Phases 3, 4 and 8).** Default-size
+classic, classicThin, openThin and blockThin arrows are distinct editable marker
+kinds. An implicit draw.io default end arrow becomes an explicit notched classic
+marker. Native v12, sheet clipboard v8, board clipboard v5, extended recovery
+envelopes (with and without pending ink), and private XMind marker snapshots
+protect these kinds from older readers. Open/block-only documents remain v11;
+old native triangle arrows retain their original rendering and serialization.
+The inspector labels the legacy triangle separately from exact classic arrows.
+All 89 supplied diagram files round-trip their 1,028 imported marker-bearing
+edges with these representations. Browser journeys in Chromium, Firefox and
+WebKit exercise offline link import, keyboard activation, legacy markers and
+the native v12 gate.
+
+The shared geometry includes the classic notch and thin widths; canvas fill uses
+triangulation rather than a convex-polygon shortcut. Native triangle arrows are
+approximated by draw.io classic arrows outside Thinoda, and the export/clipboard
+loss report now discloses this. Thinoda-specific style hints retain the legacy
+triangle on a subsequent import if the corresponding arrow remains unchanged;
+changing its marker, size or fill takes precedence over that hint.
+
+**Critique and remaining work.** Six of the published marker types now have
+default-size representations, not the complete marker family. Custom sizes,
+unfilled markers, other shapes and fixed ports still require approximation
+warnings; those warnings remain generic. Older draw.io exports lack the legacy
+hints, and a third-party editor can remove them, so legacy identity cannot
+always be recovered from draw.io alone. Geometry, routing, XMind private-data
+and accessibility limitations described above remain. The source draw.io file
+and a native copy should still be retained; lossless save-back remains
+unimplemented.
+
+**Next connector priority: marker sizes.** A scan of all 89 supplied diagrams,
+including compressed pages, found non-default sizes on 219 classic arrow ends,
+36 open, 19 blockThin, 17 classicThin and 13 block ends.
+In the published editor the start and end size fields are independent, default
+to 6 pt, accept fractional values and clamp interactive input to 0–999 pt.
+Implement bounded per-end sizes with their own compatibility gates and shared
+render geometry before treating these examples as fully faithful. Keep warnings
+for malformed or out-of-range values and for unsupported fill/port settings.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

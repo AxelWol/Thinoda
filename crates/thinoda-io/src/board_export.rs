@@ -12,17 +12,19 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 11;
+pub const NATIVE_FORMAT_VERSION: u64 = 12;
 
 /// Lowest native format version able to represent `book`.
 ///
 /// 2 is the base format, 3 adds embedded resources, 4 formatted notes, 5 FIM documents,
 /// 6 Freeform board semantics, 7 independent Zone background colors, and 8 inline card
 /// text formatting, 9 explicit Zone object membership, 10 connector waypoints,
-/// and 11 non-default connector markers.
+/// 11 open/block connector markers, and 12 classic and thin connector markers.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_connector_markers() {
+    if book.has_extended_connector_markers() {
+        12
+    } else if book.has_connector_markers() {
         11
     } else if book.has_connector_waypoints() {
         10
@@ -192,6 +194,8 @@ pub enum ExportLoss {
     MapElementsFlattened(usize),
     /// Connector ends attached to other connectors are written as free points.
     ConnectorAttachmentsDetached(usize),
+    /// Legacy triangle arrow ends are approximated by draw.io classic arrows.
+    LegacyConnectorMarkersApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -355,6 +359,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut slides = 0;
     let mut inline_text = 0;
     let mut connector_attachments = 0;
+    let mut legacy_markers = 0;
     let mut settings = false;
     for sheet in sheets {
         for (id, topic) in &sheet.topics {
@@ -372,6 +377,14 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         flattened += sheet.relationships.len() + sheet.boundaries.len() + sheet.summaries.len();
         slides += sheet.presentation.slides.len();
         connector_attachments += connector_attachment_counts(sheet).values().sum::<usize>();
+        for object in &sheet.canvas.objects {
+            if let CanvasObjectKind::Connector(connector) = &object.kind {
+                legacy_markers +=
+                    usize::from(connector.arrow_start && connector.start_marker.is_none());
+                legacy_markers +=
+                    usize::from(connector.arrow_end && connector.end_marker.is_none());
+            }
+        }
         settings |= sheet.board.grid == thinoda_core::GridKind::Dots || sheet.board.snap;
     }
     let mut out = Vec::new();
@@ -383,6 +396,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         (
             ExportLoss::ConnectorAttachmentsDetached,
             connector_attachments,
+        ),
+        (
+            ExportLoss::LegacyConnectorMarkersApproximated,
+            legacy_markers,
         ),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),

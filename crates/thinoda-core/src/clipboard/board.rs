@@ -21,6 +21,7 @@ const BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-1\n";
 const INLINE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-2\n";
 const WAYPOINT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-3\n";
 const MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-4\n";
+const EXTENDED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-5\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -39,7 +40,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_connector_markers() {
+        if self.fragment.has_extended_connector_markers() {
+            EXTENDED_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_connector_markers() {
             MARKER_BOARD_PREFIX
         } else if self.fragment.has_connector_waypoints() {
             WAYPOINT_BOARD_PREFIX
@@ -219,9 +222,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(MARKER_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-4\r\n"))
-        .map(|json| (4, json))
+        .strip_prefix(EXTENDED_MARKER_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-5\r\n"))
+        .map(|json| (5, json))
+        .or_else(|| {
+            text.strip_prefix(MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-4\r\n"))
+                .map(|json| (4, json))
+        })
         .or_else(|| {
             text.strip_prefix(WAYPOINT_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-3\r\n"))
@@ -242,6 +250,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         serde_json::from_str(json).map_err(|error| error.to_string())?;
     if version < 4 && payload.fragment.has_connector_markers() {
         return Err("connector markers require board clipboard version 4".into());
+    }
+    if version < 5 && payload.fragment.has_extended_connector_markers() {
+        return Err("classic and thin connector markers require board clipboard version 5".into());
     }
     if version < 3 && payload.fragment.has_connector_waypoints() {
         return Err("connector waypoints require board clipboard version 3".into());

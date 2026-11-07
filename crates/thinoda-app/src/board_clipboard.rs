@@ -2179,7 +2179,7 @@ mod tests {
     #[test]
     fn drawio_clipboard_reports_marker_and_port_approximation() {
         use crate::app::Cmd;
-        for style in ["endArrow=openThin", "endArrow=classic;exitX=0.25"] {
+        for style in ["endArrow=diamond", "endArrow=classic;exitX=0.25"] {
             let (mut app, clipboard) = empty_board_app();
             let before = app.doc().unwrap().doc.workbook().clone();
             let items = board_item_count(&app);
@@ -2204,35 +2204,41 @@ mod tests {
         use crate::app::Cmd;
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 
-        let (mut app, clipboard) = empty_board_app();
-        let before = app.doc().unwrap().doc.workbook().clone();
-        clipboard.borrow_mut().text =
-            DRAWIO_MODEL.replace("endArrow=classic", "startArrow=block;endArrow=open");
-        let ctx = egui::Context::default();
-        app.exec(&ctx, Cmd::MenuPaste);
-        let sheet = app.doc().unwrap().doc.sheet();
-        let connector = sheet
-            .canvas
-            .objects
-            .iter()
-            .find_map(|object| match &object.kind {
-                CanvasObjectKind::Connector(connector) => Some(connector),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(
-            connector.start_marker.unwrap().kind,
-            ConnectorMarkerKind::Block
-        );
-        assert_eq!(
-            connector.end_marker.unwrap().kind,
-            ConnectorMarkerKind::Open
-        );
-        assert!(!app.toasts.texts().any(|text| text.contains(crate::i18n::t(
-            "Pasted from draw.io; some content was simplified"
-        ))));
-        app.exec(&ctx, Cmd::Canvas(Action::Undo));
-        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        for (style, start, end) in [
+            (
+                "startArrow=block;endArrow=open",
+                ConnectorMarkerKind::Block,
+                ConnectorMarkerKind::Open,
+            ),
+            (
+                "startArrow=classicThin;endArrow=openThin",
+                ConnectorMarkerKind::ClassicThin,
+                ConnectorMarkerKind::OpenThin,
+            ),
+        ] {
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            clipboard.borrow_mut().text = DRAWIO_MODEL.replace("endArrow=classic", style);
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            let sheet = app.doc().unwrap().doc.sheet();
+            let connector = sheet
+                .canvas
+                .objects
+                .iter()
+                .find_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) => Some(connector),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(connector.start_marker.unwrap().kind, start);
+            assert_eq!(connector.end_marker.unwrap().kind, end);
+            assert!(!app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+                "Pasted from draw.io; some content was simplified"
+            ))));
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2382,7 +2388,10 @@ mod tests {
         let copy = prepare_drawio_copy(doc).unwrap().unwrap();
         assert_eq!(
             copy.losses,
-            vec![thinoda_io::ExportLoss::ConnectorAttachmentsDetached(2)]
+            vec![
+                thinoda_io::ExportLoss::ConnectorAttachmentsDetached(2),
+                thinoda_io::ExportLoss::LegacyConnectorMarkersApproximated(2),
+            ]
         );
     }
 

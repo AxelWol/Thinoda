@@ -57,14 +57,14 @@ fn connector_marker_geometry_and_hit_testing_follow_both_ends() {
     let end = markers[1].unwrap();
     assert!(start.filled);
     assert!(!end.filled);
-    assert!((start.points[1].x - 2.236).abs() < 0.001);
-    assert!((start.points[0].x - 10.236).abs() < 0.001);
-    assert!((end.points[1].x - 97.764).abs() < 0.001);
-    assert!((end.points[0].x - 89.764).abs() < 0.001);
-    assert!((end.points[0].y.abs() - 4.0).abs() < 0.001);
-    assert!(item.bounds.contains(end.points[0]));
+    assert!((start.points()[1].x - 2.236).abs() < 0.001);
+    assert!((start.points()[0].x - 10.236).abs() < 0.001);
+    assert!((end.points()[1].x - 97.764).abs() < 0.001);
+    assert!((end.points()[0].x - 89.764).abs() < 0.001);
+    assert!((end.points()[0].y.abs() - 4.0).abs() < 0.001);
+    assert!(item.bounds.contains(end.points()[0]));
     assert_eq!(
-        scene.hit_test_tolerance(end.points[0], 0.0),
+        scene.hit_test_tolerance(end.points()[0], 0.0),
         Some(SceneHit::Object(id))
     );
     let line = connector_stroke_path(points, markers);
@@ -127,7 +127,7 @@ fn connector_marker_geometry_matches_published_drawio_for_diagonal_edges() {
             Vec2::new(197.9876, 297.3168),
             Vec2::new(196.1876, 287.4168),
         ];
-        for (actual, expected) in marker.points.iter().zip(expected) {
+        for (actual, expected) in marker.points().iter().zip(expected) {
             assert!(
                 (*actual - expected).length() < 0.001,
                 "{actual:?} != {expected:?}"
@@ -137,6 +137,84 @@ fn connector_marker_geometry_matches_published_drawio_for_diagonal_edges() {
         let stroke = connector_stroke_path(&points, &[None, Some(marker)]);
         assert!((*stroke.last().unwrap() - expected_end).length() < 0.001);
     }
+}
+
+#[test]
+fn classic_and_thin_marker_geometry_matches_drawio() {
+    use crate::board::ConnectorMarkerKind;
+
+    let points = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    for (kind, half_width, filled, end, notch) in [
+        (ConnectorMarkerKind::Classic, 4.0, true, 91.764, true),
+        (
+            ConnectorMarkerKind::ClassicThin,
+            8.0 / 3.0,
+            true,
+            91.764,
+            true,
+        ),
+        (
+            ConnectorMarkerKind::OpenThin,
+            8.0 / 3.0,
+            false,
+            95.528,
+            false,
+        ),
+        (
+            ConnectorMarkerKind::BlockThin,
+            8.0 / 3.0,
+            true,
+            89.764,
+            false,
+        ),
+    ] {
+        let marker = connector_marker_geometry(&points, false, kind, 2.0).unwrap();
+        let outline = marker.points();
+        assert_eq!(outline.len(), if notch { 4 } else { 3 });
+        assert_eq!(marker.filled, filled);
+        assert!((outline[0].x - 89.764).abs() < 0.001);
+        assert!((outline[0].y - half_width).abs() < 0.001);
+        assert!((outline[1].x - 97.764).abs() < 0.001);
+        assert!((outline[2].y + half_width).abs() < 0.001);
+        if notch {
+            assert!((outline[3].x - 91.764).abs() < 0.001);
+            assert!(!point_in_polygon(Vec2::new(90.0, 0.0), outline));
+            assert!(point_in_polygon(Vec2::new(93.0, 0.0), outline));
+        }
+        let line = connector_stroke_path(&points, &[None, Some(marker)]);
+        assert!((line.last().unwrap().x - end).abs() < 0.001);
+        let start = connector_marker_geometry(&points, true, kind, 2.0).unwrap();
+        assert!((start.points()[1].x - 2.236).abs() < 0.001);
+        assert!(
+            (connector_stroke_path(&points, &[Some(start), None])[0].x - (100.0 - end)).abs()
+                < 0.001
+        );
+    }
+}
+
+#[test]
+fn classic_marker_hit_testing_respects_the_notch() {
+    use crate::board::{ConnectorMarker, ConnectorMarkerKind};
+
+    let mut sheet = Sheet::new("Markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.width = 0.1;
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(93.8, 3.0), 0.0),
+        Some(SceneHit::Object(id))
+    );
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(94.2, 0.9), 0.0), None);
 }
 
 #[test]

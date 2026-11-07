@@ -17,6 +17,7 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 const MAX_XMIND_ARCHIVE_ENTRIES: usize = MAX_RESOURCES + 5;
 const WAYPOINT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-WAYPOINTS-1";
 const MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-1";
+const EXTENDED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-2";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -706,7 +707,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_connector_markers() {
+    if book.has_extended_connector_markers() {
+        Ok(serde_json::to_string(&(
+            EXTENDED_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_markers() {
         Ok(serde_json::to_string(&(MARKER_SNAPSHOT_VERSION, book))?)
     } else if book.has_connector_waypoints() {
         Ok(serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, book))?)
@@ -722,7 +728,9 @@ fn marker_private_snapshot(source: &str) -> bool {
         .and_then(|contents| {
             String::deserialize(&mut serde_json::Deserializer::from_str(contents)).ok()
         })
-        .is_some_and(|version| version == MARKER_SNAPSHOT_VERSION)
+        .is_some_and(|version| {
+            version == MARKER_SNAPSHOT_VERSION || version == EXTENDED_MARKER_SNAPSHOT_VERSION
+        })
 }
 
 fn snapshot_contains_marker_fields(source: &str) -> bool {
@@ -749,13 +757,26 @@ fn snapshot_contains_marker_fields(source: &str) -> bool {
 fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
     if let Some(contents) = source.trim_start().strip_prefix('[') {
         let version = String::deserialize(&mut serde_json::Deserializer::from_str(contents))?;
-        if version != WAYPOINT_SNAPSHOT_VERSION && version != MARKER_SNAPSHOT_VERSION {
+        if version != WAYPOINT_SNAPSHOT_VERSION
+            && version != MARKER_SNAPSHOT_VERSION
+            && version != EXTENDED_MARKER_SNAPSHOT_VERSION
+        {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
-        if version != MARKER_SNAPSHOT_VERSION && workbook.has_connector_markers() {
+        if version != MARKER_SNAPSHOT_VERSION
+            && version != EXTENDED_MARKER_SNAPSHOT_VERSION
+            && workbook.has_connector_markers()
+        {
             return Err(IoError::NewerVersion(
                 "connector markers require a marker-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != EXTENDED_MARKER_SNAPSHOT_VERSION && workbook.has_extended_connector_markers()
+        {
+            return Err(IoError::NewerVersion(
+                "classic and thin connector markers require an extended-marker private XMind snapshot"
+                    .into(),
             ));
         }
         Ok(workbook)
@@ -1819,6 +1840,45 @@ mod tests {
                 *bytes = serde_json::to_vec(&metadata).unwrap();
                 assert!(import(&make_archive(&entries)).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn classic_and_thin_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Classic,
+            ConnectorMarkerKind::ClassicThin,
+            ConnectorMarkerKind::OpenThin,
+            ConnectorMarkerKind::BlockThin,
+        ] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+            let mut entries = original;
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] =
+                json!(serde_json::to_string(&(MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
         }
     }
 

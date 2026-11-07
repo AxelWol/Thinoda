@@ -213,6 +213,15 @@ impl CanvasLayer {
                 if c.start_marker.is_some() || c.end_marker.is_some())
         })
     }
+
+    /// Whether this layer needs the extended connector-marker format.
+    pub fn has_extended_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.requires_extended_format()))
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -828,6 +837,17 @@ pub enum ConnectorRoute {
 pub enum ConnectorMarkerKind {
     Open,
     Block,
+    Classic,
+    ClassicThin,
+    OpenThin,
+    BlockThin,
+}
+
+impl ConnectorMarkerKind {
+    /// Open and block markers were introduced before the extended marker set.
+    pub fn requires_extended_format(self) -> bool {
+        !matches!(self, Self::Open | Self::Block)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

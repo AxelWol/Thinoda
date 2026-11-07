@@ -160,9 +160,14 @@ Arrow at start|Flecha al inicio|Flèche au début|Pil ved start|Pijl aan het beg
 Arrow at end|Flecha al final|Flèche à la fin|Pil ved slutning|Pijl aan het einde|Seta no fim|Freccia alla fine|Strzałka na końcu
 Start arrow style|Estilo de flecha inicial|Style de la flèche de début|Startpilens stil|Stijl van beginpijl|Estilo da seta inicial|Stile della freccia iniziale|Styl strzałki początkowej
 End arrow style|Estilo de flecha final|Style de la flèche de fin|Slutpilens stil|Stijl van eindpijl|Estilo da seta final|Stile della freccia finale|Styl strzałki końcowej
+Legacy triangle|Triángulo anterior|Triangle historique|Tidligere trekant|Eerdere driehoek|Triângulo anterior|Triangolo precedente|Dotychczasowy trójkąt
 Classic arrow|Flecha clásica|Flèche classique|Klassisk pil|Klassieke pijl|Seta clássica|Freccia classica|Strzałka klasyczna
+Thin classic arrow|Flecha clásica estrecha|Flèche classique étroite|Smal klassisk pil|Smalle klassieke pijl|Seta clássica estreita|Freccia classica stretta|Wąska strzałka klasyczna
 Open arrow|Flecha abierta|Flèche ouverte|Åben pil|Open pijl|Seta aberta|Freccia aperta|Strzałka otwarta
+Thin open arrow|Flecha abierta estrecha|Flèche ouverte étroite|Smal åben pil|Smalle open pijl|Seta aberta estreita|Freccia aperta stretta|Wąska strzałka otwarta
 Block arrow|Flecha sólida|Flèche pleine|Fyldt pil|Gevulde pijl|Seta preenchida|Freccia piena|Strzałka wypełniona
+Thin block arrow|Flecha sólida estrecha|Flèche pleine étroite|Smal fyldt pil|Smalle gevulde pijl|Seta preenchida estreita|Freccia piena stretta|Wąska strzałka wypełniona
+Legacy arrowheads approximated in draw.io|Puntas de flecha anteriores aproximadas en draw.io|Pointes de flèche historiques approximatives dans draw.io|Tidligere pilespidser tilnærmes i draw.io|Eerdere pijlpunten benaderd in draw.io|Pontas de seta anteriores aproximadas no draw.io|Punte delle frecce precedenti approssimate in draw.io|Dotychczasowe groty strzałek przybliżone w draw.io
 Card|Tarjeta|Carte|Kort|Kaart|Cartão|Scheda|Karta
 Rotation|Rotación|Rotation|Rotation|Rotatie|Rotação|Rotazione|Obrót
 Custom color|Color personalizado|Couleur personnalisée|Brugerdefineret farve|Aangepaste kleur|Cor personalizada|Colore personalizzato|Kolor niestandardowy

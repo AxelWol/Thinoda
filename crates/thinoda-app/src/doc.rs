@@ -1679,7 +1679,7 @@ mod tests {
     #[test]
     fn drawio_connector_approximations_require_consent_and_preserve_the_source() {
         let directory = tempfile::tempdir().unwrap();
-        for (name, style) in [("marker", "endArrow=openThin;"), ("port", "exitX=0.25;")] {
+        for (name, style) in [("marker", "endArrow=diamond;"), ("port", "exitX=0.25;")] {
             let path = directory.path().join(format!("{name}.drawio"));
             let xml = format!(
                 r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" value="Connector" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#
@@ -1711,36 +1711,47 @@ mod tests {
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 
         let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("markers.drawio");
-        let xml = r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" style="startArrow=block;endArrow=open;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#;
-        std::fs::write(&source, xml).unwrap();
-        let mut document = OpenDoc::open(&source).unwrap();
-        assert!(document.path.is_none());
-        assert!(document.is_dirty());
-        assert!(same_destination(document.import_source.as_deref().unwrap(), &source).unwrap());
-        let native = directory.path().join("markers.thinoda");
-        document.save_to(&native, false).unwrap();
-        assert_eq!(std::fs::read_to_string(&source).unwrap(), xml);
-        let restored = OpenDoc::open(&native).unwrap();
-        let connector = restored
-            .doc
-            .sheet()
-            .canvas
-            .objects
-            .iter()
-            .find_map(|object| match &object.kind {
-                CanvasObjectKind::Connector(connector) => Some(connector),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(
-            connector.start_marker.unwrap().kind,
-            ConnectorMarkerKind::Block
-        );
-        assert_eq!(
-            connector.end_marker.unwrap().kind,
-            ConnectorMarkerKind::Open
-        );
+        for (name, style, start, end) in [
+            (
+                "markers",
+                "startArrow=block;endArrow=open;",
+                ConnectorMarkerKind::Block,
+                ConnectorMarkerKind::Open,
+            ),
+            (
+                "thin-markers",
+                "startArrow=classicThin;endArrow=openThin;",
+                ConnectorMarkerKind::ClassicThin,
+                ConnectorMarkerKind::OpenThin,
+            ),
+        ] {
+            let source = directory.path().join(format!("{name}.drawio"));
+            let xml = format!(
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#
+            );
+            std::fs::write(&source, &xml).unwrap();
+            let mut document = OpenDoc::open(&source).unwrap();
+            assert!(document.path.is_none());
+            assert!(document.is_dirty());
+            assert!(same_destination(document.import_source.as_deref().unwrap(), &source).unwrap());
+            let native = directory.path().join(format!("{name}.thinoda"));
+            document.save_to(&native, false).unwrap();
+            assert_eq!(std::fs::read_to_string(&source).unwrap(), xml);
+            let restored = OpenDoc::open(&native).unwrap();
+            let connector = restored
+                .doc
+                .sheet()
+                .canvas
+                .objects
+                .iter()
+                .find_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) => Some(connector),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(connector.start_marker.unwrap().kind, start);
+            assert_eq!(connector.end_marker.unwrap().kind, end);
+        }
     }
 
     #[test]

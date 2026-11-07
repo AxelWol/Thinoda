@@ -1272,12 +1272,7 @@ fn paint_canvas_object(
             if points.len() >= 2 {
                 if connector.arrow_start {
                     if let Some(marker) = markers[0] {
-                        let points = marker.points.map(|point| xf.pos(point)).to_vec();
-                        painter.add(if marker.filled {
-                            Shape::convex_polygon(points, color, stroke)
-                        } else {
-                            Shape::line(points, stroke)
-                        });
+                        paint_connector_marker(painter, marker, xf, color, stroke);
                     } else if connector.start_marker.is_none() {
                         arrow_head(
                             painter,
@@ -1291,12 +1286,7 @@ fn paint_canvas_object(
                 if connector.arrow_end {
                     let n = points.len();
                     if let Some(marker) = markers[1] {
-                        let points = marker.points.map(|point| xf.pos(point)).to_vec();
-                        painter.add(if marker.filled {
-                            Shape::convex_polygon(points, color, stroke)
-                        } else {
-                            Shape::line(points, stroke)
-                        });
+                        paint_connector_marker(painter, marker, xf, color, stroke);
                     } else if connector.end_marker.is_none() {
                         arrow_head(
                             painter,
@@ -2040,6 +2030,30 @@ fn tapered_line(painter: &Painter, pts: &[Pos2], w0: f32, w1: f32, color: Color3
         let width = w0 + (w1 - w0) * t;
         painter.line_segment([w[0], w[1]], Stroke::new(width, color));
         painter.circle_filled(w[1], width / 2.0, color);
+    }
+}
+
+fn paint_connector_marker(
+    painter: &Painter,
+    marker: thinoda_core::scene::ConnectorMarkerGeometry,
+    xf: Xf,
+    color: Color32,
+    stroke: Stroke,
+) {
+    let points: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+    if marker.filled && points.len() == 4 {
+        let mut mesh = egui::Mesh::default();
+        for point in &points {
+            mesh.colored_vertex(*point, color);
+        }
+        mesh.add_triangle(0, 1, 3);
+        mesh.add_triangle(1, 2, 3);
+        painter.add(Shape::mesh(mesh));
+        painter.add(Shape::closed_line(points, stroke));
+    } else if marker.filled {
+        painter.add(Shape::convex_polygon(points, color, stroke));
+    } else {
+        painter.add(Shape::line(points, stroke));
     }
 }
 
@@ -4177,7 +4191,7 @@ mod tests {
         );
         output.textures_delta.clear();
         for marker in markers.iter().flatten() {
-            let expected = marker.points.map(|point| xf.pos(point));
+            let expected: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
             let path = output
                 .shapes
                 .iter()
@@ -4204,6 +4218,69 @@ mod tests {
             &shape.shape,
             Shape::Path(path) if path.points == expected && !path.closed
         )));
+    }
+
+    #[test]
+    fn classic_marker_paints_a_triangulated_notched_outline() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Classic,
+            ConnectorMarkerKind::ClassicThin,
+        ] {
+            let mut sheet = Sheet::new("Markers", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let scene = build_scene(&sheet, &layout);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let marker = markers[1].unwrap();
+            let xf = Xf {
+                origin: pos2(100.0, 100.0),
+                zoom: 2.0,
+            };
+            let expected: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+            let color = Color32::from_rgb(20, 40, 60);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                paint_connector_marker(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    marker,
+                    xf,
+                    color,
+                    Stroke::new(2.0, color),
+                );
+            });
+            output.textures_delta.clear();
+            assert!(output.shapes.iter().any(|shape| match &shape.shape {
+                Shape::Mesh(mesh) => {
+                    mesh.indices == [0, 1, 3, 1, 2, 3]
+                        && mesh
+                            .vertices
+                            .iter()
+                            .map(|vertex| vertex.pos)
+                            .eq(expected.iter().copied())
+                }
+                _ => false,
+            }));
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                Shape::Path(path) if path.closed && path.points == expected
+            )));
+        }
     }
 
     #[test]

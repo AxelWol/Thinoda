@@ -56,7 +56,10 @@ async function enterLink(page: Page, link = publishedLink()) {
     await command(page, "Import draw.io link");
     await page.keyboard.insertText(link);
     await frames(page);
-    await clickAction(page, 850, 820);
+    await page.keyboard.press("Tab");
+    await expect(page.locator("#thinoda_canvas")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await frames(page);
 }
 
 test("imports published links locally with cancelable conversion consent", async ({ page }) => {
@@ -138,4 +141,49 @@ test("imports supported marker styles into a versioned native workbook", async (
     });
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
     expect(manifest.version).toBe(11);
+});
+
+test("imports classic and thin markers without changing legacy arrows", async ({ page }) => {
+    const xml = `<mxfile><diagram name="Classic and thin"><mxGraphModel><root>`
+        + `<mxCell id="0"/><mxCell id="1" parent="0"/>`
+        + `<mxCell id="thin" style="startArrow=classicThin;endArrow=openThin;" edge="1" parent="1">`
+        + `<mxGeometry relative="1" as="geometry"><mxPoint x="150" y="200" as="sourcePoint"/>`
+        + `<mxPoint x="450" y="200" as="targetPoint"/></mxGeometry></mxCell>`
+        + `<mxCell id="default" edge="1" parent="1">`
+        + `<mxGeometry relative="1" as="geometry"><mxPoint x="150" y="300" as="sourcePoint"/>`
+        + `<mxPoint x="450" y="300" as="targetPoint"/></mxGeometry></mxCell>`
+        + `<mxCell id="legacy" style="endArrow=classic;thinodaLegacyEndArrow=1;" edge="1" parent="1">`
+        + `<mxGeometry relative="1" as="geometry"><mxPoint x="150" y="400" as="sourcePoint"/>`
+        + `<mxPoint x="450" y="400" as="targetPoint"/></mxGeometry></mxCell>`
+        + `</root></mxGraphModel></diagram></mxfile>`;
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await enterLink(page, `#R${encodeURIComponent(xml)}`);
+
+    const archive = await saveAs(page, "link-classic-thin.thinoda");
+    const content = contentFrom(archive);
+    const sheet = content.sheets[content.active_sheet];
+    expect(sheet.title).toBe("Classic and thin");
+    const connectors = sheet.canvas.objects
+        .map((object) => object.kind.connector)
+        .filter((connector) => connector !== undefined);
+    expect(connectors).toHaveLength(3);
+    expect(connectors).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+            arrow_start: true,
+            arrow_end: true,
+            start_marker: { kind: "classic-thin" },
+            end_marker: { kind: "open-thin" },
+        }),
+        expect.objectContaining({
+            arrow_end: true,
+            end_marker: { kind: "classic" },
+        }),
+    ]));
+    expect(connectors.some((connector) => connector?.arrow_end && !connector.end_marker)).toBe(true);
+    const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
+    expect(manifest.version).toBe(12);
 });

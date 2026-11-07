@@ -863,9 +863,9 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                         break;
                     }
                     intersects = (marker.filled
-                        && polygon_touches_lasso(&marker.points, polygon, &mut budget)?)
+                        && polygon_touches_lasso(marker.points(), polygon, &mut budget)?)
                         || path_touches_lasso(
-                            &marker.points,
+                            marker.points(),
                             marker.filled,
                             |point| point,
                             f64::from(*width) / 2.0,
@@ -1008,8 +1008,8 @@ fn validate_scene_geometry(
                 return Err(invalid());
             }
             for marker in markers.iter().flatten() {
-                budget.charge(marker.points.len())?;
-                if marker.points.iter().any(|&point| !finite_point(point))
+                budget.charge(marker.points().len())?;
+                if marker.points().iter().any(|&point| !finite_point(point))
                     || !marker.line_inset.is_finite()
                     || marker.line_inset < 0.0
                 {
@@ -2544,6 +2544,35 @@ mod tests {
         assert_eq!(
             lasso_hits(&scene, &rectangle(89.0, 3.5, 1.5, 1.5)).unwrap(),
             vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
+    fn lasso_respects_the_classic_arrow_notch() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(93.7, 2.9, 0.2, 0.2)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+        assert!(
+            lasso_hits(&scene, &rectangle(94.1, 0.8, 0.2, 0.2))
+                .unwrap()
+                .is_empty()
         );
     }
 

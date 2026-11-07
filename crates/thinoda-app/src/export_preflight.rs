@@ -185,6 +185,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::ConnectorAttachmentsDetached(count) => {
                     (*count, "Connector-to-connector attachments detached")
                 }
+                ExportLoss::LegacyConnectorMarkersApproximated(count) => {
+                    (*count, "Legacy arrowheads approximated in draw.io")
+                }
                 ExportLoss::TopicDetailsDropped(count) => {
                     (*count, "Topic notes, labels, markers or tasks omitted")
                 }

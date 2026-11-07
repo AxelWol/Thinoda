@@ -28,6 +28,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::BoardSettingsDropped,
         ExportLoss::InlineTextDropped(16),
         ExportLoss::ConnectorAttachmentsDetached(17),
+        ExportLoss::LegacyConnectorMarkersApproximated(18),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -44,12 +45,14 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     }
     assert!(lines[15].starts_with("16 — "), "{}", lines[15]);
     assert!(lines[16].starts_with("17 — "), "{}", lines[16]);
+    assert!(lines[17].starts_with("18 — "), "{}", lines[17]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
         (13, "Boundaries omitted"),
         (14, "Cards omitted"),
         (15, "Camera image metadata or color profiles may be omitted"),
+        (18, "Legacy arrowheads approximated in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -169,6 +172,55 @@ fn drawio_connector_attachment_loss_requires_localized_consent() {
             assert_ne!(value, key, "missing {language:?} warning");
         }
     }
+}
+
+#[test]
+fn legacy_arrow_approximation_requires_localized_drawio_consent() {
+    use thinoda_core::{
+        CanvasConnector, CanvasObjectKind, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        SheetRootMode,
+    };
+
+    let mut sheet = Sheet::new("Legacy", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let options = ExportOptions::default();
+    let key = "Legacy arrowheads approximated in draw.io";
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            i18n::Lang::ALL
+                .into_iter()
+                .any(|language| message.contains(&format!("2 — {}", i18n::t_in(language, key)))),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+    let mut exact = book;
+    let CanvasObjectKind::Connector(connector) = &mut exact.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.end_marker = connector.start_marker;
+    assert!(require_board_consent(&exact, Format::DrawIo, &options, false).is_ok());
 }
 
 #[cfg(not(target_arch = "wasm32"))]

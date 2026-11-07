@@ -107,6 +107,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "connector markers require native format version 11".into(),
             ));
         }
+        if version < 12 && book.has_extended_connector_markers() {
+            return Err(IoError::Invalid(
+                "classic and thin connector markers require native format version 12".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;

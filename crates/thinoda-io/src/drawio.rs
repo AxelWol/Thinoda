@@ -609,9 +609,34 @@ impl Style {
     }
 
     fn marker(&self, key: &str) -> Option<ConnectorMarker> {
-        let kind = match self.get(key)? {
+        let name = match self.get(key) {
+            Some(name) => name,
+            None if key == "endArrow" && !self.suppress_defaults => "classic",
+            None => return None,
+        };
+        let (legacy_key, size_key, fill_key) = if key == "startArrow" {
+            ("thinodaLegacyStartArrow", "startSize", "startFill")
+        } else {
+            ("thinodaLegacyEndArrow", "endSize", "endFill")
+        };
+        if name == "classic"
+            && self.flag(legacy_key)
+            && self
+                .get(size_key)
+                .is_none_or(|_| self.num(size_key) == Some(6.0))
+            && self
+                .get(fill_key)
+                .is_none_or(|_| self.num(fill_key) == Some(1.0))
+        {
+            return None;
+        }
+        let kind = match name {
+            "classic" => ConnectorMarkerKind::Classic,
+            "classicThin" => ConnectorMarkerKind::ClassicThin,
             "open" => ConnectorMarkerKind::Open,
+            "openThin" => ConnectorMarkerKind::OpenThin,
             "block" => ConnectorMarkerKind::Block,
+            "blockThin" => ConnectorMarkerKind::BlockThin,
             _ => return None,
         };
         Some(ConnectorMarker { kind })
@@ -665,7 +690,16 @@ impl Style {
                 && (self.get("jumpStyle").is_some_and(|v| v != "none")
                     || ["startArrow", "endArrow"].iter().any(|key| {
                         self.get(key).is_some_and(|v| {
-                            !matches!(v, "" | "none" | "classic" | "open" | "block")
+                            !matches!(
+                                v,
+                                "" | "none"
+                                    | "classic"
+                                    | "classicThin"
+                                    | "open"
+                                    | "openThin"
+                                    | "block"
+                                    | "blockThin"
+                            )
                         })
                     })
                     || ["startFill", "endFill"]
@@ -2443,8 +2477,12 @@ impl<'a> PageWriter<'a> {
                     }
                 }
                 let marker_name = |marker: Option<ConnectorMarker>| match marker.map(|m| m.kind) {
+                    Some(ConnectorMarkerKind::Classic) => "classic",
+                    Some(ConnectorMarkerKind::ClassicThin) => "classicThin",
                     Some(ConnectorMarkerKind::Open) => "open",
+                    Some(ConnectorMarkerKind::OpenThin) => "openThin",
                     Some(ConnectorMarkerKind::Block) => "block",
+                    Some(ConnectorMarkerKind::BlockThin) => "blockThin",
                     None => "classic",
                 };
                 style.push_str("endArrow=");
@@ -2454,10 +2492,16 @@ impl<'a> PageWriter<'a> {
                     "none"
                 });
                 style.push(';');
+                if connector.arrow_end && connector.end_marker.is_none() {
+                    style.push_str("thinodaLegacyEndArrow=1;");
+                }
                 if connector.arrow_start {
                     style.push_str("startArrow=");
                     style.push_str(marker_name(connector.start_marker));
                     style.push(';');
+                    if connector.start_marker.is_none() {
+                        style.push_str("thinodaLegacyStartArrow=1;");
+                    }
                 }
                 color_keys(&mut style, "strokeColor", "strokeOpacity", connector.color);
                 color_keys(

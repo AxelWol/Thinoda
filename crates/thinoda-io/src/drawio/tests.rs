@@ -1202,12 +1202,6 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         ))
     };
     for style in [
-        "startArrow=openThin;",
-        "startArrow=classicThin;",
-        "startArrow=blockThin;",
-        "endArrow=openThin;",
-        "endArrow=classicThin;",
-        "endArrow=blockThin;",
         "endArrow=diamond;",
         "startFill=0;",
         "endFill=0;",
@@ -1256,14 +1250,27 @@ fn connector_marker_and_port_approximations_require_confirmation() {
 }
 
 #[test]
-fn open_and_block_connector_markers_round_trip_with_both_ends() {
+fn supported_connector_markers_round_trip_with_both_ends() {
     let marker = |name| match name {
+        "classic" => Some(ConnectorMarkerKind::Classic),
+        "classicThin" => Some(ConnectorMarkerKind::ClassicThin),
         "open" => Some(ConnectorMarkerKind::Open),
+        "openThin" => Some(ConnectorMarkerKind::OpenThin),
         "block" => Some(ConnectorMarkerKind::Block),
+        "blockThin" => Some(ConnectorMarkerKind::BlockThin),
         _ => None,
     };
-    for start in ["none", "classic", "open", "block"] {
-        for end in ["none", "classic", "open", "block"] {
+    let names = [
+        "none",
+        "classic",
+        "classicThin",
+        "open",
+        "openThin",
+        "block",
+        "blockThin",
+    ];
+    for start in names {
+        for end in names {
             let xml = page(&format!(
                 r#"<mxCell id="e" style="startArrow={start};endArrow={end};startSize=6;endSize=6;startFill=1;endFill=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/><Array as="points"><mxPoint x="50" y="20"/></Array></mxGeometry></mxCell>"#
             ));
@@ -1284,7 +1291,13 @@ fn open_and_block_connector_markers_round_trip_with_both_ends() {
             let native_version = crate::required_native_version(&report.workbook);
             assert_eq!(
                 native_version,
-                if marker(start).is_some() || marker(end).is_some() {
+                if [marker(start), marker(end)]
+                    .into_iter()
+                    .flatten()
+                    .any(ConnectorMarkerKind::requires_extended_format)
+                {
+                    12
+                } else if marker(start).is_some() || marker(end).is_some() {
                     11
                 } else {
                     10
@@ -1305,6 +1318,73 @@ fn open_and_block_connector_markers_round_trip_with_both_ends() {
             assert_eq!(restored.arrow_end, end != "none");
         }
     }
+}
+
+#[test]
+fn drawio_default_classic_and_legacy_triangle_are_distinct() {
+    let cell = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    for style in ["", "defaultEdge", "endArrow=classic;"] {
+        let report = load(&cell(style));
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(
+            connector.end_marker.unwrap().kind,
+            ConnectorMarkerKind::Classic,
+            "{style}"
+        );
+        assert_eq!(crate::required_native_version(&report.workbook), 12);
+    }
+    let no_default = load(&cell(";"));
+    let connector = connectors(&no_default.workbook.sheets[0])[0];
+    assert!(!connector.arrow_end);
+    assert!(connector.end_marker.is_none());
+
+    let mut sheet = Sheet::new("Legacy", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(
+        export_losses(&book, Format::DrawIo, &ExportOptions::default()),
+        vec![ExportLoss::LegacyConnectorMarkersApproximated(2)]
+    );
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(xml.contains("thinodaLegacyStartArrow=1;"));
+    assert!(xml.contains("thinodaLegacyEndArrow=1;"));
+    let restored = load(&xml);
+    let connector = connectors(&restored.workbook.sheets[0])[0];
+    assert!(connector.arrow_start && connector.arrow_end);
+    assert!(connector.start_marker.is_none() && connector.end_marker.is_none());
+
+    let changed = xml.replace("endArrow=classic;", "endArrow=block;");
+    let restored = load(&changed);
+    let connector = connectors(&restored.workbook.sheets[0])[0];
+    assert_eq!(
+        connector.end_marker.unwrap().kind,
+        ConnectorMarkerKind::Block
+    );
+    let resized = xml.replace(
+        "thinodaLegacyEndArrow=1;",
+        "thinodaLegacyEndArrow=1;endSize=12;",
+    );
+    let restored = load(&resized);
+    assert!(restored.warnings.contains(&ImportWarning::Formatting));
+    assert_eq!(
+        connectors(&restored.workbook.sheets[0])[0]
+            .end_marker
+            .unwrap()
+            .kind,
+        ConnectorMarkerKind::Classic
+    );
 }
 
 #[test]
@@ -1349,27 +1429,36 @@ fn supported_connector_markers_survive_link_and_clipboard_conversion() {
 
 #[test]
 fn editable_drawio_images_preserve_supported_connector_markers() {
-    let report = load(&page(
-        r#"<mxCell id="e" style="startArrow=block;endArrow=open;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
-    ));
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
-    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
-        let bytes = export_bytes(&report.workbook, format, &ExportOptions::default()).unwrap();
-        let restored = import(&bytes).unwrap();
-        assert!(
-            restored.warnings.is_empty(),
-            "{format:?}: {:?}",
-            restored.warnings
-        );
-        let connector = connectors(&restored.workbook.sheets[0])[0];
-        assert_eq!(
-            connector.start_marker.unwrap().kind,
-            ConnectorMarkerKind::Block
-        );
-        assert_eq!(
-            connector.end_marker.unwrap().kind,
-            ConnectorMarkerKind::Open
-        );
+    for (start, end, start_kind, end_kind) in [
+        (
+            "block",
+            "open",
+            ConnectorMarkerKind::Block,
+            ConnectorMarkerKind::Open,
+        ),
+        (
+            "classicThin",
+            "openThin",
+            ConnectorMarkerKind::ClassicThin,
+            ConnectorMarkerKind::OpenThin,
+        ),
+    ] {
+        let report = load(&page(&format!(
+            r#"<mxCell id="e" style="startArrow={start};endArrow={end};" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+        )));
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+            let bytes = export_bytes(&report.workbook, format, &ExportOptions::default()).unwrap();
+            let restored = import(&bytes).unwrap();
+            assert!(
+                restored.warnings.is_empty(),
+                "{format:?}: {:?}",
+                restored.warnings
+            );
+            let connector = connectors(&restored.workbook.sheets[0])[0];
+            assert_eq!(connector.start_marker.unwrap().kind, start_kind);
+            assert_eq!(connector.end_marker.unwrap().kind, end_kind);
+        }
     }
 }
 
@@ -1529,7 +1618,10 @@ fn waypoint_connector_attachments_export_at_path_midpoint_with_loss_warning() {
     for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
         assert_eq!(
             export_losses(&book, format, &ExportOptions::default()),
-            vec![ExportLoss::ConnectorAttachmentsDetached(1)]
+            vec![
+                ExportLoss::ConnectorAttachmentsDetached(1),
+                ExportLoss::LegacyConnectorMarkersApproximated(2),
+            ]
         );
         assert!(matches!(
             export_bytes(&book, format, &ExportOptions::default()),
@@ -2005,7 +2097,10 @@ fn cyclic_and_self_parented_cells_terminate() {
 #[test]
 fn export_reports_flattened_map_content() {
     let mut book = board();
-    assert!(export_losses(&book, Format::DrawIo, &ExportOptions::default()).is_empty());
+    assert_eq!(
+        export_losses(&book, Format::DrawIo, &ExportOptions::default()),
+        vec![ExportLoss::LegacyConnectorMarkersApproximated(2)]
+    );
     let sheet = &mut book.sheets[0];
     let idea = sheet.add_floating("Idea", Vec2::new(200.0, -300.0));
     let detail = sheet.add_child(idea, None, "Detail");
@@ -2021,6 +2116,7 @@ fn export_reports_flattened_map_content() {
         export_losses(&book, Format::DrawIo, &ExportOptions::default()),
         vec![
             ExportLoss::MapElementsFlattened(2),
+            ExportLoss::LegacyConnectorMarkersApproximated(2),
             ExportLoss::TopicDetailsDropped(1),
             ExportLoss::SlidesDropped(1),
         ]

@@ -253,12 +253,18 @@ mod tests {
         let copied = encode_with_report(&payload).unwrap();
         assert_eq!(
             copied.losses,
-            vec![ExportLoss::ConnectorAttachmentsDetached(1)]
+            vec![
+                ExportLoss::ConnectorAttachmentsDetached(1),
+                ExportLoss::LegacyConnectorMarkersApproximated(2),
+            ]
         );
         assert!(matches!(
             encode(&payload),
             Err(IoError::DrawioClipboardLoss(losses))
-                if losses == vec![ExportLoss::ConnectorAttachmentsDetached(1)]
+                if losses == vec![
+                    ExportLoss::ConnectorAttachmentsDetached(1),
+                    ExportLoss::LegacyConnectorMarkersApproximated(2),
+                ]
         ));
 
         let pasted = decode(&copied.text).unwrap();

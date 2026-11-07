@@ -2282,9 +2282,13 @@ fn marker_field(
     marker: &mut Option<ConnectorMarker>,
 ) {
     let name = |marker: Option<ConnectorMarker>| match marker.map(|marker| marker.kind) {
-        None => "Classic arrow",
+        None => "Legacy triangle",
+        Some(ConnectorMarkerKind::Classic) => "Classic arrow",
+        Some(ConnectorMarkerKind::ClassicThin) => "Thin classic arrow",
         Some(ConnectorMarkerKind::Open) => "Open arrow",
+        Some(ConnectorMarkerKind::OpenThin) => "Thin open arrow",
         Some(ConnectorMarkerKind::Block) => "Block arrow",
+        Some(ConnectorMarkerKind::BlockThin) => "Thin block arrow",
     };
     ui.add_enabled_ui(enabled, |ui| {
         widgets::property_field(ui, t(label), |ui| {
@@ -2294,10 +2298,22 @@ fn marker_field(
                     for choice in [
                         None,
                         Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Classic,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ClassicThin,
+                        }),
+                        Some(ConnectorMarker {
                             kind: ConnectorMarkerKind::Open,
                         }),
                         Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::OpenThin,
+                        }),
+                        Some(ConnectorMarker {
                             kind: ConnectorMarkerKind::Block,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::BlockThin,
                         }),
                     ] {
                         ui.selectable_value(marker, choice, t(name(choice)));
@@ -5185,6 +5201,74 @@ mod tests {
             panic!("expected connector");
         };
         assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+    }
+
+    #[test]
+    fn connector_inspector_selects_classic_thin_and_legacy_arrows() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        for (label, kind) in [
+            ("Classic arrow", Some(ConnectorMarkerKind::Classic)),
+            ("Thin classic arrow", Some(ConnectorMarkerKind::ClassicThin)),
+            ("Thin open arrow", Some(ConnectorMarkerKind::OpenThin)),
+            ("Thin block arrow", Some(ConnectorMarkerKind::BlockThin)),
+            ("Legacy triangle", None),
+        ] {
+            harness.get_by_label("End arrow style").click();
+            harness.run_steps(3);
+            harness.get_by_label(label).click();
+            harness.run_steps(3);
+            let CanvasObjectKind::Connector(current) = &harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            assert_eq!(current.end_marker.map(|marker| marker.kind), kind);
+        }
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        let CanvasObjectKind::Connector(current) = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind
+        else {
+            panic!("expected connector");
+        };
+        assert_eq!(
+            current.end_marker.unwrap().kind,
+            ConnectorMarkerKind::BlockThin
+        );
     }
 
     #[test]
