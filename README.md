@@ -727,8 +727,11 @@ those system-owned controls. WinGet publishing remains paused.
   contain **only the current sheet**, both in the preview and in the embedded
   diagram. Their embedded data can include content outside the visible preview:
   the image is **not redacted**. Conversion may simplify or omit features; review
-  the export warnings and retain a `.thinoda` copy. Unsupported content can
-  prevent export. Editable image export is not Save As or lossless save-back.
+  the warnings and retain the original file and a `.thinoda` copy. Connector
+  markers and fixed attachment points may be approximated; non-default marker
+  styles, sizes and fills and fixed-port hints trigger a formatting warning.
+  Unsupported content can prevent export. Editable image export is not Save As
+  or lossless save-back.
   Import also recognizes legacy URI- or base64-encoded SVG diagrams and older
   PNG diagram metadata.
   HTML exports with one embedded draw.io viewer, including older compressed or

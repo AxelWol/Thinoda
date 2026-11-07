@@ -1677,6 +1677,36 @@ mod tests {
     }
 
     #[test]
+    fn drawio_connector_approximations_require_consent_and_preserve_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, style) in [("marker", "endArrow=open;"), ("port", "exitX=0.25;")] {
+            let path = directory.path().join(format!("{name}.drawio"));
+            let xml = format!(
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" value="Connector" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#
+            );
+            std::fs::write(&path, &xml).unwrap();
+
+            assert_eq!(
+                OpenDoc::open(&path).err().unwrap(),
+                t("Import requires confirmation")
+            );
+            let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+            assert_eq!(warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            assert!(document.path.is_none());
+            assert!(document.is_dirty());
+            assert!(same_destination(document.import_source.as_deref().unwrap(), &path).unwrap());
+            assert_eq!(
+                document.save_to(&path, false).unwrap_err(),
+                t("Choose a different destination to preserve the imported source.")
+            );
+            let native = directory.path().join(format!("{name}.thinoda"));
+            document.save_to(&native, false).unwrap();
+            assert!(native.exists());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
+        }
+    }
+
+    #[test]
     fn drawio_html_errors_are_actionable_and_localized() {
         let cases = [
             (

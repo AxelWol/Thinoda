@@ -110,6 +110,10 @@ conversion warnings and keep a `.thinoda` copy; unsupported content can block
 export. These are export formats, not Save As or lossless save-back. See the
 [draw.io plan and current limitations](DRAWIO.md).
 
+Imported connector markers and fixed attachment points may be approximated.
+Non-default marker styles, sizes and fills and fixed-port hints trigger a
+formatting warning; keep the original diagram.
+
 Opening editable images also accepts older URI- or base64-encoded SVG diagrams
 and older PNG diagram metadata. Ordinary PNG drops still add an image; a
 `.drawio.png` drop opens the embedded diagram instead.

@@ -1121,6 +1121,23 @@ physical-device and real assistive-technology acceptance remain open. Gesture
 cancellation and revision guards prevent a stale preview from modifying a
 changed document; locked connectors cannot be edited.
 
+**Connector approximation warnings and critique (partial Phases 3, 4 and 8).**
+draw.io import now reports a formatting warning for non-classic marker shapes,
+non-default marker sizes or fills, fixed entry/exit points and offsets, port
+references and direction constraints, and non-default perimeter spacing.
+File and link imports use the existing confirmation and source protection;
+clipboard pastes remain undoable and show a simplification warning. The
+supplied `board-visual-tutorial.drawio` demonstrates open arrowheads, custom
+sizes and fixed ports. Default-sized, filled classic markers and plain
+connectors keep their existing no-warning round trip. Empty arrow names and
+leading-semicolon default suppression now correctly remove the end arrow; an
+explicit `defaultEdge` restores it in style order. This is a safeguard, not
+marker or port support: the current model still reduces arrowheads to booleans
+and resolves attachments automatically, including an approximate default
+classic marker. It does not retain those source settings or identify each
+affected connector in the generic warning; exact marker rendering, editable
+ports and lossless save-back remain necessary.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

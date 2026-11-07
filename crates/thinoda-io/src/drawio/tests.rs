@@ -1195,6 +1195,190 @@ fn curved_waypoints_round_trip_and_orthogonal_hints_report_approximation() {
 }
 
 #[test]
+fn connector_marker_and_port_approximations_require_confirmation() {
+    let edge = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    for style in [
+        "startArrow=open;",
+        "startArrow=openThin;",
+        "startArrow=classicThin;",
+        "startArrow=block;",
+        "startArrow=blockThin;",
+        "endArrow=open;",
+        "endArrow=openThin;",
+        "endArrow=classicThin;",
+        "endArrow=block;",
+        "endArrow=blockThin;",
+        "endArrow=diamond;",
+        "startFill=0;",
+        "endFill=0;",
+        "startSize=12;",
+        "endSize=12;",
+        "endSize=invalid;",
+        "exitX=0.25;",
+        "exitY=0.5;",
+        "exitDx=5;",
+        "exitDy=5;",
+        "exitPerimeter=0;",
+        "entryX=0.75;",
+        "entryY=0.5;",
+        "entryDx=5;",
+        "entryDy=5;",
+        "entryPerimeter=0;",
+        "sourcePort=port1;",
+        "targetPort=port2;",
+        "sourcePortConstraint=north;",
+        "targetPortConstraint=south;",
+        "sourcePerimeterSpacing=5;",
+        "targetPerimeterSpacing=5;",
+    ] {
+        let report = load(&edge(style));
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+        assert_eq!(connectors(&report.workbook.sheets[0]).len(), 1, "{style}");
+    }
+
+    for style in [
+        "",
+        "startArrow=none;endArrow=none;",
+        "startArrow=classic;endArrow=classic;",
+        "startFill=1;endFill=1;startSize=6;endSize=6;",
+        "portConstraintRotation=0;perimeterSpacing=0;sourcePerimeterSpacing=0;targetPerimeterSpacing=0;",
+    ] {
+        let report = load(&edge(style));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        assert_eq!(connectors(&report.workbook.sheets[0]).len(), 1, "{style}");
+        let restored = import(&export(&report.workbook).unwrap()).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+    }
+}
+
+#[test]
+fn shape_connection_constraints_report_approximation() {
+    for style in [
+        "portConstraint=north;",
+        "portConstraintRotation=1;",
+        "perimeterSpacing=5;",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="v" style="{style}" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+        assert_eq!(shapes(&report.workbook.sheets[0]).len(), 1);
+    }
+}
+
+#[test]
+fn empty_arrow_names_disable_the_corresponding_marker() {
+    let xml = page(
+        r#"<mxCell id="e" style="startArrow=;endArrow=;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let connector = connectors(&report.workbook.sheets[0])[0];
+    assert!(!connector.arrow_start);
+    assert!(!connector.arrow_end);
+    let restored = import(&export(&report.workbook).unwrap()).unwrap();
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    assert!(!connectors(&restored.workbook.sheets[0])[0].arrow_end);
+}
+
+#[test]
+fn edge_default_suppression_and_named_default_control_the_end_marker() {
+    for (style, arrow) in [
+        ("", true),
+        (";edgeStyle=none;", false),
+        (";endArrow=classic;", true),
+        (";defaultEdge;", true),
+        (";defaultEdge;endArrow=none;", false),
+        (";endArrow=none;defaultEdge;", true),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="e" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        assert_eq!(
+            connectors(&report.workbook.sheets[0])[0].arrow_end,
+            arrow,
+            "{style}"
+        );
+        let restored = import(&export(&report.workbook).unwrap()).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+        assert_eq!(
+            connectors(&restored.workbook.sheets[0])[0].arrow_end,
+            arrow,
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn attached_connectors_warn_before_marker_and_port_data_is_discarded() {
+    let xml = page(
+        r#"<mxCell id="a" vertex="1" parent="1"><mxGeometry x="10" y="20" width="60" height="40" as="geometry"/></mxCell>
+        <mxCell id="b" vertex="1" parent="1"><mxGeometry x="200" y="20" width="60" height="40" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=open;endSize=14;exitX=1;exitY=0.5;entryX=0;entryY=0.25;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    report.workbook.validate().unwrap();
+    let connector = connectors(&report.workbook.sheets[0])[0];
+    assert!(matches!(connector.from, Endpoint::Object(_)));
+    assert!(matches!(connector.to, Endpoint::Object(_)));
+    assert!(connector.arrow_end);
+    let paste = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert_eq!(paste.warnings, vec![ImportWarning::Formatting]);
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.warnings, vec![ImportWarning::Formatting]);
+
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(exported.contains("endArrow=classic;"));
+    assert!(!exported.contains("exitX="));
+    assert!(!exported.contains("entryX="));
+}
+
+#[test]
+fn ink_edges_report_unsupported_connector_appearance() {
+    let edge = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="thinodaInk=1;{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    for style in [
+        "",
+        "endArrow=open;",
+        "endArrow=classic;",
+        "endArrow=none;startArrow=classic;",
+        "endArrow=none;exitX=0.5;",
+    ] {
+        let report = load(&edge(style));
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+    }
+    let report = load(&edge("endArrow=none;"));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let report = load(&edge("endArrow=;"));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let suppressed = page(
+        r#"<mxCell id="e" style=";thinodaInk=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let report = load(&suppressed);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+}
+
+#[test]
 fn excessive_connector_waypoints_are_reported() {
     let points =
         r#"<mxPoint x="10" y="20"/>"#.repeat(thinoda_core::board::MAX_CONNECTOR_WAYPOINTS + 1);

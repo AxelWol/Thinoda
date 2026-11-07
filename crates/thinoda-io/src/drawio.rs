@@ -501,11 +501,15 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
 struct Style {
     tokens: Vec<String>,
     map: HashMap<String, String>,
+    suppress_defaults: bool,
 }
 
 impl Style {
     fn parse(text: &str) -> Self {
-        let mut style = Style::default();
+        let mut style = Style {
+            suppress_defaults: text.starts_with(';'),
+            ..Self::default()
+        };
         for part in text.split(';').map(str::trim).filter(|p| !p.is_empty()) {
             match part.split_once('=') {
                 Some((key, value)) => {
@@ -513,7 +517,13 @@ impl Style {
                         .map
                         .insert(key.trim().to_owned(), value.trim().to_owned());
                 }
-                None => style.tokens.push(part.to_owned()),
+                None => {
+                    // Named styles are merged in order; defaultEdge restores its end marker.
+                    if part == "defaultEdge" {
+                        style.map.insert("endArrow".into(), "classic".into());
+                    }
+                    style.tokens.push(part.to_owned());
+                }
             }
         }
         style
@@ -585,24 +595,46 @@ impl Style {
         self.num("rotation").unwrap_or(0.0)
     }
 
+    fn start_arrow(&self) -> bool {
+        self.get("startArrow")
+            .is_some_and(|value| !matches!(value, "" | "none"))
+    }
+
+    fn end_arrow(&self) -> bool {
+        match self.get("endArrow") {
+            Some(value) => !matches!(value, "" | "none"),
+            None => !self.suppress_defaults,
+        }
+    }
+
     /// Visual details without a Thinoda equivalent.
     fn formatting_loss(&self, edge: bool) -> bool {
         const FLAGS: [&str; 7] = [
             "dashed", "shadow", "glass", "sketch", "flipH", "flipV", "comic",
         ];
-        const ARROWS: [&str; 8] = [
-            "",
-            "none",
-            "classic",
-            "classicThin",
-            "block",
-            "blockThin",
-            "open",
-            "openThin",
+        const PORT_KEYS: [&str; 14] = [
+            "exitX",
+            "exitY",
+            "exitDx",
+            "exitDy",
+            "exitPerimeter",
+            "entryX",
+            "entryY",
+            "entryDx",
+            "entryDy",
+            "entryPerimeter",
+            "sourcePort",
+            "targetPort",
+            "sourcePortConstraint",
+            "targetPortConstraint",
         ];
         let colored = |key: &str| {
             self.get(key)
                 .is_some_and(|v| !matches!(v, "" | "none" | "default"))
+        };
+        let differs_from = |key: &str, default: f32| {
+            self.get(key)
+                .is_some_and(|_| self.num(key).is_none_or(|value| value != default))
         };
         FLAGS.iter().any(|key| self.flag(key))
             || colored("gradientColor")
@@ -616,11 +648,25 @@ impl Style {
                 // Thinoda image cards caption beneath the picture.
                 v != "middle" && !(v == "bottom" && self.get("thinodaCard") == Some("image"))
             })
+            || self.get("portConstraint").is_some()
+            || differs_from("portConstraintRotation", 0.0)
+            || differs_from("perimeterSpacing", 0.0)
             || (edge
                 && (self.get("jumpStyle").is_some_and(|v| v != "none")
-                    || ["startArrow", "endArrow"]
+                    || ["startArrow", "endArrow"].iter().any(|key| {
+                        self.get(key)
+                            .is_some_and(|v| !matches!(v, "" | "none" | "classic"))
+                    })
+                    || ["startFill", "endFill"]
                         .iter()
-                        .any(|key| self.get(key).is_some_and(|v| !ARROWS.contains(&v)))))
+                        .any(|key| differs_from(key, 1.0))
+                    || ["startSize", "endSize"]
+                        .iter()
+                        .any(|key| differs_from(key, 6.0))
+                    || ["sourcePerimeterSpacing", "targetPerimeterSpacing"]
+                        .iter()
+                        .any(|key| differs_from(key, 0.0))
+                    || PORT_KEYS.iter().any(|key| self.get(key).is_some())))
     }
 }
 
@@ -1527,6 +1573,9 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         let origin = context.origin;
         if let Some(tool) = style.get("thinodaInk") {
+            if style.formatting_loss(true) || style.start_arrow() || style.end_arrow() {
+                self.warn(ImportWarning::Formatting);
+            }
             let g = &cell.geometry;
             let points: Vec<Vec2> = g
                 .source
@@ -1617,10 +1666,8 @@ impl<'a> PageImport<'a> {
             .iter()
             .map(|point| origin + *point)
             .collect();
-        connector.arrow_end = style.get("endArrow") != Some("none");
-        connector.arrow_start = style
-            .get("startArrow")
-            .is_some_and(|v| !v.is_empty() && v != "none");
+        connector.arrow_end = style.end_arrow();
+        connector.arrow_start = style.start_arrow();
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();

@@ -2177,6 +2177,29 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_reports_marker_and_port_approximation() {
+        use crate::app::Cmd;
+        for style in ["endArrow=open", "endArrow=classic;exitX=0.25"] {
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let items = board_item_count(&app);
+            clipboard.borrow_mut().text = DRAWIO_MODEL.replace("endArrow=classic", style);
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            assert_eq!(board_item_count(&app), items + 3, "{style}");
+            assert!(
+                app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+                    "Pasted from draw.io; some content was simplified"
+                ))),
+                "{style}"
+            );
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn published_drawio_links_remain_plain_text_when_pasted_normally() {
         use crate::app::Cmd;
         let (mut app, clipboard) = app_with_fake_clipboard();

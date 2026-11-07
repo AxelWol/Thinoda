@@ -375,6 +375,34 @@ mod tests {
     }
 
     #[test]
+    fn connector_approximation_in_link_requires_cancelable_confirmation() {
+        let mut app = app_with_changes();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let count = app.docs.len();
+        let xml = r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" style="endArrow=open;exitX=0.25;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#;
+        let link = format!(
+            "#R{}",
+            thinoda_io::drawio_clipboard::encode_uri_component(xml)
+        );
+        app.import_drawio_link_text(&link).unwrap();
+        assert_eq!(app.docs.len(), count);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert_eq!(
+            app.dialogs.imports.front().unwrap().2,
+            vec![ImportWarning::Formatting]
+        );
+        app.resolve_import(false);
+        assert_eq!(app.docs.len(), count);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+
+        app.import_drawio_link_text(&link).unwrap();
+        app.resolve_import(true);
+        assert_eq!(app.docs.len(), count + 1);
+        assert!(app.doc().unwrap().is_dirty());
+        assert!(app.doc().unwrap().path.is_none());
+    }
+
+    #[test]
     fn rejected_link_does_not_change_documents_or_queue_warnings() {
         let mut app = app_with_changes();
         let before = app.doc().unwrap().doc.workbook().clone();
