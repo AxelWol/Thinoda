@@ -2610,6 +2610,57 @@ mod tests {
     }
 
     #[test]
+    fn lasso_respects_hollow_diamond_marker_interiors_and_outlines() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        for kind in [
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+        ] {
+            let mut sheet = Sheet::new("Hollow diamond", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.width = 0.1;
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = true;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let scene = scene(&sheet);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let points = markers[1].unwrap();
+            let interior = (points.points()[0] + points.points()[2]) * 0.5;
+            let outline = (points.points()[3] + points.points()[0]) * 0.5;
+            assert!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(interior.x - 0.1, interior.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap()
+                .is_empty(),
+                "{kind:?}"
+            );
+            assert_eq!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(outline.x - 0.1, outline.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap(),
+                vec![SceneHit::Object(id)],
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
     fn lasso_respects_the_classic_arrow_notch() {
         use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
 

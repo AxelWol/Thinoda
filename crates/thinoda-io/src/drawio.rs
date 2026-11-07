@@ -638,6 +638,8 @@ impl Style {
             "openThin" => ConnectorMarkerKind::OpenThin,
             "block" => ConnectorMarkerKind::Block,
             "blockThin" => ConnectorMarkerKind::BlockThin,
+            "diamond" => ConnectorMarkerKind::Diamond,
+            "diamondThin" => ConnectorMarkerKind::DiamondThin,
             _ => return None,
         };
         Some(ConnectorMarker { kind })
@@ -711,6 +713,8 @@ impl Style {
                                     | "openThin"
                                     | "block"
                                     | "blockThin"
+                                    | "diamond"
+                                    | "diamondThin"
                             )
                         })
                     })
@@ -2514,6 +2518,8 @@ impl<'a> PageWriter<'a> {
                     Some(ConnectorMarkerKind::OpenThin) => "openThin",
                     Some(ConnectorMarkerKind::Block) => "block",
                     Some(ConnectorMarkerKind::BlockThin) => "blockThin",
+                    Some(ConnectorMarkerKind::Diamond) => "diamond",
+                    Some(ConnectorMarkerKind::DiamondThin) => "diamondThin",
                     None => "classic",
                 };
                 style.push_str("endArrow=");

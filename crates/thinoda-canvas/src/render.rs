@@ -4223,7 +4223,7 @@ mod tests {
     }
 
     #[test]
-    fn classic_marker_paints_a_triangulated_notched_outline() {
+    fn four_point_markers_paint_their_entire_triangulated_outline() {
         use thinoda_core::{
             CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
         };
@@ -4231,6 +4231,8 @@ mod tests {
         for kind in [
             ConnectorMarkerKind::Classic,
             ConnectorMarkerKind::ClassicThin,
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
         ] {
             let mut sheet = Sheet::new("Markers", "");
             sheet.root_mode = SheetRootMode::Hidden;
@@ -4255,6 +4257,22 @@ mod tests {
                 zoom: 2.0,
             };
             let expected: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+            let triangle_area = |a: Pos2, b: Pos2, c: Pos2| {
+                ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() * 0.5
+            };
+            let polygon_area = (0..expected.len())
+                .map(|index| {
+                    let a = expected[index];
+                    let b = expected[(index + 1) % expected.len()];
+                    a.x * b.y - a.y * b.x
+                })
+                .sum::<f32>()
+                .abs()
+                * 0.5;
+            let mesh_area = triangle_area(expected[0], expected[1], expected[3])
+                + triangle_area(expected[1], expected[2], expected[3]);
+            assert!(polygon_area > 0.0);
+            assert!((mesh_area - polygon_area).abs() < 0.01, "{kind:?}");
             let color = Color32::from_rgb(20, 40, 60);
             let ctx = egui::Context::default();
             let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
@@ -4291,7 +4309,12 @@ mod tests {
             CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
         };
 
-        for kind in [ConnectorMarkerKind::Classic, ConnectorMarkerKind::Block] {
+        for kind in [
+            ConnectorMarkerKind::Classic,
+            ConnectorMarkerKind::Block,
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+        ] {
             let mut sheet = Sheet::new("Hollow markers", "");
             sheet.root_mode = SheetRootMode::Hidden;
             let mut connector = CanvasConnector::new(

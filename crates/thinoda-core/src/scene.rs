@@ -96,10 +96,37 @@ fn connector_marker_geometry(
     let delta = tip - *toward;
     let direction = delta * (1.0 / delta.length());
     let normal = Vec2::new(-direction.y, direction.x);
-    let offset = width * 1.118;
+    // Keep draw.io's rounded coefficients for stroke-width-dependent tip offsets.
+    let offset = width
+        * match kind {
+            ConnectorMarkerKind::Diamond => 7071.0 / 10_000.0,
+            ConnectorMarkerKind::DiamondThin => 0.9862,
+            _ => 1.118,
+        };
     let size = marker_size + width;
     let tip = tip - direction * offset;
     let base = tip - direction * size;
+    if kind.is_diamond() {
+        let midpoint = tip - direction * (size * 0.5);
+        let wing = size
+            / if kind == ConnectorMarkerKind::Diamond {
+                2.0
+            } else {
+                3.4
+            };
+        return Some(ConnectorMarkerGeometry {
+            points: [
+                midpoint + normal * wing,
+                tip,
+                midpoint - normal * wing,
+                base,
+            ],
+            point_count: 4,
+            closed: true,
+            filled: fill,
+            line_inset: offset + size,
+        });
+    }
     let classic = matches!(
         kind,
         ConnectorMarkerKind::Classic | ConnectorMarkerKind::ClassicThin

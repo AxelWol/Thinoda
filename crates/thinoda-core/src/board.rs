@@ -241,6 +241,15 @@ impl CanvasLayer {
                 if c.start_marker_unfilled || c.end_marker_unfilled)
         })
     }
+
+    /// Whether this layer needs diamond-marker-aware persistence.
+    pub fn has_diamond_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.is_diamond()))
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -860,12 +869,18 @@ pub enum ConnectorMarkerKind {
     ClassicThin,
     OpenThin,
     BlockThin,
+    Diamond,
+    DiamondThin,
 }
 
 impl ConnectorMarkerKind {
     /// Open and block markers were introduced before the extended marker set.
     pub fn requires_extended_format(self) -> bool {
         !matches!(self, Self::Open | Self::Block)
+    }
+
+    pub fn is_diamond(self) -> bool {
+        matches!(self, Self::Diamond | Self::DiamondThin)
     }
 }
 

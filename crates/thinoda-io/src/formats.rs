@@ -122,6 +122,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "connector marker fills require native format version 14".into(),
             ));
         }
+        if version < 15 && book.has_diamond_connector_markers() {
+            return Err(IoError::Invalid(
+                "diamond connector markers require native format version 15".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;

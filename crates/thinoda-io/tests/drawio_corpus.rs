@@ -243,3 +243,38 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
     eprintln!("{} file(s), {} failure(s)", files.len(), failures.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn supplied_uml_package_keeps_its_thin_diamond_markers() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let path = dir.join("uml-package-example.drawio");
+    if !path.is_file() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let source = std::str::from_utf8(&bytes).unwrap();
+    let expected = source.matches("startArrow=diamondThin").count()
+        + source.matches("endArrow=diamondThin").count();
+    assert!(expected > 0, "the UML example has no thin diamond markers");
+    let book = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes)
+        .unwrap()
+        .workbook;
+    let count = book
+        .sheets
+        .iter()
+        .flat_map(markers)
+        .map(|marker| {
+            usize::from(marker.start == Some(ConnectorMarkerKind::DiamondThin))
+                + usize::from(marker.end == Some(ConnectorMarkerKind::DiamondThin))
+        })
+        .sum::<usize>();
+    assert_eq!(count, expected);
+    let exported =
+        thinoda_io::export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported)
+        .unwrap()
+        .workbook;
+    check_markers(&book, &reopened).unwrap();
+}

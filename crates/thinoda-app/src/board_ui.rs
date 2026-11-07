@@ -2344,6 +2344,8 @@ fn marker_field(
         Some(ConnectorMarkerKind::OpenThin) => "Thin open arrow",
         Some(ConnectorMarkerKind::Block) => "Block arrow",
         Some(ConnectorMarkerKind::BlockThin) => "Thin block arrow",
+        Some(ConnectorMarkerKind::Diamond) => "Diamond",
+        Some(ConnectorMarkerKind::DiamondThin) => "Thin diamond",
     };
     ui.add_enabled_ui(enabled, |ui| {
         widgets::property_field(ui, t(label), |ui| {
@@ -2369,6 +2371,12 @@ fn marker_field(
                         }),
                         Some(ConnectorMarker {
                             kind: ConnectorMarkerKind::BlockThin,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Diamond,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::DiamondThin,
                         }),
                     ] {
                         ui.selectable_value(marker, choice, t(name(choice)));
@@ -5342,6 +5350,8 @@ mod tests {
             ("Thin classic arrow", Some(ConnectorMarkerKind::ClassicThin)),
             ("Thin open arrow", Some(ConnectorMarkerKind::OpenThin)),
             ("Thin block arrow", Some(ConnectorMarkerKind::BlockThin)),
+            ("Diamond", Some(ConnectorMarkerKind::Diamond)),
+            ("Thin diamond", Some(ConnectorMarkerKind::DiamondThin)),
             ("Legacy triangle", None),
         ] {
             harness.get_by_label("End arrow style").click();
@@ -5379,7 +5389,7 @@ mod tests {
         };
         assert_eq!(
             current.end_marker.unwrap().kind,
-            ConnectorMarkerKind::BlockThin
+            ConnectorMarkerKind::DiamondThin
         );
     }
 
@@ -5546,7 +5556,7 @@ mod tests {
         assert!(current(harness.state()).end_marker_unfilled);
         harness.get_by_label("End arrow style").click();
         harness.run_steps(3);
-        harness.get_by_label("Classic arrow").click();
+        harness.get_by_label("Thin diamond").click();
         harness.run_steps(3);
         assert!(
             !harness
@@ -5555,6 +5565,10 @@ mod tests {
                 .is_disabled()
         );
         assert!(current(harness.state()).end_marker_unfilled);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::DiamondThin
+        );
 
         harness.get_by_label("End arrow style").click();
         harness.run_steps(3);

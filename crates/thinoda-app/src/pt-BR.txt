@@ -15,6 +15,8 @@ Open arrow|Seta aberta
 Thin open arrow|Seta aberta estreita
 Block arrow|Seta preenchida
 Thin block arrow|Seta preenchida estreita
+Diamond|Losango
+Thin diamond|Losango estreito
 Legacy arrowheads approximated in draw.io|Pontas de seta anteriores aproximadas no draw.io
 Ink settings|Configurações da entrada à mão livre
 Pending ink is not in the saved file. Crash recovery may miss recent samples.|A entrada à mão livre pendente não está no arquivo salvo. A recuperação após falha pode não incluir as amostras recentes.

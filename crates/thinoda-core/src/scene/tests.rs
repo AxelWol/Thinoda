@@ -338,6 +338,92 @@ fn custom_marker_geometry_matches_published_drawio() {
 }
 
 #[test]
+fn diamond_marker_geometry_matches_published_drawio() {
+    let horizontal = [Vec2::new(0.0, 50.0), Vec2::new(100.0, 50.0)];
+    for (kind, expected, trimmed) in [
+        (
+            ConnectorMarkerKind::Diamond,
+            [
+                Vec2::new(92.5858, 56.0),
+                Vec2::new(98.5858, 50.0),
+                Vec2::new(92.5858, 44.0),
+                Vec2::new(86.5858, 50.0),
+            ],
+            86.5858,
+        ),
+        (
+            ConnectorMarkerKind::DiamondThin,
+            [
+                Vec2::new(92.0276, 53.52941),
+                Vec2::new(98.0276, 50.0),
+                Vec2::new(92.0276, 46.47059),
+                Vec2::new(86.0276, 50.0),
+            ],
+            86.0276,
+        ),
+    ] {
+        for fill in [false, true] {
+            let marker =
+                connector_marker_geometry(&horizontal, false, kind, 2.0, 10.0, fill).unwrap();
+            assert!(marker.closed);
+            assert_eq!(marker.filled, fill);
+            for (actual, expected) in marker.points().iter().zip(expected) {
+                assert!(
+                    (*actual - expected).length() < 0.001,
+                    "{kind:?}: {actual:?}"
+                );
+            }
+            let line = connector_stroke_path(&horizontal, &[None, Some(marker)]);
+            assert!((line.last().unwrap().x - trimmed).abs() < 0.001);
+            let start =
+                connector_marker_geometry(&horizontal, true, kind, 2.0, 10.0, fill).unwrap();
+            for (actual, expected) in start.points().iter().zip(expected) {
+                let reflected = Vec2::new(100.0 - expected.x, 100.0 - expected.y);
+                assert!(
+                    (*actual - reflected).length() < 0.001,
+                    "{kind:?}: {actual:?}"
+                );
+            }
+            let line = connector_stroke_path(&horizontal, &[Some(start), None]);
+            assert!((line[0].x - (100.0 - trimmed)).abs() < 0.001);
+        }
+    }
+
+    // Recorded from app.diagrams.net at a 3:4 direction, size 6 and width 2.
+    let diagonal = [Vec2::new(140.0, 220.0), Vec2::new(200.0, 300.0)];
+    for (kind, expected) in [
+        (
+            ConnectorMarkerKind::Diamond,
+            [
+                Vec2::new(193.55148, 298.06864),
+                Vec2::new(199.15148, 298.86864),
+                Vec2::new(199.95148, 293.26865),
+                Vec2::new(194.35149, 292.46863),
+            ],
+        ),
+        (
+            ConnectorMarkerKind::DiamondThin,
+            [
+                Vec2::new(194.53421, 296.63385),
+                Vec2::new(198.81656, 298.422_1),
+                Vec2::new(198.2989, 293.8103),
+                Vec2::new(194.01656, 292.0221),
+            ],
+        ),
+    ] {
+        let marker = connector_marker_geometry(&diagonal, false, kind, 2.0, 6.0, true).unwrap();
+        for (actual, expected) in marker.points().iter().zip(expected) {
+            assert!(
+                (*actual - expected).length() < 0.001,
+                "{kind:?}: {actual:?}"
+            );
+        }
+        let line = connector_stroke_path(&diagonal, &[None, Some(marker)]);
+        assert!((*line.last().unwrap() - expected[3]).length() < 0.001);
+    }
+}
+
+#[test]
 fn hollow_marker_geometry_is_closed_but_does_not_hit_the_empty_interior() {
     use crate::board::{ConnectorMarker, ConnectorMarkerKind};
 
@@ -346,6 +432,8 @@ fn hollow_marker_geometry_is_closed_but_does_not_hit_the_empty_interior() {
         ConnectorMarkerKind::ClassicThin,
         ConnectorMarkerKind::Block,
         ConnectorMarkerKind::BlockThin,
+        ConnectorMarkerKind::Diamond,
+        ConnectorMarkerKind::DiamondThin,
     ] {
         let mut sheet = Sheet::new("Hollow markers", "");
         sheet.root_mode = SheetRootMode::Hidden;

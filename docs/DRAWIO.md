@@ -196,13 +196,13 @@ Rules (each backed by a test):
 
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
-  sizes, and v14 adds marker fill overrides. Every later field or passthrough
-  representation that a v14 reader cannot preserve must require a higher native
-  version, with `required_native_version` choosing the oldest version that can
-  represent the complete workbook. Older builds must reject that version instead
-  of silently dropping data. Version sheet/board clipboard, recovery and
-  private XMind envelopes separately whenever an older reader could otherwise
-  ignore new data; reject forged older envelopes too.
+  sizes, v14 adds marker fill overrides, and v15 adds diamond markers. Every later
+  field or passthrough representation that a v15 reader cannot preserve must
+  require a higher native version, with `required_native_version` choosing the
+  oldest version that can represent the complete workbook. Older builds must
+  reject that version instead of silently dropping data. Version sheet/board
+  clipboard, recovery and private XMind envelopes separately whenever an older
+  reader could otherwise ignore new data; reject forged older envelopes too.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 
@@ -558,7 +558,7 @@ connections arrive in Phase 8 without changing the gestures).
 - `required_native_version` gates every field at the first version that supports
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
-  and subsequent additions need a higher version.
+  v15 covers diamond markers, and subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1254,16 +1254,44 @@ passed all 15 link-import journeys across Chromium, Firefox and WebKit.
 markers are represented. Malformed values, non-default fills on disabled or
 unsupported markers, other marker families, fixed ports, and the routing and
 lossless save-back limitations above still require warnings or further work.
-In the supplied corpus, a scan of explicit arrow ends found 17 `oval`, eight
-`diamondThin` and four `halfCircle` markers; those families are not yet
-represented and are candidates for the next fidelity slices.
+At this checkpoint, a scan of explicit arrow ends in the supplied corpus found
+17 `oval`, eight `diamondThin` and four `halfCircle` markers not yet
+represented; the following slice addresses diamonds.
 Selecting a legacy triangle or disabling an arrow intentionally clears its
 draw.io fill choice; undo restores it. XMind's public representation does not
 preserve these private-only board objects after external edits. The shared
-four-point filled-marker triangulation currently assumes a concave classic
-arrow and must be revisited before adding convex four-point markers. Actual
+four-point filled-marker triangulation was only checked against a concave classic
+arrow; the following slice checks it against convex diamonds too. Actual
 PowerPoint rendering, physical-device and real screen-reader acceptance have
 not been established.
+
+**Diamond connector markers (partial Phases 3, 4 and 8).** Filled and hollow
+`diamond` and `diamondThin` ends use distinct draw.io tip offsets, widths and
+shortened connector strokes, with independent per-end sizes and fill choices.
+The localized inspector supports both styles. Native v15, sheet clipboard v11,
+board clipboard v8, recovery envelopes with and without pending ink, and private
+XMind snapshots v5 protect these markers from older readers. Other documents keep
+the oldest version capable of representing their contents.
+
+The geometry was compared with the published editor for horizontal and
+diagonal connectors, including a non-default size and stroke width. The canvas
+mesh is checked for complete coverage of both classic and diamond outlines;
+hit testing and lasso selection distinguish hollow interiors from their
+outlines. The affected Rust library suites passed 1,872 tests with four ignored;
+the board-export, I/O and corpus suites also passed. All 89 supplied diagrams
+passed the corpus round trip, including all six thin-diamond ends in the UML
+package example. SVG and presentation paths, PNG pixels, rasterized PDF pixels
+and editable PowerPoint geometry were checked for hollow markers; PNG and
+PowerPoint checks also cover filled diamonds. A production web build and all
+18 link-import journeys passed across Chromium, Firefox and WebKit.
+
+**Critique and remaining work.** This slice adds two of the published marker
+types, not the complete family. Oval and half-circle markers, fixed ports,
+advanced routing and lossless draw.io save-back remain outstanding. The
+four-point canvas mesh now covers both the concave classic marker and the convex
+diamond; future marker shapes still require their own geometry and coverage
+checks. Actual PowerPoint rendering, physical-device and real screen-reader
+acceptance are not established.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

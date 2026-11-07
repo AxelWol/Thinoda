@@ -1202,10 +1202,10 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         ))
     };
     for style in [
-        "endArrow=diamond;",
+        "endArrow=oval;",
         "startFill=0;",
         "endArrow=none;endFill=0;",
-        "endArrow=diamond;endFill=0;",
+        "endArrow=oval;endFill=0;",
         "endFill=invalid;",
         "endFill=2;",
         "startSize=12;",
@@ -1244,6 +1244,7 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         "endFill=0;",
         "startArrow=block;startFill=0;endArrow=open;endFill=0;",
         "startArrow=block;startSize=12.5;endSize=0;",
+        "startArrow=diamond;startFill=0;endArrow=diamondThin;endFill=1;",
         "portConstraintRotation=0;perimeterSpacing=0;sourcePerimeterSpacing=0;targetPerimeterSpacing=0;",
     ] {
         let report = load(&edge(style));
@@ -1267,6 +1268,8 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
         "openThin",
         "block",
         "blockThin",
+        "diamond",
+        "diamondThin",
     ];
     for kind in names {
         for start_fill in [0, 1] {
@@ -1287,7 +1290,9 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
                 assert_eq!(connector.end_marker_size, Some(0.0));
                 assert_eq!(
                     crate::required_native_version(&report.workbook),
-                    if start_fill == 0 || end_fill == 0 {
+                    if kind.starts_with("diamond") {
+                        15
+                    } else if start_fill == 0 || end_fill == 0 {
                         14
                     } else {
                         13
@@ -1324,6 +1329,8 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
         "openThin",
         "block",
         "blockThin",
+        "diamond",
+        "diamondThin",
     ];
     for kind in names {
         for size in [0.0, 6.0, 12.5, 999.0] {
@@ -1339,7 +1346,10 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
             let connector = connectors(&report.workbook.sheets[0])[0];
             assert_eq!(connector.start_marker_size, (size != 6.0).then_some(size));
             assert_eq!(connector.end_marker_size, Some(12.5));
-            assert_eq!(crate::required_native_version(&report.workbook), 13);
+            assert_eq!(
+                crate::required_native_version(&report.workbook),
+                if kind.starts_with("diamond") { 15 } else { 13 }
+            );
             let exported = export(&report.workbook).unwrap();
             let restored = import(&exported).unwrap();
             assert!(
@@ -1365,6 +1375,8 @@ fn supported_connector_markers_round_trip_with_both_ends() {
         "openThin" => Some(ConnectorMarkerKind::OpenThin),
         "block" => Some(ConnectorMarkerKind::Block),
         "blockThin" => Some(ConnectorMarkerKind::BlockThin),
+        "diamond" => Some(ConnectorMarkerKind::Diamond),
+        "diamondThin" => Some(ConnectorMarkerKind::DiamondThin),
         _ => None,
     };
     let names = [
@@ -1375,6 +1387,8 @@ fn supported_connector_markers_round_trip_with_both_ends() {
         "openThin",
         "block",
         "blockThin",
+        "diamond",
+        "diamondThin",
     ];
     for start in names {
         for end in names {
@@ -1399,6 +1413,12 @@ fn supported_connector_markers_round_trip_with_both_ends() {
             assert_eq!(
                 native_version,
                 if [marker(start), marker(end)]
+                    .into_iter()
+                    .flatten()
+                    .any(ConnectorMarkerKind::is_diamond)
+                {
+                    15
+                } else if [marker(start), marker(end)]
                     .into_iter()
                     .flatten()
                     .any(ConnectorMarkerKind::requires_extended_format)
@@ -1559,6 +1579,14 @@ fn editable_drawio_images_preserve_supported_connector_markers() {
             ConnectorMarkerKind::OpenThin,
             false,
             true,
+        ),
+        (
+            "diamond",
+            "diamondThin",
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+            true,
+            false,
         ),
     ] {
         let report = load(&page(&format!(

@@ -1679,7 +1679,7 @@ mod tests {
     #[test]
     fn drawio_connector_approximations_require_consent_and_preserve_the_source() {
         let directory = tempfile::tempdir().unwrap();
-        for (name, style) in [("marker", "endArrow=diamond;"), ("port", "exitX=0.25;")] {
+        for (name, style) in [("marker", "endArrow=oval;"), ("port", "exitX=0.25;")] {
             let path = directory.path().join(format!("{name}.drawio"));
             let xml = format!(
                 r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" value="Connector" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#
@@ -1761,6 +1761,16 @@ mod tests {
                 None,
                 false,
                 true,
+            ),
+            (
+                "diamond-markers",
+                "startArrow=diamond;startSize=12.5;startFill=0;endArrow=diamondThin;endSize=8;",
+                ConnectorMarkerKind::Diamond,
+                ConnectorMarkerKind::DiamondThin,
+                Some(12.5),
+                Some(8.0),
+                true,
+                false,
             ),
         ] {
             let source = directory.path().join(format!("{name}.drawio"));
