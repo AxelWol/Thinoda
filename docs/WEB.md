@@ -114,10 +114,11 @@ Opening editable images also accepts older URI- or base64-encoded SVG diagrams
 and older PNG diagram metadata. Ordinary PNG drops still add an image; a
 `.drawio.png` drop opens the embedded diagram instead.
 
-An `.html` or `.htm` file with one embedded draw.io viewer can be opened or
-dropped as an unsaved converted copy. The page is treated as data: scripts and
-remote resources are never loaded. HTML with remote-only viewers or multiple
-diagrams is not imported; export each diagram as a separate editable file.
+An `.html` or `.htm` file with one embedded draw.io viewer, including older
+compressed or URI-encoded viewers, can be opened or dropped as an unsaved
+converted copy. The page is treated as data: scripts and remote resources are
+never loaded. HTML with remote-only viewers or multiple diagrams is not
+imported; export each diagram as a separate editable file.
 
 **File > Import draw.io link…** imports self-contained published `#R` links
 or fragments locally, without contacting the link's website. The result is an

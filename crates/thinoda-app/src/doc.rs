@@ -1643,30 +1643,37 @@ mod tests {
     #[test]
     fn drawio_html_import_preserves_its_source_and_requires_warning_consent() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("diagram.html");
-        let html = include_str!("../../thinoda-io/tests/fixtures/published-rectangle.drawio.html")
-            .replace("rounded=0;", "rounded=0;dashed=1;");
-        std::fs::write(&path, &html).unwrap();
+        let current =
+            include_str!("../../thinoda-io/tests/fixtures/published-rectangle.drawio.html")
+                .replace("rounded=0;", "rounded=0;dashed=1;");
+        let xml = r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="Legacy" style="rounded=0;dashed=1;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#;
+        let encoded: String = xml.bytes().map(|byte| format!("%{byte:02X}")).collect();
+        let legacy = format!(r#"<div class="mxgraph"><div>{encoded}</div></div>"#);
 
-        assert_eq!(
-            OpenDoc::open(&path).err().unwrap(),
-            t("Import requires confirmation")
-        );
-        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
-        assert!(warnings.contains(&thinoda_io::ImportWarning::Formatting));
-        assert!(document.path.is_none());
-        assert!(document.is_dirty());
-        assert!(same_destination(document.import_source.as_deref().unwrap(), &path).unwrap());
-        assert_eq!(
-            document.save_to(&path, false).unwrap_err(),
-            t("Choose a different destination to preserve the imported source.")
-        );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+        for (name, html) in [("current", current), ("legacy", legacy)] {
+            let path = directory.path().join(format!("{name}.html"));
+            std::fs::write(&path, &html).unwrap();
 
-        let native = directory.path().join("copy.thinoda");
-        document.save_to(&native, false).unwrap();
-        assert!(native.exists());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+            assert_eq!(
+                OpenDoc::open(&path).err().unwrap(),
+                t("Import requires confirmation")
+            );
+            let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+            assert!(warnings.contains(&thinoda_io::ImportWarning::Formatting));
+            assert!(document.path.is_none());
+            assert!(document.is_dirty());
+            assert!(same_destination(document.import_source.as_deref().unwrap(), &path).unwrap());
+            assert_eq!(
+                document.save_to(&path, false).unwrap_err(),
+                t("Choose a different destination to preserve the imported source.")
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+
+            let native = directory.path().join(format!("{name}.thinoda"));
+            document.save_to(&native, false).unwrap();
+            assert!(native.exists());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+        }
     }
 
     #[test]

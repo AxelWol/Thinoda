@@ -415,7 +415,7 @@ pub(crate) fn sniff(bytes: &[u8]) -> bool {
 }
 
 pub(crate) fn sniff_html(bytes: &[u8]) -> bool {
-    const ATTRIBUTE: &[u8] = b"data-mxgraph";
+    const ATTRIBUTE: &[u8] = b"class";
     if bytes.len() > MAX_BYTES
         || !bytes
             .windows(ATTRIBUTE.len())

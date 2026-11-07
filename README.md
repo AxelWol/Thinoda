@@ -731,8 +731,9 @@ those system-owned controls. WinGet publishing remains paused.
   prevent export. Editable image export is not Save As or lossless save-back.
   Import also recognizes legacy URI- or base64-encoded SVG diagrams and older
   PNG diagram metadata.
-  HTML exports with one embedded draw.io viewer can also be opened or dropped
-  as converted copies; Thinoda never runs their scripts or loads remote URLs.
+  HTML exports with one embedded draw.io viewer, including older compressed or
+  URI-encoded viewers, can also be opened or dropped as converted copies;
+  Thinoda never runs their scripts or loads remote URLs.
   Remote-only viewers and HTML containing multiple diagrams are not imported.
   **File > Import draw.io link…** also accepts self-contained published `#R`
   links or fragments, decodes them locally without contacting the URL, and

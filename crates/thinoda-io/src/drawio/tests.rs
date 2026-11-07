@@ -699,6 +699,12 @@ fn html_viewer(xml: &str) -> String {
     )
 }
 
+fn legacy_html_viewer(data: &str) -> String {
+    format!(
+        r#"<div class="mxgraph"><div style="width:1px;height:1px;overflow:hidden;">{data}</div></div>"#
+    )
+}
+
 #[test]
 fn published_drawio_html_export_imports_its_embedded_diagram() {
     let html = include_bytes!("../../tests/fixtures/published-rectangle.drawio.html");
@@ -778,6 +784,90 @@ fn html_viewer_rejects_missing_remote_malformed_and_ambiguous_diagrams() {
     ));
     let dtd = html_viewer(r#"<!DOCTYPE mxfile [<!ENTITY x SYSTEM "file:///secret">]><mxfile/>"#);
     assert!(import_html(dtd.as_bytes()).is_err());
+}
+
+#[test]
+fn legacy_html_viewers_import_compressed_and_uri_encoded_multipage_diagrams() {
+    let xml = r#"<mxfile><diagram name="First"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="A &amp; B &quot;C&quot; ü" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram><diagram name="Second"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#;
+    let uri = percent_encode(xml);
+    let compressed = base64::engine::general_purpose::STANDARD
+        .encode(miniz_oxide::deflate::compress_to_vec(uri.as_bytes(), 6));
+    let escaped_xml = xml
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+
+    for data in [uri, compressed, escaped_xml] {
+        let html = format!(
+            r#"<!doctype html><DIV class="example mx&#103;raph"><section><DIV>{data}</DIV><div>preview only</div></section></DIV>"#
+        );
+        for name in ["legacy.html", "legacy.HTM", "without-extension"] {
+            assert_eq!(
+                detect_format(Path::new(name), html.as_bytes()),
+                Some(Format::DrawIoHtml),
+                "{name}"
+            );
+            let report =
+                crate::import_named_bytes_with_report(Path::new(name), html.as_bytes()).unwrap();
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+            assert_eq!(report.workbook.sheets.len(), 2);
+            assert_eq!(report.workbook.sheets[0].title, "First");
+            assert_eq!(report.workbook.sheets[1].title, "Second");
+            assert_eq!(
+                shapes(&report.workbook.sheets[0])[0].label(),
+                "A & B \"C\" ü"
+            );
+        }
+    }
+}
+
+#[test]
+fn legacy_html_viewer_imports_independently_encoded_bare_model() {
+    let html = legacy_html_viewer(GOLDEN_COMPRESSED);
+    let report = import_html(html.as_bytes()).unwrap();
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(shapes(sheet)[0].label(), "Start & go");
+    assert_eq!(shapes(sheet)[1].label(), "Ünïcode");
+}
+
+#[test]
+fn legacy_html_viewer_decodes_entities_across_streaming_chunks() {
+    let xml = page(
+        r#"<mxCell id="v" value="Chunk ü" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#,
+    );
+    let data = percent_encode(&xml).replacen('%', "&#37;", 1);
+    let viewer = legacy_html_viewer(&data);
+    let entity = viewer.find("&#37;").unwrap();
+    let html = format!("{}{viewer}", " ".repeat(16 * 1024 - entity - 2));
+    let report = import_html(html.as_bytes()).unwrap();
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "Chunk ü");
+}
+
+#[test]
+fn legacy_html_viewers_reject_ambiguous_or_malformed_markup() {
+    let data = percent_encode(&page(""));
+    let valid = legacy_html_viewer(&data);
+    let current = html_viewer(&page(""));
+    for html in [
+        format!(r#"<div class="mxgraph"><div>{data}</div>"#),
+        format!(r#"<div class="mxgraph"></div><div>{data}</div>"#),
+        format!(r#"<div class="mxgraph"><div></div><div>{data}</div></div>"#),
+        format!(r#"<div class="mxgraph"><div><span>{data}</span></div></div>"#),
+        format!(r#"<div class="mxgraph"><div><!--comment-->{data}</div></div>"#),
+        r#"<div class="mxgraph"><div>%ZZ</div></div>"#.to_owned(),
+        r#"<div class="mxgraph"><div>not-compressed</div></div>"#.to_owned(),
+        format!("{valid}{valid}"),
+        format!("{current}{valid}"),
+        format!(r#"<div class="mxgraph" data-mxgraph="invalid"><div>{data}</div></div>"#),
+    ] {
+        assert!(import_html(html.as_bytes()).is_err(), "{html}");
+    }
+    assert!(matches!(
+        import_html(format!("{valid}{current}").as_bytes()),
+        Err(IoError::DrawIoHtml(crate::DrawIoHtmlError::MultipleViewers))
+    ));
+    let dtd = percent_encode(r#"<!DOCTYPE mxfile [<!ENTITY x SYSTEM "file:///secret">]><mxfile/>"#);
+    assert!(import_html(legacy_html_viewer(&dtd).as_bytes()).is_err());
 }
 
 #[test]
@@ -1586,11 +1676,13 @@ fn hostile_inputs_are_rejected() {
     truncated.extend(b"tEXt");
     assert!(!sniff(&truncated));
     let bomb = miniz_oxide::deflate::compress_to_vec(&vec![b'a'; MAX_BYTES + 1], 9);
-    let page = format!(
-        "<mxfile><diagram>{}</diagram></mxfile>",
-        base64::engine::general_purpose::STANDARD.encode(bomb)
-    );
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bomb);
+    let page = format!("<mxfile><diagram>{encoded}</diagram></mxfile>");
     assert!(import(page.as_bytes()).is_err());
+    assert!(matches!(
+        import_html(legacy_html_viewer(&encoded).as_bytes()),
+        Err(IoError::DrawIoHtml(crate::DrawIoHtmlError::InvalidViewer))
+    ));
 }
 
 #[test]

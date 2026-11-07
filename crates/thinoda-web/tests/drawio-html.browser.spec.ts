@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { deflateRawSync } from "node:zlib";
 import { colorBounds, command, frames, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
@@ -61,16 +62,24 @@ test("opens and drops embedded draw.io HTML without loading page resources", asy
         (object: { kind: { shape?: { label?: string } } }) => object.kind.shape?.label === "Published PNG",
     )).toBe(true);
 
-    const droppedHtml = Buffer.from(html.toString("utf8")
-        .replace("Published PNG", "Dropped HTML")
-        .replace("#d5e8d4", "#17c987"), "utf8");
+    const legacyXml = '<mxfile><diagram name="Page-1"><mxGraphModel><root><mxCell id="0"/>' +
+        '<mxCell id="1" parent="0"/><mxCell id="v" value="Dropped legacy HTML" ' +
+        'style="rounded=0;fillColor=#17c987;" vertex="1" parent="1">' +
+        '<mxGeometry x="350" y="380" width="120" height="60" as="geometry"/></mxCell>' +
+        '</root></mxGraphModel></diagram></mxfile>';
+    const data = deflateRawSync(Buffer.from(encodeURIComponent(legacyXml))).toString("base64");
+    const droppedHtml = Buffer.from(
+        `<!doctype html><script src="https://example.invalid/never-load.js"></script>` +
+        `<div class="mxgraph"><div style="width:1px;height:1px;overflow:hidden;">${data}</div></div>`,
+        "utf8",
+    );
     await canvas.drop({ files: { name: "dropped.htm", mimeType: "text/html", buffer: droppedHtml } });
     await expect.poll(async () => (
         await colorBounds(page, await page.screenshot(), [[23, 201, 135]], 5)
     )[0].count, { timeout: 30_000 }).toBeGreaterThan(200);
     const dropped = activeSheet(await saveAs(page, "html-dropped.thinoda"));
     expect(dropped.canvas.objects.some(
-        (object: { kind: { shape?: { label?: string } } }) => object.kind.shape?.label === "Dropped HTML",
+        (object: { kind: { shape?: { label?: string } } }) => object.kind.shape?.label === "Dropped legacy HTML",
     )).toBe(true);
     expect(externalRequests).toEqual([]);
 });

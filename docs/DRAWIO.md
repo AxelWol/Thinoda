@@ -610,6 +610,12 @@ connections arrive in Phase 8 without changing the gestures).
   cross-reference, object-stream and attachment decoding, including nesting and
   cycles, before using a parser on untrusted files; do not identify metadata by
   scanning arbitrary PDF stream bytes.
+- Parser evaluation: `zpdf-parser` 0.18.0 has per-filter and cache limits, but
+  its [open and object-resolution paths](https://github.com/Xero-Team/zpdf/blob/8779a86/crates/zpdf-parser/src/lib.rs)
+  also perform automatic repair scans and may re-decode streams after cache
+  admission stops. Its [cross-reference traversal](https://github.com/Xero-Team/zpdf/blob/8779a86/crates/zpdf-parser/src/xref.rs)
+  does not expose a caller-controlled aggregate decoding budget. These controls
+  alone do not satisfy the importer's strict, aggregate-bounded requirement.
 
 ### Phase 12 — Vendor library download (`p12-vendor-libraries`)
 - Libraries manager; pinned manifest (URL, version, SHA-256, license URL); cache dir /
@@ -972,11 +978,25 @@ separate save-back path. Chromium, Firefox and WebKit open and drop the
 published fixture, save a native copy, and verify that neither the viewer
 script nor an external image is requested. This intentionally supports a
 single self-contained viewer, not arbitrary HTML or remote URLs; legacy
-semicolonless HTML character references are not guaranteed, and older viewers
-that store compressed data in a nested `div` rather than `data-mxgraph` are
-not yet imported. The streaming parser's memory budget is not a global
-process-memory limit: decoding the JSON and XML can require additional bounded
-copies.
+semicolonless HTML character references are not guaranteed. The streaming
+parser's memory budget is not a global process-memory limit: decoding the JSON
+and XML can require additional bounded copies.
+
+**Legacy HTML compatibility and critique (partial Phase 11).** Older viewers
+store compressed or URI-encoded diagram data in their first nested `div`
+instead of `data-mxgraph`. The importer also accepts an HTML-escaped XML model
+there. The parser uses source offsets for the text so character references
+split across input chunks are decoded together. It requires explicitly closed
+viewer and payload elements and a text-only payload: ambiguous, malformed or
+nested markup is rejected rather than reading unrelated page content. Multiple
+viewers, decompression beyond the existing limit, and remote-only viewers remain
+unsupported. The imported file still opens as an unsaved converted copy with
+warning consent and source protection. Synthetic legacy wrappers and an
+independently compressed graph exercise both encoding paths. Chromium, Firefox
+and WebKit open the published current-format fixture and drop a compressed
+legacy viewer, save native copies, and make no external requests. These checks
+do not prove compatibility with every historical HTML export or fidelity for
+every shape.
 
 **Corpus validation (docs/draw-io-examples).** `crates/thinoda-io/tests/drawio_corpus.rs`
 runs every `.drawio`/`.xml` file in the user-supplied example corpus (89 files from
