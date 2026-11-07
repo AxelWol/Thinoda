@@ -895,6 +895,8 @@ also preserves support for filenames containing non-Unicode characters. Browser
 tests cover disclosure and cancellation, downloads, metadata, source preservation
 and re-opening in Chromium, Firefox and WebKit. Their import wait is restricted
 to the canvas so a similarly colored sidebar swatch cannot give a false positive.
+The stable shortcut-registry contract was also updated to include both new export
+commands after a later targeted check exposed the missing entries.
 This single-shape external-editor check
 does not establish fidelity for complex files, external editors, physical
 devices or all existing content; unsupported FIM provenance, equations and
