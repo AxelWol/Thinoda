@@ -14,7 +14,7 @@ use thinoda_core::board::{
     MAX_TOTAL_INK_POINTS, MIN_STROKE_WIDTH, distance_to_segment, point_in_polygon, rotate_around,
     rotated_corners, validate_object,
 };
-use thinoda_core::scene::SceneGeometry;
+use thinoda_core::scene::{SceneGeometry, connector_stroke_path};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, InkStroke, InkTool, Rect, Scene,
     SceneHit, SceneId, SceneItem, Vec2,
@@ -850,8 +850,15 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                 width,
                 markers,
             } => {
+                let trimmed;
+                let stroke = if markers.iter().any(Option::is_some) {
+                    trimmed = connector_stroke_path(points, markers);
+                    trimmed.as_slice()
+                } else {
+                    points.as_slice()
+                };
                 let mut intersects = path_touches_lasso(
-                    points,
+                    stroke,
                     false,
                     |point| point,
                     f64::from(*width) / 2.0,
@@ -866,7 +873,7 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                         && polygon_touches_lasso(marker.points(), polygon, &mut budget)?)
                         || path_touches_lasso(
                             marker.points(),
-                            marker.filled,
+                            marker.closed,
                             |point| point,
                             f64::from(*width) / 2.0,
                             polygon,
@@ -2567,6 +2574,37 @@ mod tests {
         let scene = scene(&sheet);
         assert_eq!(
             lasso_hits(&scene, &rectangle(83.0, 7.0, 1.5, 1.5)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
+    fn lasso_uses_the_closed_outline_not_the_empty_hollow_marker_interior() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Hollow markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert!(
+            lasso_hits(&scene, &rectangle(94.8, -0.2, 0.4, 0.4))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(88.8, 3.1, 0.2, 0.2)).unwrap(),
             vec![SceneHit::Object(id)]
         );
     }

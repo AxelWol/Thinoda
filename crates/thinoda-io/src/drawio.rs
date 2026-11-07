@@ -650,6 +650,10 @@ impl Style {
             .filter(|value| *value != DEFAULT_CONNECTOR_MARKER_SIZE)
     }
 
+    fn marker_unfilled(&self, arrow_key: &str, fill_key: &str) -> bool {
+        self.marker(arrow_key).is_some() && self.num(fill_key) == Some(0.0)
+    }
+
     /// Visual details without a Thinoda equivalent.
     fn formatting_loss(&self, edge: bool) -> bool {
         const FLAGS: [&str; 7] = [
@@ -710,9 +714,16 @@ impl Style {
                             )
                         })
                     })
-                    || ["startFill", "endFill"]
+                    || [("startArrow", "startFill"), ("endArrow", "endFill")]
                         .iter()
-                        .any(|key| differs_from(key, 1.0))
+                        .any(|(arrow, key)| {
+                            self.get(key).is_some_and(|_| {
+                                self.num(key).is_none_or(|value| {
+                                    (value != 0.0 && value != 1.0)
+                                        || (value == 0.0 && self.marker(arrow).is_none())
+                                })
+                            })
+                        })
                     || [("startArrow", "startSize"), ("endArrow", "endSize")]
                         .iter()
                         .any(|(arrow, key)| {
@@ -1733,6 +1744,8 @@ impl<'a> PageImport<'a> {
         connector.end_marker = style.marker("endArrow");
         connector.start_marker_size = style.marker_size("startArrow", "startSize");
         connector.end_marker_size = style.marker_size("endArrow", "endSize");
+        connector.start_marker_unfilled = style.marker_unfilled("startArrow", "startFill");
+        connector.end_marker_unfilled = style.marker_unfilled("endArrow", "endFill");
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
@@ -2526,6 +2539,12 @@ impl<'a> PageWriter<'a> {
                 }
                 if let Some(size) = connector.end_marker_size {
                     style.push_str(&format!("endSize={};", num(size)));
+                }
+                if connector.start_marker_unfilled {
+                    style.push_str("startFill=0;");
+                }
+                if connector.end_marker_unfilled {
+                    style.push_str("endFill=0;");
                 }
                 color_keys(&mut style, "strokeColor", "strokeOpacity", connector.color);
                 color_keys(

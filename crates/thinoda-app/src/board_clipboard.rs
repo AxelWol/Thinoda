@@ -2204,13 +2204,15 @@ mod tests {
         use crate::app::Cmd;
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 
-        for (style, start, end, start_size, end_size) in [
+        for (style, start, end, start_size, end_size, start_unfilled, end_unfilled) in [
             (
                 "startArrow=block;endArrow=open",
                 ConnectorMarkerKind::Block,
                 ConnectorMarkerKind::Open,
                 None,
                 None,
+                false,
+                false,
             ),
             (
                 "startArrow=classicThin;endArrow=openThin",
@@ -2218,6 +2220,8 @@ mod tests {
                 ConnectorMarkerKind::OpenThin,
                 None,
                 None,
+                false,
+                false,
             ),
             (
                 "startArrow=classic;startSize=12.5;endArrow=open;endSize=0",
@@ -2225,6 +2229,26 @@ mod tests {
                 ConnectorMarkerKind::Open,
                 Some(12.5),
                 Some(0.0),
+                false,
+                false,
+            ),
+            (
+                "startArrow=block;startFill=0;endArrow=classic;endFill=1",
+                ConnectorMarkerKind::Block,
+                ConnectorMarkerKind::Classic,
+                None,
+                None,
+                true,
+                false,
+            ),
+            (
+                "startArrow=classic;startFill=1;endArrow=open;endFill=0",
+                ConnectorMarkerKind::Classic,
+                ConnectorMarkerKind::Open,
+                None,
+                None,
+                false,
+                true,
             ),
         ] {
             let (mut app, clipboard) = empty_board_app();
@@ -2246,6 +2270,8 @@ mod tests {
             assert_eq!(connector.end_marker.unwrap().kind, end);
             assert_eq!(connector.start_marker_size, start_size);
             assert_eq!(connector.end_marker_size, end_size);
+            assert_eq!(connector.start_marker_unfilled, start_unfilled);
+            assert_eq!(connector.end_marker_unfilled, end_unfilled);
             assert!(!app.toasts.texts().any(|text| text.contains(crate::i18n::t(
                 "Pasted from draw.io; some content was simplified"
             ))));

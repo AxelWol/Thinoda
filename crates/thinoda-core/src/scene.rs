@@ -58,6 +58,7 @@ pub enum SceneHit {
 pub struct ConnectorMarkerGeometry {
     points: [Vec2; 4],
     point_count: usize,
+    pub closed: bool,
     pub filled: bool,
     pub line_inset: f32,
 }
@@ -75,6 +76,7 @@ fn connector_marker_geometry(
     kind: ConnectorMarkerKind,
     width: f32,
     marker_size: f32,
+    fill: bool,
 ) -> Option<ConnectorMarkerGeometry> {
     let tip = if at_start {
         *points.first()?
@@ -108,7 +110,7 @@ fn connector_marker_geometry(
             | ConnectorMarkerKind::OpenThin
             | ConnectorMarkerKind::BlockThin
     );
-    let filled = !matches!(
+    let closed = !matches!(
         kind,
         ConnectorMarkerKind::Open | ConnectorMarkerKind::OpenThin
     );
@@ -121,10 +123,11 @@ fn connector_marker_geometry(
             tip - direction * (size * 0.75),
         ],
         point_count: if classic { 4 } else { 3 },
-        filled,
+        closed,
+        filled: closed && fill,
         line_inset: if classic {
             size * 0.75 + offset
-        } else if filled {
+        } else if closed {
             size + offset
         } else {
             offset * 2.0
@@ -236,10 +239,15 @@ impl SceneGeometry {
                 markers,
             } => {
                 let radius = width / 2.0 + tolerance;
-                distance_to_polyline(p, points) <= radius
+                let stroke_hit = if markers.iter().any(Option::is_some) {
+                    distance_to_polyline(p, &connector_stroke_path(points, markers)) <= radius
+                } else {
+                    distance_to_polyline(p, points) <= radius
+                };
+                stroke_hit
                     || markers.iter().flatten().any(|marker| {
                         (marker.filled && point_in_polygon(p, marker.points()))
-                            || if marker.filled {
+                            || if marker.closed {
                                 distance_to_outline(p, marker.points()) <= radius
                             } else {
                                 distance_to_polyline(p, marker.points()) <= radius
@@ -376,6 +384,7 @@ fn object_item(
                             marker.kind,
                             c.width,
                             c.start_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                            !c.start_marker_unfilled,
                         )
                     }),
                     c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
@@ -385,6 +394,7 @@ fn object_item(
                             marker.kind,
                             c.width,
                             c.end_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                            !c.end_marker_unfilled,
                         )
                     }),
                 ],

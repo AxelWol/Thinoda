@@ -233,6 +233,14 @@ impl CanvasLayer {
                 if c.start_marker_size.is_some() || c.end_marker_size.is_some())
         })
     }
+
+    /// Whether this layer needs marker-fill-aware persistence.
+    pub fn has_connector_marker_fills(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.start_marker_unfilled || c.end_marker_unfilled)
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -889,6 +897,11 @@ pub struct CanvasConnector {
     pub start_marker_size: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_marker_size: Option<f32>,
+    /// Unfilled overrides apply only to explicit draw.io-compatible markers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start_marker_unfilled: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub end_marker_unfilled: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -918,6 +931,10 @@ struct StoredCanvasConnector {
     #[serde(default)]
     end_marker_size: Option<f32>,
     #[serde(default)]
+    start_marker_unfilled: bool,
+    #[serde(default)]
+    end_marker_unfilled: bool,
+    #[serde(default)]
     label: String,
     #[serde(default)]
     color: Option<Color>,
@@ -943,6 +960,11 @@ impl<'de> Deserialize<'de> for CanvasConnector {
         {
             return Err(serde::de::Error::custom("invalid connector marker size"));
         }
+        if (stored.start_marker_unfilled && stored.start_marker.is_none())
+            || (stored.end_marker_unfilled && stored.end_marker.is_none())
+        {
+            return Err(serde::de::Error::custom("invalid connector marker fill"));
+        }
         Ok(Self {
             from: stored.from,
             to: stored.to,
@@ -954,6 +976,8 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             end_marker: stored.end_marker,
             start_marker_size: stored.start_marker_size,
             end_marker_size: stored.end_marker_size,
+            start_marker_unfilled: stored.start_marker_unfilled,
+            end_marker_unfilled: stored.end_marker_unfilled,
             label: stored.label,
             color: stored.color,
             width: stored.width,
@@ -986,6 +1010,8 @@ impl CanvasConnector {
             end_marker: None,
             start_marker_size: None,
             end_marker_size: None,
+            start_marker_unfilled: false,
+            end_marker_unfilled: false,
             label: String::new(),
             color: None,
             width: default_connector_width(),
@@ -997,6 +1023,7 @@ impl CanvasConnector {
         if !enabled {
             self.start_marker = None;
             self.start_marker_size = None;
+            self.start_marker_unfilled = false;
         }
     }
 
@@ -1005,6 +1032,7 @@ impl CanvasConnector {
         if !enabled {
             self.end_marker = None;
             self.end_marker_size = None;
+            self.end_marker_unfilled = false;
         }
     }
 }
@@ -1282,6 +1310,11 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
                 || !valid_marker_size(c.end_marker_size, c.end_marker)
             {
                 return Err(format!("connector {id} has an invalid marker size"));
+            }
+            if (c.start_marker_unfilled && c.start_marker.is_none())
+                || (c.end_marker_unfilled && c.end_marker.is_none())
+            {
+                return Err(format!("connector {id} has an invalid marker fill"));
             }
             if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
                 return Err(format!(

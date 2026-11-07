@@ -1711,7 +1711,7 @@ mod tests {
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 
         let directory = tempfile::tempdir().unwrap();
-        for (name, style, start, end, start_size, end_size) in [
+        for (name, style, start, end, start_size, end_size, start_unfilled, end_unfilled) in [
             (
                 "markers",
                 "startArrow=block;endArrow=open;",
@@ -1719,6 +1719,8 @@ mod tests {
                 ConnectorMarkerKind::Open,
                 None,
                 None,
+                false,
+                false,
             ),
             (
                 "thin-markers",
@@ -1727,6 +1729,8 @@ mod tests {
                 ConnectorMarkerKind::OpenThin,
                 None,
                 None,
+                false,
+                false,
             ),
             (
                 "sized-markers",
@@ -1735,6 +1739,28 @@ mod tests {
                 ConnectorMarkerKind::Open,
                 Some(12.5),
                 Some(0.0),
+                false,
+                false,
+            ),
+            (
+                "hollow-start",
+                "startArrow=block;startFill=0;endArrow=classic;endFill=1;",
+                ConnectorMarkerKind::Block,
+                ConnectorMarkerKind::Classic,
+                None,
+                None,
+                true,
+                false,
+            ),
+            (
+                "hollow-end",
+                "startArrow=classic;startFill=1;endArrow=open;endFill=0;",
+                ConnectorMarkerKind::Classic,
+                ConnectorMarkerKind::Open,
+                None,
+                None,
+                false,
+                true,
             ),
         ] {
             let source = directory.path().join(format!("{name}.drawio"));
@@ -1765,6 +1791,8 @@ mod tests {
             assert_eq!(connector.end_marker.unwrap().kind, end);
             assert_eq!(connector.start_marker_size, start_size);
             assert_eq!(connector.end_marker_size, end_size);
+            assert_eq!(connector.start_marker_unfilled, start_unfilled);
+            assert_eq!(connector.end_marker_unfilled, end_unfilled);
         }
     }
 

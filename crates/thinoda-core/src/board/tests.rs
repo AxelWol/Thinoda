@@ -151,6 +151,60 @@ fn connector_marker_sizes_are_bounded_and_require_explicit_markers() {
 }
 
 #[test]
+fn connector_marker_fill_requires_explicit_markers_and_clears_with_arrows() {
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    assert!(
+        !serde_json::to_string(&connector)
+            .unwrap()
+            .contains("unfilled")
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.start_marker_unfilled = true;
+    connector.end_marker_unfilled = true;
+    let encoded = serde_json::to_value(&connector).unwrap();
+    assert_eq!(
+        serde_json::from_value::<CanvasConnector>(encoded.clone()).unwrap(),
+        connector
+    );
+    validate_object(&CanvasObject::connector(connector.clone())).unwrap();
+    for (marker, fill) in [
+        ("start_marker", "start_marker_unfilled"),
+        ("end_marker", "end_marker_unfilled"),
+    ] {
+        let mut forged = encoded.clone();
+        forged[marker] = serde_json::Value::Null;
+        assert!(
+            serde_json::from_value::<CanvasConnector>(forged)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid connector marker fill")
+        );
+        let mut forged = encoded.clone();
+        forged[fill] = serde_json::json!("false");
+        assert!(serde_json::from_value::<CanvasConnector>(forged).is_err());
+    }
+    let mut invalid = connector.clone();
+    invalid.end_marker = None;
+    assert!(
+        validate_object(&CanvasObject::connector(invalid))
+            .unwrap_err()
+            .contains("invalid marker fill")
+    );
+    connector.set_arrow_start(false);
+    connector.set_arrow_end(false);
+    assert!(!connector.start_marker_unfilled && !connector.end_marker_unfilled);
+}
+
+#[test]
 fn connector_waypoint_limits_and_edits_are_atomic() {
     let mut connector =
         CanvasConnector::new(Endpoint::Point(Vec2::ZERO), Endpoint::Point(Vec2::ZERO));

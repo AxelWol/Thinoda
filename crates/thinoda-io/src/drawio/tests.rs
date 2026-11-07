@@ -1204,7 +1204,10 @@ fn connector_marker_and_port_approximations_require_confirmation() {
     for style in [
         "endArrow=diamond;",
         "startFill=0;",
-        "endFill=0;",
+        "endArrow=none;endFill=0;",
+        "endArrow=diamond;endFill=0;",
+        "endFill=invalid;",
+        "endFill=2;",
         "startSize=12;",
         "endSize=invalid;",
         "endSize=-1;",
@@ -1238,6 +1241,8 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         "startArrow=none;endArrow=none;",
         "startArrow=classic;endArrow=classic;",
         "startFill=1;endFill=1;startSize=6;endSize=6;",
+        "endFill=0;",
+        "startArrow=block;startFill=0;endArrow=open;endFill=0;",
         "startArrow=block;startSize=12.5;endSize=0;",
         "portConstraintRotation=0;perimeterSpacing=0;sourcePerimeterSpacing=0;targetPerimeterSpacing=0;",
     ] {
@@ -1250,6 +1255,63 @@ fn connector_marker_and_port_approximations_require_confirmation() {
             "{style}: {:?}",
             restored.warnings
         );
+    }
+}
+
+#[test]
+fn marker_fills_round_trip_independently_for_every_supported_shape() {
+    let names = [
+        "classic",
+        "classicThin",
+        "open",
+        "openThin",
+        "block",
+        "blockThin",
+    ];
+    for kind in names {
+        for start_fill in [0, 1] {
+            for end_fill in [0, 1] {
+                let xml = page(&format!(
+                    r#"<mxCell id="e" style="startArrow={kind};startSize=12.5;startFill={start_fill};endArrow={kind};endSize=0;endFill={end_fill};" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+                ));
+                let report = load(&xml);
+                assert!(
+                    report.warnings.is_empty(),
+                    "{kind}, {start_fill}, {end_fill}: {:?}",
+                    report.warnings
+                );
+                let connector = connectors(&report.workbook.sheets[0])[0];
+                assert_eq!(connector.start_marker_unfilled, start_fill == 0);
+                assert_eq!(connector.end_marker_unfilled, end_fill == 0);
+                assert_eq!(connector.start_marker_size, Some(12.5));
+                assert_eq!(connector.end_marker_size, Some(0.0));
+                assert_eq!(
+                    crate::required_native_version(&report.workbook),
+                    if start_fill == 0 || end_fill == 0 {
+                        14
+                    } else {
+                        13
+                    }
+                );
+                let exported = export(&report.workbook).unwrap();
+                let restored = import(&exported).unwrap();
+                assert!(
+                    restored.warnings.is_empty(),
+                    "{kind}: {:?}",
+                    restored.warnings
+                );
+                let restored = connectors(&restored.workbook.sheets[0])[0];
+                assert_eq!(
+                    restored.start_marker_unfilled,
+                    connector.start_marker_unfilled
+                );
+                assert_eq!(restored.end_marker_unfilled, connector.end_marker_unfilled);
+                assert_eq!(restored.start_marker_size, connector.start_marker_size);
+                assert_eq!(restored.end_marker_size, connector.end_marker_size);
+                assert_eq!(restored.start_marker, connector.start_marker);
+                assert_eq!(restored.end_marker, connector.end_marker);
+            }
+        }
     }
 }
 
@@ -1434,7 +1496,7 @@ fn drawio_default_classic_and_legacy_triangle_are_distinct() {
 #[test]
 fn supported_connector_markers_survive_link_and_clipboard_conversion() {
     let xml = page(
-        r#"<mxCell id="e" style="startArrow=block;startSize=12.5;endArrow=open;endSize=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+        r#"<mxCell id="e" style="startArrow=block;startSize=12.5;startFill=0;endArrow=open;endSize=0;endFill=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
     );
     let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
     let linked = crate::import_drawio_link(&link).unwrap();
@@ -1450,6 +1512,8 @@ fn supported_connector_markers_survive_link_and_clipboard_conversion() {
     );
     assert_eq!(connector.start_marker_size, Some(12.5));
     assert_eq!(connector.end_marker_size, Some(0.0));
+    assert!(connector.start_marker_unfilled);
+    assert!(connector.end_marker_unfilled);
 
     let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
     assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
@@ -1468,6 +1532,8 @@ fn supported_connector_markers_survive_link_and_clipboard_conversion() {
         );
         assert_eq!(connector.start_marker_size, Some(12.5));
         assert_eq!(connector.end_marker_size, Some(0.0));
+        assert!(connector.start_marker_unfilled);
+        assert!(connector.end_marker_unfilled);
     };
     assert_markers(&pasted.payload);
     let copy = crate::drawio_clipboard::encode(&pasted.payload).unwrap();
@@ -1477,22 +1543,28 @@ fn supported_connector_markers_survive_link_and_clipboard_conversion() {
 
 #[test]
 fn editable_drawio_images_preserve_supported_connector_markers() {
-    for (start, end, start_kind, end_kind) in [
+    for (start, end, start_kind, end_kind, start_unfilled, end_unfilled) in [
         (
             "block",
             "open",
             ConnectorMarkerKind::Block,
             ConnectorMarkerKind::Open,
+            true,
+            false,
         ),
         (
             "classicThin",
             "openThin",
             ConnectorMarkerKind::ClassicThin,
             ConnectorMarkerKind::OpenThin,
+            false,
+            true,
         ),
     ] {
         let report = load(&page(&format!(
-            r#"<mxCell id="e" style="startArrow={start};startSize=12.5;endArrow={end};endSize=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+            r#"<mxCell id="e" style="startArrow={start};startSize=12.5;startFill={};endArrow={end};endSize=0;endFill={};" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+            u8::from(!start_unfilled),
+            u8::from(!end_unfilled),
         )));
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         for format in [Format::DrawIoSvg, Format::DrawIoPng] {
@@ -1508,6 +1580,8 @@ fn editable_drawio_images_preserve_supported_connector_markers() {
             assert_eq!(connector.end_marker.unwrap().kind, end_kind);
             assert_eq!(connector.start_marker_size, Some(12.5));
             assert_eq!(connector.end_marker_size, Some(0.0));
+            assert_eq!(connector.start_marker_unfilled, start_unfilled);
+            assert_eq!(connector.end_marker_unfilled, end_unfilled);
         }
     }
 }

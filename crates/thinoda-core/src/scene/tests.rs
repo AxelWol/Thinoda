@@ -89,6 +89,7 @@ fn connector_marker_geometry_handles_duplicate_and_short_segments() {
             ConnectorMarkerKind::Open,
             2.0,
             DEFAULT_CONNECTOR_MARKER_SIZE,
+            true,
         ),
         connector_marker_geometry(
             &duplicate,
@@ -96,6 +97,7 @@ fn connector_marker_geometry_handles_duplicate_and_short_segments() {
             ConnectorMarkerKind::Block,
             2.0,
             DEFAULT_CONNECTOR_MARKER_SIZE,
+            true,
         ),
     ];
     assert!(markers.iter().all(Option::is_some));
@@ -111,7 +113,8 @@ fn connector_marker_geometry_handles_duplicate_and_short_segments() {
             true,
             ConnectorMarkerKind::Open,
             2.0,
-            DEFAULT_CONNECTOR_MARKER_SIZE
+            DEFAULT_CONNECTOR_MARKER_SIZE,
+            true,
         )
         .is_none()
     );
@@ -123,6 +126,7 @@ fn connector_marker_geometry_handles_duplicate_and_short_segments() {
         ConnectorMarkerKind::Open,
         2.0,
         DEFAULT_CONNECTOR_MARKER_SIZE,
+        true,
     );
     let clipped = connector_stroke_path(&bent, &[marker, None]);
     assert_eq!(clipped[0].x, 2.0);
@@ -140,9 +144,15 @@ fn connector_marker_geometry_matches_published_drawio_for_diagonal_edges() {
         (ConnectorMarkerKind::Open, Vec2::new(195.9752, 294.6336)),
         (ConnectorMarkerKind::Block, Vec2::new(192.5876, 290.1168)),
     ] {
-        let marker =
-            connector_marker_geometry(&points, false, kind, 3.0, DEFAULT_CONNECTOR_MARKER_SIZE)
-                .unwrap();
+        let marker = connector_marker_geometry(
+            &points,
+            false,
+            kind,
+            3.0,
+            DEFAULT_CONNECTOR_MARKER_SIZE,
+            true,
+        )
+        .unwrap();
         let expected = [
             Vec2::new(188.9876, 292.8168),
             Vec2::new(197.9876, 297.3168),
@@ -189,9 +199,15 @@ fn classic_and_thin_marker_geometry_matches_drawio() {
             false,
         ),
     ] {
-        let marker =
-            connector_marker_geometry(&points, false, kind, 2.0, DEFAULT_CONNECTOR_MARKER_SIZE)
-                .unwrap();
+        let marker = connector_marker_geometry(
+            &points,
+            false,
+            kind,
+            2.0,
+            DEFAULT_CONNECTOR_MARKER_SIZE,
+            true,
+        )
+        .unwrap();
         let outline = marker.points();
         assert_eq!(outline.len(), if notch { 4 } else { 3 });
         assert_eq!(marker.filled, filled);
@@ -206,9 +222,15 @@ fn classic_and_thin_marker_geometry_matches_drawio() {
         }
         let line = connector_stroke_path(&points, &[None, Some(marker)]);
         assert!((line.last().unwrap().x - end).abs() < 0.001);
-        let start =
-            connector_marker_geometry(&points, true, kind, 2.0, DEFAULT_CONNECTOR_MARKER_SIZE)
-                .unwrap();
+        let start = connector_marker_geometry(
+            &points,
+            true,
+            kind,
+            2.0,
+            DEFAULT_CONNECTOR_MARKER_SIZE,
+            true,
+        )
+        .unwrap();
         assert!((start.points()[1].x - 2.236).abs() < 0.001);
         assert!(
             (connector_stroke_path(&points, &[Some(start), None])[0].x - (100.0 - end)).abs()
@@ -293,7 +315,7 @@ fn custom_marker_geometry_matches_published_drawio() {
             false,
         ),
     ] {
-        let marker = connector_marker_geometry(&points, false, kind, 2.0, 12.5).unwrap();
+        let marker = connector_marker_geometry(&points, false, kind, 2.0, 12.5, true).unwrap();
         let expected = [
             Vec2::new(83.264, wing),
             Vec2::new(97.764, 0.0),
@@ -312,6 +334,69 @@ fn custom_marker_geometry_matches_published_drawio() {
             (100.0 - marker.line_inset - trimmed_end).abs() < 0.001,
             "{kind:?}"
         );
+    }
+}
+
+#[test]
+fn hollow_marker_geometry_is_closed_but_does_not_hit_the_empty_interior() {
+    use crate::board::{ConnectorMarker, ConnectorMarkerKind};
+
+    for kind in [
+        ConnectorMarkerKind::Classic,
+        ConnectorMarkerKind::ClassicThin,
+        ConnectorMarkerKind::Block,
+        ConnectorMarkerKind::BlockThin,
+    ] {
+        let mut sheet = Sheet::new("Hollow markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker { kind });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let (_, scene) = scene(&sheet);
+        let SceneGeometry::Polyline { markers, .. } =
+            &scene.item(SceneId::Object(id)).unwrap().geometry
+        else {
+            panic!("expected connector");
+        };
+        let marker = markers[1].unwrap();
+        assert!(marker.closed, "{kind:?}");
+        assert!(!marker.filled, "{kind:?}");
+        assert_eq!(
+            scene.hit_test_tolerance(Vec2::new(95.0, 0.0), 0.0),
+            None,
+            "{kind:?}"
+        );
+        let closing = (marker.points()[0] + marker.points()[marker.points().len() - 1]) * 0.5;
+        assert_eq!(
+            scene.hit_test_tolerance(closing, 0.0),
+            Some(SceneHit::Object(id)),
+            "{kind:?}"
+        );
+        let filled = connector_marker_geometry(
+            &[Vec2::ZERO, Vec2::new(100.0, 0.0)],
+            false,
+            kind,
+            0.1,
+            12.5,
+            true,
+        )
+        .unwrap();
+        assert_eq!(marker.line_inset, filled.line_inset);
+    }
+    for kind in [ConnectorMarkerKind::Open, ConnectorMarkerKind::OpenThin] {
+        let points = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
+        for fill in [false, true] {
+            let marker = connector_marker_geometry(&points, false, kind, 2.0, 12.5, fill).unwrap();
+            assert!(!marker.closed && !marker.filled, "{kind:?}, {fill}");
+        }
     }
 }
 

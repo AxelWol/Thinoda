@@ -2052,6 +2052,8 @@ fn paint_connector_marker(
         painter.add(Shape::closed_line(points, stroke));
     } else if marker.filled {
         painter.add(Shape::convex_polygon(points, color, stroke));
+    } else if marker.closed {
+        painter.add(Shape::closed_line(points, stroke));
     } else {
         painter.add(Shape::line(points, stroke));
     }
@@ -4200,7 +4202,7 @@ mod tests {
                     _ => None,
                 })
                 .expect("marker must use the scene's geometry");
-            assert_eq!(path.closed, marker.filled);
+            assert_eq!(path.closed, marker.closed);
             assert_eq!(
                 path.fill,
                 if marker.filled {
@@ -4280,6 +4282,62 @@ mod tests {
                 &shape.shape,
                 Shape::Path(path) if path.closed && path.points == expected
             )));
+        }
+    }
+
+    #[test]
+    fn hollow_connector_marker_paints_a_closed_unfilled_outline() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for kind in [ConnectorMarkerKind::Classic, ConnectorMarkerKind::Block] {
+            let mut sheet = Sheet::new("Hollow markers", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_unfilled = true;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let scene = build_scene(&sheet, &layout);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let marker = markers[1].unwrap();
+            let xf = Xf {
+                origin: pos2(100.0, 100.0),
+                zoom: 2.0,
+            };
+            let expected: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+            let color = Color32::from_rgb(20, 40, 60);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                paint_connector_marker(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    marker,
+                    xf,
+                    color,
+                    Stroke::new(2.0, color),
+                );
+            });
+            output.textures_delta.clear();
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                Shape::Path(path) if path.closed && path.points == expected && path.fill == Color32::TRANSPARENT
+            )));
+            assert!(
+                !output
+                    .shapes
+                    .iter()
+                    .any(|shape| matches!(&shape.shape, Shape::Mesh(_)))
+            );
         }
     }
 

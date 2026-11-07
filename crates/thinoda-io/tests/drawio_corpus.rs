@@ -81,6 +81,8 @@ struct MarkerSnapshot {
     end: Option<ConnectorMarkerKind>,
     start_size: Option<f32>,
     end_size: Option<f32>,
+    start_unfilled: bool,
+    end_unfilled: bool,
 }
 
 fn markers(sheet: &Sheet) -> Vec<MarkerSnapshot> {
@@ -97,6 +99,8 @@ fn markers(sheet: &Sheet) -> Vec<MarkerSnapshot> {
                     end: connector.end_marker.map(|marker| marker.kind),
                     start_size: connector.start_marker_size,
                     end_size: connector.end_marker_size,
+                    start_unfilled: connector.start_marker_unfilled,
+                    end_unfilled: connector.end_marker_unfilled,
                 })
             }
             _ => None,

@@ -195,14 +195,14 @@ Rules (each backed by a test):
    fresh ids and default envelope.
 
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
-  block connector markers, v12 adds classic and thin markers, and v13 adds
-  marker sizes. Every later field or passthrough representation that a v13
-  reader cannot preserve must
-  require a higher native version, with `required_native_version` choosing the
-  oldest version that can represent the complete workbook. Older builds must
-  reject that version instead of silently dropping data. Version sheet/board
-  clipboard, recovery and private XMind envelopes separately whenever an older
-  reader could otherwise ignore new data; reject forged older envelopes too.
+  block connector markers, v12 adds classic and thin markers, v13 adds marker
+  sizes, and v14 adds marker fill overrides. Every later field or passthrough
+  representation that a v14 reader cannot preserve must require a higher native
+  version, with `required_native_version` choosing the oldest version that can
+  represent the complete workbook. Older builds must reject that version instead
+  of silently dropping data. Version sheet/board clipboard, recovery and
+  private XMind envelopes separately whenever an older reader could otherwise
+  ignore new data; reject forged older envelopes too.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 
@@ -557,8 +557,8 @@ connections arrive in Phase 8 without changing the gestures).
   `DrawIoPageExt`/`DrawIoCellExt`, ownership table, tombstones, marker migration.
 - `required_native_version` gates every field at the first version that supports
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
-  and thin markers, v13 covers marker sizes, and subsequent additions need a
-  higher version.
+  and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
+  and subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1193,13 +1193,13 @@ changing its marker, size or fill takes precedence over that hint.
 **Critique at this slice.** Six of the published marker types have
 default-size representations, not the complete marker family. At this
 checkpoint custom sizes, unfilled markers, other shapes and fixed ports
-required approximation warnings; the later marker-size slice addresses the
-first of these. Warnings remain generic. Older draw.io exports lack the legacy
-hints, and a third-party editor can remove them, so legacy identity cannot
-always be recovered from draw.io alone. Geometry, routing, XMind private-data
-and accessibility limitations described above remain. The source draw.io file
-and a native copy should still be retained; lossless save-back remains
-unimplemented.
+required approximation warnings; the later marker-size and hollow-marker
+slices address the first two. Warnings remain generic. Older draw.io exports
+lack the legacy hints, and a third-party editor can remove them, so legacy
+identity cannot always be recovered from draw.io alone. Geometry, routing,
+XMind private-data and accessibility limitations described above remain. The
+source draw.io file and a native copy should still be retained; lossless
+save-back remains unimplemented.
 
 **Marker sizes (partial Phases 3, 4 and 8).** A scan of all 89 supplied diagrams,
 including compressed pages, found non-default sizes on 219 classic arrow ends,
@@ -1225,9 +1225,45 @@ save and the existing conversion-consent cases.
 remain unrepresented and produce a formatting warning when non-default;
 out-of-range or malformed values also warn and are approximated. Legacy
 Thinoda triangles have no adjustable size. Sizes use finite `f32` values, so
-arbitrary source decimal precision is not lossless. The six supported shapes
-still do not cover hollow arrows, other marker families, fixed ports or the
-remaining routing and save-back limitations above.
+arbitrary source decimal precision is not lossless. At this checkpoint, the six
+supported shapes did not cover hollow arrows; the following slice addresses
+that subset. Other marker families, fixed ports and the remaining routing and
+save-back limitations above remain.
+
+**Hollow connector markers (partial Phases 3, 4 and 8).** Classic and block
+arrows, including their thin variants, preserve independent draw.io `startFill`
+and `endFill` settings. They paint a closed outline without filling its interior,
+while the shortened connector stroke, hit testing and lasso selection respect
+that hollow geometry. Open arrows always paint as open; their saved fill choice
+is retained when switching to a closed arrow. The localized inspector exposes
+independent fill controls with undo and style-copy support. Native v14, sheet
+clipboard v10, board clipboard v7, recovery envelopes with and without pending
+ink, and private XMind snapshots protect fill overrides from older readers.
+Documents without overrides keep their earlier format versions.
+
+The affected library suites passed 1,866 tests with four ignored, and the
+strengthened inspector, context-toolbar, interchange and export tests were
+rerun separately. All 89 supplied diagrams passed the corpus round trip.
+SVG and presentation paths, PNG pixels and rasterized PDF pixels verify
+unfilled marker interiors; the PDF check also verifies the outline. The editable
+PowerPoint output is checked for closed, unfilled geometry. Native and
+WebAssembly Clippy passed with warnings denied, and the production web build
+passed all 15 link-import journeys across Chromium, Firefox and WebKit.
+
+**Critique and remaining work.** Only fill values `0` and `1` on supported
+markers are represented. Malformed values, non-default fills on disabled or
+unsupported markers, other marker families, fixed ports, and the routing and
+lossless save-back limitations above still require warnings or further work.
+In the supplied corpus, a scan of explicit arrow ends found 17 `oval`, eight
+`diamondThin` and four `halfCircle` markers; those families are not yet
+represented and are candidates for the next fidelity slices.
+Selecting a legacy triangle or disabling an arrow intentionally clears its
+draw.io fill choice; undo restores it. XMind's public representation does not
+preserve these private-only board objects after external edits. The shared
+four-point filled-marker triangulation currently assumes a concave classic
+arrow and must be revisited before adding convex four-point markers. Actual
+PowerPoint rendering, physical-device and real screen-reader acceptance have
+not been established.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

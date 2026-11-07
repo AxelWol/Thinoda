@@ -245,6 +245,8 @@ pub(crate) enum BoardStyleClipboard {
         end_marker: Option<ConnectorMarker>,
         start_marker_size: Option<f32>,
         end_marker_size: Option<f32>,
+        start_marker_unfilled: bool,
+        end_marker_unfilled: bool,
     },
     Ink {
         style: ObjectStyle,
@@ -269,6 +271,8 @@ impl BoardStyleClipboard {
                 end_marker: connector.end_marker,
                 start_marker_size: connector.start_marker_size,
                 end_marker_size: connector.end_marker_size,
+                start_marker_unfilled: connector.start_marker_unfilled,
+                end_marker_unfilled: connector.end_marker_unfilled,
             },
             CanvasObjectKind::Ink(ink) => Self::Ink {
                 style: object.style,
@@ -303,6 +307,8 @@ impl BoardStyleClipboard {
                     end_marker,
                     start_marker_size,
                     end_marker_size,
+                    start_marker_unfilled,
+                    end_marker_unfilled,
                 },
                 CanvasObjectKind::Connector(connector),
             ) => {
@@ -316,6 +322,8 @@ impl BoardStyleClipboard {
                 connector.end_marker = end_marker;
                 connector.start_marker_size = start_marker_size;
                 connector.end_marker_size = end_marker_size;
+                connector.start_marker_unfilled = start_marker_unfilled;
+                connector.end_marker_unfilled = end_marker_unfilled;
             }
             (
                 Self::Ink {
@@ -1257,12 +1265,20 @@ impl ThinodaApp {
                         arrow_start,
                         &mut connector.start_marker,
                         &mut connector.start_marker_size,
+                        &mut connector.start_marker_unfilled,
                     );
                     marker_size_field(
                         ui,
                         "Start arrow size",
                         arrow_start && connector.start_marker.is_some(),
                         &mut connector.start_marker_size,
+                    );
+                    marker_fill_field(
+                        ui,
+                        "Fill start arrow",
+                        arrow_start,
+                        connector.start_marker,
+                        &mut connector.start_marker_unfilled,
                     );
                     let mut arrow_end = connector.arrow_end;
                     if ui.checkbox(&mut arrow_end, t("Arrow at end")).changed() {
@@ -1275,12 +1291,20 @@ impl ThinodaApp {
                         arrow_end,
                         &mut connector.end_marker,
                         &mut connector.end_marker_size,
+                        &mut connector.end_marker_unfilled,
                     );
                     marker_size_field(
                         ui,
                         "End arrow size",
                         arrow_end && connector.end_marker.is_some(),
                         &mut connector.end_marker_size,
+                    );
+                    marker_fill_field(
+                        ui,
+                        "Fill end arrow",
+                        arrow_end,
+                        connector.end_marker,
+                        &mut connector.end_marker_unfilled,
                     );
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
                     width_field(ui, &mut connector.width);
@@ -1317,6 +1341,8 @@ impl ThinodaApp {
                                 current.end_marker = value.end_marker;
                                 current.start_marker_size = value.start_marker_size;
                                 current.end_marker_size = value.end_marker_size;
+                                current.start_marker_unfilled = value.start_marker_unfilled;
+                                current.end_marker_unfilled = value.end_marker_unfilled;
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -2308,6 +2334,7 @@ fn marker_field(
     enabled: bool,
     marker: &mut Option<ConnectorMarker>,
     size: &mut Option<f32>,
+    unfilled: &mut bool,
 ) {
     let name = |marker: Option<ConnectorMarker>| match marker.map(|marker| marker.kind) {
         None => "Legacy triangle",
@@ -2352,6 +2379,7 @@ fn marker_field(
     });
     if marker.is_none() {
         *size = None;
+        *unfilled = false;
     }
 }
 
@@ -2374,6 +2402,36 @@ fn marker_size_field(ui: &mut Ui, label: &'static str, enabled: bool, size: &mut
     if !enabled {
         response.on_disabled_hover_text(t(
             "Enable an arrow and select a draw.io arrow style to set its size.",
+        ));
+    }
+}
+
+fn marker_fill_field(
+    ui: &mut Ui,
+    label: &'static str,
+    enabled: bool,
+    marker: Option<ConnectorMarker>,
+    unfilled: &mut bool,
+) {
+    let open = marker.is_some_and(|marker| {
+        matches!(
+            marker.kind,
+            ConnectorMarkerKind::Open | ConnectorMarkerKind::OpenThin
+        )
+    });
+    let can_fill = enabled && marker.is_some() && !open;
+    let mut filled = !*unfilled;
+    let response = ui.add_enabled(can_fill, egui::Checkbox::new(&mut filled, t(label)));
+    if response.changed() {
+        *unfilled = !filled;
+    }
+    if !enabled || marker.is_none() {
+        response.on_disabled_hover_text(t(
+            "Enable an arrow and select a draw.io arrow style to set its fill.",
+        ));
+    } else if open {
+        response.on_disabled_hover_text(t(
+            "Open arrows cannot be filled. This setting is retained for closed arrow styles.",
         ));
     }
 }
@@ -5415,6 +5473,119 @@ mod tests {
     }
 
     #[test]
+    fn connector_marker_fill_inspector_is_independent_and_undoable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.clone()
+        };
+        for label in ["Fill start arrow", "Fill end arrow"] {
+            assert!(!harness.get_by_label(label).accesskit_node().is_disabled());
+        }
+        harness.get_by_label("Fill start arrow").click();
+        harness.run_steps(3);
+        assert!(current(harness.state()).start_marker_unfilled);
+        assert!(!current(harness.state()).end_marker_unfilled);
+        harness.get_by_label("Fill end arrow").click();
+        harness.run_steps(3);
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert!(current(harness.state()).start_marker_unfilled);
+        assert!(!current(harness.state()).end_marker_unfilled);
+        harness.get_by_label("Fill end arrow").click();
+        harness.run_steps(3);
+
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Open arrow").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Classic arrow").click();
+        harness.run_steps(3);
+        assert!(
+            !harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Legacy triangle").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(!current(harness.state()).end_marker_unfilled);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert!(current(harness.state()).end_marker_unfilled);
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Arrow at end")
+            .click();
+        harness.run_steps(3);
+        assert!(!current(harness.state()).end_marker_unfilled);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        assert!(current(harness.state()).end_marker_unfilled);
+    }
+
+    #[test]
     fn object_styles_copy_atomically_without_copying_content_or_geometry() {
         let mut app = ThinodaApp::headless();
         let ctx = Context::default();
@@ -5518,6 +5689,8 @@ mod tests {
         });
         source.start_marker_size = Some(12.5);
         source.end_marker_size = Some(0.0);
+        source.start_marker_unfilled = true;
+        source.end_marker_unfilled = true;
         source.color = Some(Color::rgba(30, 60, 90, 255));
         source.width = 4.0;
         let source = doc
@@ -5588,6 +5761,8 @@ mod tests {
         );
         assert_eq!(connector.start_marker_size, Some(12.5));
         assert_eq!(connector.end_marker_size, Some(0.0));
+        assert!(connector.start_marker_unfilled);
+        assert!(connector.end_marker_unfilled);
         assert_eq!(connector.width, 4.0);
         assert!(app.doc_mut().unwrap().doc.undo());
         assert_eq!(

@@ -23,6 +23,7 @@ const WAYPOINT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-3\n";
 const MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-4\n";
 const EXTENDED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-5\n";
 const SIZED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-6\n";
+const FILLED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-7\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -41,7 +42,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_connector_marker_sizes() {
+        if self.fragment.has_connector_marker_fills() {
+            FILLED_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_connector_marker_sizes() {
             SIZED_MARKER_BOARD_PREFIX
         } else if self.fragment.has_extended_connector_markers() {
             EXTENDED_MARKER_BOARD_PREFIX
@@ -225,9 +228,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(SIZED_MARKER_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-6\r\n"))
-        .map(|json| (6, json))
+        .strip_prefix(FILLED_MARKER_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-7\r\n"))
+        .map(|json| (7, json))
+        .or_else(|| {
+            text.strip_prefix(SIZED_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-6\r\n"))
+                .map(|json| (6, json))
+        })
         .or_else(|| {
             text.strip_prefix(EXTENDED_MARKER_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-5\r\n"))
@@ -264,6 +272,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     }
     if version < 6 && payload.fragment.has_connector_marker_sizes() {
         return Err("connector marker sizes require board clipboard version 6".into());
+    }
+    if version < 7 && payload.fragment.has_connector_marker_fills() {
+        return Err("connector marker fills require board clipboard version 7".into());
     }
     if version < 3 && payload.fragment.has_connector_waypoints() {
         return Err("connector waypoints require board clipboard version 3".into());

@@ -87,6 +87,8 @@ fn arrow_toggle_clears_custom_marker_and_undo_restores_it() {
             connector.end_marker = Some(ConnectorMarker {
                 kind: ConnectorMarkerKind::Open,
             });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = true;
         })
         .unwrap();
     let mut h = harness(app, vec2(1000.0, 700.0));
@@ -94,12 +96,19 @@ fn arrow_toggle_clears_custom_marker_and_undo_restores_it() {
     let current = connector(h.state(), id);
     assert!(!current.arrow_end);
     assert_eq!(current.end_marker, None);
+    assert_eq!(current.end_marker_size, None);
+    assert!(!current.end_marker_unfilled);
     assert!(h.state_mut().doc_mut().unwrap().doc.undo());
     let restored = connector(h.state(), id);
     assert!(restored.arrow_end);
     assert_eq!(restored.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+    assert_eq!(restored.end_marker_size, Some(12.5));
+    assert!(restored.end_marker_unfilled);
     assert!(h.state_mut().doc_mut().unwrap().doc.redo());
-    assert_eq!(connector(h.state(), id).end_marker, None);
+    let redone = connector(h.state(), id);
+    assert_eq!(redone.end_marker, None);
+    assert_eq!(redone.end_marker_size, None);
+    assert!(!redone.end_marker_unfilled);
 }
 
 #[test]

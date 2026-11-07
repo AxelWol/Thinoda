@@ -19,6 +19,7 @@ const WAYPOINT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-WAYPOINTS-1";
 const MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-1";
 const EXTENDED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-2";
 const SIZED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-3";
+const FILLED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-4";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -708,7 +709,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_connector_marker_sizes() {
+    if book.has_connector_marker_fills() {
+        Ok(serde_json::to_string(&(
+            FILLED_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_marker_sizes() {
         Ok(serde_json::to_string(&(
             SIZED_MARKER_SNAPSHOT_VERSION,
             book,
@@ -738,6 +744,7 @@ fn marker_private_snapshot(source: &str) -> bool {
             version == MARKER_SNAPSHOT_VERSION
                 || version == EXTENDED_MARKER_SNAPSHOT_VERSION
                 || version == SIZED_MARKER_SNAPSHOT_VERSION
+                || version == FILLED_MARKER_SNAPSHOT_VERSION
         })
 }
 
@@ -762,6 +769,8 @@ fn snapshot_contains_marker_fields(source: &str) -> bool {
                 || connector.contains_key("end_marker")
                 || connector.contains_key("start_marker_size")
                 || connector.contains_key("end_marker_size")
+                || connector.contains_key("start_marker_unfilled")
+                || connector.contains_key("end_marker_unfilled")
         })
 }
 
@@ -772,6 +781,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != MARKER_SNAPSHOT_VERSION
             && version != EXTENDED_MARKER_SNAPSHOT_VERSION
             && version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
@@ -779,6 +789,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         if version != MARKER_SNAPSHOT_VERSION
             && version != EXTENDED_MARKER_SNAPSHOT_VERSION
             && version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
             && workbook.has_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -787,6 +798,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         }
         if version != EXTENDED_MARKER_SNAPSHOT_VERSION
             && version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
             && workbook.has_extended_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -794,9 +806,17 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
                     .into(),
             ));
         }
-        if version != SIZED_MARKER_SNAPSHOT_VERSION && workbook.has_connector_marker_sizes() {
+        if version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
+            && workbook.has_connector_marker_sizes()
+        {
             return Err(IoError::NewerVersion(
                 "connector marker sizes require a size-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != FILLED_MARKER_SNAPSHOT_VERSION && workbook.has_connector_marker_fills() {
+            return Err(IoError::NewerVersion(
+                "connector marker fills require a fill-aware private XMind snapshot".into(),
             ));
         }
         Ok(workbook)
@@ -1929,6 +1949,41 @@ mod tests {
         let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
         metadata["thinodaWorkbook"] =
             json!(serde_json::to_string(&(EXTENDED_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+        assert!(matches!(
+            import(&make_archive(&entries)),
+            Err(IoError::NewerVersion(_))
+        ));
+    }
+
+    #[test]
+    fn marker_fills_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata["thinodaWorkbook"] =
+            json!(serde_json::to_string(&(SIZED_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
         *bytes = serde_json::to_vec(&metadata).unwrap();
         assert!(matches!(
             import(&make_archive(&entries)),
