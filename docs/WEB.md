@@ -110,13 +110,13 @@ conversion warnings and keep a `.thinoda` copy; unsupported content can block
 export. These are export formats, not Save As or lossless save-back. See the
 [draw.io plan and current limitations](DRAWIO.md).
 
-Classic, open and block arrows, diamonds and oval connector markers, including
-thin variants where available, have independent start and end sizes from 0 to
-999 in the connector inspector. Classic and block arrows, diamonds and ovals
-can be filled or hollow independently. Open arrows remain open; their fill
-setting is retained when changing to a closed style. Unsupported marker shapes,
-out-of-range sizes, unsupported fill values, and fixed-port hints trigger a
-formatting warning.
+Classic, open and block arrows, diamonds, ovals and half-circle connector
+markers, including thin variants where available, have independent start and
+end sizes from 0 to 999 in the connector inspector. Classic and block arrows,
+diamonds and ovals can be filled or hollow independently. Open arrows and
+half-circles remain open; their fill setting is retained when changing directly
+to a fillable draw.io marker. Unsupported marker shapes, out-of-range sizes,
+unsupported fill values, and fixed-port hints trigger a formatting warning.
 Existing Thinoda triangle arrows retain their native appearance; draw.io export
 warns that they will be approximated. Keep the original diagram.
 

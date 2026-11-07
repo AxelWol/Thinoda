@@ -7,7 +7,7 @@ Fill start arrow|Preencher seta inicial
 Fill end arrow|Preencher seta final
 Enable an arrow and select a draw.io arrow style to set its size.|Ative uma seta e selecione um estilo de seta do draw.io para definir o tamanho.
 Enable an arrow and select a draw.io arrow style to set its fill.|Ative uma seta e selecione um estilo de seta do draw.io para definir o preenchimento.
-Open arrows cannot be filled. This setting is retained for closed arrow styles.|Setas abertas não podem ser preenchidas. Essa configuração é mantida para estilos de seta fechados.
+Open markers cannot be filled. The fill setting is retained when changing to a fillable marker.|Marcadores abertos não podem ser preenchidos. A configuração de preenchimento é mantida ao mudar para um marcador preenchível.
 Legacy triangle|Triângulo anterior
 Classic arrow|Seta clássica
 Thin classic arrow|Seta clássica estreita
@@ -18,6 +18,7 @@ Thin block arrow|Seta preenchida estreita
 Diamond|Losango
 Thin diamond|Losango estreito
 Oval|Oval
+Half circle|Semicírculo
 Legacy arrowheads approximated in draw.io|Pontas de seta anteriores aproximadas no draw.io
 Ink settings|Configurações da entrada à mão livre
 Pending ink is not in the saved file. Crash recovery may miss recent samples.|A entrada à mão livre pendente não está no arquivo salvo. A recuperação após falha pode não incluir as amostras recentes.

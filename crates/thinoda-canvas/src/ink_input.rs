@@ -878,6 +878,16 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                             polygon,
                             &mut budget,
                         )?
+                    } else if let Some((path, error)) = marker.flattened_curve(*width) {
+                        budget.charge(path.len())?;
+                        path_touches_lasso(
+                            &path,
+                            false,
+                            |point| point,
+                            f64::from(*width) / 2.0 + f64::from(error),
+                            polygon,
+                            &mut budget,
+                        )?
                     } else {
                         (marker.filled
                             && polygon_touches_lasso(marker.points(), polygon, &mut budget)?)
@@ -1037,6 +1047,9 @@ fn validate_scene_geometry(
                         || !(center.y - radius).is_finite()
                 });
                 if invalid_circle
+                    || marker
+                        .curve()
+                        .is_some_and(|curve| curve.iter().any(|&point| !finite_point(point)))
                     || marker.points().iter().any(|&point| !finite_point(point))
                     || !marker.line_inset.is_finite()
                     || marker.line_inset < 0.0
@@ -2715,6 +2728,73 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn lasso_respects_half_circle_marker_outline_and_open_interior() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Half-circle marker", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(12.5);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert!(
+            lasso_hits(&scene, &rectangle(99.9, 0.9, 0.2, 0.2))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(89.7, 10.1, 0.2, 0.2)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(80.0, -20.0, 30.0, 40.0)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
+    fn half_circle_lasso_work_is_budgeted() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Half-circle marker budget", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-2000.0, 0.0)),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(999.0);
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        let mut polygon = vec![Vec2::new(99.0, 10.0); 4096];
+        polygon.extend([
+            Vec2::new(99.1, 10.0),
+            Vec2::new(99.1, 10.1),
+            Vec2::new(99.0, 10.1),
+        ]);
+        assert_eq!(
+            lasso_hits(&scene, &polygon),
+            Err(GeometryError::TooComplex {
+                limit: MAX_GEOMETRY_CHECKS,
+            })
+        );
     }
 
     #[test]

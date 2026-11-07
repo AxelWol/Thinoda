@@ -56,23 +56,163 @@ pub enum SceneHit {
 /// Paint geometry for a non-default connector marker, in sheet coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConnectorMarkerGeometry {
-    points: [Vec2; 4],
-    point_count: usize,
-    circle: Option<(Vec2, f32)>,
+    shape: ConnectorMarkerShape,
     pub closed: bool,
     pub filled: bool,
     pub line_inset: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConnectorMarkerShape {
+    Polygon {
+        points: [Vec2; 4],
+        point_count: usize,
+    },
+    Circle(Vec2, f32),
+    Curve([Vec2; 5]),
+}
+
+fn quadratic_point(points: [Vec2; 3], t: f64) -> [f64; 2] {
+    let coordinate = |a: f32, b: f32, c: f32| {
+        let a = f64::from(a);
+        let b = f64::from(b);
+        let c = f64::from(c);
+        let first = a + (b - a) * t;
+        let second = b + (c - b) * t;
+        first + (second - first) * t
+    };
+    [
+        coordinate(points[0].x, points[1].x, points[2].x),
+        coordinate(points[0].y, points[1].y, points[2].y),
+    ]
+}
+
+fn quadratic_bounds(points: [Vec2; 3]) -> Rect {
+    let mut min = [
+        f64::from(points[0].x.min(points[2].x)),
+        f64::from(points[0].y.min(points[2].y)),
+    ];
+    let mut max = [
+        f64::from(points[0].x.max(points[2].x)),
+        f64::from(points[0].y.max(points[2].y)),
+    ];
+    for (a, b, c) in [
+        (points[0].x, points[1].x, points[2].x),
+        (points[0].y, points[1].y, points[2].y),
+    ] {
+        let (a, b, c) = (f64::from(a), f64::from(b), f64::from(c));
+        let denominator = a - 2.0 * b + c;
+        if denominator != 0.0 {
+            let t = (a - b) / denominator;
+            if t > 0.0 && t < 1.0 {
+                let point = quadratic_point(points, t);
+                for axis in 0..2 {
+                    min[axis] = min[axis].min(point[axis]);
+                    max[axis] = max[axis].max(point[axis]);
+                }
+            }
+        }
+    }
+    // Keep the f32 rectangle conservative when extrema are rounded at large coordinates.
+    let magnitude = min
+        .into_iter()
+        .chain(max)
+        .map(f64::abs)
+        .fold(1.0_f64, f64::max) as f32;
+    let padding = magnitude * f32::EPSILON * 2.0;
+    let min = Vec2::new(min[0] as f32 - padding, min[1] as f32 - padding);
+    let max = Vec2::new(max[0] as f32 + padding, max[1] as f32 + padding);
+    Rect::from_min_size(min, max - min)
+}
+
+fn point_near_curve_path(point: Vec2, path: &[Vec2], radius: f64) -> bool {
+    if radius < 0.0 {
+        return false;
+    }
+    let point = [f64::from(point.x), f64::from(point.y)];
+    path.windows(2).any(|segment| {
+        let a = [f64::from(segment[0].x), f64::from(segment[0].y)];
+        let delta = [
+            f64::from(segment[1].x) - a[0],
+            f64::from(segment[1].y) - a[1],
+        ];
+        let length_squared = delta[0] * delta[0] + delta[1] * delta[1];
+        let t = if length_squared == 0.0 {
+            0.0
+        } else {
+            (((point[0] - a[0]) * delta[0] + (point[1] - a[1]) * delta[1]) / length_squared)
+                .clamp(0.0, 1.0)
+        };
+        let dx = point[0] - a[0] - delta[0] * t;
+        let dy = point[1] - a[1] - delta[1] * t;
+        dx * dx + dy * dy <= radius * radius
+    })
+}
+
 impl ConnectorMarkerGeometry {
     /// The polygonal marker outline, including the notch of a classic arrow.
     pub fn points(&self) -> &[Vec2] {
-        &self.points[..self.point_count]
+        match &self.shape {
+            ConnectorMarkerShape::Polygon {
+                points,
+                point_count,
+            } => &points[..*point_count],
+            _ => &[],
+        }
     }
 
     /// The center and radius of a circular marker, when present.
     pub fn circle(&self) -> Option<(Vec2, f32)> {
-        self.circle
+        match self.shape {
+            ConnectorMarkerShape::Circle(center, radius) => Some((center, radius)),
+            _ => None,
+        }
+    }
+
+    /// Two connected quadratic spans: start, control, join, control, end.
+    pub fn curve(&self) -> Option<[Vec2; 5]> {
+        match self.shape {
+            ConnectorMarkerShape::Curve(points) => Some(points),
+            _ => None,
+        }
+    }
+
+    /// Flatten a marker curve for conservative stroke hit testing.
+    pub fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
+        let points = self.curve()?;
+        let spans = [
+            [points[0], points[1], points[2]],
+            [points[2], points[3], points[4]],
+        ];
+        let curvature = spans
+            .iter()
+            .map(|span| {
+                let second_difference =
+                    |a: f32, b: f32, c: f32| f64::from(a) - 2.0 * f64::from(b) + f64::from(c);
+                second_difference(span[0].x, span[1].x, span[2].x)
+                    .hypot(second_difference(span[0].y, span[1].y, span[2].y))
+            })
+            .fold(0.0_f64, f64::max);
+        let target = (f64::from(width) * 0.01).clamp(0.001, 0.05);
+        let segments = ((curvature / (4.0 * target)).sqrt().ceil() as usize).clamp(1, 512);
+        // Include vertex quantization in the hit-test error, not just curve subdivision.
+        let mut rounding_error_squared = 0.0_f64;
+        let mut path = Vec::with_capacity(2 * segments + 1);
+        path.push(points[0]);
+        for span in spans {
+            for index in 1..=segments {
+                let point = quadratic_point(span, index as f64 / segments as f64);
+                let rounded = Vec2::new(point[0] as f32, point[1] as f32);
+                let dx = point[0] - f64::from(rounded.x);
+                let dy = point[1] - f64::from(rounded.y);
+                rounding_error_squared = rounding_error_squared.max(dx * dx + dy * dy);
+                path.push(rounded);
+            }
+        }
+        let error = (curvature / (4.0 * (segments * segments) as f64)
+            + rounding_error_squared.sqrt()) as f32;
+        let error = error.next_up();
+        Some((path, error))
     }
 }
 
@@ -105,11 +245,26 @@ fn connector_marker_geometry(
     if kind == ConnectorMarkerKind::Oval {
         let radius = marker_size * 0.5;
         return Some(ConnectorMarkerGeometry {
-            points: [tip; 4],
-            point_count: 0,
-            circle: Some((tip, radius)),
+            shape: ConnectorMarkerShape::Circle(tip, radius),
             closed: true,
             filled: fill,
+            line_inset: radius,
+        });
+    }
+    if kind == ConnectorMarkerKind::HalfCircle {
+        let radius = marker_size + width + 1.0;
+        let apex = tip - direction * radius;
+        let side = normal * radius;
+        return Some(ConnectorMarkerGeometry {
+            shape: ConnectorMarkerShape::Curve([
+                tip + side,
+                apex + side,
+                apex,
+                apex - side,
+                tip - side,
+            ]),
+            closed: false,
+            filled: false,
             line_inset: radius,
         });
     }
@@ -132,14 +287,15 @@ fn connector_marker_geometry(
                 3.4
             };
         return Some(ConnectorMarkerGeometry {
-            points: [
-                midpoint + normal * wing,
-                tip,
-                midpoint - normal * wing,
-                base,
-            ],
-            point_count: 4,
-            circle: None,
+            shape: ConnectorMarkerShape::Polygon {
+                points: [
+                    midpoint + normal * wing,
+                    tip,
+                    midpoint - normal * wing,
+                    base,
+                ],
+                point_count: 4,
+            },
             closed: true,
             filled: fill,
             line_inset: offset + size,
@@ -161,14 +317,15 @@ fn connector_marker_geometry(
     );
     let wing = size / if thin { 3.0 } else { 2.0 };
     Some(ConnectorMarkerGeometry {
-        points: [
-            base + normal * wing,
-            tip,
-            base - normal * wing,
-            tip - direction * (size * 0.75),
-        ],
-        point_count: if classic { 4 } else { 3 },
-        circle: None,
+        shape: ConnectorMarkerShape::Polygon {
+            points: [
+                base + normal * wing,
+                tip,
+                base - normal * wing,
+                tip - direction * (size * 0.75),
+            ],
+            point_count: if classic { 4 } else { 3 },
+        },
         closed,
         filled: closed && fill,
         line_inset: if classic {
@@ -297,6 +454,12 @@ impl SceneGeometry {
                             marker_radius > 0.0
                                 && ((marker.filled && distance <= marker_radius + radius)
                                     || (distance - marker_radius).abs() <= radius)
+                        } else if let Some((path, error)) = marker.flattened_curve(*width) {
+                            point_near_curve_path(
+                                p,
+                                &path,
+                                f64::from(*width) / 2.0 + f64::from(tolerance) + f64::from(error),
+                            )
                         } else {
                             (marker.filled && point_in_polygon(p, marker.points()))
                                 || if marker.closed {
@@ -558,6 +721,11 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
                     (radius > 0.0).then(|| {
                         Rect::from_center_size(center, Vec2::new(2.0 * radius, 2.0 * radius))
                     })
+                } else if let Some(curve) = marker.curve() {
+                    Some(
+                        quadratic_bounds([curve[0], curve[1], curve[2]])
+                            .union(&quadratic_bounds([curve[2], curve[3], curve[4]])),
+                    )
                 } else {
                     points_bounds(marker.points())
                 };

@@ -1172,6 +1172,26 @@ fn board_object_svg(
                     ));
                 }
             }
+            board::Prim::Quadratic {
+                points,
+                stroke,
+                width,
+            } => {
+                out.push_str(&format!(
+                    "<path d=\"M {:.2},{:.2} Q {:.2},{:.2} {:.2},{:.2} Q {:.2},{:.2} {:.2},{:.2}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{width:.2}\"/>",
+                    points[0].x,
+                    points[0].y,
+                    points[1].x,
+                    points[1].y,
+                    points[2].x,
+                    points[2].y,
+                    points[3].x,
+                    points[3].y,
+                    points[4].x,
+                    points[4].y,
+                    col(stroke)
+                ));
+            }
             board::Prim::Text {
                 rect,
                 pivot,

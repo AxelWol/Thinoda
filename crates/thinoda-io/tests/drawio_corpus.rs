@@ -292,6 +292,7 @@ fn supplied_diagrams_keep_their_oval_markers() {
         if !path.is_file() {
             continue;
         }
+
         let bytes = std::fs::read(path).unwrap();
         let source = std::str::from_utf8(&bytes).unwrap();
         let expected =
@@ -317,4 +318,39 @@ fn supplied_diagrams_keep_their_oval_markers() {
             .workbook;
         check_markers(&book, &reopened).unwrap();
     }
+}
+
+#[test]
+fn supplied_uml_component_keeps_its_half_circle_markers() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let path = dir.join("uml-component-example.drawio");
+    if !path.is_file() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let source = std::str::from_utf8(&bytes).unwrap();
+    let expected = source.matches("startArrow=halfCircle").count()
+        + source.matches("endArrow=halfCircle").count();
+    assert!(expected > 0, "the UML example has no half-circle markers");
+    let book = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes)
+        .unwrap()
+        .workbook;
+    let count = book
+        .sheets
+        .iter()
+        .flat_map(markers)
+        .map(|marker| {
+            usize::from(marker.start == Some(ConnectorMarkerKind::HalfCircle))
+                + usize::from(marker.end == Some(ConnectorMarkerKind::HalfCircle))
+        })
+        .sum::<usize>();
+    assert_eq!(count, expected);
+    let exported =
+        thinoda_io::export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported)
+        .unwrap()
+        .workbook;
+    check_markers(&book, &reopened).unwrap();
 }

@@ -157,6 +157,22 @@ impl Drawing {
             self.line(color, width, dashed, arrow)));
     }
 
+    fn quadratic(&mut self, name: &str, points: [Vec2; 5], color: Color, width: f32) {
+        let id = self.id();
+        let path = format!(
+            "<a:moveTo>{}</a:moveTo><a:quadBezTo>{}{}</a:quadBezTo><a:quadBezTo>{}{}</a:quadBezTo>",
+            self.point(points[0]),
+            self.point(points[1]),
+            self.point(points[2]),
+            self.point(points[3]),
+            self.point(points[4])
+        );
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{}" h="{}" fill="none">{path}</a:path></a:pathLst></a:custGeom><a:noFill/>{}</p:spPr></p:sp>"#,
+            esc(name), self.width, self.height, self.width, self.height,
+            self.line(color, width, false, false)));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn text(
         &mut self,
@@ -289,6 +305,16 @@ impl Drawing {
                         );
                     }
                 }
+                super::board::Prim::Quadratic {
+                    points,
+                    stroke,
+                    width,
+                } => self.quadratic(
+                    &format!("Canvas object {}", object.id),
+                    points,
+                    stroke,
+                    width,
+                ),
                 super::board::Prim::Text {
                     rect,
                     pivot,

@@ -338,6 +338,257 @@ fn custom_marker_geometry_matches_published_drawio() {
 }
 
 #[test]
+fn marker_shapes_keep_scene_geometry_compact() {
+    assert!(std::mem::size_of::<ConnectorMarkerGeometry>() <= 64);
+    assert!(std::mem::size_of::<SceneGeometry>() <= 192);
+}
+
+#[test]
+fn half_circle_marker_geometry_matches_published_drawio() {
+    let horizontal = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 100.0)];
+    let start = connector_marker_geometry(
+        &horizontal,
+        true,
+        ConnectorMarkerKind::HalfCircle,
+        2.0,
+        12.5,
+        true,
+    )
+    .unwrap();
+    let end = connector_marker_geometry(
+        &horizontal,
+        false,
+        ConnectorMarkerKind::HalfCircle,
+        2.0,
+        8.0,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        start.curve(),
+        Some([
+            Vec2::new(100.0, 84.5),
+            Vec2::new(115.5, 84.5),
+            Vec2::new(115.5, 100.0),
+            Vec2::new(115.5, 115.5),
+            Vec2::new(100.0, 115.5),
+        ])
+    );
+    assert_eq!(
+        end.curve(),
+        Some([
+            Vec2::new(300.0, 111.0),
+            Vec2::new(289.0, 111.0),
+            Vec2::new(289.0, 100.0),
+            Vec2::new(289.0, 89.0),
+            Vec2::new(300.0, 89.0),
+        ])
+    );
+    assert!(!start.closed && !start.filled && !end.closed && !end.filled);
+    assert_eq!(
+        connector_stroke_path(&horizontal, &[Some(start), Some(end)]),
+        vec![Vec2::new(115.5, 100.0), Vec2::new(289.0, 100.0)]
+    );
+    let zero = connector_marker_geometry(
+        &horizontal,
+        false,
+        ConnectorMarkerKind::HalfCircle,
+        2.0,
+        0.0,
+        true,
+    )
+    .unwrap();
+    assert_eq!(zero.line_inset, 3.0);
+    assert_eq!(zero.curve().unwrap()[2], Vec2::new(297.0, 100.0));
+
+    let diagonal = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 200.0)];
+    let start = connector_marker_geometry(
+        &diagonal,
+        true,
+        ConnectorMarkerKind::HalfCircle,
+        3.0,
+        12.5,
+        true,
+    )
+    .unwrap();
+    let end = connector_marker_geometry(
+        &diagonal,
+        false,
+        ConnectorMarkerKind::HalfCircle,
+        3.0,
+        8.0,
+        true,
+    )
+    .unwrap();
+    for (actual, expected) in start.curve().unwrap().into_iter().zip([
+        Vec2::new(107.38, 85.24),
+        Vec2::new(122.14, 92.62),
+        Vec2::new(114.76, 107.38),
+        Vec2::new(107.38, 122.14),
+        Vec2::new(92.62, 114.76),
+    ]) {
+        assert!((actual - expected).length() < 0.01, "{actual:?}");
+    }
+    for (actual, expected) in end.curve().unwrap().into_iter().zip([
+        Vec2::new(294.63, 210.73),
+        Vec2::new(283.90, 205.37),
+        Vec2::new(289.27, 194.63),
+        Vec2::new(294.63, 183.90),
+        Vec2::new(305.37, 189.27),
+    ]) {
+        assert!((actual - expected).length() < 0.01, "{actual:?}");
+    }
+    let stroke = connector_stroke_path(&diagonal, &[Some(start), Some(end)]);
+    assert!((stroke[0] - Vec2::new(114.76, 107.38)).length() < 0.01);
+    assert!((stroke[1] - Vec2::new(289.27, 194.63)).length() < 0.01);
+}
+
+#[test]
+fn half_circle_selection_path_is_bounded_and_tracks_the_curve() {
+    let points = [Vec2::ZERO, Vec2::new(2000.0, 1000.0)];
+    for width in [0.1, 2.0, 200.0] {
+        for size in [0.0, 12.5, 999.0] {
+            let marker = connector_marker_geometry(
+                &points,
+                false,
+                ConnectorMarkerKind::HalfCircle,
+                width,
+                size,
+                false,
+            )
+            .unwrap();
+            let curve = marker.curve().unwrap();
+            let (path, error) = marker.flattened_curve(width).unwrap();
+            assert!(path.len() <= 1025);
+            for span in [
+                [curve[0], curve[1], curve[2]],
+                [curve[2], curve[3], curve[4]],
+            ] {
+                for step in 0..=1000 {
+                    let point = quadratic_point(span, f64::from(step) / 1000.0);
+                    let point = Vec2::new(point[0] as f32, point[1] as f32);
+                    assert!(
+                        distance_to_polyline(point, &path) <= error + 0.001,
+                        "width={width}, size={size}, error={error}, point={point:?}"
+                    );
+                }
+            }
+        }
+    }
+    let bounds = quadratic_bounds([
+        Vec2::new(0.0, 0.0),
+        Vec2::new(10.0, 10.0),
+        Vec2::new(20.0, 0.0),
+    ]);
+    assert!(bounds.contains(Vec2::ZERO));
+    assert!(bounds.contains(Vec2::new(20.0, 5.0)));
+    assert!(bounds.size.x < 20.001 && bounds.size.y < 5.001);
+}
+
+#[test]
+fn half_circle_flattening_remains_conservative_at_large_coordinates() {
+    let points = [
+        Vec2::new(999_900.0, 1_000_000.0),
+        Vec2::new(1_000_000.0, 1_000_000.0),
+    ];
+    let marker = connector_marker_geometry(
+        &points,
+        false,
+        ConnectorMarkerKind::HalfCircle,
+        0.1,
+        12.5,
+        false,
+    )
+    .unwrap();
+    let curve = marker.curve().unwrap();
+    let (path, error) = marker.flattened_curve(0.1).unwrap();
+    let distance = |point: [f64; 2], a: Vec2, b: Vec2| {
+        let a = [f64::from(a.x), f64::from(a.y)];
+        let delta = [f64::from(b.x) - a[0], f64::from(b.y) - a[1]];
+        let length_squared = delta[0] * delta[0] + delta[1] * delta[1];
+        let t = if length_squared == 0.0 {
+            0.0
+        } else {
+            (((point[0] - a[0]) * delta[0] + (point[1] - a[1]) * delta[1]) / length_squared)
+                .clamp(0.0, 1.0)
+        };
+        (point[0] - a[0] - t * delta[0]).hypot(point[1] - a[1] - t * delta[1])
+    };
+    for span in [
+        [curve[0], curve[1], curve[2]],
+        [curve[2], curve[3], curve[4]],
+    ] {
+        let bounds = quadratic_bounds(span);
+        for step in 0..=1000 {
+            let point = quadratic_point(span, f64::from(step) / 1000.0);
+            let deviation = path
+                .windows(2)
+                .map(|pair| distance(point, pair[0], pair[1]))
+                .fold(f64::INFINITY, f64::min);
+            assert!(
+                deviation <= f64::from(error) + 1e-8,
+                "{deviation} > {error}"
+            );
+            assert!(point[0] >= f64::from(bounds.min.x));
+            assert!(point[1] >= f64::from(bounds.min.y));
+            assert!(point[0] <= f64::from(bounds.max().x));
+            assert!(point[1] <= f64::from(bounds.max().y));
+        }
+    }
+    let rotated_span = [
+        Vec2::new(999_990.0, 999_990.0),
+        Vec2::new(1_000_000.0, 1_000_000.0),
+        Vec2::new(999_990.0, 1_000_010.0),
+    ];
+    let bounds = quadratic_bounds(rotated_span);
+    for step in 0..=1000 {
+        let point = quadratic_point(rotated_span, f64::from(step) / 1000.0);
+        assert!(point[0] >= f64::from(bounds.min.x));
+        assert!(point[1] >= f64::from(bounds.min.y));
+        assert!(point[0] <= f64::from(bounds.max().x));
+        assert!(point[1] <= f64::from(bounds.max().y));
+    }
+}
+
+#[test]
+fn half_circle_hit_distance_is_precise_at_large_coordinates() {
+    let origin = Vec2::new(1_000_000.0, 1_000_000.0);
+    let path = [origin, origin - Vec2::new(0.625, 0.625)];
+    let point = origin - Vec2::new(0.625, 0.5625);
+    assert!(point_near_curve_path(point, &path, 0.05));
+    assert!(!point_near_curve_path(point, &path, 0.04));
+    assert!(distance_to_polyline(point, &path) > 0.05);
+}
+
+#[test]
+fn half_circle_hit_testing_respects_the_open_interior() {
+    use crate::board::ConnectorMarker;
+
+    let mut sheet = Sheet::new("Half-circle marker", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.width = 0.1;
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::HalfCircle,
+    });
+    connector.end_marker_size = Some(12.5);
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(100.0, 2.0), 0.0), None);
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(89.8, 10.2), 0.0),
+        Some(SceneHit::Object(id))
+    );
+    let bounds = scene.item(SceneId::Object(id)).unwrap().bounds;
+    assert!(bounds.contains(Vec2::new(100.0, 13.6)));
+}
+
+#[test]
 fn oval_marker_geometry_matches_published_drawio() {
     let horizontal = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 100.0)];
     let start = connector_marker_geometry(

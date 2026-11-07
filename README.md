@@ -731,11 +731,11 @@ those system-owned controls. WinGet publishing remains paused.
   diagram. Their embedded data can include content outside the visible preview:
   the image is **not redacted**. Conversion may simplify or omit features; review
   the warnings and retain the original file and a `.thinoda` copy. Classic,
-  open and block arrows, diamonds and oval connector markers, including thin
-  variants where available, support independent start and end sizes from 0 to
-  999. Classic and block arrows, diamonds and ovals can be filled or hollow
-  independently; open arrows remain open and retain their fill setting if
-  switched back to a closed style.
+  open and block arrows, diamonds, ovals and half-circle connector markers,
+  including thin variants where available, support independent start and end
+  sizes from 0 to 999. Classic and block arrows, diamonds and ovals can be
+  filled or hollow independently; open arrows and half-circles remain open and
+  retain their fill setting when changed directly to a fillable draw.io marker.
   Unsupported marker shapes, sizes outside
   that range, unsupported fill values, and fixed-port hints trigger a formatting
   warning. Existing Thinoda triangle arrows retain

@@ -196,9 +196,10 @@ Rules (each backed by a test):
 
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
-  sizes, v14 adds marker fill overrides, v15 adds diamond markers, and v16 adds
-  oval markers. Every later field or passthrough representation that a v16
-  reader cannot preserve must require a higher native version, with
+  sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
+  oval markers, and v17 adds half-circle markers. Every later field or
+  passthrough representation that a v17 reader cannot preserve must require a
+  higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
   dropping data. Version sheet/board clipboard, recovery and private XMind
@@ -559,8 +560,8 @@ connections arrive in Phase 8 without changing the gestures).
 - `required_native_version` gates every field at the first version that supports
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
-  v15 covers diamond markers, v16 covers oval markers, and subsequent additions
-  need a higher version.
+  v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
+  markers, and subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1324,6 +1325,47 @@ the connector stroke. When markers overlap on a short connector, Thinoda
 collapses the remaining stroke to a point; that case has not been compared with
 draw.io. Actual PowerPoint rendering, physical-device behavior and real
 screen-reader acceptance have not been established.
+
+**Half-circle connector markers (partial Phases 3, 4 and 8).** The `halfCircle`
+marker is an open, unfilled pair of quadratic curves, regardless of its stored
+fill setting. Its draw.io radius and connector-stroke inset are marker size plus
+stroke width plus one, including for a zero-size marker. The inspector retains
+the fill setting for a direct change to a fillable marker. Native v17, sheet
+clipboard v13, board clipboard v10, recovery marker envelopes v7 with or
+without pending ink, and private XMind marker snapshots v7 protect the new kind
+from older readers; documents without it retain their earlier versions.
+
+The shared geometry emits quadratic SVG and editable PowerPoint paths. Canvas
+painting and selection use a bounded polyline approximation, with a conservative
+error allowance for both subdivision and coordinate rounding. Curve extrema
+and samples are computed at higher precision, including near the board's
+coordinate limits. Lasso work is charged to the existing geometry budget.
+Polygon, circle and curve data share tagged storage so the new marker does not
+inflate every scene item; a regression test bounds the geometry's size.
+
+Geometry checks cover horizontal and diagonal connectors, zero and custom
+sizes, high coordinates, hit testing and bounded lasso selection. All 89
+supplied diagrams passed the corpus round trip, including the four half-circle
+ends in the UML component example. SVG and presentation paths, PNG pixels,
+rasterized PDF pixels and editable PowerPoint geometry were checked. The
+affected library suites passed 1,894 tests with four ignored; the board-export
+and corpus integration suites passed 50 with two ignored. The marker PDF
+rasterization test passed separately. Native and WebAssembly Clippy passed
+with warnings denied. The production web build passed all 24 link-import
+journeys across Chromium, Firefox and WebKit. All four deterministic importer
+mutation tests passed. Linux AddressSanitizer smoke campaigns also passed for
+XMind (15,645 runs), FreeMind (35,438) and OPML (27,662), each with a
+20-second time limit and isolated corpus copies.
+
+**Critique and remaining work.** This adds only one of the remaining marker
+families. The conservative selection tolerance may select within its bounded
+approximation error outside the exact curve. Short connectors with overlapping
+markers still collapse the stroke to a point, which can differ from draw.io.
+Fixed ports, advanced routing, the remaining markers and lossless draw.io
+save-back are not implemented. Actual PowerPoint rendering, physical-device
+behavior and real screen-reader acceptance remain unverified. These short
+importer smokes are not the longer acceptance campaigns and do not replace the
+planned draw.io fuzz target.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

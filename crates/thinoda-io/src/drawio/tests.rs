@@ -1202,10 +1202,10 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         ))
     };
     for style in [
-        "endArrow=halfCircle;",
+        "endArrow=baseDash;",
         "startFill=0;",
         "endArrow=none;endFill=0;",
-        "endArrow=halfCircle;endFill=0;",
+        "endArrow=baseDash;endFill=0;",
         "endFill=invalid;",
         "endFill=2;",
         "startSize=12;",
@@ -1246,6 +1246,7 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         "startArrow=block;startSize=12.5;endSize=0;",
         "startArrow=diamond;startFill=0;endArrow=diamondThin;endFill=1;",
         "startArrow=oval;startFill=0;endArrow=oval;endFill=1;",
+        "startArrow=halfCircle;startFill=0;endArrow=halfCircle;endFill=1;",
         "portConstraintRotation=0;perimeterSpacing=0;sourcePerimeterSpacing=0;targetPerimeterSpacing=0;",
     ] {
         let report = load(&edge(style));
@@ -1272,6 +1273,7 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
         "diamond",
         "diamondThin",
         "oval",
+        "halfCircle",
     ];
     for kind in names {
         for start_fill in [0, 1] {
@@ -1292,7 +1294,9 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
                 assert_eq!(connector.end_marker_size, Some(0.0));
                 assert_eq!(
                     crate::required_native_version(&report.workbook),
-                    if kind == "oval" {
+                    if kind == "halfCircle" {
+                        17
+                    } else if kind == "oval" {
                         16
                     } else if kind.starts_with("diamond") {
                         15
@@ -1336,6 +1340,7 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
         "diamond",
         "diamondThin",
         "oval",
+        "halfCircle",
     ];
     for kind in names {
         for size in [0.0, 6.0, 12.5, 999.0] {
@@ -1353,7 +1358,9 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
             assert_eq!(connector.end_marker_size, Some(12.5));
             assert_eq!(
                 crate::required_native_version(&report.workbook),
-                if kind == "oval" {
+                if kind == "halfCircle" {
+                    17
+                } else if kind == "oval" {
                     16
                 } else if kind.starts_with("diamond") {
                     15
@@ -1389,6 +1396,7 @@ fn supported_connector_markers_round_trip_with_both_ends() {
         "diamond" => Some(ConnectorMarkerKind::Diamond),
         "diamondThin" => Some(ConnectorMarkerKind::DiamondThin),
         "oval" => Some(ConnectorMarkerKind::Oval),
+        "halfCircle" => Some(ConnectorMarkerKind::HalfCircle),
         _ => None,
     };
     let names = [
@@ -1402,6 +1410,7 @@ fn supported_connector_markers_round_trip_with_both_ends() {
         "diamond",
         "diamondThin",
         "oval",
+        "halfCircle",
     ];
     for start in names {
         for end in names {
@@ -1426,6 +1435,12 @@ fn supported_connector_markers_round_trip_with_both_ends() {
             assert_eq!(
                 native_version,
                 if [marker(start), marker(end)]
+                    .into_iter()
+                    .flatten()
+                    .any(|kind| kind == ConnectorMarkerKind::HalfCircle)
+                {
+                    17
+                } else if [marker(start), marker(end)]
                     .into_iter()
                     .flatten()
                     .any(|kind| kind == ConnectorMarkerKind::Oval)
@@ -1534,50 +1549,54 @@ fn drawio_default_classic_and_legacy_triangle_are_distinct() {
 
 #[test]
 fn supported_connector_markers_survive_link_and_clipboard_conversion() {
-    let xml = page(
-        r#"<mxCell id="e" style="startArrow=block;startSize=12.5;startFill=0;endArrow=open;endSize=0;endFill=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
-    );
-    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
-    let linked = crate::import_drawio_link(&link).unwrap();
-    assert!(linked.warnings.is_empty(), "{:?}", linked.warnings);
-    let connector = connectors(&linked.workbook.sheets[0])[0];
-    assert_eq!(
-        connector.start_marker.unwrap().kind,
-        ConnectorMarkerKind::Block
-    );
-    assert_eq!(
-        connector.end_marker.unwrap().kind,
-        ConnectorMarkerKind::Open
-    );
-    assert_eq!(connector.start_marker_size, Some(12.5));
-    assert_eq!(connector.end_marker_size, Some(0.0));
-    assert!(connector.start_marker_unfilled);
-    assert!(connector.end_marker_unfilled);
-
-    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
-    assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
-    let assert_markers = |payload: &thinoda_core::clipboard::BoardClipboardPayload| {
-        let mut sheet = Sheet::new("Paste", "");
-        sheet.root_mode = SheetRootMode::Hidden;
-        thinoda_core::clipboard::paste_board_selection(&mut sheet, payload, Vec2::ZERO).unwrap();
-        let connector = connectors(&sheet)[0];
-        assert_eq!(
-            connector.start_marker.unwrap().kind,
-            ConnectorMarkerKind::Block
-        );
-        assert_eq!(
-            connector.end_marker.unwrap().kind,
-            ConnectorMarkerKind::Open
-        );
+    for (start, end, start_kind, end_kind) in [
+        (
+            "block",
+            "open",
+            ConnectorMarkerKind::Block,
+            ConnectorMarkerKind::Open,
+        ),
+        (
+            "halfCircle",
+            "oval",
+            ConnectorMarkerKind::HalfCircle,
+            ConnectorMarkerKind::Oval,
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="e" style="startArrow={start};startSize=12.5;startFill=0;endArrow={end};endSize=0;endFill=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ));
+        let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+        let linked = crate::import_drawio_link(&link).unwrap();
+        assert!(linked.warnings.is_empty(), "{:?}", linked.warnings);
+        let connector = connectors(&linked.workbook.sheets[0])[0];
+        assert_eq!(connector.start_marker.unwrap().kind, start_kind);
+        assert_eq!(connector.end_marker.unwrap().kind, end_kind);
         assert_eq!(connector.start_marker_size, Some(12.5));
         assert_eq!(connector.end_marker_size, Some(0.0));
         assert!(connector.start_marker_unfilled);
         assert!(connector.end_marker_unfilled);
-    };
-    assert_markers(&pasted.payload);
-    let copy = crate::drawio_clipboard::encode(&pasted.payload).unwrap();
-    let restored = crate::drawio_clipboard::decode(&copy).unwrap();
-    assert_markers(&restored.payload);
+
+        let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+        assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
+        let assert_markers = |payload: &thinoda_core::clipboard::BoardClipboardPayload| {
+            let mut sheet = Sheet::new("Paste", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            thinoda_core::clipboard::paste_board_selection(&mut sheet, payload, Vec2::ZERO)
+                .unwrap();
+            let connector = connectors(&sheet)[0];
+            assert_eq!(connector.start_marker.unwrap().kind, start_kind);
+            assert_eq!(connector.end_marker.unwrap().kind, end_kind);
+            assert_eq!(connector.start_marker_size, Some(12.5));
+            assert_eq!(connector.end_marker_size, Some(0.0));
+            assert!(connector.start_marker_unfilled);
+            assert!(connector.end_marker_unfilled);
+        };
+        assert_markers(&pasted.payload);
+        let copy = crate::drawio_clipboard::encode(&pasted.payload).unwrap();
+        let restored = crate::drawio_clipboard::decode(&copy).unwrap();
+        assert_markers(&restored.payload);
+    }
 }
 
 #[test]
@@ -1611,6 +1630,14 @@ fn editable_drawio_images_preserve_supported_connector_markers() {
             "oval",
             "oval",
             ConnectorMarkerKind::Oval,
+            ConnectorMarkerKind::Oval,
+            true,
+            false,
+        ),
+        (
+            "halfCircle",
+            "oval",
+            ConnectorMarkerKind::HalfCircle,
             ConnectorMarkerKind::Oval,
             true,
             false,

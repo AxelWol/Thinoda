@@ -416,6 +416,42 @@ fn oval_markers_require_v16_and_oval_aware_xmind_snapshots() {
 }
 
 #[test]
+fn half_circle_markers_require_v17_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Oval,
+    });
+    assert_eq!(required_native_version(&book), 17);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 17);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":16,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("half-circle connector markers require native format version 17")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-7")
+    );
+}
+
+#[test]
 fn connector_markers_render_in_svg_raster_and_presentation_exports() {
     let mut sheet = Sheet::new("Markers", "");
     sheet.root_mode = SheetRootMode::Hidden;
@@ -622,6 +658,75 @@ fn oval_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
     });
     connector.end_marker_size = Some(8.0);
     (book, id)
+}
+
+fn half_circle_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let (mut book, id) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::HalfCircle,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::HalfCircle,
+    });
+    connector.end_marker_unfilled = false;
+    (book, id)
+}
+
+#[test]
+fn half_circle_markers_render_in_visual_and_editable_exports() {
+    let (book, id) = half_circle_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let paths = [
+        r##"<path d="M 0.00,-15.50 Q 15.50,-15.50 15.50,0.00 Q 15.50,15.50 0.00,15.50" fill="none" stroke="#14283C" stroke-width="2.00"/>"##,
+        r##"<path d="M 100.00,11.00 Q 89.00,11.00 89.00,0.00 Q 89.00,-11.00 100.00,-11.00" fill="none" stroke="#14283C" stroke-width="2.00"/>"##,
+    ];
+    let presentation =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for path in paths {
+        assert!(svg.contains(path), "{svg}");
+        assert!(presentation.contains(path), "{presentation}");
+    }
+    assert!(svg.contains("M 15.50,0.00 L 89.00,0.00"), "{svg}");
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * png.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * png.height() as f32).floor() as u32;
+        *png.get_pixel(px, py)
+    };
+    for x in [0.0, 100.0] {
+        assert_eq!(sample(x, 0.0), sample(x, 20.0));
+    }
+    for (x, y) in [(11.625, -11.625), (91.75, 8.25)] {
+        assert_ne!(sample(x, y), sample(x, 20.0));
+    }
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    let curves: Vec<_> = slide
+        .split("<p:sp>")
+        .filter(|shape| {
+            shape.contains(&format!("Canvas object {id}")) && shape.contains("<a:quadBezTo>")
+        })
+        .collect();
+    assert_eq!(curves.len(), 2, "{slide}");
+    for curve in curves {
+        assert_eq!(curve.matches("<a:quadBezTo>").count(), 2);
+        assert!(!curve.contains("<a:close/>"));
+        assert!(curve.contains(r#"fill="none""#));
+        assert!(curve.contains("</a:custGeom><a:noFill/><a:ln"));
+    }
 }
 
 #[test]
@@ -918,6 +1023,17 @@ document[0].render(scale=4).to_pil().convert("RGB").save(sys.stdout.buffer, form
         }
         let background = sample(&hollow, view, positions[1], 12.0);
         assert_ne!(sample(&hollow, view, outline.0, outline.1), background);
+    }
+    let (book, _) = half_circle_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let view = view_box(&svg);
+    let open = rasterize(&export(&book, Format::Pdf));
+    for x in [0.0, 100.0] {
+        let background = sample(&open, view, x, 20.0);
+        assert_eq!(sample(&open, view, x, 0.0), background);
+    }
+    for (x, y) in [(11.625, -11.625), (91.75, 8.25)] {
+        assert_ne!(sample(&open, view, x, y), sample(&open, view, x, 20.0));
     }
 }
 

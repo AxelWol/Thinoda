@@ -2347,6 +2347,7 @@ fn marker_field(
         Some(ConnectorMarkerKind::Diamond) => "Diamond",
         Some(ConnectorMarkerKind::DiamondThin) => "Thin diamond",
         Some(ConnectorMarkerKind::Oval) => "Oval",
+        Some(ConnectorMarkerKind::HalfCircle) => "Half circle",
     };
     ui.add_enabled_ui(enabled, |ui| {
         widgets::property_field(ui, t(label), |ui| {
@@ -2381,6 +2382,9 @@ fn marker_field(
                         }),
                         Some(ConnectorMarker {
                             kind: ConnectorMarkerKind::Oval,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::HalfCircle,
                         }),
                     ] {
                         ui.selectable_value(marker, choice, t(name(choice)));
@@ -2428,7 +2432,9 @@ fn marker_fill_field(
     let open = marker.is_some_and(|marker| {
         matches!(
             marker.kind,
-            ConnectorMarkerKind::Open | ConnectorMarkerKind::OpenThin
+            ConnectorMarkerKind::Open
+                | ConnectorMarkerKind::OpenThin
+                | ConnectorMarkerKind::HalfCircle
         )
     });
     let can_fill = enabled && marker.is_some() && !open;
@@ -2443,7 +2449,7 @@ fn marker_fill_field(
         ));
     } else if open {
         response.on_disabled_hover_text(t(
-            "Open arrows cannot be filled. This setting is retained for closed arrow styles.",
+            "Open markers cannot be filled. The fill setting is retained when changing to a fillable marker.",
         ));
     }
 }
@@ -5357,6 +5363,7 @@ mod tests {
             ("Diamond", Some(ConnectorMarkerKind::Diamond)),
             ("Thin diamond", Some(ConnectorMarkerKind::DiamondThin)),
             ("Oval", Some(ConnectorMarkerKind::Oval)),
+            ("Half circle", Some(ConnectorMarkerKind::HalfCircle)),
             ("Legacy triangle", None),
         ] {
             harness.get_by_label("End arrow style").click();
@@ -5394,11 +5401,14 @@ mod tests {
         else {
             panic!("expected connector");
         };
-        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Oval);
+        assert_eq!(
+            current.end_marker.unwrap().kind,
+            ConnectorMarkerKind::HalfCircle
+        );
     }
 
     #[test]
-    fn connector_marker_menu_scrolls_to_oval_with_the_mouse() {
+    fn connector_marker_menu_scrolls_to_half_circle_with_the_mouse() {
         let mut app = ThinodaApp::headless();
         let doc = app.doc_mut().unwrap();
         let connector = CanvasConnector::new(
@@ -5421,7 +5431,7 @@ mod tests {
         harness.run_steps(3);
         harness.get_by_label("End arrow style").click();
         harness.run_steps(3);
-        let before = harness.get_by_label("Oval").rect();
+        let before = harness.get_by_label("Half circle").rect();
         harness.hover_at(harness.get_by_label("Legacy triangle").rect().center());
         harness.event(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
@@ -5431,13 +5441,13 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         });
         harness.run_steps(15);
-        let after = harness.get_by_label("Oval").rect();
+        let after = harness.get_by_label("Half circle").rect();
         assert!(
             after.top() < before.top(),
             "before={before:?}, after={after:?}"
         );
         assert!(harness.ctx.content_rect().contains(after.center()));
-        harness.get_by_label("Oval").click();
+        harness.get_by_label("Half circle").click();
         harness.run_steps(3);
         let CanvasObjectKind::Connector(current) = &harness
             .state()
@@ -5452,7 +5462,10 @@ mod tests {
         else {
             panic!("expected connector");
         };
-        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Oval);
+        assert_eq!(
+            current.end_marker.unwrap().kind,
+            ConnectorMarkerKind::HalfCircle
+        );
     }
 
     #[test]
@@ -5632,6 +5645,54 @@ mod tests {
         assert_eq!(
             current(harness.state()).end_marker.unwrap().kind,
             ConnectorMarkerKind::Oval
+        );
+
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Half circle").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Half circle").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::HalfCircle
+        );
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Oval").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Oval").click();
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::Oval
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert!(
+            !harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::HalfCircle
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
         );
 
         harness.get_by_label("End arrow style").click();

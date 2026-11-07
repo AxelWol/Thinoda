@@ -641,6 +641,7 @@ impl Style {
             "diamond" => ConnectorMarkerKind::Diamond,
             "diamondThin" => ConnectorMarkerKind::DiamondThin,
             "oval" => ConnectorMarkerKind::Oval,
+            "halfCircle" => ConnectorMarkerKind::HalfCircle,
             _ => return None,
         };
         Some(ConnectorMarker { kind })
@@ -717,6 +718,7 @@ impl Style {
                                     | "diamond"
                                     | "diamondThin"
                                     | "oval"
+                                    | "halfCircle"
                             )
                         })
                     })
@@ -2523,6 +2525,7 @@ impl<'a> PageWriter<'a> {
                     Some(ConnectorMarkerKind::Diamond) => "diamond",
                     Some(ConnectorMarkerKind::DiamondThin) => "diamondThin",
                     Some(ConnectorMarkerKind::Oval) => "oval",
+                    Some(ConnectorMarkerKind::HalfCircle) => "halfCircle",
                     None => "classic",
                 };
                 style.push_str("endArrow=");

@@ -35,6 +35,12 @@ pub(crate) enum Prim {
         stroke: Color,
         width: f32,
     },
+    /// Two connected quadratic spans of an open connector marker.
+    Quadratic {
+        points: [Vec2; 5],
+        stroke: Color,
+        width: f32,
+    },
     /// Centered text lines in an unrotated `rect`, turned around `pivot`.
     Text {
         rect: Rect,
@@ -308,6 +314,12 @@ fn marker_primitive(
             center,
             radius,
             fill: marker.filled.then_some(color),
+            stroke: color,
+            width,
+        }
+    } else if let Some(points) = marker.curve() {
+        Prim::Quadratic {
+            points,
             stroke: color,
             width,
         }

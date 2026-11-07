@@ -2055,6 +2055,13 @@ fn paint_connector_marker(
         }
         return;
     }
+    if let Some((points, _)) = marker.flattened_curve(stroke.width / xf.zoom) {
+        painter.add(Shape::line(
+            points.into_iter().map(|point| xf.pos(point)).collect(),
+            stroke,
+        ));
+        return;
+    }
     let points: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
     if marker.filled && points.len() == 4 {
         let mut mesh = egui::Mesh::default();
@@ -4235,6 +4242,65 @@ mod tests {
             &shape.shape,
             Shape::Path(path) if path.points == expected && !path.closed
         )));
+    }
+
+    #[test]
+    fn half_circle_markers_paint_one_open_curve() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        let mut sheet = Sheet::new("Half-circle marker", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 2.0;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(12.5);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let SceneGeometry::Polyline { markers, .. } =
+            &scene.item(SceneId::Object(id)).unwrap().geometry
+        else {
+            panic!("expected connector");
+        };
+        let xf = Xf {
+            origin: pos2(100.0, 100.0),
+            zoom: 2.0,
+        };
+        let color = Color32::from_rgba_unmultiplied(20, 40, 60, 120);
+        let stroke = Stroke::new(4.0, color);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            paint_connector_marker(
+                &ctx.layer_painter(egui::LayerId::background()),
+                markers[1].unwrap(),
+                xf,
+                color,
+                stroke,
+            );
+        });
+        output.textures_delta.clear();
+        let paths: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::Path(path) => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths.len(), 1);
+        assert!(!paths[0].closed);
+        assert_eq!(paths[0].fill, Color32::TRANSPARENT);
+        assert_eq!(paths[0].points.first(), Some(&pos2(300.0, 131.0)));
+        assert_eq!(paths[0].points.last(), Some(&pos2(300.0, 69.0)));
     }
 
     #[test]

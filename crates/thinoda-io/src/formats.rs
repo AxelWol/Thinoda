@@ -132,6 +132,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "oval connector markers require native format version 16".into(),
             ));
         }
+        if version < 17 && book.has_half_circle_connector_markers() {
+            return Err(IoError::Invalid(
+                "half-circle connector markers require native format version 17".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;

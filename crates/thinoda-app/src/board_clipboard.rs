@@ -2179,7 +2179,7 @@ mod tests {
     #[test]
     fn drawio_clipboard_reports_marker_and_port_approximation() {
         use crate::app::Cmd;
-        for style in ["endArrow=halfCircle", "endArrow=classic;exitX=0.25"] {
+        for style in ["endArrow=baseDash", "endArrow=classic;exitX=0.25"] {
             let (mut app, clipboard) = empty_board_app();
             let before = app.doc().unwrap().doc.workbook().clone();
             let items = board_item_count(&app);
@@ -2262,6 +2262,15 @@ mod tests {
             (
                 "startArrow=oval;startSize=12.5;startFill=0;endArrow=oval;endSize=8",
                 ConnectorMarkerKind::Oval,
+                ConnectorMarkerKind::Oval,
+                Some(12.5),
+                Some(8.0),
+                true,
+                false,
+            ),
+            (
+                "startArrow=halfCircle;startSize=12.5;startFill=0;endArrow=oval;endSize=8",
+                ConnectorMarkerKind::HalfCircle,
                 ConnectorMarkerKind::Oval,
                 Some(12.5),
                 Some(8.0),
