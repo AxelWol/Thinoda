@@ -86,7 +86,7 @@ features work differently:
 |---|---|
 | Files on disk | Documents under `/Documents` use OPFS with an IndexedDB fallback. **Open Recent** and autosave use these site-private copies; settings and recovery retain the synchronous virtual file system. |
 | Open / Import / Merge dialogs | The browser's file picker. Open and Import copy files into `/Documents`; Merge uses a temporary browser input. Name collisions receive a suffix. |
-| Drag & drop onto the window | Supported. Dropped files are copied into `/Documents` and opened. |
+| Drag & drop onto the window | Documents, including explicitly named `.drawio.png` files, are copied into `/Documents` and opened. Ordinary PNG/JPEG drops stay in memory and insert an image on the selected topic or as a board image card. A `.png` with embedded draw.io data can instead be opened as a diagram through File > Open. |
 | Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. Plain Save updates the browser copy and, for a file explicitly picked with Chromium File System Access in this tab, saves back to the original file. Firefox/Safari retain downloads; use Save As to download again. |
 | Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |

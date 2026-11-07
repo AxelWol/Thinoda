@@ -648,10 +648,9 @@ Phase 3 scene-model extensions exist:
   needs the Phase 3 ownership/passthrough model and remains Phase 7 work. Autosave stays
   limited to native formats.
 
-Not yet covered: everything in Phases 1, 3–5 and 8–14, ink pressure (exported as a
-plain polyline without a loss row), clipboard interop, drag-and-drop of
-`.drawio.png` (still inserted as a picture; `.drawio.svg` opens as a diagram), and the
-fixture corpus from Phase 0.
+At this milestone, Phases 1, 3–5 and 8–14, ink pressure, clipboard interop,
+`.drawio.png` drag-and-drop and the Phase 0 fixture corpus remained open.
+Subsequent checkpoints below record partial progress.
 
 **UX addition — GitHub corner mark (user request, 2026-11-05).** Like diagrams.net's
 lower-right GitHub kitten, Thinoda shows the GitHub mark (Primer Octicons
@@ -851,6 +850,29 @@ or raw XML back. Thinoda now matches both directions:
   `drawio_clipboard_text_pastes_as_one_undoable_selection`,
   `copy_as_drawio_writes_plain_encoded_model_that_pastes_back` and
   `malformed_drawio_text_reports_an_error_without_editing` in the app.
+
+**Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
+file explicitly named `.drawio.png` now opens its embedded diagram through the
+same bounded, conversion-only import and warning flow as File › Open, on desktop
+and in the browser. The original source is not overwritten. A file with that
+suffix but no embedded diagram reports an open error rather than inserting an
+image. Ordinary PNG/JPEG drops retain their image behavior, and the image picker
+can still insert a `.drawio.png` as a picture. Browser diagram drops use the
+existing 64 MiB document-upload limit and durable document staging; image drops
+retain their separate 8 MiB per-image limit.
+
+The suffix deliberately disambiguates the drop: an ordinary `.png` containing
+draw.io data is still inserted as an image when dropped, but can be imported as
+a diagram through File › Open. This is not a general choice dialog, lossless
+save-back, or embedded-PNG export. Native drop and staging tests cover source
+preservation, invalid files, ordinary images and limits; browser tests use
+synthetic file drops in Chromium, Firefox and WebKit. They exercise a generated
+`zTXt` fixture and a labelled PNG exported from the published diagrams.net editor
+(that export uses percent-encoded `tEXt`); codec tests also cover compressed and
+uncompressed `iTXt` and Unicode. A filename collision and a leading-dot name
+remain document drops even when browser staging changes their suffix. The
+published fixture is a single simple shape, not evidence of complete format
+fidelity. Physical file-manager and device acceptance remain open.
 
 **Corpus validation (docs/draw-io-examples).** `crates/thinoda-io/tests/drawio_corpus.rs`
 runs every `.drawio`/`.xml` file in the user-supplied example corpus (89 files from

@@ -4,6 +4,8 @@
  */
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 import { colorBounds, command, drag, frames, saveAs, touchEvents, withPdfViewer, zipEntry } from "./board-browser-helpers";
 
 test.use({
@@ -926,6 +928,77 @@ test("a shape library drag creates one selected, undoable shape", async ({ page 
     await page.keyboard.press("Control+Shift+z");
     await frames(page);
     expect(sheetFrom(await saveAs(page, "shape-library-redo.thinoda"))).toEqual(saved);
+});
+
+test("dropping a draw.io PNG opens its diagram while ordinary PNG drops remain images", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    await canvas.focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+
+    const image = Buffer.from(await page.evaluate(() => {
+        const fixture = document.createElement("canvas");
+        fixture.width = fixture.height = 64;
+        const context = fixture.getContext("2d");
+        if (!context) throw new Error("Cannot create the image fixture");
+        context.fillStyle = "#ff00c4";
+        context.fillRect(0, 0, 64, 64);
+        return fixture.toDataURL("image/png").split(",")[1];
+    }), "base64");
+    const xml = `<mxfile><diagram name="Embedded"><mxGraphModel><root>
+        <mxCell id="0"/><mxCell id="1" parent="0"/>
+        <mxCell id="v" value="Dropped diagram" style="ellipse;fillColor=#17c987;"
+            vertex="1" parent="1"><mxGeometry width="160" height="100" as="geometry"/></mxCell>
+        </root></mxGraphModel></diagram></mxfile>`;
+    const text = Buffer.concat([
+        Buffer.from("mxfile\0\0", "utf8"),
+        deflateSync(Buffer.from(encodeURIComponent(xml), "utf8")),
+    ]);
+    const header = Buffer.alloc(8);
+    header.writeUInt32BE(text.length, 0);
+    header.write("zTXt", 4, "ascii");
+    const checksum = Buffer.alloc(4);
+    checksum.writeUInt32BE(crc32(Buffer.concat([header.subarray(4), text])));
+    const embedded = Buffer.concat([
+        image.subarray(0, -12), header, text, checksum, image.subarray(-12),
+    ]);
+    await canvas.drop({ files: { name: "picture.png", mimeType: "image/png", buffer: embedded } });
+    await expect.poll(async () => (
+        await colorBounds(page, await page.screenshot(), [[255, 0, 196]], 5)
+    )[0].count, { timeout: 30_000 }).toBeGreaterThan(200);
+    const withImage = sheetFrom(await saveAs(page, "ordinary-image-drop.thinoda"));
+    expect(Object.values(withImage.topics).some(topic => topic.image?.startsWith("thinoda-resource:")))
+        .toBe(true);
+
+    await canvas.drop({
+        files: { name: "embedded.drawio.png", mimeType: "image/png", buffer: embedded },
+    });
+    await expect.poll(async () => (
+        await colorBounds(page, await page.screenshot(), [[23, 201, 135]], 5)
+    )[0].count, { timeout: 30_000 }).toBeGreaterThan(200);
+    const opened = sheetFrom(await saveAs(page, "embedded-diagram-drop.thinoda"));
+    expect(opened.title).toBe("Embedded");
+    expect(opened.root_mode).toBe("hidden");
+    expect(opened.canvas.objects.some(object => object.kind.shape?.label === "Dropped diagram"))
+        .toBe(true);
+    expect(Object.values(opened.topics).some(topic => topic.image)).toBe(false);
+
+    const published = await readFile(join(
+        __dirname, "..", "..", "thinoda-io", "tests", "fixtures", "published-rectangle.drawio.png",
+    ));
+    await canvas.drop({
+        files: { name: "embedded.drawio.png", mimeType: "image/png", buffer: published },
+    });
+    await expect.poll(async () => (
+        await colorBounds(page, await page.screenshot(), [[213, 232, 212]], 5)
+    )[0].count, { timeout: 30_000 }).toBeGreaterThan(200);
+    const publishedDiagram = sheetFrom(await saveAs(page, "published-diagram-drop.thinoda"));
+    expect(publishedDiagram.title).toBe("Page-1");
+    expect(publishedDiagram.canvas.objects.some(object => object.kind.shape?.label === "Published PNG"))
+        .toBe(true);
+    expect(Object.values(publishedDiagram.topics).some(topic => topic.image)).toBe(false);
 });
 
 test("a fast mouse drag commits its full geometry", async ({ page }) => {

@@ -3101,7 +3101,7 @@ impl ThinodaApp {
                 }
                 files::Purpose::Dropped => {
                     for path in &picked.paths {
-                        if crate::images::is_supported_image_path(path) {
+                        if files::is_dropped_image_path(path) {
                             self.finish_dropped_image(picked.image_owner.clone(), path);
                             #[cfg(target_arch = "wasm32")]
                             if let Err(error) = thinoda_platform::fs::remove_file(path) {
@@ -3654,7 +3654,7 @@ impl ThinodaApp {
                 None
             };
         for (path, owner) in files::dropped_files(ctx, image_owner) {
-            if crate::images::is_supported_image_path(&path) {
+            if files::is_dropped_image_path(&path) {
                 self.finish_dropped_image(owner, &path);
             } else {
                 self.request_open_from_ui(ctx, &path, CardOpenOrder::AfterQueuedInput);

@@ -460,6 +460,66 @@ fn svg_and_png_containers_are_detected_and_imported() {
 }
 
 #[test]
+fn png_compressed_and_international_text_chunks_import_diagrams() {
+    let label = "Embedded \u{fc}";
+    let model = page(&format!(
+        r#"<mxCell id="v" value="{label}" style="ellipse;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#
+    ));
+    let text = percent_encode(&model);
+    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 6);
+    for (kind, flag) in [(b"zTXt", 1), (b"iTXt", 0), (b"iTXt", 1)] {
+        let mut data = b"mxfile\0".to_vec();
+        if kind == b"zTXt" {
+            data.push(0);
+        } else {
+            data.extend([flag, 0]);
+            data.extend_from_slice(b"en\0Diagram\0");
+        }
+        data.extend_from_slice(if flag == 1 {
+            &compressed
+        } else {
+            model.as_bytes()
+        });
+        let mut png = PNG_SIGNATURE.to_vec();
+        png_chunk(&mut png, b"IHDR", &[0; 13]);
+        png_chunk(&mut png, kind, &data);
+        png_chunk(&mut png, b"IEND", &[]);
+        assert_eq!(
+            detect_format(Path::new("embedded.drawio.png"), &png),
+            Some(Format::DrawIo)
+        );
+        let report = import(&png).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), label);
+    }
+}
+
+#[test]
+fn published_drawio_png_export_imports_its_embedded_diagram() {
+    let png = include_bytes!("../../tests/fixtures/published-rectangle.drawio.png");
+    assert_eq!(
+        detect_format(Path::new("published-rectangle.drawio.png"), png),
+        Some(Format::DrawIo)
+    );
+    let report = import(png).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(sheet.title, "Page-1");
+    let objects = shapes(sheet);
+    assert_eq!(objects.len(), 1);
+    assert!(matches!(
+        objects[0].kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Rectangle,
+            ..
+        }
+    ));
+    assert_eq!(objects[0].label(), "Published PNG");
+    assert_eq!(objects[0].style.fill, Some(Color::rgb(0xd5, 0xe8, 0xd4)));
+    assert_eq!(objects[0].rect, rect(350.0, 380.0, 120.0, 60.0));
+}
+
+#[test]
 fn nested_connector_waypoints_import_and_round_trip_in_parent_coordinates() {
     let xml = page(
         r#"
