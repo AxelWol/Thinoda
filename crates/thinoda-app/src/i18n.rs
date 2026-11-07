@@ -705,6 +705,7 @@ const DE: &[(&str, &str)] = &[
     ("Block arrow", "Blockpfeil"),
     ("Thin block arrow", "Schmaler Blockpfeil"),
     ("Thin diamond", "Schmale Raute"),
+    ("Oval", "Oval"),
     (
         "Legacy arrowheads approximated in draw.io",
         "Bisherige Pfeilspitzen in draw.io angenähert",
@@ -4713,6 +4714,7 @@ mod tests {
             "Thin block arrow",
             "Diamond",
             "Thin diamond",
+            "Oval",
             "Legacy arrowheads approximated in draw.io",
             "Edit label",
             "More formatting options",

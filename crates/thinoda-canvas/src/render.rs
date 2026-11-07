@@ -2040,6 +2040,21 @@ fn paint_connector_marker(
     color: Color32,
     stroke: Stroke,
 ) {
+    if let Some((center, radius)) = marker.circle() {
+        if radius > 0.0 {
+            painter.circle(
+                xf.pos(center),
+                radius * xf.zoom,
+                if marker.filled {
+                    color
+                } else {
+                    Color32::TRANSPARENT
+                },
+                stroke,
+            );
+        }
+        return;
+    }
     let points: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
     if marker.filled && points.len() == 4 {
         let mut mesh = egui::Mesh::default();
@@ -4220,6 +4235,80 @@ mod tests {
             &shape.shape,
             Shape::Path(path) if path.points == expected && !path.closed
         )));
+    }
+
+    #[test]
+    fn oval_markers_paint_filled_or_hollow_circles() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for (size, filled) in [(12.5, false), (12.5, true), (0.0, true)] {
+            let mut sheet = Sheet::new("Oval marker", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker {
+                kind: ConnectorMarkerKind::Oval,
+            });
+            connector.end_marker_size = Some(size);
+            connector.end_marker_unfilled = !filled;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let scene = build_scene(&sheet, &layout);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let xf = Xf {
+                origin: pos2(100.0, 100.0),
+                zoom: 2.0,
+            };
+            let color = Color32::from_rgb(20, 40, 60);
+            let stroke = Stroke::new(4.0, color);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 400.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_connector_marker(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        markers[1].unwrap(),
+                        xf,
+                        color,
+                        stroke,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            let circles: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Circle(circle) => Some(circle),
+                    _ => None,
+                })
+                .collect();
+            if size == 0.0 {
+                assert!(circles.is_empty());
+            } else {
+                assert_eq!(circles.len(), 1);
+                assert_eq!(circles[0].center, xf.pos(Vec2::new(100.0, 0.0)));
+                assert_eq!(circles[0].radius, 12.5);
+                assert_eq!(
+                    circles[0].fill,
+                    if filled { color } else { Color32::TRANSPARENT }
+                );
+                assert_eq!(circles[0].stroke, stroke);
+            }
+        }
     }
 
     #[test]

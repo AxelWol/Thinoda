@@ -175,6 +175,7 @@ Thin open arrow|Flecha abierta estrecha|Flèche ouverte étroite|Smal åben pil|
 Block arrow|Flecha sólida|Flèche pleine|Fyldt pil|Gevulde pijl|Seta preenchida|Freccia piena|Strzałka wypełniona
 Thin block arrow|Flecha sólida estrecha|Flèche pleine étroite|Smal fyldt pil|Smalle gevulde pijl|Seta preenchida estreita|Freccia piena stretta|Wąska strzałka wypełniona
 Thin diamond|Rombo estrecho|Losange étroit|Smal rombe|Smalle ruit|Losango estreito|Rombo stretto|Wąski romb
+Oval|Óvalo|Ovale|Oval|Ovaal|Oval|Ovale|Owal
 Legacy arrowheads approximated in draw.io|Puntas de flecha anteriores aproximadas en draw.io|Pointes de flèche historiques approximatives dans draw.io|Tidligere pilespidser tilnærmes i draw.io|Eerdere pijlpunten benaderd in draw.io|Pontas de seta anteriores aproximadas no draw.io|Punte delle frecce precedenti approssimate in draw.io|Dotychczasowe groty strzałek przybliżone w draw.io
 Card|Tarjeta|Carte|Kort|Kaart|Cartão|Scheda|Karta
 Rotation|Rotación|Rotation|Rotation|Rotatie|Rotação|Rotazione|Obrót

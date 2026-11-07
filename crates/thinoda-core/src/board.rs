@@ -250,6 +250,15 @@ impl CanvasLayer {
                     .any(|marker| marker.kind.is_diamond()))
         })
     }
+
+    /// Whether this layer needs oval-marker-aware persistence.
+    pub fn has_oval_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind == ConnectorMarkerKind::Oval))
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -871,6 +880,7 @@ pub enum ConnectorMarkerKind {
     BlockThin,
     Diamond,
     DiamondThin,
+    Oval,
 }
 
 impl ConnectorMarkerKind {

@@ -278,3 +278,43 @@ fn supplied_uml_package_keeps_its_thin_diamond_markers() {
         .workbook;
     check_markers(&book, &reopened).unwrap();
 }
+
+#[test]
+fn supplied_diagrams_keep_their_oval_markers() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    for name in [
+        "infographic-rockpool.drawio",
+        "uml-component-example.drawio",
+    ] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let source = std::str::from_utf8(&bytes).unwrap();
+        let expected =
+            source.matches("startArrow=oval").count() + source.matches("endArrow=oval").count();
+        assert!(expected > 0, "{name} has no oval markers");
+        let book = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes)
+            .unwrap()
+            .workbook;
+        let count = book
+            .sheets
+            .iter()
+            .flat_map(markers)
+            .map(|marker| {
+                usize::from(marker.start == Some(ConnectorMarkerKind::Oval))
+                    + usize::from(marker.end == Some(ConnectorMarkerKind::Oval))
+            })
+            .sum::<usize>();
+        assert_eq!(count, expected, "{name}");
+        let exported =
+            thinoda_io::export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
+        let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported)
+            .unwrap()
+            .workbook;
+        check_markers(&book, &reopened).unwrap();
+    }
+}

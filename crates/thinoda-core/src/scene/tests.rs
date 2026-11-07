@@ -338,6 +338,94 @@ fn custom_marker_geometry_matches_published_drawio() {
 }
 
 #[test]
+fn oval_marker_geometry_matches_published_drawio() {
+    let horizontal = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 100.0)];
+    let start = connector_marker_geometry(
+        &horizontal,
+        true,
+        ConnectorMarkerKind::Oval,
+        2.0,
+        12.5,
+        false,
+    )
+    .unwrap();
+    let end = connector_marker_geometry(
+        &horizontal,
+        false,
+        ConnectorMarkerKind::Oval,
+        2.0,
+        8.0,
+        true,
+    )
+    .unwrap();
+    assert_eq!(start.circle(), Some((horizontal[0], 6.25)));
+    assert_eq!(end.circle(), Some((horizontal[1], 4.0)));
+    assert!(start.points().is_empty() && end.points().is_empty());
+    assert!(!start.filled && end.filled);
+    assert_eq!(
+        connector_stroke_path(&horizontal, &[Some(start), Some(end)]),
+        vec![Vec2::new(106.25, 100.0), Vec2::new(296.0, 100.0)]
+    );
+
+    let diagonal = [Vec2::new(140.0, 220.0), Vec2::new(200.0, 300.0)];
+    let marker =
+        connector_marker_geometry(&diagonal, false, ConnectorMarkerKind::Oval, 8.0, 8.0, true)
+            .unwrap();
+    assert_eq!(marker.circle(), Some((diagonal[1], 4.0)));
+    let line = connector_stroke_path(&diagonal, &[None, Some(marker)]);
+    assert!((*line.last().unwrap() - Vec2::new(197.6, 296.8)).length() < 0.001);
+
+    let zero = connector_marker_geometry(
+        &horizontal,
+        false,
+        ConnectorMarkerKind::Oval,
+        2.0,
+        0.0,
+        true,
+    )
+    .unwrap();
+    assert_eq!(zero.circle(), Some((horizontal[1], 0.0)));
+    assert_eq!(
+        connector_stroke_path(&horizontal, &[None, Some(zero)]),
+        horizontal
+    );
+}
+
+#[test]
+fn oval_marker_hit_testing_respects_hollow_interiors_and_stroke_bounds() {
+    use crate::board::ConnectorMarker;
+
+    for filled in [false, true] {
+        let mut sheet = Sheet::new("Oval marker", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = !filled;
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let (_, scene) = scene(&sheet);
+        let item = scene.item(SceneId::Object(id)).unwrap();
+        assert!(item.bounds.contains(Vec2::new(100.0, 6.29)));
+        assert_eq!(
+            scene.hit_test_tolerance(Vec2::new(100.0, 1.0), 0.0),
+            filled.then_some(SceneHit::Object(id))
+        );
+        assert_eq!(
+            scene.hit_test_tolerance(Vec2::new(100.0, 6.25), 0.0),
+            Some(SceneHit::Object(id))
+        );
+    }
+}
+
+#[test]
 fn diamond_marker_geometry_matches_published_drawio() {
     let horizontal = [Vec2::new(0.0, 50.0), Vec2::new(100.0, 50.0)];
     for (kind, expected, trimmed) in [

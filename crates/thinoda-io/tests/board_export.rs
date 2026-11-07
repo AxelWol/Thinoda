@@ -380,6 +380,42 @@ fn diamond_markers_require_v15_and_diamond_aware_xmind_snapshots() {
 }
 
 #[test]
+fn oval_markers_require_v16_and_oval_aware_xmind_snapshots() {
+    let (mut book, _) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Diamond,
+    });
+    assert_eq!(required_native_version(&book), 16);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 16);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":15,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("oval connector markers require native format version 16")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-6")
+    );
+}
+
+#[test]
 fn connector_markers_render_in_svg_raster_and_presentation_exports() {
     let mut sheet = Sheet::new("Markers", "");
     sheet.root_mode = SheetRootMode::Hidden;
@@ -573,6 +609,21 @@ fn diamond_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
     (book, id)
 }
 
+fn oval_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let (mut book, id) = hollow_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Oval,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Oval,
+    });
+    connector.end_marker_size = Some(8.0);
+    (book, id)
+}
+
 #[test]
 fn hollow_markers_render_closed_and_transparent_in_visual_exports() {
     let (book, id) = hollow_marker_book();
@@ -722,6 +773,93 @@ fn diamond_markers_render_in_visual_and_editable_exports() {
 }
 
 #[test]
+fn oval_markers_render_in_visual_and_editable_exports() {
+    let (mut book, id) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.end_marker_unfilled = false;
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let circles = [
+        r##"<circle cx="0.00" cy="0.00" r="6.25" fill="none" stroke="#14283C" stroke-width="2.00"/>"##,
+        r##"<circle cx="100.00" cy="0.00" r="4" fill="#14283C" stroke="#14283C" stroke-width="2.00"/>"##,
+    ];
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for circle in circles {
+        assert!(svg.contains(circle), "{svg}");
+        assert!(slide.contains(circle), "{slide}");
+    }
+    assert!(svg.contains("M 6.25,0.00 L 96.00,0.00"), "{svg}");
+
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * png.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * png.height() as f32).floor() as u32;
+        *png.get_pixel(px, py)
+    };
+    assert_eq!(sample(0.0, 0.0), sample(0.0, 12.0));
+    assert_ne!(sample(0.0, 6.25), sample(0.0, 12.0));
+    assert_ne!(sample(100.0, 0.0), sample(100.0, 12.0));
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    let shapes: Vec<_> = slide
+        .split("<p:sp>")
+        .filter(|shape| {
+            shape.contains(&format!("Canvas object {id}"))
+                && shape.contains(r#"<a:prstGeom prst="ellipse">"#)
+        })
+        .collect();
+    assert_eq!(shapes.len(), 2, "{slide}");
+    assert!(
+        shapes
+            .iter()
+            .any(|shape| shape.contains("</a:prstGeom><a:noFill/><a:ln"))
+    );
+    assert!(
+        shapes
+            .iter()
+            .any(|shape| shape.contains("</a:prstGeom><a:solidFill>"))
+    );
+
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker_size = Some(0.0);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(!svg.contains(r#"<circle cx="0.00" cy="0.00""#));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(
+        slide
+            .split("<p:sp>")
+            .filter(|shape| {
+                shape.contains(&format!("Canvas object {id}"))
+                    && shape.contains(r#"<a:prstGeom prst="ellipse">"#)
+            })
+            .count(),
+        1,
+        "{slide}"
+    );
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker_size = Some(0.001);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(svg.contains(r#"<circle cx="0.00" cy="0.00" r="0.0005""#));
+}
+
+#[test]
 #[ignore = "requires Python 3, pypdfium2 and Pillow"]
 fn hollow_marker_pdf_rasterizes_an_outline_without_a_fill() {
     use std::process::{Command, Stdio};
@@ -760,6 +898,7 @@ document[0].render(scale=4).to_pil().convert("RGB").save(sys.stdout.buffer, form
     for (book, positions, outline) in [
         (hollow_marker_book().0, [7.0, 93.0], (90.0, 3.8)),
         (diamond_marker_book().0, [8.0, 91.0], (94.0, 2.4)),
+        (oval_marker_book().0, [0.0, 100.0], (100.0, 4.0)),
     ] {
         let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
         let view = view_box(&svg);

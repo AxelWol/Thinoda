@@ -869,16 +869,27 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                     if intersects {
                         break;
                     }
-                    intersects = (marker.filled
-                        && polygon_touches_lasso(marker.points(), polygon, &mut budget)?)
-                        || path_touches_lasso(
-                            marker.points(),
-                            marker.closed,
-                            |point| point,
+                    intersects = if let Some((center, radius)) = marker.circle() {
+                        circle_touches_lasso(
+                            center,
+                            radius,
+                            marker.filled,
                             f64::from(*width) / 2.0,
                             polygon,
                             &mut budget,
-                        )?;
+                        )?
+                    } else {
+                        (marker.filled
+                            && polygon_touches_lasso(marker.points(), polygon, &mut budget)?)
+                            || path_touches_lasso(
+                                marker.points(),
+                                marker.closed,
+                                |point| point,
+                                f64::from(*width) / 2.0,
+                                polygon,
+                                &mut budget,
+                            )?
+                    };
                 }
                 intersects
             }
@@ -1016,7 +1027,17 @@ fn validate_scene_geometry(
             }
             for marker in markers.iter().flatten() {
                 budget.charge(marker.points().len())?;
-                if marker.points().iter().any(|&point| !finite_point(point))
+                let invalid_circle = marker.circle().is_some_and(|(center, radius)| {
+                    !finite_point(center)
+                        || !radius.is_finite()
+                        || radius < 0.0
+                        || !(center.x + radius).is_finite()
+                        || !(center.x - radius).is_finite()
+                        || !(center.y + radius).is_finite()
+                        || !(center.y - radius).is_finite()
+                });
+                if invalid_circle
+                    || marker.points().iter().any(|&point| !finite_point(point))
                     || !marker.line_inset.is_finite()
                     || marker.line_inset < 0.0
                 {
@@ -1390,6 +1411,42 @@ fn capsule_interval(a: Vec2, b: Vec2, c: Vec2, d: Vec2, radius: f64) -> Option<(
         result = union_interval(result, Some(strip));
     }
     result
+}
+
+fn circle_touches_lasso(
+    center: Vec2,
+    radius: f32,
+    filled: bool,
+    stroke_radius: f64,
+    lasso: &[Vec2],
+    budget: &mut GeometryBudget,
+) -> Result<bool, GeometryError> {
+    if radius <= 0.0 {
+        return Ok(false);
+    }
+    budget.charge(lasso.len())?;
+    let outer = f64::from(radius) + stroke_radius;
+    let inner = (f64::from(radius) - stroke_radius).max(0.0);
+    let distance_squared = |point: Vec2| {
+        let dx = f64::from(point.x) - f64::from(center.x);
+        let dy = f64::from(point.y) - f64::from(center.y);
+        dx * dx + dy * dy
+    };
+    if (filled && distance_squared(lasso[0]) <= outer * outer)
+        || point_in_polygon(Vec2::new(center.x + radius, center.y), lasso)
+    {
+        return Ok(true);
+    }
+    for index in 0..segment_count(lasso, true) {
+        budget.charge(1)?;
+        let (a, b) = segment(lasso, true, index);
+        if point_segment_distance_squared(center, a, b) <= outer * outer
+            && (filled || distance_squared(a).max(distance_squared(b)) >= inner * inner)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn polygon_touches_lasso(
@@ -2658,6 +2715,75 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn lasso_respects_oval_marker_interiors_outlines_and_enclosure() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        for filled in [false, true] {
+            let mut sheet = Sheet::new("Oval marker", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.width = 0.1;
+            connector.end_marker = Some(ConnectorMarker {
+                kind: ConnectorMarkerKind::Oval,
+            });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = !filled;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let scene = scene(&sheet);
+            let interior = lasso_hits(&scene, &rectangle(99.9, 0.9, 0.2, 0.2)).unwrap();
+            assert_eq!(
+                interior,
+                if filled {
+                    vec![SceneHit::Object(id)]
+                } else {
+                    vec![]
+                }
+            );
+            assert_eq!(
+                lasso_hits(&scene, &rectangle(99.9, 6.15, 0.2, 0.2)).unwrap(),
+                vec![SceneHit::Object(id)]
+            );
+        }
+
+        let center = Vec2::new(100.0, 0.0);
+        for (lasso, filled, expected) in [
+            (rectangle(93.0, -7.0, 14.0, 14.0), false, true),
+            (rectangle(99.9, 0.9, 0.2, 0.2), false, false),
+            (rectangle(99.9, 0.9, 0.2, 0.2), true, true),
+            (rectangle(110.0, 10.0, 1.0, 1.0), true, false),
+        ] {
+            assert_eq!(
+                circle_touches_lasso(
+                    center,
+                    6.25,
+                    filled,
+                    0.05,
+                    &lasso,
+                    &mut GeometryBudget::new()
+                )
+                .unwrap(),
+                expected
+            );
+        }
+        assert!(
+            !circle_touches_lasso(
+                center,
+                0.0,
+                true,
+                0.05,
+                &rectangle(99.0, -1.0, 2.0, 2.0),
+                &mut GeometryBudget::new(),
+            )
+            .unwrap()
+        );
     }
 
     #[test]

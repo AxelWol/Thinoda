@@ -296,3 +296,36 @@ test("imports filled and hollow diamond markers into a versioned native workbook
     const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
     expect(manifest.version).toBe(15);
 });
+
+test("imports filled and hollow oval markers into a versioned native workbook", async ({ page }) => {
+    const xml = `<mxfile><diagram name="Oval markers"><mxGraphModel><root>`
+        + `<mxCell id="0"/><mxCell id="1" parent="0"/>`
+        + `<mxCell id="edge" style="startArrow=oval;startSize=12.5;startFill=0;endArrow=oval;endSize=8;endFill=1;"`
+        + ` edge="1" parent="1"><mxGeometry relative="1" as="geometry">`
+        + `<mxPoint x="150" y="200" as="sourcePoint"/><mxPoint x="450" y="200" as="targetPoint"/>`
+        + `</mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>`;
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await enterLink(page, `#R${encodeURIComponent(xml)}`);
+
+    const archive = await saveAs(page, "link-oval-markers.thinoda");
+    const content = contentFrom(archive);
+    const sheet = content.sheets[content.active_sheet];
+    expect(sheet.title).toBe("Oval markers");
+    const connector = sheet.canvas.objects.find((object) => object.kind.connector)?.kind.connector;
+    expect(connector).toMatchObject({
+        arrow_start: true,
+        arrow_end: true,
+        start_marker: { kind: "oval" },
+        start_marker_size: 12.5,
+        start_marker_unfilled: true,
+        end_marker: { kind: "oval" },
+        end_marker_size: 8,
+    });
+    expect(connector?.end_marker_unfilled).toBeUndefined();
+    const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
+    expect(manifest.version).toBe(16);
+});

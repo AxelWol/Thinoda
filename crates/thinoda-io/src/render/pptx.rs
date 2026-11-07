@@ -268,6 +268,27 @@ impl Drawing {
                     fill,
                     stroke,
                 ),
+                super::board::Prim::Circle {
+                    center,
+                    radius,
+                    fill,
+                    stroke,
+                    width,
+                } => {
+                    if radius > 0.0 {
+                        let id = self.id();
+                        self.shape(
+                            id,
+                            &format!("Canvas object {}", object.id),
+                            Rect::from_center_size(center, Vec2::new(radius * 2.0, radius * 2.0)),
+                            "ellipse",
+                            fill,
+                            stroke,
+                            width,
+                            false,
+                        );
+                    }
+                }
                 super::board::Prim::Text {
                     rect,
                     pivot,

@@ -27,6 +27,14 @@ pub(crate) enum Prim {
         /// Round caps and joins (ink).
         round: bool,
     },
+    /// Circular connector marker in sheet coordinates.
+    Circle {
+        center: Vec2,
+        radius: f32,
+        fill: Option<Color>,
+        stroke: Color,
+        width: f32,
+    },
     /// Centered text lines in an unrotated `rect`, turned around `pivot`.
     Text {
         rect: Rect,
@@ -295,12 +303,22 @@ fn marker_primitive(
     width: f32,
     color: Color,
 ) -> Prim {
-    Prim::Path {
-        points: marker.points().to_vec(),
-        closed: marker.closed,
-        fill: marker.filled.then_some(color),
-        stroke: Some((color, width)),
-        round: false,
+    if let Some((center, radius)) = marker.circle() {
+        Prim::Circle {
+            center,
+            radius,
+            fill: marker.filled.then_some(color),
+            stroke: color,
+            width,
+        }
+    } else {
+        Prim::Path {
+            points: marker.points().to_vec(),
+            closed: marker.closed,
+            fill: marker.filled.then_some(color),
+            stroke: Some((color, width)),
+            round: false,
+        }
     }
 }
 

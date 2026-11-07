@@ -775,6 +775,11 @@ impl Sheet {
         self.canvas.has_diamond_connector_markers()
     }
 
+    /// Whether the sheet needs oval-marker-aware persistence.
+    pub fn has_oval_connector_markers(&self) -> bool {
+        self.canvas.has_oval_connector_markers()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2280,6 +2285,11 @@ impl Workbook {
     /// Whether any sheet needs diamond-marker-aware persistence.
     pub fn has_diamond_connector_markers(&self) -> bool {
         self.sheets.iter().any(Sheet::has_diamond_connector_markers)
+    }
+
+    /// Whether any sheet needs oval-marker-aware persistence.
+    pub fn has_oval_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_oval_connector_markers)
     }
 
     pub fn active(&self) -> &Sheet {

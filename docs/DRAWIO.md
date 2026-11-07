@@ -196,13 +196,14 @@ Rules (each backed by a test):
 
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
-  sizes, v14 adds marker fill overrides, and v15 adds diamond markers. Every later
-  field or passthrough representation that a v15 reader cannot preserve must
-  require a higher native version, with `required_native_version` choosing the
-  oldest version that can represent the complete workbook. Older builds must
-  reject that version instead of silently dropping data. Version sheet/board
-  clipboard, recovery and private XMind envelopes separately whenever an older
-  reader could otherwise ignore new data; reject forged older envelopes too.
+  sizes, v14 adds marker fill overrides, v15 adds diamond markers, and v16 adds
+  oval markers. Every later field or passthrough representation that a v16
+  reader cannot preserve must require a higher native version, with
+  `required_native_version` choosing the oldest version that can represent the
+  complete workbook. Older builds must reject that version instead of silently
+  dropping data. Version sheet/board clipboard, recovery and private XMind
+  envelopes separately whenever an older reader could otherwise ignore new
+  data; reject forged older envelopes too.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 
@@ -558,7 +559,8 @@ connections arrive in Phase 8 without changing the gestures).
 - `required_native_version` gates every field at the first version that supports
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
-  v15 covers diamond markers, and subsequent additions need a higher version.
+  v15 covers diamond markers, v16 covers oval markers, and subsequent additions
+  need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1286,12 +1288,42 @@ PowerPoint checks also cover filled diamonds. A production web build and all
 18 link-import journeys passed across Chromium, Firefox and WebKit.
 
 **Critique and remaining work.** This slice adds two of the published marker
-types, not the complete family. Oval and half-circle markers, fixed ports,
-advanced routing and lossless draw.io save-back remain outstanding. The
+types, not the complete family. At this checkpoint oval and half-circle
+markers, fixed ports, advanced routing and lossless draw.io save-back remain
+outstanding; the following slice addresses ovals. The
 four-point canvas mesh now covers both the concave classic marker and the convex
 diamond; future marker shapes still require their own geometry and coverage
 checks. Actual PowerPoint rendering, physical-device and real screen-reader
 acceptance are not established.
+
+**Oval connector markers (partial Phases 3, 4 and 8).** Filled and hollow
+`oval` ends are circular markers centered on their connector endpoints. Their
+diameters use the independent marker sizes; the connector stroke stops at each
+circle's inner edge, matching the published editor. The localized inspector
+supports size and fill changes with undo. Native v16, sheet clipboard v12,
+board clipboard v9, recovery envelopes with and without pending ink, and
+private XMind snapshots v6 protect these markers from older readers.
+
+The geometry was compared with the published editor using different start and
+end sizes and a non-default stroke width. Tests cover filled and hollow canvas
+rendering, circle-aware hit and lasso selection, small and zero sizes,
+source-preserving import, and the compact inspector's mouse and accessibility
+scrolling. The affected Rust library suites passed 1,881 tests with four
+ignored; the relevant I/O, board, presentation and corpus integration suites
+passed 131 tests with three ignored. All 89 supplied diagrams passed the
+corpus round trip, including the oval markers in the rockpool and UML component
+examples. SVG and presentation output, PNG and rasterized PDF pixels, and
+editable PowerPoint geometry were checked for filled and hollow markers. Native
+and WebAssembly Clippy passed with warnings denied. The production web build
+passed all 21 link-import journeys across Chromium, Firefox and WebKit.
+
+**Critique and remaining work.** This slice does not implement other circular or
+half-circle marker families, fixed ports, advanced routing or lossless draw.io
+save-back. A zero-size oval is invisible, matching draw.io; it does not shorten
+the connector stroke. When markers overlap on a short connector, Thinoda
+collapses the remaining stroke to a point; that case has not been compared with
+draw.io. Actual PowerPoint rendering, physical-device behavior and real
+screen-reader acceptance have not been established.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

@@ -58,15 +58,21 @@ pub enum SceneHit {
 pub struct ConnectorMarkerGeometry {
     points: [Vec2; 4],
     point_count: usize,
+    circle: Option<(Vec2, f32)>,
     pub closed: bool,
     pub filled: bool,
     pub line_inset: f32,
 }
 
 impl ConnectorMarkerGeometry {
-    /// The marker outline, including the notch of a classic arrow.
+    /// The polygonal marker outline, including the notch of a classic arrow.
     pub fn points(&self) -> &[Vec2] {
         &self.points[..self.point_count]
+    }
+
+    /// The center and radius of a circular marker, when present.
+    pub fn circle(&self) -> Option<(Vec2, f32)> {
+        self.circle
     }
 }
 
@@ -96,6 +102,17 @@ fn connector_marker_geometry(
     let delta = tip - *toward;
     let direction = delta * (1.0 / delta.length());
     let normal = Vec2::new(-direction.y, direction.x);
+    if kind == ConnectorMarkerKind::Oval {
+        let radius = marker_size * 0.5;
+        return Some(ConnectorMarkerGeometry {
+            points: [tip; 4],
+            point_count: 0,
+            circle: Some((tip, radius)),
+            closed: true,
+            filled: fill,
+            line_inset: radius,
+        });
+    }
     // Keep draw.io's rounded coefficients for stroke-width-dependent tip offsets.
     let offset = width
         * match kind {
@@ -122,6 +139,7 @@ fn connector_marker_geometry(
                 base,
             ],
             point_count: 4,
+            circle: None,
             closed: true,
             filled: fill,
             line_inset: offset + size,
@@ -150,6 +168,7 @@ fn connector_marker_geometry(
             tip - direction * (size * 0.75),
         ],
         point_count: if classic { 4 } else { 3 },
+        circle: None,
         closed,
         filled: closed && fill,
         line_inset: if classic {
@@ -273,12 +292,19 @@ impl SceneGeometry {
                 };
                 stroke_hit
                     || markers.iter().flatten().any(|marker| {
-                        (marker.filled && point_in_polygon(p, marker.points()))
-                            || if marker.closed {
-                                distance_to_outline(p, marker.points()) <= radius
-                            } else {
-                                distance_to_polyline(p, marker.points()) <= radius
-                            }
+                        if let Some((center, marker_radius)) = marker.circle() {
+                            let distance = (p - center).length();
+                            marker_radius > 0.0
+                                && ((marker.filled && distance <= marker_radius + radius)
+                                    || (distance - marker_radius).abs() <= radius)
+                        } else {
+                            (marker.filled && point_in_polygon(p, marker.points()))
+                                || if marker.closed {
+                                    distance_to_outline(p, marker.points()) <= radius
+                                } else {
+                                    distance_to_polyline(p, marker.points()) <= radius
+                                }
+                        }
                     })
             }
         }
@@ -528,7 +554,14 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
         } => {
             let mut bounds = points_bounds(points)?.expand(width / 2.0);
             for marker in markers.iter().flatten() {
-                if let Some(marker_bounds) = points_bounds(marker.points()) {
+                let marker_bounds = if let Some((center, radius)) = marker.circle() {
+                    (radius > 0.0).then(|| {
+                        Rect::from_center_size(center, Vec2::new(2.0 * radius, 2.0 * radius))
+                    })
+                } else {
+                    points_bounds(marker.points())
+                };
+                if let Some(marker_bounds) = marker_bounds {
                     bounds = bounds.union(&marker_bounds.expand(width / 2.0));
                 }
             }

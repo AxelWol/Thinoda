@@ -1157,6 +1157,21 @@ fn board_object_svg(
                 };
                 out.push_str(&format!("<path d=\"{d}\" fill=\"{fill}\" {stroke}{caps}/>"));
             }
+            board::Prim::Circle {
+                center,
+                radius,
+                fill,
+                stroke,
+                width,
+            } => {
+                if radius > 0.0 {
+                    let fill = fill.map_or_else(|| "none".into(), col);
+                    out.push_str(&format!(
+                        "<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"{radius}\" fill=\"{fill}\" stroke=\"{}\" stroke-width=\"{width:.2}\"/>",
+                        center.x, center.y, col(stroke)
+                    ));
+                }
+            }
             board::Prim::Text {
                 rect,
                 pivot,

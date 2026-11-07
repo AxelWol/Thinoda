@@ -2346,6 +2346,7 @@ fn marker_field(
         Some(ConnectorMarkerKind::BlockThin) => "Thin block arrow",
         Some(ConnectorMarkerKind::Diamond) => "Diamond",
         Some(ConnectorMarkerKind::DiamondThin) => "Thin diamond",
+        Some(ConnectorMarkerKind::Oval) => "Oval",
     };
     ui.add_enabled_ui(enabled, |ui| {
         widgets::property_field(ui, t(label), |ui| {
@@ -2377,6 +2378,9 @@ fn marker_field(
                         }),
                         Some(ConnectorMarker {
                             kind: ConnectorMarkerKind::DiamondThin,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Oval,
                         }),
                     ] {
                         ui.selectable_value(marker, choice, t(name(choice)));
@@ -5352,9 +5356,12 @@ mod tests {
             ("Thin block arrow", Some(ConnectorMarkerKind::BlockThin)),
             ("Diamond", Some(ConnectorMarkerKind::Diamond)),
             ("Thin diamond", Some(ConnectorMarkerKind::DiamondThin)),
+            ("Oval", Some(ConnectorMarkerKind::Oval)),
             ("Legacy triangle", None),
         ] {
             harness.get_by_label("End arrow style").click();
+            harness.run_steps(3);
+            harness.get_by_label(label).scroll_to_me();
             harness.run_steps(3);
             harness.get_by_label(label).click();
             harness.run_steps(3);
@@ -5387,10 +5394,65 @@ mod tests {
         else {
             panic!("expected connector");
         };
-        assert_eq!(
-            current.end_marker.unwrap().kind,
-            ConnectorMarkerKind::DiamondThin
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Oval);
+    }
+
+    #[test]
+    fn connector_marker_menu_scrolls_to_oval_with_the_mouse() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
         );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        let before = harness.get_by_label("Oval").rect();
+        harness.hover_at(harness.get_by_label("Legacy triangle").rect().center());
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -1200.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(15);
+        let after = harness.get_by_label("Oval").rect();
+        assert!(
+            after.top() < before.top(),
+            "before={before:?}, after={after:?}"
+        );
+        assert!(harness.ctx.content_rect().contains(after.center()));
+        harness.get_by_label("Oval").click();
+        harness.run_steps(3);
+        let CanvasObjectKind::Connector(current) = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind
+        else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Oval);
     }
 
     #[test]
@@ -5556,7 +5618,9 @@ mod tests {
         assert!(current(harness.state()).end_marker_unfilled);
         harness.get_by_label("End arrow style").click();
         harness.run_steps(3);
-        harness.get_by_label("Thin diamond").click();
+        harness.get_by_label("Oval").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Oval").click();
         harness.run_steps(3);
         assert!(
             !harness
@@ -5567,10 +5631,12 @@ mod tests {
         assert!(current(harness.state()).end_marker_unfilled);
         assert_eq!(
             current(harness.state()).end_marker.unwrap().kind,
-            ConnectorMarkerKind::DiamondThin
+            ConnectorMarkerKind::Oval
         );
 
         harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Legacy triangle").scroll_to_me();
         harness.run_steps(3);
         harness.get_by_label("Legacy triangle").click();
         harness.run_steps(3);

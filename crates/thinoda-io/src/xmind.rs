@@ -21,6 +21,7 @@ const EXTENDED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-2";
 const SIZED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-3";
 const FILLED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-4";
 const DIAMOND_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-5";
+const OVAL_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-6";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -710,7 +711,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_diamond_connector_markers() {
+    if book.has_oval_connector_markers() {
+        Ok(serde_json::to_string(&(
+            OVAL_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_diamond_connector_markers() {
         Ok(serde_json::to_string(&(
             DIAMOND_MARKER_SNAPSHOT_VERSION,
             book,
@@ -752,6 +758,7 @@ fn marker_private_snapshot(source: &str) -> bool {
                 || version == SIZED_MARKER_SNAPSHOT_VERSION
                 || version == FILLED_MARKER_SNAPSHOT_VERSION
                 || version == DIAMOND_MARKER_SNAPSHOT_VERSION
+                || version == OVAL_MARKER_SNAPSHOT_VERSION
         })
 }
 
@@ -790,6 +797,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != SIZED_MARKER_SNAPSHOT_VERSION
             && version != FILLED_MARKER_SNAPSHOT_VERSION
             && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
@@ -799,6 +807,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != SIZED_MARKER_SNAPSHOT_VERSION
             && version != FILLED_MARKER_SNAPSHOT_VERSION
             && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
             && workbook.has_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -809,6 +818,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != SIZED_MARKER_SNAPSHOT_VERSION
             && version != FILLED_MARKER_SNAPSHOT_VERSION
             && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
             && workbook.has_extended_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -819,6 +829,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         if version != SIZED_MARKER_SNAPSHOT_VERSION
             && version != FILLED_MARKER_SNAPSHOT_VERSION
             && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
             && workbook.has_connector_marker_sizes()
         {
             return Err(IoError::NewerVersion(
@@ -827,15 +838,24 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         }
         if version != FILLED_MARKER_SNAPSHOT_VERSION
             && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
             && workbook.has_connector_marker_fills()
         {
             return Err(IoError::NewerVersion(
                 "connector marker fills require a fill-aware private XMind snapshot".into(),
             ));
         }
-        if version != DIAMOND_MARKER_SNAPSHOT_VERSION && workbook.has_diamond_connector_markers() {
+        if version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
+            && workbook.has_diamond_connector_markers()
+        {
             return Err(IoError::NewerVersion(
                 "diamond connector markers require a diamond-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != OVAL_MARKER_SNAPSHOT_VERSION && workbook.has_oval_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "oval connector markers require an oval-aware private XMind snapshot".into(),
             ));
         }
         Ok(workbook)
@@ -2046,6 +2066,45 @@ mod tests {
                 Err(IoError::NewerVersion(_))
             ));
         }
+    }
+
+    #[test]
+    fn oval_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Diamond,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata["thinodaWorkbook"] =
+            json!(serde_json::to_string(&(DIAMOND_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+        assert!(matches!(
+            import(&make_archive(&entries)),
+            Err(IoError::NewerVersion(_))
+        ));
     }
 
     #[test]
