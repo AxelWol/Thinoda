@@ -41,8 +41,10 @@ copy/paste and connector transforms. Explicit points require native format v10;
 documents without them keep their previous version. Waypoint-bearing sheet and
 mixed-board clipboard payloads use versions 6 and 3, and recovery and private
 XMind snapshots use waypoint-aware envelopes. The model limits points to 1,024
-per connector and 200,000 per sheet. Interactive waypoint editing and exact
-draw.io orthogonal routing are not yet available; see
+per connector and 200,000 per sheet. Selected, unlocked connectors expose
+undoable waypoint insertion, movement, deletion and clearing for their
+existing straight, elbow and curve routes. Exact draw.io orthogonal routing
+and segment dragging are not yet available; see
 [DRAWIO.md](DRAWIO.md) for conversion warnings and remaining work.
 
 ## 1. Goal

@@ -39,6 +39,17 @@ Bring to front|Trazer para frente
 Rotate left|Girar para a esquerda
 Rotate right|Girar para a direita
 Rotate board item|Girar elemento do quadro
+Connector waypoint|Ponto de controle do conector
+Add connector waypoint|Adicionar ponto de controle ao conector
+Drag or use arrow keys to move; double-click or press Delete to remove.|Arraste ou use as setas para mover; clique duas vezes ou pressione Delete para remover.
+Drag, press Enter, or use arrow keys to add a waypoint.|Arraste, pressione Enter ou use as setas para adicionar um ponto de controle.
+Clear connector waypoints|Remover pontos de controle do conector
+Connector is locked.|O conector está bloqueado.
+Connector no longer exists.|O conector não existe mais.
+Connector waypoint no longer exists.|O ponto de controle do conector não existe mais.
+A connector can have at most 1,024 waypoints.|Um conector pode ter no máximo 1.024 pontos de controle.
+A sheet can have at most 200,000 connector waypoints.|Uma folha pode ter no máximo 200.000 pontos de controle de conectores.
+The connector waypoint is outside the permitted board coordinates.|O ponto de controle do conector está fora das coordenadas permitidas do quadro.
 Add connected shape above|Adicionar forma conectada acima
 Add connected shape to the right|Adicionar forma conectada à direita
 Add connected shape below|Adicionar forma conectada abaixo

@@ -193,6 +193,24 @@ fn localize_model_error_in(language: Lang, error: &str) -> &str {
         "pasted topic depth exceeds 256" => {
             t_in(language, "Paste would exceed a topic depth of 256 levels.")
         }
+        "connector is locked" => t_in(language, "Connector is locked."),
+        "connector no longer exists" => t_in(language, "Connector no longer exists."),
+        "connector waypoint no longer exists" => {
+            t_in(language, "Connector waypoint no longer exists.")
+        }
+        "connectors exceed 200000 waypoints per sheet" => t_in(
+            language,
+            "A sheet can have at most 200,000 connector waypoints.",
+        ),
+        _ if error.starts_with("connector ") && error.ends_with(" exceeds 1024 waypoints") => {
+            t_in(language, "A connector can have at most 1,024 waypoints.")
+        }
+        _ if error.starts_with("connector ") && error.ends_with(" has an invalid waypoint") => {
+            t_in(
+                language,
+                "The connector waypoint is outside the permitted board coordinates.",
+            )
+        }
         _ => error,
     }
 }
@@ -578,6 +596,44 @@ const DE: &[(&str, &str)] = &[
     ("Free point", "Freier Punkt"),
     ("Resize board item", "Größe des Board-Elements ändern"),
     ("Rotate board item", "Board-Element drehen"),
+    ("Connector waypoint", "Wegpunkt der Verbindungslinie"),
+    (
+        "Add connector waypoint",
+        "Wegpunkt der Verbindungslinie hinzufügen",
+    ),
+    (
+        "Drag or use arrow keys to move; double-click or press Delete to remove.",
+        "Zum Verschieben ziehen oder die Pfeiltasten verwenden; zum Entfernen doppelklicken oder Entf drücken.",
+    ),
+    (
+        "Drag, press Enter, or use arrow keys to add a waypoint.",
+        "Ziehen, die Eingabetaste oder eine Pfeiltaste drücken, um einen Wegpunkt hinzuzufügen.",
+    ),
+    (
+        "Clear connector waypoints",
+        "Wegpunkte der Verbindungslinie entfernen",
+    ),
+    ("Connector is locked.", "Die Verbindungslinie ist gesperrt."),
+    (
+        "Connector no longer exists.",
+        "Die Verbindungslinie existiert nicht mehr.",
+    ),
+    (
+        "Connector waypoint no longer exists.",
+        "Der Wegpunkt der Verbindungslinie existiert nicht mehr.",
+    ),
+    (
+        "A connector can have at most 1,024 waypoints.",
+        "Eine Verbindungslinie kann höchstens 1.024 Wegpunkte haben.",
+    ),
+    (
+        "A sheet can have at most 200,000 connector waypoints.",
+        "Ein Blatt kann höchstens 200.000 Wegpunkte für Verbindungslinien haben.",
+    ),
+    (
+        "The connector waypoint is outside the permitted board coordinates.",
+        "Der Wegpunkt der Verbindungslinie liegt außerhalb der zulässigen Board-Koordinaten.",
+    ),
     (
         "Add connected shape above",
         "Verbundene Form oberhalb hinzufügen",
@@ -3958,6 +4014,47 @@ mod tests {
     }
 
     #[test]
+    fn waypoint_edit_errors_are_localized_in_every_catalog() {
+        assert_eq!(thinoda_core::board::MAX_CONNECTOR_WAYPOINTS, 1_024);
+        assert_eq!(thinoda_core::board::MAX_TOTAL_CONNECTOR_WAYPOINTS, 200_000);
+        let cases = [
+            ("connector is locked", "Connector is locked."),
+            ("connector no longer exists", "Connector no longer exists."),
+            (
+                "connector waypoint no longer exists",
+                "Connector waypoint no longer exists.",
+            ),
+            (
+                "connector 42 exceeds 1024 waypoints",
+                "A connector can have at most 1,024 waypoints.",
+            ),
+            (
+                "connectors exceed 200000 waypoints per sheet",
+                "A sheet can have at most 200,000 connector waypoints.",
+            ),
+            (
+                "connector 42 has an invalid waypoint",
+                "The connector waypoint is outside the permitted board coordinates.",
+            ),
+        ];
+        for language in Lang::ALL {
+            for (error, key) in cases {
+                assert_eq!(
+                    localize_model_error_in(language, error),
+                    t_in(language, key)
+                );
+                if language != Lang::En {
+                    assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+                }
+            }
+        }
+        assert_eq!(
+            localize_model_error_in(Lang::De, "connector 42 has an unknown failure"),
+            "connector 42 has an unknown failure"
+        );
+    }
+
+    #[test]
     fn fim_wizard_dynamic_labels_are_in_every_catalog() {
         for key in [
             "General",
@@ -4482,6 +4579,11 @@ mod tests {
             "Free point",
             "Resize board item",
             "Rotate board item",
+            "Connector waypoint",
+            "Add connector waypoint",
+            "Drag or use arrow keys to move; double-click or press Delete to remove.",
+            "Drag, press Enter, or use arrow keys to add a waypoint.",
+            "Clear connector waypoints",
             "Add connected shape above",
             "Add connected shape to the right",
             "Add connected shape below",

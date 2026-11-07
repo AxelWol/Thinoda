@@ -546,20 +546,53 @@ fn push_distinct(points: &mut Vec<Vec2>, point: Vec2) {
     }
 }
 
-fn routed_waypoints(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+fn quadratic(start: Vec2, control: Vec2, end: Vec2, t: f32) -> Vec2 {
+    start * ((1.0 - t) * (1.0 - t)) + control * (2.0 * (1.0 - t) * t) + end * (t * t)
+}
+
+#[derive(Clone, Copy)]
+struct WaypointVertex {
+    point: Vec2,
+    passed: usize,
+}
+
+fn push_waypoint_vertex(points: &mut Vec<WaypointVertex>, point: Vec2, passed: usize) {
+    if let Some(last) = points.last_mut()
+        && last.point == point
+    {
+        last.passed = passed;
+    } else {
+        points.push(WaypointVertex { point, passed });
+    }
+}
+
+fn routed_waypoint_vertices(
+    connector: &CanvasConnector,
+    a: EndTarget,
+    b: EndTarget,
+) -> Vec<WaypointVertex> {
     let mut points = Vec::with_capacity(connector.waypoints.len() + 2);
-    points.push(a.rect.center());
-    for &waypoint in connector.waypoints.iter() {
+    points.push(WaypointVertex {
+        point: a.rect.center(),
+        passed: 0,
+    });
+    for (index, &waypoint) in connector.waypoints.iter().enumerate() {
         if connector.route == ConnectorRoute::Curve {
-            points.push(waypoint);
+            points.push(WaypointVertex {
+                point: waypoint,
+                passed: index + 1,
+            });
         } else {
-            push_distinct(&mut points, waypoint);
+            push_waypoint_vertex(&mut points, waypoint, index + 1);
         }
     }
     if connector.route == ConnectorRoute::Curve {
-        points.push(b.rect.center());
+        points.push(WaypointVertex {
+            point: b.rect.center(),
+            passed: connector.waypoints.len(),
+        });
     } else {
-        push_distinct(&mut points, b.rect.center());
+        push_waypoint_vertex(&mut points, b.rect.center(), connector.waypoints.len());
     }
     if points.len() == 1 {
         points.push(points[0]);
@@ -570,10 +603,14 @@ fn routed_waypoints(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> 
         orthogonal.push(points[0]);
         for &next in &points[1..] {
             let previous = *orthogonal.last().expect("path starts with a point");
-            if previous.x != next.x && previous.y != next.y {
-                push_distinct(&mut orthogonal, Vec2::new(next.x, previous.y));
+            if previous.point.x != next.point.x && previous.point.y != next.point.y {
+                push_waypoint_vertex(
+                    &mut orthogonal,
+                    Vec2::new(next.point.x, previous.point.y),
+                    previous.passed,
+                );
             }
-            push_distinct(&mut orthogonal, next);
+            push_waypoint_vertex(&mut orthogonal, next.point, next.passed);
         }
         if orthogonal.len() == 1 {
             orthogonal.push(orthogonal[0]);
@@ -584,42 +621,52 @@ fn routed_waypoints(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> 
     let last = points.len() - 1;
     let first_toward = points[1..]
         .iter()
-        .copied()
-        .find(|point| *point != points[0])
-        .unwrap_or(points[last]);
+        .map(|vertex| vertex.point)
+        .find(|point| *point != points[0].point)
+        .unwrap_or(points[last].point);
     let last_toward = points[..last]
         .iter()
         .rev()
-        .copied()
-        .find(|point| *point != points[last])
-        .unwrap_or(points[0]);
-    points[0] = a.clip(first_toward);
-    points[last] = b.clip(last_toward);
+        .map(|vertex| vertex.point)
+        .find(|point| *point != points[last].point)
+        .unwrap_or(points[0].point);
+    points[0].point = a.clip(first_toward);
+    points[last].point = b.clip(last_toward);
 
     if connector.route != ConnectorRoute::Curve || points.len() == 2 {
-        points.dedup();
-        if points.len() == 1 {
-            points.push(points[0]);
+        let mut distinct = Vec::with_capacity(points.len());
+        for vertex in points {
+            push_waypoint_vertex(&mut distinct, vertex.point, vertex.passed);
         }
-        return points;
+        if distinct.len() == 1 {
+            distinct.push(distinct[0]);
+        }
+        return distinct;
     }
+    points
+}
+
+fn routed_waypoints(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let points = routed_waypoint_vertices(connector, a, b);
+    if connector.route != ConnectorRoute::Curve || points.len() == 2 {
+        return points.into_iter().map(|vertex| vertex.point).collect();
+    }
+    let last = points.len() - 1;
 
     // draw.io's curved polylines use each control point as the handle of a
     // quadratic span, with intermediate spans meeting halfway between handles.
-    let mut curved = vec![points[0]];
-    let mut start = points[0];
+    let mut curved = vec![points[0].point];
+    let mut start = points[0].point;
     for index in 1..last {
-        let control = points[index];
+        let control = points[index].point;
         let end = if index + 1 == last {
-            points[last]
+            points[last].point
         } else {
-            (control + points[index + 1]) * 0.5
+            (control + points[index + 1].point) * 0.5
         };
         for step in 1..=WAYPOINT_CURVE_SEGMENTS {
             let t = step as f32 / WAYPOINT_CURVE_SEGMENTS as f32;
-            let point =
-                start * ((1.0 - t) * (1.0 - t)) + control * (2.0 * (1.0 - t) * t) + end * (t * t);
-            push_distinct(&mut curved, point);
+            push_distinct(&mut curved, quadratic(start, control, end, t));
         }
         start = end;
     }
@@ -794,21 +841,101 @@ pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
     }
 }
 
-/// Polyline of a free connector, clipped to its endpoint targets. Empty if an endpoint
-/// cannot be resolved (dangling reference, hidden anchor or invalid connector cycle).
-pub fn connector_path(sheet: &Sheet, layout: &Layout, connector: &CanvasConnector) -> Vec<Vec2> {
+fn connector_targets(
+    sheet: &Sheet,
+    layout: &Layout,
+    connector: &CanvasConnector,
+) -> Option<(EndTarget, EndTarget)> {
     let mut resolver = ConnectorResolver::new(sheet, layout);
     for end in [connector.from, connector.to] {
         if let Endpoint::Object(id) = end
             && !resolver.resolve(id)
         {
-            return Vec::new();
+            return None;
         }
     }
     resolver
         .endpoint(connector.from)
         .zip(resolver.endpoint(connector.to))
+}
+
+/// Polyline of a free connector, clipped to its endpoint targets. Empty if an endpoint
+/// cannot be resolved (dangling reference, hidden anchor or invalid connector cycle).
+pub fn connector_path(sheet: &Sheet, layout: &Layout, connector: &CanvasConnector) -> Vec<Vec2> {
+    connector_targets(sheet, layout, connector)
         .map_or_else(Vec::new, |(from, to)| routed_path(connector, from, to))
+}
+
+/// A point on a rendered connector where another waypoint can be inserted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConnectorInsertHandle {
+    pub point: Vec2,
+    /// Index before which the new waypoint is inserted.
+    pub insert_at: usize,
+}
+
+/// Insertion handles for the supplied rendered path, in path order.
+///
+/// Elbow bends introduced by the router retain the insertion index of their
+/// logical span. Curve controls are not generally on the path, so their
+/// handles use sampled positions on either side of each control.
+pub fn connector_insert_handles(
+    sheet: &Sheet,
+    layout: &Layout,
+    connector: &CanvasConnector,
+) -> Vec<ConnectorInsertHandle> {
+    let Some((from, to)) = connector_targets(sheet, layout, connector) else {
+        return Vec::new();
+    };
+    if connector.waypoints.is_empty() {
+        let path = routed_path(connector, from, to);
+        if connector.route == ConnectorRoute::Curve {
+            return crate::board::polyline_midpoint(&path)
+                .map(|point| {
+                    vec![ConnectorInsertHandle {
+                        point,
+                        insert_at: 0,
+                    }]
+                })
+                .unwrap_or_default();
+        }
+        return path
+            .windows(2)
+            .filter(|segment| segment[0] != segment[1])
+            .map(|segment| ConnectorInsertHandle {
+                point: (segment[0] + segment[1]) * 0.5,
+                insert_at: 0,
+            })
+            .collect();
+    }
+    let vertices = routed_waypoint_vertices(connector, from, to);
+    if connector.route == ConnectorRoute::Curve {
+        let mut handles = Vec::with_capacity(connector.waypoints.len() * 2);
+        let mut start = vertices[0].point;
+        let last = vertices[vertices.len() - 1].point;
+        for (index, &control) in connector.waypoints.iter().enumerate() {
+            let end = connector
+                .waypoints
+                .get(index + 1)
+                .map_or(last, |next| (control + *next) * 0.5);
+            for (t, insert_at) in [(0.25, index), (0.75, index + 1)] {
+                handles.push(ConnectorInsertHandle {
+                    point: quadratic(start, control, end, t),
+                    insert_at,
+                });
+            }
+            start = end;
+        }
+        return handles;
+    }
+    vertices
+        .windows(2)
+        .filter(|segment| segment[0].point != segment[1].point)
+        .map(|segment| ConnectorInsertHandle {
+            point: (segment[0].point + segment[1].point) * 0.5,
+            insert_at: segment[0].passed,
+        })
+        .collect()
 }
 
 #[cfg(test)]

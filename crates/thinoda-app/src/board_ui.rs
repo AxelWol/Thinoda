@@ -52,6 +52,7 @@ struct ConnectorProperties {
     color: Option<Color>,
     effective_color: Color,
     width: f32,
+    has_waypoints: bool,
 }
 
 struct ConnectorContext {
@@ -196,6 +197,7 @@ enum ConnectorChange {
     ArrowEnd(bool),
     Color(Option<Color>),
     Width(f32),
+    ClearWaypoints,
 }
 
 impl ConnectorChange {
@@ -206,6 +208,7 @@ impl ConnectorChange {
             Self::ArrowEnd(_) => "Arrow at end",
             Self::Color(_) => "Connector color",
             Self::Width(_) => "Connector width",
+            Self::ClearWaypoints => "Clear connector waypoints",
         }
     }
 
@@ -216,6 +219,7 @@ impl ConnectorChange {
             Self::ArrowEnd(enabled) => connector.arrow_end = enabled,
             Self::Color(color) => connector.color = color,
             Self::Width(width) => connector.width = width,
+            Self::ClearWaypoints => connector.waypoints = Default::default(),
         }
     }
 }
@@ -373,6 +377,12 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.free_point = t("Free point").into();
     labels.resize = t("Resize board item").into();
     labels.rotate = t("Rotate board item").into();
+    labels.waypoint = t("Connector waypoint").into();
+    labels.insert_waypoint = t("Add connector waypoint").into();
+    labels.waypoint_hint =
+        t("Drag or use arrow keys to move; double-click or press Delete to remove.").into();
+    labels.insert_waypoint_hint =
+        t("Drag, press Enter, or use arrow keys to add a waypoint.").into();
     labels.connect_up = t("Add connected shape above").into();
     labels.connect_right = t("Add connected shape to the right").into();
     labels.connect_down = t("Add connected shape below").into();
@@ -462,6 +472,7 @@ impl ThinodaApp {
                 color: connector.color,
                 effective_color,
                 width: connector.width,
+                has_waypoints: !connector.waypoints.is_empty(),
             },
         })
     }
@@ -1145,7 +1156,15 @@ impl ThinodaApp {
                     .iter()
                     .any(|member| sheet.is_board_member_locked(*member))
             });
+        let inspector_owner = (
+            doc.doc.instance_id(),
+            doc.doc.active_index(),
+            doc.doc.state_id(),
+            id,
+        );
+        let gesture_active = doc.view.has_active_canvas_gesture();
         let mut edited = original.clone();
+        let mut clear_waypoints = false;
         ui.label(
             egui::RichText::new(t(match &original.kind {
                 CanvasObjectKind::Shape { shape, .. } => shape_name(*shape),
@@ -1199,6 +1218,15 @@ impl ThinodaApp {
                             })
                             .response
                     });
+                    clear_waypoints = ui
+                        .push_id(("clear-connector-waypoints", inspector_owner), |ui| {
+                            ui.add_enabled(
+                                !gesture_active && !connector.waypoints.is_empty(),
+                                egui::Button::new(t("Clear connector waypoints")),
+                            )
+                            .clicked()
+                        })
+                        .inner;
                     ui.checkbox(&mut connector.arrow_start, t("Arrow at start"));
                     ui.checkbox(&mut connector.arrow_end, t("Arrow at end"));
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
@@ -1210,7 +1238,7 @@ impl ThinodaApp {
                 }
             }
         });
-        if edited != original {
+        if edited != original || clear_waypoints {
             let result = (|| {
                 let doc = self
                     .doc_mut()
@@ -1234,6 +1262,9 @@ impl ThinodaApp {
                                 current.arrow_end = value.arrow_end;
                                 current.color = value.color;
                                 current.width = value.width;
+                                if clear_waypoints {
+                                    current.waypoints = Default::default();
+                                }
                             }
                             (CanvasObjectKind::Ink(current), CanvasObjectKind::Ink(value)) => {
                                 current.color = value.color;
@@ -1416,6 +1447,15 @@ fn connector_context_controls(
                             }
                         }
                     });
+                    if ui
+                        .add_enabled(
+                            properties.has_waypoints,
+                            egui::Button::new(t("Clear connector waypoints")),
+                        )
+                        .clicked()
+                    {
+                        change = Some(ConnectorChange::ClearWaypoints);
+                    }
                     crate::ui::reveal_changed_focus(ui);
                 });
         },

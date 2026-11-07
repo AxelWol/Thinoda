@@ -334,6 +334,133 @@ fn waypoint_routes_preserve_controls_and_keep_elbows_orthogonal() {
 }
 
 #[test]
+fn waypoint_insertion_handles_follow_rendered_segments_and_indices() {
+    let sheet = Sheet::new("Waypoints", "Root");
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let start = Vec2::new(0.0, 0.0);
+    let end = Vec2::new(200.0, 150.0);
+    let mut connector = CanvasConnector::new(Endpoint::Point(start), Endpoint::Point(end));
+    connector.route = ConnectorRoute::Elbow;
+    connector.waypoints = vec![Vec2::new(100.0, 100.0)].into();
+    let path = connector_path(&sheet, &layout, &connector);
+    let handles = connector_insert_handles(&sheet, &layout, &connector);
+    assert_eq!(
+        handles
+            .iter()
+            .map(|handle| handle.insert_at)
+            .collect::<Vec<_>>(),
+        [0, 0, 1, 1]
+    );
+    assert_eq!(handles.len(), path.len() - 1);
+    for (handle, segment) in handles.iter().zip(path.windows(2)) {
+        assert_eq!(handle.point, (segment[0] + segment[1]) * 0.5);
+    }
+
+    connector.route = ConnectorRoute::Straight;
+    connector.waypoints = vec![
+        start,
+        Vec2::new(60.0, 0.0),
+        Vec2::new(60.0, 0.0),
+        Vec2::new(140.0, 0.0),
+    ]
+    .into();
+    assert_eq!(
+        connector_insert_handles(&sheet, &layout, &connector)
+            .iter()
+            .map(|handle| handle.insert_at)
+            .collect::<Vec<_>>(),
+        [1, 3, 4]
+    );
+}
+
+#[test]
+fn waypoint_insertion_indices_follow_revisited_clipped_endpoint() {
+    let mut sheet = Sheet::new("Waypoints", "Root");
+    let from = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(1000.0, 1000.0, 40.0, 40.0),
+        Band::Above,
+    );
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let clipped = Vec2::new(1020.0, 1040.0);
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(from),
+        Endpoint::Point(Vec2::new(1300.0, 1100.0)),
+    );
+    connector.waypoints = vec![
+        clipped,
+        Vec2::new(1020.0, 1100.0),
+        clipped,
+        Vec2::new(1120.0, 1040.0),
+    ]
+    .into();
+    for (route, indices) in [
+        (ConnectorRoute::Straight, vec![1, 2, 3, 4]),
+        (ConnectorRoute::Elbow, vec![1, 2, 3, 4, 4]),
+    ] {
+        connector.route = route;
+        let path = connector_path(&sheet, &layout, &connector);
+        assert_eq!(path[0], clipped, "{route:?}");
+        assert_eq!(path[2], clipped, "{route:?}");
+        let handles = connector_insert_handles(&sheet, &layout, &connector);
+        assert_eq!(
+            handles
+                .iter()
+                .map(|handle| handle.insert_at)
+                .collect::<Vec<_>>(),
+            indices,
+            "{route:?}"
+        );
+        for (handle, segment) in handles.iter().zip(path.windows(2)) {
+            assert_eq!(handle.point, (segment[0] + segment[1]) * 0.5);
+        }
+    }
+}
+
+#[test]
+fn curved_waypoint_insertion_handles_lie_on_the_sampled_curve() {
+    let sheet = Sheet::new("Waypoints", "Root");
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 0.0)),
+        Endpoint::Point(Vec2::new(200.0, 150.0)),
+    );
+    connector.route = ConnectorRoute::Curve;
+    for waypoints in [
+        vec![],
+        vec![Vec2::new(50.0, 120.0), Vec2::new(150.0, 30.0)],
+        vec![Vec2::new(50.0, 120.0), Vec2::new(50.0, 120.0)],
+    ] {
+        connector.waypoints = waypoints.into();
+        let path = connector_path(&sheet, &layout, &connector);
+        let handles = connector_insert_handles(&sheet, &layout, &connector);
+        assert_eq!(
+            handles.len(),
+            if connector.waypoints.is_empty() {
+                1
+            } else {
+                connector.waypoints.len() * 2
+            }
+        );
+        assert!(
+            handles
+                .iter()
+                .all(|handle| distance_to_polyline(handle.point, &path) < 0.001)
+        );
+        if connector.waypoints.len() == 2 {
+            assert_eq!(
+                handles
+                    .iter()
+                    .map(|handle| handle.insert_at)
+                    .collect::<Vec<_>>(),
+                [0, 1, 1, 2]
+            );
+        }
+    }
+}
+
+#[test]
 fn connectors_resolve_endpoints_and_hit() {
     let mut s = Sheet::new("Conn", "Root");
     let f = s.add_floating("F", Vec2::new(600.0, 0.0));

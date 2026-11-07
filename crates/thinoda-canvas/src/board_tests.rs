@@ -1,9 +1,12 @@
 use super::*;
 use crate::actions::{BoardAction, apply_board_action, board_actions};
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 use thinoda_core::{
-    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, Endpoint, SceneId,
-    ShapeKind, SheetRootMode, Workbook, ZOrder, board::BoardMember,
+    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorRoute,
+    Endpoint, SceneId, ShapeKind, SheetRootMode, Workbook, ZOrder, board::BoardMember,
 };
 
 struct State {
@@ -2639,6 +2642,380 @@ fn connector_creation_and_endpoint_edits_are_undoable() {
     h.run_steps(2);
     assert_eq!(h.state().doc.workbook(), &created);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+fn waypoint_harness(route: ConnectorRoute) -> (Harness<'static, State>, CanvasObjectId) {
+    let mut sheet = board();
+    sheet.board.snap = false;
+    let mut edge = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-240.0, -80.0)),
+        Endpoint::Point(Vec2::new(240.0, 80.0)),
+    );
+    edge.route = route;
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(edge))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(3);
+    (h, id)
+}
+
+#[test]
+fn waypoint_drag_move_and_double_click_are_undoable_for_all_routes() {
+    for route in [
+        ConnectorRoute::Straight,
+        ConnectorRoute::Elbow,
+        ConnectorRoute::Curve,
+    ] {
+        let (mut h, id) = waypoint_harness(route);
+        let before = h.state().doc.workbook().clone();
+        let handle = h.get_by_label("Add connector waypoint 1").rect().center();
+        let destination = handle + vec2(20.0, 65.0);
+        drag(&mut h, handle, destination);
+        assert_eq!(h.state().doc.workbook(), &before, "{route:?}: preview");
+        finish_drag(&mut h, destination);
+        assert_eq!(connector(&h, id).waypoints.len(), 1, "{route:?}");
+        let inserted = h.state().doc.workbook().clone();
+
+        let handle = h.get_by_label("Connector waypoint 1").rect().center();
+        let destination = handle + vec2(35.0, -30.0);
+        let old = connector(&h, id).waypoints[0];
+        drag(&mut h, handle, destination);
+        assert_eq!(h.state().doc.workbook(), &inserted, "{route:?}: preview");
+        finish_drag(&mut h, destination);
+        assert_eq!(connector(&h, id).waypoints[0], old + Vec2::new(35.0, -30.0));
+        let moved = h.state().doc.workbook().clone();
+
+        let handle = h.get_by_label("Connector waypoint 1").rect().center();
+        click(&mut h, handle, Modifiers::NONE);
+        assert_eq!(
+            h.state().doc.workbook(),
+            &moved,
+            "{route:?}: click is not an edit"
+        );
+        click(&mut h, handle, Modifiers::NONE);
+        assert!(connector(&h, id).waypoints.is_empty(), "{route:?}");
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &moved);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &inserted);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state_mut().doc.redo());
+        assert!(h.state_mut().doc.redo());
+        assert!(h.state_mut().doc.redo());
+        assert!(connector(&h, id).waypoints.is_empty());
+        assert!(
+            h.state().errors.is_empty(),
+            "{route:?}: {:?}",
+            h.state().errors
+        );
+    }
+}
+
+#[test]
+fn waypoint_keyboard_controls_preserve_endpoint_tab_order_and_focus() {
+    let (mut h, id) = waypoint_harness(ConnectorRoute::Straight);
+    let before = h.state().doc.workbook().clone();
+    let connector_label =
+        "Connector, From: Free point (-240, -80), To: Free point (240, 80), Selected";
+    h.get_by_label(connector_label).focus();
+    h.run_steps(2);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Connector From").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Connector To").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Add connector waypoint 1").is_focused());
+    assert_eq!(
+        h.get_by_label("Add connector waypoint 1")
+            .accesskit_node()
+            .description(),
+        Some("Drag, press Enter, or use arrow keys to add a waypoint.".into())
+    );
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(connector(&h, id).waypoints.len(), 1);
+    assert!(h.get_by_label("Connector waypoint 1").is_focused());
+    assert_eq!(
+        h.get_by_label("Connector waypoint 1")
+            .accesskit_node()
+            .description(),
+        Some("Drag or use arrow keys to move; double-click or press Delete to remove.".into())
+    );
+    let initial = connector(&h, id).waypoints[0];
+    h.key_press(Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(
+        connector(&h, id).waypoints[0],
+        initial + Vec2::new(1.0, 0.0)
+    );
+    h.key_press(Key::Delete);
+    h.run_steps(3);
+    assert!(connector(&h, id).waypoints.is_empty());
+    assert!(h.state().doc.sheet().canvas.object(id).is_some());
+    assert!(h.get_by_label(connector_label).is_focused());
+    assert!(h.state_mut().doc.undo());
+    assert!(h.state_mut().doc.undo());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn waypoint_keyboard_move_offscreen_returns_focus_to_connector() {
+    let (mut h, id) = waypoint_harness(ConnectorRoute::Straight);
+    let canvas = h.state().view.canvas_rect;
+    let point = h
+        .state()
+        .view
+        .xf()
+        .sheet(pos2(canvas.right() - 1.0, canvas.center().y));
+    h.state_mut()
+        .doc
+        .update_canvas_object("Add control", id, |object| {
+            if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                connector.waypoints = vec![point].into();
+            }
+        })
+        .unwrap();
+    h.run_steps(3);
+    h.get_by_label("Connector waypoint 1").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowRight);
+    h.run_steps(3);
+    assert_eq!(connector(&h, id).waypoints[0], point + Vec2::new(10.0, 0.0));
+    assert!(
+        h.get_by_label(
+            "Connector, From: Free point (-240, -80), To: Free point (240, 80), Selected"
+        )
+        .is_focused()
+    );
+}
+
+#[test]
+fn waypoint_insertion_accepts_accessibility_click() {
+    let (mut h, id) = waypoint_harness(ConnectorRoute::Straight);
+    h.get_by_label("Add connector waypoint 1").click();
+    h.run_steps(3);
+    assert!(connector(&h, id).waypoints.is_empty());
+    let position = h.get_by_label("Add connector waypoint 1").rect().center();
+    click(&mut h, position, Modifiers::NONE);
+    assert!(connector(&h, id).waypoints.is_empty());
+    h.get_by_label("Add connector waypoint 1").click_accesskit();
+    h.run_steps(3);
+    assert_eq!(connector(&h, id).waypoints.len(), 1);
+    assert!(h.get_by_label("Connector waypoint 1").is_focused());
+
+    h.get_by_label("Connector, From: Free point (-240, -80), To: Free point (240, 80), Selected")
+        .focus();
+    h.run_steps(2);
+    h.get_by_label("Connector waypoint 1").click_accesskit();
+    h.run_steps(2);
+    assert!(h.get_by_label("Connector waypoint 1").is_focused());
+    assert_eq!(connector(&h, id).waypoints.len(), 1);
+}
+
+#[test]
+fn waypoint_drag_cancel_and_stale_document_never_commit() {
+    let (mut h, id) = waypoint_harness(ConnectorRoute::Straight);
+    let before = h.state().doc.workbook().clone();
+    let handle = h.get_by_label("Add connector waypoint 1").rect().center();
+    let destination = handle + vec2(20.0, 50.0);
+    drag(&mut h, handle, destination);
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    finish_drag(&mut h, destination);
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.run_steps(3);
+    let handle = h.get_by_label("Add connector waypoint 1").rect().center();
+    drag(&mut h, handle, destination);
+    h.state_mut()
+        .doc
+        .update_canvas_object("External edit", id, |object| {
+            object.alt_text = "Changed".into()
+        })
+        .unwrap();
+    let changed = h.state().doc.workbook().clone();
+    h.run_steps(2);
+    finish_drag(&mut h, destination);
+    assert_eq!(h.state().doc.workbook(), &changed);
+    assert!(connector(&h, id).waypoints.is_empty());
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("gesture canceled"))
+    );
+}
+
+#[test]
+fn waypoint_touch_drag_commits_once_and_touch_cancel_discards_preview() {
+    let (mut h, id) = waypoint_harness(ConnectorRoute::Straight);
+    let before = h.state().doc.workbook().clone();
+    let start = h.get_by_label("Add connector waypoint 1").rect().center();
+    let end = start + vec2(30.0, 60.0);
+    touch(&mut h, egui::TouchPhase::Start, start);
+    touch(&mut h, egui::TouchPhase::Move, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    touch(&mut h, egui::TouchPhase::End, end);
+    h.run_steps(3);
+    assert_eq!(connector(&h, id).waypoints.len(), 1);
+    let inserted = h.state().doc.workbook().clone();
+    let start = h.get_by_label("Connector waypoint 1").rect().center();
+    let end = start + vec2(60.0, 0.0);
+    touch(&mut h, egui::TouchPhase::Start, start);
+    touch(&mut h, egui::TouchPhase::Move, end);
+    touch(&mut h, egui::TouchPhase::Cancel, end);
+    touch(&mut h, egui::TouchPhase::End, end);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &inserted);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn coincident_waypoints_remain_individually_keyboard_editable() {
+    let (mut h, id) = waypoint_harness(ConnectorRoute::Curve);
+    let location = Vec2::new(0.0, 60.0);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Add controls", id, |object| {
+            if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                connector.waypoints = vec![location, location].into();
+            }
+        })
+        .unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Connector waypoint 1").is_some());
+    h.get_by_label("Connector waypoint 2").focus();
+    h.run_steps(2);
+    h.key_press(Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(
+        connector(&h, id).waypoints.as_ref(),
+        &[location, location + Vec2::new(1.0, 0.0)]
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn waypoint_drag_snapping_to_its_original_position_is_a_noop() {
+    let (mut h, id) = waypoint_harness(ConnectorRoute::Straight);
+    h.state_mut()
+        .doc
+        .edit_sheet("Enable snapping", |sheet| {
+            sheet.board.snap = true;
+            sheet.board.grid_size = 20.0;
+            sheet
+                .update_canvas_object(id, |object| {
+                    if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                        connector.waypoints = vec![Vec2::ZERO].into();
+                    }
+                })
+                .map_err(thinoda_core::EditError::Invalid)
+        })
+        .unwrap();
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let revision = h.state().doc.state_id();
+    let start = h.get_by_label("Connector waypoint 1").rect().center();
+    let end = start + vec2(5.0, 5.0);
+    drag(&mut h, start, end);
+    finish_drag(&mut h, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().doc.state_id(), revision);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn locked_connector_has_no_waypoint_controls() {
+    let mut sheet = board();
+    let mut edge = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-240.0, 0.0)),
+        Endpoint::Point(Vec2::new(240.0, 0.0)),
+    );
+    edge.waypoints = vec![Vec2::new(0.0, 50.0)].into();
+    let mut object = CanvasObject::connector(edge);
+    object.locked = true;
+    let id = sheet.add_canvas_object(object).unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(3);
+    assert!(h.query_by_label("Connector waypoint 1").is_none());
+    assert!(h.query_by_label("Add connector waypoint 1").is_none());
+}
+
+#[test]
+fn waypoint_limit_reports_an_error_without_changing_history() {
+    let mut sheet = board();
+    let mut edge = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-300.0, 0.0)),
+        Endpoint::Point(Vec2::new(300.0, 0.0)),
+    );
+    edge.waypoints = vec![Vec2::ZERO; thinoda_core::board::MAX_CONNECTOR_WAYPOINTS].into();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(edge))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let revision = h.state().doc.state_id();
+    h.get_by_label("Add connector waypoint 1").focus();
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().doc.state_id(), revision);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("1024"))
+    );
+}
+
+#[test]
+fn waypoint_controls_respect_frame_clipping() {
+    let mut sheet = board();
+    let mut edge = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-180.0, 0.0)),
+        Endpoint::Point(Vec2::new(180.0, 0.0)),
+    );
+    edge.waypoints = vec![Vec2::new(-95.0, 20.0), Vec2::new(120.0, 20.0)].into();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(edge))
+        .unwrap();
+    let frame = sheet
+        .create_board_frame(
+            "Clip",
+            thinoda_core::Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(200.0, 200.0)),
+        )
+        .unwrap();
+    sheet.set_zone_members(frame, vec![], vec![id]).unwrap();
+    sheet.zones[0].clip = true;
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(3);
+    assert!(h.query_by_label("Connector waypoint 1").is_some());
+    assert!(h.query_by_label("Connector waypoint 2").is_none());
+    h.get_by_label("Connector waypoint 1").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowLeft);
+    h.run_steps(3);
+    assert_eq!(connector(&h, id).waypoints[0], Vec2::new(-105.0, 20.0));
+    assert!(h.query_by_label("Connector waypoint 1").is_none());
+    assert!(
+        h.get_by_label("Connector, From: Free point (-180, 0), To: Free point (180, 0), Selected")
+            .is_focused()
+    );
 }
 
 #[test]

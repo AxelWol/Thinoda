@@ -88,7 +88,7 @@ Anything outside a tier is reported in diagnostics as "preserved, shown approxim
   Straight|Elbow|Curve, waypoints, arrow_start/end: bool, label, color, width}`; flat
   groups (no nesting), lock flags, single `CanvasLayer` with `Band::{Below,Above}` paint
   bands; cards (Sticky/Text/Image) are floating topics; zones are sheet-level.
-- **Missing for draw.io**: waypoint editing and exact routing, ports/fixed connection points, arrow-type enum, dash
+- **Missing for draw.io**: exact routing, ports/fixed connection points, arrow-type enum, dash
   patterns, fonts/size/alignment per shape, gradients, shadows, rounded/arcSize params,
   flip, named layers (visibility/lock), nested groups/containers, swimlanes/tables, free
   text & image objects, hyperlinks/custom properties/tooltips on objects, stencil shapes,
@@ -244,7 +244,7 @@ Rules (each backed by a test):
 | Text | `CanvasObjectKind::Text` (free text) and `Image { resource | external_url, aspect }`; `LabelStyle { font_family, font_size, bold/italic/underline/strike, align, v_align, wrap, spacing, label_position, background, border }`; rich labels reuse the v8 inline-text model; HTML→rich text mapping table (b/i/u/s/font/color/br/p/ul/ol/li/a/sub/sup) with anything else kept as preserved HTML + plain-text fallback. Fonts: family name kept; missing fonts fall back via existing font stack, noted in diagnostics. |
 | Connection style | Per object `ConnectionStyle { perimeter: Option<Perimeter>, perimeter_spacing, ports: PortPolicy (Default per kind / Constraints(list) / None), connectable }`; `None` = default derived from `ShapeKind`/stencil (Phase 1 uses only these derived defaults). Imported non-default values affect routing, hit-testing, export (tested). |
 | Style | `ObjectStyle` += `dash: Option<DashPattern>`, `fill_opacity`, `stroke_opacity`, `gradient: Option<Gradient>`, `shadow`, `rounded + arc_size`, `flip_h/v`, `direction`, `fill_style`, `sketch`. Colors: `ThemedColor = Fixed(Color) | Default | None | LightDark(Color, Color)`. |
-| Connectors | `waypoints: Arc<[Vec2]>` (stored; editing is future work); `route` += `Orthogonal`, `EntityRelation`, `Isometric`, `Segment`, `Loop`, `SideToSide`, `TopToBottom` (Elbow kept); `start_marker/end_marker: Option<Marker { kind: ArrowKind(34), filled, size }>`; `Endpoint::Port { object, x, y, dx, dy, perimeter }`; labels per 3.2.1; `jump: Option<LineJump>`; dash. |
+| Connectors | `waypoints: Arc<[Vec2]>` (stored and interactively editable); `route` += `Orthogonal`, `EntityRelation`, `Isometric`, `Segment`, `Loop`, `SideToSide`, `TopToBottom` (Elbow kept); `start_marker/end_marker: Option<Marker { kind: ArrowKind(34), filled, size }>`; `Endpoint::Port { object, x, y, dx, dy, perimeter }`; labels per 3.2.1; `jump: Option<LineJump>`; dash. |
 | Structure | Named **layers** `Vec<BoardLayer { id, name, visible, locked }>` in `CanvasLayer`; objects reference layer via `parent`. |
 | Metadata | Per-object `link: Option<Link>` (`Url` w/ scheme allow-list, `Sheet(SheetId)`, `Action(raw)` preserved-only), `tooltip`, `properties: Vec<(String,String)>`, `tags`, `placeholders`. |
 | Sheet | `DiagramPage { page_size, page_scale, grid, background, background_image, math, adaptive_colors }` in `BoardSettings`. |
@@ -587,7 +587,7 @@ connections arrive in Phase 8 without changing the gestures).
 ### Phase 8 — Connector editing UX (`p8-connectors`)
 - Remaining 3.4.1a items that need further model extensions: fixed connection points (×) incl.
   default per-kind point sets and stencil constraints, floating/fixed toggle (Alt),
-  virtual bends + waypoints, orthogonal segment dragging, all route styles in the edge
+  orthogonal segment dragging, all route styles in the edge
   toolbar, 34-marker picker, line jumps, multiple edge labels, smart guides; direction
   arrows/quick-shape popover become port-aware; stencil perimeters; persisted
   `ConnectionStyle` editing; positioned/multiple label dragging; Delete vs Delete all.
@@ -927,9 +927,8 @@ explicitly authorized. Copy as draw.io reports that loss after copying in a
 persistent warning, including attachments to connectors outside the copied
 selection; its report-returning API exposes losses in the prepared fragment,
 while the text-only encoder refuses those lossy conversions. Callers must report
-any losses incurred while preparing a fragment. Interactive waypoint handles,
-exact mxGraph routing, fixed ports and lossless style preservation remain future
-work.
+any losses incurred while preparing a fragment. Exact mxGraph routing, fixed
+ports and lossless style preservation remain future work.
 
 Regression coverage includes coordinate and native-version round trips,
 parent-relative groups, limits, transforms, history, clipboard, path hit
@@ -937,6 +936,32 @@ testing, label editing, attachment deletion, persistence versioning and export
 preflight. The 89-file example corpus passes with 564 waypoint-bearing edges;
 the corpus test additionally checks waypoint paths and native workbook
 equality, not only page and item counts.
+
+**Interactive waypoint editing (partial Phase 8).** A selected, unlocked
+connector shows its explicit waypoints and smaller insertion handles on
+straight, elbow and curved paths. Drag an insertion handle to add a point or an
+existing handle to move it; double-click an existing point to remove it. A
+drag previews the route without changing the document and commits one undoable
+edit on release. The connector-route popup and inspector can clear all points.
+Controls have localized names and instructions: use Tab to focus them,
+Enter or an arrow key to insert, arrow keys to move, and Delete to remove.
+Endpoint controls retain their existing order and behavior. Waypoint-limit,
+locked, stale-control and invalid-coordinate errors are localized.
+
+**Waypoint editing critique.** Clipped or offscreen controls are not offered;
+insertion handles close to existing controls are hidden to reduce overlap, so
+some short segments require zooming in. Coincident explicit points remain
+separately keyboard-addressable, but their pointer targets can overlap.
+Insertion follows logical point order even when clipping or coincident points
+collapse rendered vertices; generated elbow bends are not independent
+waypoints. Keyboard movement that takes a handle out of the viewport or a
+clipping frame returns focus to the connector. The existing no-point curve uses
+a cubic approximation, whereas the
+first waypoint switches it to sampled quadratic spans, so adding a point can
+change its appearance. Elbow-segment dragging, exact draw.io routing and
+physical-device and real assistive-technology acceptance remain open. Gesture
+cancellation and revision guards prevent a stale preview from modifying a
+changed document; locked connectors cannot be edited.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
@@ -992,3 +1017,6 @@ equality, not only page and item counts.
 | W2 | major | draw.io export and copying could silently detach connector-to-connector attachments, including targets outside the selection. | Resolve the fallback at the path midpoint; require export consent at the API and app layers, or show a persistent clipboard warning. |
 | W3 | major | A future private XMind snapshot with an incompatible body could fall back before its version was checked. | Check the version tag first and reject unknown versions. |
 | W4 | minor | Adding Copy as draw.io made the expanded Edit menu taller, so its Settings test attempted to click an off-screen item. | Check that both commands can be revealed, then scroll Settings into view before activating it. |
+| W5 | major | A clipped endpoint can coincide with a waypoint and later revisit the same coordinate, making coordinate-only insertion indices ambiguous. | Carry logical indices through routing and deduplication; test straight and elbow paths that revisit the clipped endpoint. |
+| W6 | major | Keyboard movement can take a focused waypoint outside the viewport or clipping frame, leaving no focusable handle. | Return focus to the owning connector and cover both boundaries. |
+| W7 | major | An assistive-technology click on an insertion handle had no effect despite its button role. | Insert and focus the point on AccessKit activation; clicking an existing point focuses it without deleting it. |

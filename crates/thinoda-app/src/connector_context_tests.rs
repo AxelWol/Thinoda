@@ -215,6 +215,78 @@ fn selected_connector_controls_change_only_existing_properties_and_round_trip() 
 }
 
 #[test]
+fn clear_connector_waypoints_is_guarded_undoable_and_disabled_when_empty() {
+    let (mut app, id) = app_with_connector();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Add waypoints", id, |object| {
+            if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                connector.waypoints = vec![Vec2::new(-20.0, 80.0), Vec2::new(50.0, 70.0)].into();
+            }
+        })
+        .unwrap();
+    let original = connector(&app, id);
+    let stale = app.connector_context().unwrap().target;
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Change description", id, |object| {
+            object.alt_text = "New description".into();
+        })
+        .unwrap();
+    assert!(
+        app.apply_connector_change(&stale, ConnectorChange::ClearWaypoints)
+            .is_err()
+    );
+    assert_eq!(connector(&app, id), original);
+
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    click(&mut h, Role::Button, "Connector route");
+    let clear = h.get_by_role_and_label(Role::Button, "Clear connector waypoints");
+    assert!(!clear.accesskit_node().is_disabled());
+    click(&mut h, Role::Button, "Clear connector waypoints");
+    let mut expected = original.clone();
+    expected.waypoints = Default::default();
+    assert_eq!(connector(h.state(), id), expected);
+    close_popup(&mut h);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+    h.run_steps(4);
+    click(&mut h, Role::Button, "Connector route");
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Clear connector waypoints")
+            .accesskit_node()
+            .is_disabled()
+    );
+}
+
+#[test]
+fn inspector_clears_connector_waypoints_without_changing_other_fields() {
+    let (mut app, id) = app_with_connector();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Add waypoint", id, |object| {
+            if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                connector.waypoints = vec![Vec2::new(0.0, 90.0)].into();
+            }
+        })
+        .unwrap();
+    let original = connector(&app, id);
+    let mut h = harness(app, vec2(1200.0, 800.0));
+    click(&mut h, Role::Button, "More formatting options");
+    click(&mut h, Role::Button, "Clear connector waypoints");
+    let mut expected = original.clone();
+    expected.waypoints = Default::default();
+    assert_eq!(connector(h.state(), id), expected);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(connector(h.state(), id), original);
+}
+
+#[test]
 fn controls_support_keyboard_focus_and_exact_width() {
     let (app, id) = app_with_connector();
     let mut h = harness(app, vec2(900.0, 700.0));

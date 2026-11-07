@@ -245,6 +245,13 @@ enum GestureKind {
         start: bool,
         point: Vec2,
     },
+    Waypoint {
+        id: CanvasObjectId,
+        index: usize,
+        insert: bool,
+        original: Vec2,
+        point: Vec2,
+    },
     Arrow {
         source: CanvasObjectId,
         dir: ArrowDir,
@@ -1096,6 +1103,8 @@ enum ControlKind {
     Rotate,
     From,
     To,
+    Waypoint(usize),
+    InsertWaypoint(usize, usize),
     Arrow(ArrowDir),
 }
 
@@ -1111,16 +1120,22 @@ struct Control {
 }
 
 fn control_id(control: Control) -> Id {
-    let part = match control.kind {
-        ControlKind::Resize => 0,
-        ControlKind::Rotate => 1,
-        ControlKind::From => 2,
-        ControlKind::To => 3,
-        ControlKind::Arrow(dir) => 4 + dir as usize,
+    control_kind_id(control.item, control.kind, control.hover)
+}
+
+fn control_kind_id(item: SceneId, kind: ControlKind, hover: bool) -> Id {
+    let part = match kind {
+        ControlKind::Resize => (0, 0, 0),
+        ControlKind::Rotate => (1, 0, 0),
+        ControlKind::From => (2, 0, 0),
+        ControlKind::To => (3, 0, 0),
+        ControlKind::Arrow(dir) => (4, dir as usize, 0),
+        ControlKind::Waypoint(index) => (5, index, 0),
+        ControlKind::InsertWaypoint(index, segment) => (6, index, segment),
     };
     // Hover arrows never share an Id with the selection's, so focus cannot
     // silently move onto a non-focusable hover control.
-    MapCanvas::id().with(("board-control", control.item, part, control.hover))
+    MapCanvas::id().with(("board-control", item, part, hover))
 }
 
 /// After keyboard activation, focus the same arrow on the new selection so
@@ -1304,7 +1319,7 @@ fn selection_controls(
             return Vec::new();
         }
         let item = SceneId::Object(id);
-        if object.is_connector() {
+        if let CanvasObjectKind::Connector(connector) = &object.kind {
             let Some(SceneGeometry::Polyline { points, .. }) =
                 scene.item(item).map(|item| &item.geometry)
             else {
@@ -1313,22 +1328,54 @@ fn selection_controls(
             let (Some(from), Some(to)) = (points.first(), points.last()) else {
                 return Vec::new();
             };
-            return [(ControlKind::From, *from), (ControlKind::To, *to)]
+            let clip = scene.item(item).and_then(|item| item.clip);
+            let make_control = |kind, point| Control {
+                item,
+                kind,
+                point,
+                rect: object.rect,
+                rotation: 0.0,
+                hover: false,
+            };
+            let mut list: Vec<_> = [(ControlKind::From, *from), (ControlKind::To, *to)]
                 .into_iter()
-                .filter(|(_, point)| {
-                    scene.item(item).is_none_or(|scene_item| {
-                        scene_item.clip.is_none_or(|clip| clip.contains(*point))
-                    })
-                })
-                .map(|(kind, point)| Control {
-                    item,
-                    kind,
-                    point,
-                    rect: object.rect,
-                    rotation: 0.0,
-                    hover: false,
-                })
+                .filter(|(_, point)| clip.is_none_or(|clip| clip.contains(*point)))
+                .map(|(kind, point)| make_control(kind, point))
                 .collect();
+            list.extend(
+                connector
+                    .waypoints
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, point)| {
+                        clip.is_none_or(|clip| clip.contains(**point))
+                            && view.canvas_rect.contains(view.xf().pos(**point))
+                    })
+                    .map(|(index, &point)| make_control(ControlKind::Waypoint(index), point)),
+            );
+            let xf = view.xf();
+            let mut occupied: Vec<_> = list.iter().map(|control| xf.pos(control.point)).collect();
+            for (segment, handle) in
+                thinoda_core::scene::connector_insert_handles(sheet, layout, connector)
+                    .into_iter()
+                    .enumerate()
+            {
+                let center = xf.pos(handle.point);
+                if clip.is_some_and(|clip| !clip.contains(handle.point))
+                    || !view.canvas_rect.contains(center)
+                    || occupied
+                        .iter()
+                        .any(|point| point.distance_sq(center) < 18.0 * 18.0)
+                {
+                    continue;
+                }
+                occupied.push(center);
+                list.push(make_control(
+                    ControlKind::InsertWaypoint(handle.insert_at, segment),
+                    handle.point,
+                ));
+            }
+            return list;
         }
         (item, object.rect, object.rotation)
     } else if view.board_selection.is_empty() && view.selection.len() == 1 {
@@ -1388,6 +1435,10 @@ fn control_label(view: &MapView, kind: ControlKind) -> String {
         ControlKind::Rotate => view.board_labels.rotate.clone(),
         ControlKind::From => format!("{} {}", view.board_labels.connector, view.board_labels.from),
         ControlKind::To => format!("{} {}", view.board_labels.connector, view.board_labels.to),
+        ControlKind::Waypoint(index) => format!("{} {}", view.board_labels.waypoint, index + 1),
+        ControlKind::InsertWaypoint(_, segment) => {
+            format!("{} {}", view.board_labels.insert_waypoint, segment + 1)
+        }
         ControlKind::Arrow(dir) => match dir {
             ArrowDir::Up => view.board_labels.connect_up.clone(),
             ArrowDir::Right => view.board_labels.connect_right.clone(),
@@ -1452,6 +1503,45 @@ fn set_endpoint(
             }
         }
     })
+}
+
+enum WaypointEdit {
+    Insert(usize, Vec2),
+    Move(usize, Vec2),
+    Remove(usize),
+}
+
+fn edit_waypoint(doc: &mut Document, id: CanvasObjectId, edit: WaypointEdit) -> EditResult<bool> {
+    if !board_actions::member_is_movable(doc.sheet(), BoardMember::Object(id)) {
+        return Err(EditError::Invalid("connector is locked".into()));
+    }
+    let Some(CanvasObjectKind::Connector(connector)) =
+        doc.sheet().canvas.object(id).map(|object| &object.kind)
+    else {
+        return Err(EditError::Invalid("connector no longer exists".into()));
+    };
+    let mut points = connector.waypoints.to_vec();
+    match edit {
+        WaypointEdit::Insert(index, point) if index <= points.len() => points.insert(index, point),
+        WaypointEdit::Move(index, point) if index < points.len() => points[index] = point,
+        WaypointEdit::Remove(index) if index < points.len() => {
+            points.remove(index);
+        }
+        _ => {
+            return Err(EditError::Invalid(
+                "connector waypoint no longer exists".into(),
+            ));
+        }
+    }
+    if points.as_slice() == connector.waypoints.as_ref() {
+        return Ok(false);
+    }
+    doc.update_canvas_object("Edit connector waypoints", id, |object| {
+        if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+            connector.waypoints = points.into();
+        }
+    })?;
+    Ok(true)
 }
 
 /// What a direction-arrow click does, following draw.io's `plusTooltip`.
@@ -2029,6 +2119,32 @@ fn alt_arrow_pressed(ui: &Ui) -> bool {
     })
 }
 
+fn activate_waypoint_insertion(
+    ui: &Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    out: &mut CanvasOutput,
+    control: Control,
+) {
+    let (ControlKind::InsertWaypoint(index, _), SceneId::Object(id)) = (control.kind, control.item)
+    else {
+        return;
+    };
+    if prepare_edit(doc, view, out) {
+        match edit_waypoint(doc, id, WaypointEdit::Insert(index, control.point)) {
+            Ok(true) => ui.ctx().memory_mut(|memory| {
+                memory.request_focus(control_kind_id(
+                    control.item,
+                    ControlKind::Waypoint(index),
+                    false,
+                ))
+            }),
+            Ok(false) => {}
+            Err(error) => out.error = Some(error),
+        }
+    }
+}
+
 fn keyboard_control(
     ui: &Ui,
     doc: &mut Document,
@@ -2073,6 +2189,35 @@ fn keyboard_control(
     if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
         ui.ctx()
             .memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+        return;
+    }
+    if matches!(
+        control.kind,
+        ControlKind::Waypoint(_) | ControlKind::InsertWaypoint(_, _)
+    ) && ui.input_mut(|input| {
+        input.consume_key(Modifiers::NONE, Key::Delete)
+            || input.consume_key(Modifiers::NONE, Key::Backspace)
+    }) {
+        if let (ControlKind::Waypoint(index), SceneId::Object(id)) = (control.kind, control.item)
+            && prepare_edit(doc, view, out)
+        {
+            match edit_waypoint(doc, id, WaypointEdit::Remove(index)) {
+                Ok(true) => ui
+                    .ctx()
+                    .memory_mut(|memory| memory.request_focus(item_id(control.item))),
+                Ok(false) => {}
+                Err(error) => out.error = Some(error),
+            }
+        }
+        return;
+    }
+    if matches!(control.kind, ControlKind::InsertWaypoint(_, _))
+        && ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter)
+                || input.consume_key(Modifiers::NONE, Key::Space)
+        })
+    {
+        activate_waypoint_insertion(ui, doc, view, out, control);
         return;
     }
     // Let the canvas own Alt+arrow duplication/rotation even when a handle is
@@ -2161,6 +2306,36 @@ fn keyboard_control(
             };
             set_endpoint(doc, id, control.kind == ControlKind::From, endpoint).map(|()| true)
         }
+        ControlKind::Waypoint(index) | ControlKind::InsertWaypoint(index, _) => {
+            let SceneId::Object(id) = control.item else {
+                return;
+            };
+            if !prepare_edit(doc, view, out) {
+                return;
+            }
+            let point = control.point + delta;
+            let edit = if matches!(control.kind, ControlKind::Waypoint(_)) {
+                WaypointEdit::Move(index, point)
+            } else {
+                WaypointEdit::Insert(index, point)
+            };
+            let result = edit_waypoint(doc, id, edit);
+            if matches!(result, Ok(true)) {
+                let visible = view.canvas_rect.contains(view.xf().pos(point))
+                    && scene
+                        .item(control.item)
+                        .and_then(|item| item.clip)
+                        .is_none_or(|clip| clip.contains(point));
+                ui.ctx().memory_mut(|memory| {
+                    memory.request_focus(if visible {
+                        control_kind_id(control.item, ControlKind::Waypoint(index), false)
+                    } else {
+                        item_id(control.item)
+                    })
+                });
+            }
+            result
+        }
         ControlKind::Arrow(_) => return,
     };
     if let Err(error) = result {
@@ -2200,6 +2375,17 @@ fn interact_controls(
         let response = ui.interact(rect, control_id(control), sense);
         let label = control_label(view, control.kind);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+        let hint = match control.kind {
+            ControlKind::Waypoint(_) => Some(&view.board_labels.waypoint_hint),
+            ControlKind::InsertWaypoint(_, _) => Some(&view.board_labels.insert_waypoint_hint),
+            _ => None,
+        };
+        if let Some(hint) = hint {
+            response.clone().on_hover_text(hint);
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_description(hint.as_str());
+            });
+        }
         if let ControlKind::Arrow(dir) = control.kind
             && let SceneId::Object(source) = control.item
             && response.hovered()
@@ -2265,6 +2451,18 @@ fn interact_controls(
                         point: control.point,
                     }
                 }
+                ControlKind::Waypoint(index) | ControlKind::InsertWaypoint(index, _) => {
+                    let SceneId::Object(id) = control.item else {
+                        continue;
+                    };
+                    GestureKind::Waypoint {
+                        id,
+                        index,
+                        insert: matches!(control.kind, ControlKind::InsertWaypoint(_, _)),
+                        original: control.point,
+                        point: control.point,
+                    }
+                }
                 ControlKind::Arrow(dir) => {
                     let SceneId::Object(source) = control.item else {
                         continue;
@@ -2283,6 +2481,45 @@ fn interact_controls(
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, start));
             blocked = true;
+        }
+        if response.double_clicked()
+            && let (ControlKind::Waypoint(index), SceneId::Object(id)) =
+                (control.kind, control.item)
+            && view
+                .board_input
+                .gesture
+                .as_ref()
+                .is_none_or(|drag| !drag.canceled && !drag.guard.changed(doc, view))
+        {
+            view.board_input.gesture = None;
+            if prepare_edit(doc, view, out) {
+                match edit_waypoint(doc, id, WaypointEdit::Remove(index)) {
+                    Ok(true) => ui
+                        .ctx()
+                        .memory_mut(|memory| memory.request_focus(item_id(control.item))),
+                    Ok(false) => {}
+                    Err(error) => out.error = Some(error),
+                }
+            }
+            return true;
+        }
+        if response.clicked()
+            && view.board_input.gesture.is_none()
+            && ui.input(|input| {
+                input.has_accesskit_action_request(response.id, egui::accesskit::Action::Click)
+            })
+        {
+            match control.kind {
+                ControlKind::InsertWaypoint(_, _) => {
+                    activate_waypoint_insertion(ui, doc, view, out, control);
+                    return true;
+                }
+                ControlKind::Waypoint(_) => {
+                    response.request_focus();
+                    return true;
+                }
+                _ => {}
+            }
         }
         // Press and release can land in one frame (e.g. synthetic taps).
         if response.clicked()
@@ -2400,6 +2637,11 @@ fn update_gesture(
             | GestureKind::Outline { current: p, .. } => {
                 *p = current;
             }
+            GestureKind::Waypoint {
+                original, point, ..
+            } => {
+                *point = snapped(doc.sheet(), *original + current - drag.origin);
+            }
         }
     }
     if release.is_none()
@@ -2443,6 +2685,10 @@ fn update_gesture(
                     ..
                 }
             );
+            let waypoint_focus = match &drag.kind {
+                GestureKind::Waypoint { id, index, .. } => Some((*id, *index)),
+                _ => None,
+            };
             let result = match drag.kind {
                 GestureKind::Create {
                     tool,
@@ -2514,6 +2760,20 @@ fn update_gesture(
                     let end = endpoint_at(doc.sheet(), scene, point, Some(id));
                     set_endpoint(doc, id, start, end).map(|()| true)
                 }
+                GestureKind::Waypoint {
+                    id,
+                    index,
+                    insert,
+                    point,
+                    ..
+                } => {
+                    let edit = if insert {
+                        WaypointEdit::Insert(index, point)
+                    } else {
+                        WaypointEdit::Move(index, point)
+                    };
+                    edit_waypoint(doc, id, edit)
+                }
                 GestureKind::Arrow {
                     source,
                     dir,
@@ -2541,6 +2801,16 @@ fn update_gesture(
             };
             match result {
                 Ok(true) if duplicating => focus_duplicated_selection(ui, view),
+                Ok(true) if waypoint_focus.is_some() => {
+                    let (id, index) = waypoint_focus.expect("checked");
+                    ctx.memory_mut(|memory| {
+                        memory.request_focus(control_kind_id(
+                            SceneId::Object(id),
+                            ControlKind::Waypoint(index),
+                            false,
+                        ))
+                    });
+                }
                 Err(error) => out.error = Some(error),
                 _ => {}
             }
@@ -3591,8 +3861,13 @@ pub(super) fn paint(
             }
             continue;
         }
-        painter.circle_filled(center, 6.0, sheet_background(sheet, view.dark));
-        painter.circle_stroke(center, 6.0, Stroke::new(2.0, view.accent));
+        let radius = if matches!(control.kind, ControlKind::InsertWaypoint(_, _)) {
+            4.0
+        } else {
+            6.0
+        };
+        painter.circle_filled(center, radius, sheet_background(sheet, view.dark));
+        painter.circle_stroke(center, radius, Stroke::new(2.0, view.accent));
         if focused {
             painter.circle_stroke(center, 9.0, Stroke::new(2.0, view.accent));
         }
@@ -3783,6 +4058,47 @@ pub(super) fn paint(
                         6.0,
                         4.0,
                     ));
+                }
+            }
+        }
+        GestureKind::Waypoint {
+            id,
+            index,
+            insert,
+            point,
+            ..
+        } => {
+            if let Some(object) = sheet.canvas.object(*id)
+                && let CanvasObjectKind::Connector(connector) = &object.kind
+            {
+                let mut connector = connector.clone();
+                let mut points = connector.waypoints.to_vec();
+                if *insert && *index <= points.len() {
+                    points.insert(*index, *point);
+                } else if !*insert && *index < points.len() {
+                    points[*index] = *point;
+                } else {
+                    return;
+                }
+                connector.waypoints = points.into();
+                let preview = thinoda_core::scene::connector_path(sheet, layout, &connector);
+                if preview.len() >= 2 {
+                    let clipped = scene
+                        .item(SceneId::Object(*id))
+                        .and_then(|item| item.clip)
+                        .map(|clip| painter.with_clip_rect(xf.rect(clip)));
+                    let target = clipped.as_ref().unwrap_or(painter);
+                    target.add(egui::Shape::dashed_line(
+                        &preview
+                            .into_iter()
+                            .map(|point| xf.pos(point))
+                            .collect::<Vec<_>>(),
+                        stroke,
+                        6.0,
+                        4.0,
+                    ));
+                    target.circle_filled(xf.pos(*point), 6.0, sheet_background(sheet, view.dark));
+                    target.circle_stroke(xf.pos(*point), 6.0, stroke);
                 }
             }
         }
