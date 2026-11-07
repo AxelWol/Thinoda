@@ -1,4 +1,9 @@
-# Regional wording for pending freehand input.
+# Regional wording overrides.
+Start arrow style|Estilo da seta inicial
+End arrow style|Estilo da seta final
+Classic arrow|Seta clássica
+Open arrow|Seta aberta
+Block arrow|Seta preenchida
 Ink settings|Configurações da entrada à mão livre
 Pending ink is not in the saved file. Crash recovery may miss recent samples.|A entrada à mão livre pendente não está no arquivo salvo. A recuperação após falha pode não incluir as amostras recentes.
 Recovered ink may be incomplete. Review it before retrying.|A entrada à mão livre recuperada pode estar incompleta. Revise-a antes de tentar novamente.

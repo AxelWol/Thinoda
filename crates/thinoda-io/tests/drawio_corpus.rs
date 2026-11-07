@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use thinoda_core::{
     Sheet, Vec2, Workbook,
-    board::{CanvasObjectKind, ConnectorRoute},
+    board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute},
 };
 use thinoda_io::{ExportOptions, Format};
 
@@ -75,6 +75,48 @@ fn check_waypoints(before: &Workbook, after: &Workbook) -> Result<(), String> {
     Ok(())
 }
 
+fn markers(sheet: &Sheet) -> Vec<(Option<ConnectorMarkerKind>, Option<ConnectorMarkerKind>)> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector)
+                if connector.start_marker.is_some() || connector.end_marker.is_some() =>
+            {
+                Some((
+                    connector.start_marker.map(|marker| marker.kind),
+                    connector.end_marker.map(|marker| marker.kind),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn check_markers(before: &Workbook, after: &Workbook) -> Result<(), String> {
+    for (index, (original, restored)) in before.sheets.iter().zip(&after.sheets).enumerate() {
+        let mut remaining = markers(restored);
+        for marker in markers(original) {
+            let Some(found) = remaining.iter().position(|other| *other == marker) else {
+                return Err(format!(
+                    "page {} lost connector markers {marker:?}",
+                    index + 1
+                ));
+            };
+            remaining.swap_remove(found);
+        }
+        if !remaining.is_empty() {
+            return Err(format!(
+                "page {} gained {} connector markers",
+                index + 1,
+                remaining.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn check(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let format = thinoda_io::detect_format(path, &bytes);
@@ -118,6 +160,7 @@ fn check(path: &Path) -> Result<String, String> {
         return Err(format!("round trip lost items {count} -> {round_trip}"));
     }
     check_waypoints(&book, &again)?;
+    check_markers(&book, &again)?;
 
     let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
         .map_err(|e| format!("native export: {e}"))?;
@@ -136,11 +179,15 @@ fn check(path: &Path) -> Result<String, String> {
         thinoda_io::drawio_clipboard::decode(&text).map_err(|e| format!("clipboard: {e}"))?;
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} waypoint edge(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} warning kind(s)",
         book.sheets.len(),
         book.sheets
             .iter()
             .map(|sheet| waypoint_paths(sheet).len())
+            .sum::<usize>(),
+        book.sheets
+            .iter()
+            .map(|sheet| markers(sheet).len())
             .sum::<usize>(),
         report.warnings.len()
     ))

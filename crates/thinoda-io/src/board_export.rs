@@ -12,16 +12,19 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 10;
+pub const NATIVE_FORMAT_VERSION: u64 = 11;
 
 /// Lowest native format version able to represent `book`.
 ///
 /// 2 is the base format, 3 adds embedded resources, 4 formatted notes, 5 FIM documents,
 /// 6 Freeform board semantics, 7 independent Zone background colors, and 8 inline card
-/// text formatting, 9 explicit Zone object membership, and 10 connector waypoints.
+/// text formatting, 9 explicit Zone object membership, 10 connector waypoints,
+/// and 11 non-default connector markers.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_connector_waypoints() {
+    if book.has_connector_markers() {
+        11
+    } else if book.has_connector_waypoints() {
         10
     } else if book
         .sheets

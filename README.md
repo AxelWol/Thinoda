@@ -722,14 +722,19 @@ those system-owned controls. WinGet publishing remains paused.
 - XMind reopening honors edits made by other applications rather than silently
   restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
+  If public content or embedded images changed, or an unreadable older snapshot
+  is ignored, reopening can omit private-only board objects and their connector
+  markers.
 - draw.io diagrams can be imported as converted copies and exported as `.drawio`
   or editable `.drawio.svg` / `.drawio.png` images. The editable image exports
   contain **only the current sheet**, both in the preview and in the embedded
   diagram. Their embedded data can include content outside the visible preview:
   the image is **not redacted**. Conversion may simplify or omit features; review
-  the warnings and retain the original file and a `.thinoda` copy. Connector
-  markers and fixed attachment points may be approximated; non-default marker
-  styles, sizes and fills and fixed-port hints trigger a formatting warning.
+  the warnings and retain the original file and a `.thinoda` copy. Default-sized
+  open and filled block connector arrows are editable; unsupported marker shapes,
+  custom sizes and fills, and fixed-port hints trigger a formatting warning.
+  The existing classic arrow remains an approximation without a marker-specific
+  warning.
   Unsupported content can prevent export. Editable image export is not Save As
   or lossless save-back.
   Import also recognizes legacy URI- or base64-encoded SVG diagrams and older

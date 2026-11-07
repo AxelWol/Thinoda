@@ -845,14 +845,36 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                 polygon,
                 &mut budget,
             )?,
-            SceneGeometry::Polyline { points, width } => path_touches_lasso(
+            SceneGeometry::Polyline {
                 points,
-                false,
-                |point| point,
-                f64::from(*width) / 2.0,
-                polygon,
-                &mut budget,
-            )?,
+                width,
+                markers,
+            } => {
+                let mut intersects = path_touches_lasso(
+                    points,
+                    false,
+                    |point| point,
+                    f64::from(*width) / 2.0,
+                    polygon,
+                    &mut budget,
+                )?;
+                for marker in markers.iter().flatten() {
+                    if intersects {
+                        break;
+                    }
+                    intersects = (marker.filled
+                        && polygon_touches_lasso(&marker.points, polygon, &mut budget)?)
+                        || path_touches_lasso(
+                            &marker.points,
+                            marker.filled,
+                            |point| point,
+                            f64::from(*width) / 2.0,
+                            polygon,
+                            &mut budget,
+                        )?;
+                }
+                intersects
+            }
         };
         if intersects {
             seen.insert(hit);
@@ -973,13 +995,26 @@ fn validate_scene_geometry(
                 return Err(invalid());
             }
         }
-        SceneGeometry::Polyline { points, width } => {
+        SceneGeometry::Polyline {
+            points,
+            width,
+            markers,
+        } => {
             if points.is_empty() || points.len() > MAX_INPUT_SAMPLES || !valid_width(*width) {
                 return Err(invalid());
             }
             budget.charge(points.len())?;
             if points.iter().any(|&point| !finite_point(point)) {
                 return Err(invalid());
+            }
+            for marker in markers.iter().flatten() {
+                budget.charge(marker.points.len())?;
+                if marker.points.iter().any(|&point| !finite_point(point))
+                    || !marker.line_inset.is_finite()
+                    || marker.line_inset < 0.0
+                {
+                    return Err(invalid());
+                }
             }
         }
     }
@@ -2486,6 +2521,29 @@ mod tests {
         assert_eq!(
             lasso_hits(&scene, &rectangle(1440.0, -2.0, 20.0, 4.0)).unwrap(),
             vec![SceneHit::Object(connector)]
+        );
+    }
+
+    #[test]
+    fn lasso_selects_connector_marker_wings() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(89.0, 3.5, 1.5, 1.5)).unwrap(),
+            vec![SceneHit::Object(id)]
         );
     }
 

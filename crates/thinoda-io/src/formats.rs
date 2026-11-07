@@ -102,9 +102,19 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "connector waypoints require native format version 10".into(),
             ));
         }
+        if version < 11 && book.has_connector_markers() {
+            return Err(IoError::Invalid(
+                "connector markers require native format version 11".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_connector_markers() {
+            return Err(IoError::Invalid(
+                "connector markers require a versioned native archive".into(),
+            ));
+        }
         if book.has_connector_waypoints() {
             return Err(IoError::Invalid(
                 "connector waypoints require a versioned native archive".into(),

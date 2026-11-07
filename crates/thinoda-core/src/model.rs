@@ -750,6 +750,11 @@ impl Sheet {
         self.canvas.has_connector_waypoints()
     }
 
+    /// Whether the sheet needs marker-aware persistence.
+    pub fn has_connector_markers(&self) -> bool {
+        self.canvas.has_connector_markers()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2228,6 +2233,11 @@ impl Workbook {
     /// Whether any sheet needs waypoint-aware persistence.
     pub fn has_connector_waypoints(&self) -> bool {
         self.sheets.iter().any(Sheet::has_connector_waypoints)
+    }
+
+    /// Whether any sheet needs marker-aware persistence.
+    pub fn has_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_markers)
     }
 
     pub fn active(&self) -> &Sheet {

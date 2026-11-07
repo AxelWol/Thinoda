@@ -158,6 +158,11 @@ Connector color|Color del conector|Couleur du connecteur|Forbindelseslinjens far
 Connector width|Grosor del conector|Épaisseur du connecteur|Forbindelseslinjens tykkelse|Dikte van de verbindingslijn|Espessura do conector|Spessore del connettore|Grubość łącznika
 Arrow at start|Flecha al inicio|Flèche au début|Pil ved start|Pijl aan het begin|Seta no início|Freccia all’inizio|Strzałka na początku
 Arrow at end|Flecha al final|Flèche à la fin|Pil ved slutning|Pijl aan het einde|Seta no fim|Freccia alla fine|Strzałka na końcu
+Start arrow style|Estilo de flecha inicial|Style de la flèche de début|Startpilens stil|Stijl van beginpijl|Estilo da seta inicial|Stile della freccia iniziale|Styl strzałki początkowej
+End arrow style|Estilo de flecha final|Style de la flèche de fin|Slutpilens stil|Stijl van eindpijl|Estilo da seta final|Stile della freccia finale|Styl strzałki końcowej
+Classic arrow|Flecha clásica|Flèche classique|Klassisk pil|Klassieke pijl|Seta clássica|Freccia classica|Strzałka klasyczna
+Open arrow|Flecha abierta|Flèche ouverte|Åben pil|Open pijl|Seta aberta|Freccia aperta|Strzałka otwarta
+Block arrow|Flecha sólida|Flèche pleine|Fyldt pil|Gevulde pijl|Seta preenchida|Freccia piena|Strzałka wypełniona
 Card|Tarjeta|Carte|Kort|Kaart|Cartão|Scheda|Karta
 Rotation|Rotación|Rotation|Rotation|Rotatie|Rotação|Rotazione|Obrót
 Custom color|Color personalizado|Couleur personnalisée|Brugerdefineret farve|Aangepaste kleur|Cor personalizada|Colore personalizzato|Kolor niestandardowy

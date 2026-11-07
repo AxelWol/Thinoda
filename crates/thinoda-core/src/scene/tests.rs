@@ -23,6 +23,123 @@ fn shape(s: &mut Sheet, kind: ShapeKind, r: Rect, band: Band) -> CanvasObjectId 
 }
 
 #[test]
+fn connector_marker_geometry_and_hit_testing_follow_both_ends() {
+    use crate::board::{ConnectorMarker, ConnectorMarkerKind};
+
+    let mut sheet = Sheet::new("Markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    let item = scene.item(SceneId::Object(id)).unwrap();
+    let SceneGeometry::Polyline {
+        points,
+        width,
+        markers,
+    } = &item.geometry
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(*width, 2.0);
+    let start = markers[0].unwrap();
+    let end = markers[1].unwrap();
+    assert!(start.filled);
+    assert!(!end.filled);
+    assert!((start.points[1].x - 2.236).abs() < 0.001);
+    assert!((start.points[0].x - 10.236).abs() < 0.001);
+    assert!((end.points[1].x - 97.764).abs() < 0.001);
+    assert!((end.points[0].x - 89.764).abs() < 0.001);
+    assert!((end.points[0].y.abs() - 4.0).abs() < 0.001);
+    assert!(item.bounds.contains(end.points[0]));
+    assert_eq!(
+        scene.hit_test_tolerance(end.points[0], 0.0),
+        Some(SceneHit::Object(id))
+    );
+    let line = connector_stroke_path(points, markers);
+    assert!((line[0].x - 10.236).abs() < 0.001);
+    assert!((line[1].x - 95.528).abs() < 0.001);
+}
+
+#[test]
+fn connector_marker_geometry_handles_duplicate_and_short_segments() {
+    use crate::board::ConnectorMarkerKind;
+
+    let duplicate = [
+        Vec2::ZERO,
+        Vec2::ZERO,
+        Vec2::new(1.0, 0.0),
+        Vec2::new(1.0, 0.0),
+    ];
+    let markers = [
+        connector_marker_geometry(&duplicate, true, ConnectorMarkerKind::Open, 2.0),
+        connector_marker_geometry(&duplicate, false, ConnectorMarkerKind::Block, 2.0),
+    ];
+    assert!(markers.iter().all(Option::is_some));
+    let clipped = connector_stroke_path(&duplicate, &markers);
+    assert!(clipped.len() >= 2);
+    assert!(clipped.iter().all(|point| {
+        point.x.is_finite() && point.y.is_finite() && (0.0..=1.0).contains(&point.x)
+    }));
+    assert!((clipped[0].x - clipped[clipped.len() - 1].x).abs() < 0.001);
+    assert!(
+        connector_marker_geometry(
+            &[Vec2::ZERO, Vec2::ZERO],
+            true,
+            ConnectorMarkerKind::Open,
+            2.0
+        )
+        .is_none()
+    );
+
+    let bent = [Vec2::ZERO, Vec2::new(2.0, 0.0), Vec2::new(2.0, 20.0)];
+    let marker = connector_marker_geometry(&bent, true, ConnectorMarkerKind::Open, 2.0);
+    let clipped = connector_stroke_path(&bent, &[marker, None]);
+    assert_eq!(clipped[0].x, 2.0);
+    assert!((clipped[0].y - 2.472).abs() < 0.001);
+    assert_eq!(clipped.last(), Some(&Vec2::new(2.0, 20.0)));
+}
+
+#[test]
+fn connector_marker_geometry_matches_published_drawio_for_diagonal_edges() {
+    use crate::board::ConnectorMarkerKind;
+
+    // Recorded from app.diagrams.net's mxMarker with size 6 and stroke width 3.
+    let points = [Vec2::new(140.0, 220.0), Vec2::new(200.0, 300.0)];
+    for (kind, expected_end) in [
+        (ConnectorMarkerKind::Open, Vec2::new(195.9752, 294.6336)),
+        (ConnectorMarkerKind::Block, Vec2::new(192.5876, 290.1168)),
+    ] {
+        let marker = connector_marker_geometry(&points, false, kind, 3.0).unwrap();
+        let expected = [
+            Vec2::new(188.9876, 292.8168),
+            Vec2::new(197.9876, 297.3168),
+            Vec2::new(196.1876, 287.4168),
+        ];
+        for (actual, expected) in marker.points.iter().zip(expected) {
+            assert!(
+                (*actual - expected).length() < 0.001,
+                "{actual:?} != {expected:?}"
+            );
+        }
+        assert_eq!(marker.filled, kind == ConnectorMarkerKind::Block);
+        let stroke = connector_stroke_path(&points, &[None, Some(marker)]);
+        assert!((*stroke.last().unwrap() - expected_end).length() < 0.001);
+    }
+}
+
+#[test]
 fn bands_paint_in_order() {
     let mut s = Sheet::new("Bands", "Root");
     let f = s.add_floating("F", Vec2::new(0.0, 400.0));
@@ -710,7 +827,8 @@ fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
             .geometry,
         SceneGeometry::Polyline {
             points: path,
-            width: connector.width
+            width: connector.width,
+            markers: [None, None],
         }
     );
 

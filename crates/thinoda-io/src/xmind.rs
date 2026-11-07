@@ -16,6 +16,7 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 const MAX_XMIND_ARCHIVE_ENTRIES: usize = MAX_RESOURCES + 5;
 const WAYPOINT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-WAYPOINTS-1";
+const MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -705,23 +706,66 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_connector_waypoints() {
+    if book.has_connector_markers() {
+        Ok(serde_json::to_string(&(MARKER_SNAPSHOT_VERSION, book))?)
+    } else if book.has_connector_waypoints() {
         Ok(serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, book))?)
     } else {
         Ok(serde_json::to_string(book)?)
     }
 }
 
+fn marker_private_snapshot(source: &str) -> bool {
+    source
+        .trim_start()
+        .strip_prefix('[')
+        .and_then(|contents| {
+            String::deserialize(&mut serde_json::Deserializer::from_str(contents)).ok()
+        })
+        .is_some_and(|version| version == MARKER_SNAPSHOT_VERSION)
+}
+
+fn snapshot_contains_marker_fields(source: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(source) else {
+        return false;
+    };
+    let workbook = value
+        .as_array()
+        .and_then(|envelope| envelope.get(1))
+        .unwrap_or(&value);
+    workbook
+        .get("sheets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|sheet| sheet.get("canvas")?.get("objects")?.as_array())
+        .flatten()
+        .filter_map(|object| object.get("kind")?.get("connector")?.as_object())
+        .any(|connector| {
+            connector.contains_key("start_marker") || connector.contains_key("end_marker")
+        })
+}
+
 fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
     if let Some(contents) = source.trim_start().strip_prefix('[') {
         let version = String::deserialize(&mut serde_json::Deserializer::from_str(contents))?;
-        if version != WAYPOINT_SNAPSHOT_VERSION {
+        if version != WAYPOINT_SNAPSHOT_VERSION && version != MARKER_SNAPSHOT_VERSION {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != MARKER_SNAPSHOT_VERSION && workbook.has_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "connector markers require a marker-aware private XMind snapshot".into(),
+            ));
+        }
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "connector markers require a marker-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_connector_waypoints() {
             return Err(IoError::Invalid(
                 "connector waypoints require a versioned private XMind snapshot".into(),
@@ -1244,9 +1288,15 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 .and_then(|m| m.get("thinodaWorkbook"))
                 .and_then(Value::as_str)
             {
+                let marker_snapshot = marker_private_snapshot(w);
                 match read_private_snapshot(w) {
                     Ok(workbook) => {
                         if let Err(e) = workbook.validate() {
+                            if marker_snapshot {
+                                return Err(IoError::Invalid(format!(
+                                    "invalid marker-aware private XMind snapshot: {e}"
+                                )));
+                            }
                             log::warn!("Ignoring invalid private XMind snapshot: {e}");
                         } else {
                             let public_matches = match public_content(&workbook) {
@@ -1293,6 +1343,9 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                         }
                     }
                     Err(error @ IoError::NewerVersion(_)) => return Err(error),
+                    Err(error) if marker_snapshot || snapshot_contains_marker_fields(w) => {
+                        return Err(error);
+                    }
                     Err(e) => log::warn!("Ignoring unreadable private XMind snapshot: {e}"),
                 }
             }
@@ -1707,6 +1760,96 @@ mod tests {
 
     fn image_resource_path(topic: TopicId) -> String {
         format!("resources/topic-0-{}", topic.0)
+    }
+
+    #[test]
+    fn connector_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for snapshot in [
+            private_snapshot(&book).unwrap(),
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            for (from, to) in [
+                ("\"kind\":\"open\"", "\"kind\":\"unknown-marker\""),
+                ("\"arrow_end\":true", "\"arrow_end\":false"),
+            ] {
+                let malformed = snapshot.replace(from, to);
+                assert_ne!(snapshot, malformed);
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(malformed);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(import(&make_archive(&entries)).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn externally_edited_xmind_content_supersedes_stale_marker_snapshot() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "content.json")
+            .unwrap();
+        let mut content: Value = serde_json::from_slice(bytes).unwrap();
+        content[0]["rootTopic"]["title"] = json!("Edited externally");
+        *bytes = serde_json::to_vec(&content).unwrap();
+        let reopened = import(&make_archive(&entries)).unwrap();
+        assert_eq!(reopened.active().root_topic().title, "Edited externally");
+        assert!(reopened.active().canvas.is_empty());
     }
 
     #[test]

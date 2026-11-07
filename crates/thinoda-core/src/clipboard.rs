@@ -23,12 +23,15 @@ const FORMATTED_SHEET_PREFIX: &str = "THINODA-SHEET-3\n";
 const FIM_SHEET_PREFIX: &str = "THINODA-SHEET-4\n";
 const INLINE_SHEET_PREFIX: &str = "THINODA-SHEET-5\n";
 const WAYPOINT_SHEET_PREFIX: &str = "THINODA-SHEET-6\n";
+const MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-7\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_connector_waypoints() {
+    let prefix = if sheet.has_connector_markers() {
+        MARKER_SHEET_PREFIX
+    } else if sheet.has_connector_waypoints() {
         WAYPOINT_SHEET_PREFIX
     } else if sheet.has_inline_text() {
         INLINE_SHEET_PREFIX
@@ -59,9 +62,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(WAYPOINT_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-6\r\n"))
-        .map(|json| (6, json))
+        .strip_prefix(MARKER_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-7\r\n"))
+        .map(|json| (7, json))
+        .or_else(|| {
+            text.strip_prefix(WAYPOINT_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-6\r\n"))
+                .map(|json| (6, json))
+        })
         .or_else(|| {
             text.strip_prefix(INLINE_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-5\r\n"))
@@ -89,6 +97,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 7 && sheet.has_connector_markers() {
+        return Err("connector markers require sheet clipboard version 7".into());
+    }
     if version < 6 && sheet.has_connector_waypoints() {
         return Err("connector waypoints require sheet clipboard version 6".into());
     }
@@ -471,6 +482,42 @@ mod tests {
                         .contains("connector waypoints require sheet clipboard version 6")
                 );
             }
+        }
+    }
+
+    #[test]
+    fn connector_marker_sheet_clipboards_require_version_seven() {
+        use crate::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut sheet = formatted_card_sheet(crate::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        connector.waypoints = vec![Vec2::new(50.0, 30.0)].into();
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(MARKER_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        for version in 1..=6 {
+            let forged =
+                encoded.replacen("THINODA-SHEET-7", &format!("THINODA-SHEET-{version}"), 1);
+            assert!(
+                decode_sheet(&forged)
+                    .unwrap_err()
+                    .contains("connector markers require sheet clipboard version 7")
+            );
         }
     }
 

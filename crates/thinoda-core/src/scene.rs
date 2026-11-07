@@ -3,9 +3,10 @@
 //! `docs/FREEFORM.md`.
 
 use crate::board::{
-    Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorRoute,
-    Endpoint, GridKind, ShapeKind, distance_to_outline, distance_to_polyline, point_in_polygon,
-    points_bounds, rotate_around, rotated_bounds, rotated_rect_contains, shape_geometry,
+    Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorMarkerKind,
+    ConnectorRoute, Endpoint, GridKind, ShapeKind, distance_to_outline, distance_to_polyline,
+    point_in_polygon, points_bounds, rotate_around, rotated_bounds, rotated_rect_contains,
+    shape_geometry,
 };
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rotated_rect, cubic};
@@ -52,6 +53,111 @@ pub enum SceneHit {
     Object(CanvasObjectId),
 }
 
+/// Paint geometry for a non-default connector marker, in sheet coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConnectorMarkerGeometry {
+    /// Two wings and the tip, in path order.
+    pub points: [Vec2; 3],
+    pub filled: bool,
+    pub line_inset: f32,
+}
+
+fn connector_marker_geometry(
+    points: &[Vec2],
+    at_start: bool,
+    kind: ConnectorMarkerKind,
+    width: f32,
+) -> Option<ConnectorMarkerGeometry> {
+    let tip = if at_start {
+        *points.first()?
+    } else {
+        *points.last()?
+    };
+    let toward = if at_start {
+        points
+            .iter()
+            .find(|point| (**point - tip).length() > f32::EPSILON)
+    } else {
+        points
+            .iter()
+            .rev()
+            .find(|point| (**point - tip).length() > f32::EPSILON)
+    }?;
+    let delta = tip - *toward;
+    let direction = delta * (1.0 / delta.length());
+    let normal = Vec2::new(-direction.y, direction.x);
+    let offset = width * 1.118;
+    let size = 6.0 + width;
+    let tip = tip - direction * offset;
+    let base = tip - direction * size;
+    let filled = kind == ConnectorMarkerKind::Block;
+    Some(ConnectorMarkerGeometry {
+        points: [
+            base + normal * (size / 2.0),
+            tip,
+            base - normal * (size / 2.0),
+        ],
+        filled,
+        line_inset: if filled { size + offset } else { offset * 2.0 },
+    })
+}
+
+/// Trim a connector stroke to the inside of its non-default markers.
+/// If the markers overlap on a short path, the remaining stroke collapses to a point.
+pub fn connector_stroke_path(
+    points: &[Vec2],
+    markers: &[Option<ConnectorMarkerGeometry>; 2],
+) -> Vec<Vec2> {
+    if markers.iter().all(Option::is_none) || points.len() < 2 {
+        return points.to_vec();
+    }
+    let total: f32 = points
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).length())
+        .sum();
+    if total <= f32::EPSILON {
+        return points.to_vec();
+    }
+    let mut start = markers[0].map_or(0.0, |marker| marker.line_inset);
+    let mut end = markers[1].map_or(0.0, |marker| marker.line_inset);
+    if start + end > total {
+        let scale = total / (start + end);
+        start *= scale;
+        end *= scale;
+    }
+    let stop = (total - end).max(start).min(total);
+    let mut result = Vec::new();
+    let mut offset = 0.0;
+    for pair in points.windows(2) {
+        let delta = pair[1] - pair[0];
+        let length = delta.length();
+        if length <= f32::EPSILON {
+            continue;
+        }
+        let segment_end = offset + length;
+        if segment_end >= start && offset <= stop {
+            let first = ((start - offset) / length).clamp(0.0, 1.0);
+            let last = ((stop - offset) / length).clamp(0.0, 1.0);
+            let a = pair[0] + delta * first;
+            let b = pair[0] + delta * last;
+            if result.last() != Some(&a) {
+                result.push(a);
+            }
+            if result.last() != Some(&b) {
+                result.push(b);
+            }
+        }
+        offset = segment_end;
+        if offset > stop {
+            break;
+        }
+    }
+    if result.len() == 1 {
+        result.push(result[0]);
+    }
+    result
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneGeometry {
     /// Unrotated rect turned by `rotation` degrees around its centre.
@@ -69,7 +175,11 @@ pub enum SceneGeometry {
         rotation: f32,
     },
     /// Free connector path.
-    Polyline { points: Vec<Vec2>, width: f32 },
+    Polyline {
+        points: Vec<Vec2>,
+        width: f32,
+        markers: [Option<ConnectorMarkerGeometry>; 2],
+    },
 }
 
 impl SceneGeometry {
@@ -90,8 +200,21 @@ impl SceneGeometry {
                 let local = rotate_around(p, *center, -*rotation);
                 distance_to_polyline(local, points) <= width / 2.0 + tolerance
             }
-            SceneGeometry::Polyline { points, width } => {
-                distance_to_polyline(p, points) <= width / 2.0 + tolerance
+            SceneGeometry::Polyline {
+                points,
+                width,
+                markers,
+            } => {
+                let radius = width / 2.0 + tolerance;
+                distance_to_polyline(p, points) <= radius
+                    || markers.iter().flatten().any(|marker| {
+                        (marker.filled && point_in_polygon(p, &marker.points))
+                            || if marker.filled {
+                                distance_to_outline(p, &marker.points) <= radius
+                            } else {
+                                distance_to_polyline(p, &marker.points) <= radius
+                            }
+                    })
             }
         }
     }
@@ -215,6 +338,14 @@ fn object_item(
                 return None;
             }
             SceneGeometry::Polyline {
+                markers: [
+                    c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
+                        connector_marker_geometry(&points, true, marker.kind, c.width)
+                    }),
+                    c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
+                        connector_marker_geometry(&points, false, marker.kind, c.width)
+                    }),
+                ],
                 points,
                 width: c.width,
             }
@@ -311,8 +442,18 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
                 crate::board::rotated_corners(r, 0.0).map(|c| rotate_around(c, *center, *rotation));
             points_bounds(&corners)
         }
-        SceneGeometry::Polyline { points, width } => {
-            Some(points_bounds(points)?.expand(width / 2.0))
+        SceneGeometry::Polyline {
+            points,
+            width,
+            markers,
+        } => {
+            let mut bounds = points_bounds(points)?.expand(width / 2.0);
+            for marker in markers.iter().flatten() {
+                if let Some(marker_bounds) = points_bounds(&marker.points) {
+                    bounds = bounds.union(&marker_bounds.expand(width / 2.0));
+                }
+            }
+            Some(bounds)
         }
     }
 }

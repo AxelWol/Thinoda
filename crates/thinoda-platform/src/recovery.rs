@@ -44,6 +44,8 @@ pub struct Snapshot {
 const INLINE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INLINE-1";
 const WAYPOINT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-WAYPOINTS-1";
 const INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-1";
+const MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-1";
+const MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -65,7 +67,11 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(INK_WORKBOOK_VERSION)?;
+        tuple.serialize_element(if self.workbook.has_connector_markers() {
+            MARKER_INK_WORKBOOK_VERSION
+        } else {
+            INK_WORKBOOK_VERSION
+        })?;
         tuple.serialize_element(self.workbook)?;
         tuple.serialize_element(pending_ink)?;
         tuple.end()
@@ -124,7 +130,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_connector_waypoints() {
+    let version = if workbook.has_connector_markers() {
+        MARKER_WORKBOOK_VERSION
+    } else if workbook.has_connector_waypoints() {
         WAYPOINT_WORKBOOK_VERSION
     } else if workbook.has_inline_text() {
         INLINE_WORKBOOK_VERSION
@@ -154,6 +162,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_connector_markers() {
+                return Err(A::Error::custom(
+                    "connector markers require a versioned recovery workbook",
+                ));
+            }
             if workbook.has_connector_waypoints() {
                 return Err(A::Error::custom(
                     "connector waypoints require a versioned recovery workbook",
@@ -175,6 +188,8 @@ where
             if version != INLINE_WORKBOOK_VERSION
                 && version != WAYPOINT_WORKBOOK_VERSION
                 && version != INK_WORKBOOK_VERSION
+                && version != MARKER_WORKBOOK_VERSION
+                && version != MARKER_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -183,22 +198,31 @@ where
             let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != MARKER_WORKBOOK_VERSION
+                && version != MARKER_INK_WORKBOOK_VERSION
+                && workbook.has_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "connector markers require a marker-aware recovery workbook",
+                ));
+            }
             if version == INLINE_WORKBOOK_VERSION && workbook.has_connector_waypoints() {
                 return Err(A::Error::custom(
                     "connector waypoints require a waypoint-aware recovery workbook",
                 ));
             }
-            let pending_ink = if version == INK_WORKBOOK_VERSION {
-                let pending_ink: String = seq
-                    .next_element()?
-                    .ok_or_else(|| A::Error::custom("missing pending ink"))?;
-                if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
-                    return Err(A::Error::custom("invalid pending ink size"));
-                }
-                Some(pending_ink)
-            } else {
-                None
-            };
+            let pending_ink =
+                if version == INK_WORKBOOK_VERSION || version == MARKER_INK_WORKBOOK_VERSION {
+                    let pending_ink: String = seq
+                        .next_element()?
+                        .ok_or_else(|| A::Error::custom("missing pending ink"))?;
+                    if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
+                        return Err(A::Error::custom("invalid pending ink size"));
+                    }
+                    Some(pending_ink)
+                } else {
+                    None
+                };
             if seq.next_element::<IgnoredAny>()?.is_some() {
                 return Err(A::Error::custom("unexpected recovery workbook data"));
             }
@@ -1063,6 +1087,75 @@ mod lock_tests {
                     .unwrap_err()
                     .to_string()
                     .contains("connector waypoints require a versioned recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn connector_markers_require_marker_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Sheet,
+            Vec2,
+        };
+
+        let mut sheet = Sheet::new("Markers", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        connector.waypoints = vec![Vec2::new(50.0, 20.0)].into();
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        book.sheets.push(sheet);
+        book.validate().unwrap();
+        let meta = SnapshotMeta::default();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => Snapshot::to_bytes_with_pending_ink(meta.clone(), &book, ink).unwrap(),
+                None => Snapshot::to_bytes(meta.clone(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+            assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    MARKER_WORKBOOK_VERSION
+                }
+            );
+            for old_version in [
+                INLINE_WORKBOOK_VERSION,
+                WAYPOINT_WORKBOOK_VERSION,
+                INK_WORKBOOK_VERSION,
+            ] {
+                let mut forged = value.clone();
+                forged["workbook"][0] = serde_json::json!(old_version);
+                assert!(
+                    serde_json::from_value::<Snapshot>(forged)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("connector markers require a marker-aware recovery workbook")
+                );
+            }
+            let mut unversioned = value.clone();
+            unversioned["workbook"] = value["workbook"][1].clone();
+            assert!(
+                serde_json::from_value::<Snapshot>(unversioned)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector markers require a versioned recovery workbook")
             );
         }
     }

@@ -19,9 +19,10 @@ use thinoda_core::{
     TopicId, TopicShape, Vec2, Workbook, ZoneId,
     board::{
         Band, BoardMember, CanvasConnector, CanvasGroupId, CanvasObject, CanvasObjectId,
-        CanvasObjectKind, Card, CardKind, ConnectorRoute, Endpoint, GridKind, InkStroke, InkTool,
-        MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE,
-        MIN_STROKE_WIDTH, ObjectStyle, ShapeKind, SheetRootMode, normalize_rotation, rotate_around,
+        CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind, ConnectorRoute,
+        Endpoint, GridKind, InkStroke, InkTool, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE,
+        MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, ShapeKind,
+        SheetRootMode, normalize_rotation, rotate_around,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -607,6 +608,15 @@ impl Style {
         }
     }
 
+    fn marker(&self, key: &str) -> Option<ConnectorMarker> {
+        let kind = match self.get(key)? {
+            "open" => ConnectorMarkerKind::Open,
+            "block" => ConnectorMarkerKind::Block,
+            _ => return None,
+        };
+        Some(ConnectorMarker { kind })
+    }
+
     /// Visual details without a Thinoda equivalent.
     fn formatting_loss(&self, edge: bool) -> bool {
         const FLAGS: [&str; 7] = [
@@ -654,8 +664,9 @@ impl Style {
             || (edge
                 && (self.get("jumpStyle").is_some_and(|v| v != "none")
                     || ["startArrow", "endArrow"].iter().any(|key| {
-                        self.get(key)
-                            .is_some_and(|v| !matches!(v, "" | "none" | "classic"))
+                        self.get(key).is_some_and(|v| {
+                            !matches!(v, "" | "none" | "classic" | "open" | "block")
+                        })
                     })
                     || ["startFill", "endFill"]
                         .iter()
@@ -1668,6 +1679,8 @@ impl<'a> PageImport<'a> {
             .collect();
         connector.arrow_end = style.end_arrow();
         connector.arrow_start = style.start_arrow();
+        connector.start_marker = style.marker("startArrow");
+        connector.end_marker = style.marker("endArrow");
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
@@ -2429,13 +2442,22 @@ impl<'a> PageWriter<'a> {
                         }
                     }
                 }
+                let marker_name = |marker: Option<ConnectorMarker>| match marker.map(|m| m.kind) {
+                    Some(ConnectorMarkerKind::Open) => "open",
+                    Some(ConnectorMarkerKind::Block) => "block",
+                    None => "classic",
+                };
+                style.push_str("endArrow=");
                 style.push_str(if connector.arrow_end {
-                    "endArrow=classic;"
+                    marker_name(connector.end_marker)
                 } else {
-                    "endArrow=none;"
+                    "none"
                 });
+                style.push(';');
                 if connector.arrow_start {
-                    style.push_str("startArrow=classic;");
+                    style.push_str("startArrow=");
+                    style.push_str(marker_name(connector.start_marker));
+                    style.push(';');
                 }
                 color_keys(&mut style, "strokeColor", "strokeOpacity", connector.color);
                 color_keys(

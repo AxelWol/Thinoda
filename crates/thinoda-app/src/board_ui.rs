@@ -3,8 +3,8 @@
 use egui::{Color32, Context, Rect, Ui, vec2};
 use thinoda_canvas::{BoardTool, MapView};
 use thinoda_core::{
-    CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorRoute, InkTool, ObjectStyle,
-    ShapeKind, TopicId,
+    CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
+    ConnectorRoute, InkTool, ObjectStyle, ShapeKind, TopicId,
     board::{BoardMember, MAX_BOARD_COORDINATE, MIN_CARD_SIZE},
 };
 use thinoda_ui::{
@@ -215,8 +215,8 @@ impl ConnectorChange {
     fn apply(self, connector: &mut thinoda_core::CanvasConnector) {
         match self {
             Self::Route(route) => connector.route = route,
-            Self::ArrowStart(enabled) => connector.arrow_start = enabled,
-            Self::ArrowEnd(enabled) => connector.arrow_end = enabled,
+            Self::ArrowStart(enabled) => connector.set_arrow_start(enabled),
+            Self::ArrowEnd(enabled) => connector.set_arrow_end(enabled),
             Self::Color(color) => connector.color = color,
             Self::Width(width) => connector.width = width,
             Self::ClearWaypoints => connector.waypoints = Default::default(),
@@ -238,6 +238,8 @@ pub(crate) enum BoardStyleClipboard {
         route: ConnectorRoute,
         arrow_start: bool,
         arrow_end: bool,
+        start_marker: Option<ConnectorMarker>,
+        end_marker: Option<ConnectorMarker>,
     },
     Ink {
         style: ObjectStyle,
@@ -258,6 +260,8 @@ impl BoardStyleClipboard {
                 route: connector.route,
                 arrow_start: connector.arrow_start,
                 arrow_end: connector.arrow_end,
+                start_marker: connector.start_marker,
+                end_marker: connector.end_marker,
             },
             CanvasObjectKind::Ink(ink) => Self::Ink {
                 style: object.style,
@@ -288,6 +292,8 @@ impl BoardStyleClipboard {
                     route,
                     arrow_start,
                     arrow_end,
+                    start_marker,
+                    end_marker,
                 },
                 CanvasObjectKind::Connector(connector),
             ) => {
@@ -297,6 +303,8 @@ impl BoardStyleClipboard {
                 connector.route = route;
                 connector.arrow_start = arrow_start;
                 connector.arrow_end = arrow_end;
+                connector.start_marker = start_marker;
+                connector.end_marker = end_marker;
             }
             (
                 Self::Ink {
@@ -1227,8 +1235,28 @@ impl ThinodaApp {
                             .clicked()
                         })
                         .inner;
-                    ui.checkbox(&mut connector.arrow_start, t("Arrow at start"));
-                    ui.checkbox(&mut connector.arrow_end, t("Arrow at end"));
+                    let mut arrow_start = connector.arrow_start;
+                    if ui.checkbox(&mut arrow_start, t("Arrow at start")).changed() {
+                        connector.set_arrow_start(arrow_start);
+                    }
+                    marker_field(
+                        ui,
+                        "Start arrow style",
+                        id,
+                        arrow_start,
+                        &mut connector.start_marker,
+                    );
+                    let mut arrow_end = connector.arrow_end;
+                    if ui.checkbox(&mut arrow_end, t("Arrow at end")).changed() {
+                        connector.set_arrow_end(arrow_end);
+                    }
+                    marker_field(
+                        ui,
+                        "End arrow style",
+                        id,
+                        arrow_end,
+                        &mut connector.end_marker,
+                    );
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
                     width_field(ui, &mut connector.width);
                 }
@@ -1260,6 +1288,8 @@ impl ThinodaApp {
                                 current.route = value.route;
                                 current.arrow_start = value.arrow_start;
                                 current.arrow_end = value.arrow_end;
+                                current.start_marker = value.start_marker;
+                                current.end_marker = value.end_marker;
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -2242,6 +2272,40 @@ fn route_name(route: ConnectorRoute) -> &'static str {
         ConnectorRoute::Elbow => "Elbow",
         ConnectorRoute::Curve => "Curve",
     }
+}
+
+fn marker_field(
+    ui: &mut Ui,
+    label: &'static str,
+    id: CanvasObjectId,
+    enabled: bool,
+    marker: &mut Option<ConnectorMarker>,
+) {
+    let name = |marker: Option<ConnectorMarker>| match marker.map(|marker| marker.kind) {
+        None => "Classic arrow",
+        Some(ConnectorMarkerKind::Open) => "Open arrow",
+        Some(ConnectorMarkerKind::Block) => "Block arrow",
+    };
+    ui.add_enabled_ui(enabled, |ui| {
+        widgets::property_field(ui, t(label), |ui| {
+            egui::ComboBox::from_id_salt(("board_connector_marker", id, label))
+                .selected_text(t(name(*marker)))
+                .show_ui(ui, |ui| {
+                    for choice in [
+                        None,
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Open,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Block,
+                        }),
+                    ] {
+                        ui.selectable_value(marker, choice, t(name(choice)));
+                    }
+                })
+                .response
+        });
+    });
 }
 
 fn width_field(ui: &mut Ui, width: &mut f32) {
@@ -5023,6 +5087,107 @@ mod tests {
     }
 
     #[test]
+    fn connector_marker_inspector_is_accessible_and_undoable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Start arrow style")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Block arrow").click();
+        harness.run_steps(3);
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Block);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Arrow at end")
+            .click();
+        harness.run_steps(3);
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert!(!current.arrow_end);
+        assert_eq!(current.end_marker, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+    }
+
+    #[test]
     fn object_styles_copy_atomically_without_copying_content_or_geometry() {
         let mut app = ThinodaApp::headless();
         let ctx = Context::default();
@@ -5118,6 +5283,12 @@ mod tests {
         );
         source.route = ConnectorRoute::Curve;
         source.arrow_start = true;
+        source.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        source.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
         source.color = Some(Color::rgba(30, 60, 90, 255));
         source.width = 4.0;
         let source = doc
@@ -5178,7 +5349,27 @@ mod tests {
         );
         assert_eq!(connector.route, ConnectorRoute::Curve);
         assert!(connector.arrow_start);
+        assert_eq!(
+            connector.start_marker.unwrap().kind,
+            ConnectorMarkerKind::Block
+        );
+        assert_eq!(
+            connector.end_marker.unwrap().kind,
+            ConnectorMarkerKind::Open
+        );
         assert_eq!(connector.width, 4.0);
+        assert!(app.doc_mut().unwrap().doc.undo());
+        assert_eq!(
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(target)
+                .unwrap(),
+            &before_target
+        );
+        assert!(app.doc_mut().unwrap().doc.redo());
         app.doc_mut().unwrap().view.select_board_object(ink_source);
         app.exec(&ctx, Cmd::CopyStyle);
         app.doc_mut().unwrap().view.select_board_object(ink_target);

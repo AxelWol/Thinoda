@@ -14,7 +14,19 @@ test.setTimeout(180_000);
 
 type Sheet = {
     title: string;
-    canvas: { objects: { kind: { shape?: { label?: string } } }[] };
+    canvas: {
+        objects: {
+            kind: {
+                shape?: { label?: string };
+                connector?: {
+                    arrow_start: boolean;
+                    arrow_end: boolean;
+                    start_marker?: { kind: string };
+                    end_marker?: { kind: string };
+                };
+            };
+        }[];
+    };
 };
 type Content = { active_sheet: number; sheets: Sheet[] };
 
@@ -40,9 +52,9 @@ async function clickAction(page: Page, x: number, y: number) {
     await frames(page);
 }
 
-async function enterLink(page: Page) {
+async function enterLink(page: Page, link = publishedLink()) {
     await command(page, "Import draw.io link");
-    await page.keyboard.insertText(publishedLink());
+    await page.keyboard.insertText(link);
     await frames(page);
     await clickAction(page, 850, 820);
 }
@@ -96,4 +108,34 @@ test("imports published links locally with cancelable conversion consent", async
         (object) => object.kind.shape?.label === "Imported link shape",
     )).toBe(true);
     expect(externalRequests).toEqual([]);
+});
+
+test("imports supported marker styles into a versioned native workbook", async ({ page }) => {
+    const xml = `<mxfile><diagram name="Marker page"><mxGraphModel><root>`
+        + `<mxCell id="0"/><mxCell id="1" parent="0"/>`
+        + `<mxCell id="edge" style="startArrow=block;endArrow=open;strokeWidth=4;"`
+        + ` edge="1" parent="1"><mxGeometry relative="1" as="geometry">`
+        + `<mxPoint x="150" y="200" as="sourcePoint"/>`
+        + `<mxPoint x="450" y="200" as="targetPoint"/>`
+        + `</mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>`;
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await enterLink(page, `#R${encodeURIComponent(xml)}`);
+
+    const archive = await saveAs(page, "link-markers.thinoda");
+    const content = contentFrom(archive);
+    const sheet = content.sheets[content.active_sheet];
+    expect(sheet.title).toBe("Marker page");
+    const connector = sheet.canvas.objects.find((object) => object.kind.connector)?.kind.connector;
+    expect(connector).toMatchObject({
+        arrow_start: true,
+        arrow_end: true,
+        start_marker: { kind: "block" },
+        end_marker: { kind: "open" },
+    });
+    const manifest: { version: number } = JSON.parse(zipEntry(archive, "manifest.json").toString("utf8"));
+    expect(manifest.version).toBe(11);
 });

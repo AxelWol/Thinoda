@@ -8,7 +8,7 @@ use thinoda_core::{
     board::{
         CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, rotate_around, shape_label_rect,
     },
-    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem},
+    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_path},
 };
 
 use crate::VisualExportContext;
@@ -228,7 +228,14 @@ pub(crate) fn object_prims(
                 round: true,
             });
         }
-        (CanvasObjectKind::Connector(connector), SceneGeometry::Polyline { points, width }) => {
+        (
+            CanvasObjectKind::Connector(connector),
+            SceneGeometry::Polyline {
+                points,
+                width,
+                markers,
+            },
+        ) => {
             let color = faded(
                 connector
                     .color
@@ -238,7 +245,7 @@ pub(crate) fn object_prims(
             );
             let width = width.max(0.1);
             out.push(Prim::Path {
-                points: points.clone(),
+                points: connector_stroke_path(points, markers),
                 closed: false,
                 fill: None,
                 stroke: Some((color, width)),
@@ -246,10 +253,18 @@ pub(crate) fn object_prims(
             });
             let n = points.len();
             if connector.arrow_end && n >= 2 {
-                out.push(arrowhead(points[n - 2], points[n - 1], width, color));
+                if let Some(marker) = markers[1] {
+                    out.push(marker_primitive(marker, width, color));
+                } else if connector.end_marker.is_none() {
+                    out.push(arrowhead(points[n - 2], points[n - 1], width, color));
+                }
             }
             if connector.arrow_start && n >= 2 {
-                out.push(arrowhead(points[1], points[0], width, color));
+                if let Some(marker) = markers[0] {
+                    out.push(marker_primitive(marker, width, color));
+                } else if connector.start_marker.is_none() {
+                    out.push(arrowhead(points[1], points[0], width, color));
+                }
             }
             if !connector.label.trim().is_empty() {
                 let mid = midpoint(points);
@@ -273,6 +288,20 @@ pub(crate) fn object_prims(
         _ => {}
     }
     out
+}
+
+fn marker_primitive(
+    marker: thinoda_core::scene::ConnectorMarkerGeometry,
+    width: f32,
+    color: Color,
+) -> Prim {
+    Prim::Path {
+        points: marker.points.to_vec(),
+        closed: marker.filled,
+        fill: marker.filled.then_some(color),
+        stroke: Some((color, width)),
+        round: false,
+    }
 }
 
 fn arrowhead(from: Vec2, tip: Vec2, width: f32, color: Color) -> Prim {

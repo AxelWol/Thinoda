@@ -194,8 +194,9 @@ Rules (each backed by a test):
 8. **Non-draw.io documents** never get these fields; a native sheet saved to draw.io gets
    fresh ids and default envelope.
 
-- **Native format gates:** v10 currently covers connector waypoints. Every later
-  field or passthrough representation that a v10 reader cannot preserve must
+- **Native format gates:** v10 covers connector waypoints and v11 covers open
+  and block connector markers. Every later field or passthrough representation
+  that a v11 reader cannot preserve must
   require a higher native version, with `required_native_version` choosing the
   oldest version that can represent the complete workbook. Older builds must
   reject that version instead of silently dropping data. Version sheet/board
@@ -553,7 +554,8 @@ connections arrive in Phase 8 without changing the gestures).
   Text/Image/Stencil/opaque kinds, style/connector/metadata fields, `DrawIoDocumentExt`/
   `DrawIoPageExt`/`DrawIoCellExt`, ownership table, tombstones, marker migration.
 - `required_native_version` gates every field at the first version that supports
-  it: v10 covers waypoints, and subsequent additions need a higher version.
+  it: v10 covers waypoints, v11 covers open/block markers, and subsequent
+  additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1122,7 +1124,7 @@ cancellation and revision guards prevent a stale preview from modifying a
 changed document; locked connectors cannot be edited.
 
 **Connector approximation warnings and critique (partial Phases 3, 4 and 8).**
-draw.io import now reports a formatting warning for non-classic marker shapes,
+The first safeguard reported a formatting warning for non-classic marker shapes,
 non-default marker sizes or fills, fixed entry/exit points and offsets, port
 references and direction constraints, and non-default perimeter spacing.
 File and link imports use the existing confirmation and source protection;
@@ -1132,11 +1134,42 @@ sizes and fixed ports. Default-sized, filled classic markers and plain
 connectors keep their existing no-warning round trip. Empty arrow names and
 leading-semicolon default suppression now correctly remove the end arrow; an
 explicit `defaultEdge` restores it in style order. This is a safeguard, not
-marker or port support: the current model still reduces arrowheads to booleans
-and resolves attachments automatically, including an approximate default
-classic marker. It does not retain those source settings or identify each
-affected connector in the generic warning; exact marker rendering, editable
-ports and lossless save-back remain necessary.
+marker or port support by itself.
+
+**Open and block connector markers (partial Phases 3, 4 and 8).** Default-size
+open and filled block arrows at either end now retain their type through draw.io
+file, editable SVG/PNG, link and clipboard conversions. The localized connector
+inspector changes each enabled arrow's style; toolbar toggles, style copy and
+undo preserve valid marker state. The core scene supplies shared marker geometry
+and stroke shortening to canvas and vector/raster/presentation exports,
+including hit and lasso selection. Native v11, sheet clipboard v7, board
+clipboard v4, separate marker-aware recovery envelopes (including pending
+ink), and private XMind snapshots reject older readers and forged older tags.
+Documents without custom
+markers retain their earlier serialization and version. All 89 supplied
+diagram files round-trip their 140 imported open/block marker edges through
+draw.io; the live published editor's marker coordinates and line insets also
+match the tested straight and diagonal defaults. The underlying proportions
+can also be checked against the
+[mxGraph marker implementation](https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/shape/mxMarker.js).
+
+**Critique and remaining work.** This is two of the published marker types,
+not full marker fidelity. Other marker kinds, non-default sizes/fills and fixed
+ports still warn and are approximated; the generic warning does not identify
+individual edges. The existing classic marker remains a legacy triangle rather
+than draw.io's notched classic arrow and does not trigger a marker-specific
+warning. Geometry follows the published default marker proportions, but short
+overlapping markers collapse the connecting stroke and curved/elbow routing
+remains approximate; pixel-identical parity,
+physical-device and screen-reader acceptance have not been established. The
+current in-memory representation keeps booleans alongside optional kinds with
+validation, rather than the eventual derived marker API in §3.2.3. Lossless
+save-back, editable ports and the remaining marker families are still open.
+As with other private-only board content, a Thinoda XMind snapshot is ignored
+when public content or embedded images were changed externally; importing then
+uses the public XMind representation, which cannot restore those markers.
+Unreadable legacy snapshots without recognizable marker fields can also fall
+back to public content; the original XMind file should be retained.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

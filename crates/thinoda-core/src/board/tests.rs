@@ -35,6 +35,65 @@ fn board() -> (Sheet, TopicId, TopicId, TopicId) {
 // ---- serde ------------------------------------------------------------------------------
 
 #[test]
+fn connector_markers_preserve_legacy_json_and_reject_conflicting_flags() {
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let legacy = serde_json::to_string(&connector).unwrap();
+    assert_eq!(
+        legacy,
+        r#"{"from":{"point":{"x":0.0,"y":0.0}},"to":{"point":{"x":100.0,"y":0.0}},"route":"straight","arrow_end":true,"width":2.0}"#
+    );
+    assert!(!legacy.contains("start_marker"));
+    assert!(!legacy.contains("end_marker"));
+    assert_eq!(
+        serde_json::from_str::<CanvasConnector>(&legacy).unwrap(),
+        connector
+    );
+
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    let encoded = serde_json::to_value(&connector).unwrap();
+    assert_eq!(
+        serde_json::from_value::<CanvasConnector>(encoded.clone()).unwrap(),
+        connector
+    );
+    validate_object(&CanvasObject::connector(connector.clone())).unwrap();
+    for (flag, marker) in [("arrow_start", "start_marker"), ("arrow_end", "end_marker")] {
+        let mut forged = encoded.clone();
+        forged[flag] = serde_json::json!(false);
+        assert!(
+            serde_json::from_value::<CanvasConnector>(forged)
+                .unwrap_err()
+                .to_string()
+                .contains("marker conflicts")
+        );
+        let mut forged = encoded.clone();
+        forged[marker]["unknown"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<CanvasConnector>(forged).is_err());
+    }
+
+    connector.set_arrow_start(false);
+    connector.set_arrow_end(false);
+    assert!(connector.start_marker.is_none());
+    assert!(connector.end_marker.is_none());
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    assert!(
+        validate_object(&CanvasObject::connector(connector))
+            .unwrap_err()
+            .contains("marker conflicts")
+    );
+}
+
+#[test]
 fn connector_waypoint_limits_and_edits_are_atomic() {
     let mut connector =
         CanvasConnector::new(Endpoint::Point(Vec2::ZERO), Endpoint::Point(Vec2::ZERO));

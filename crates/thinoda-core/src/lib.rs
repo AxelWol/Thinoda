@@ -41,8 +41,9 @@ pub mod todo;
 
 pub use board::{
     Band, BoardSettings, CanvasConnector, CanvasGroup, CanvasGroupId, CanvasLayer, CanvasObject,
-    CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorRoute, Endpoint, GridKind,
-    InkStroke, InkTool, ObjectStyle, RootProjection, ShapeKind, SheetRootMode, ZOrder,
+    CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
+    ConnectorRoute, Endpoint, GridKind, InkStroke, InkTool, ObjectStyle, RootProjection, ShapeKind,
+    SheetRootMode, ZOrder,
 };
 pub use document::Document;
 pub use edit::{EditError, EditResult};

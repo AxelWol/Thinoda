@@ -75,6 +75,34 @@ fn close_popup(h: &mut Harness<'_, ThinodaApp>) {
 }
 
 #[test]
+fn arrow_toggle_clears_custom_marker_and_undo_restores_it() {
+    let (mut app, id) = app_with_connector();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Set marker", id, |object| {
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                panic!("expected connector");
+            };
+            connector.end_marker = Some(ConnectorMarker {
+                kind: ConnectorMarkerKind::Open,
+            });
+        })
+        .unwrap();
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    click(&mut h, Role::Button, "Arrow at end");
+    let current = connector(h.state(), id);
+    assert!(!current.arrow_end);
+    assert_eq!(current.end_marker, None);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    let restored = connector(h.state(), id);
+    assert!(restored.arrow_end);
+    assert_eq!(restored.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+    assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+    assert_eq!(connector(h.state(), id).end_marker, None);
+}
+
+#[test]
 fn selected_connector_controls_change_only_existing_properties_and_round_trip() {
     for expanded in [false, true] {
         let (app, id) = app_with_connector();

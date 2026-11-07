@@ -1202,15 +1202,11 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         ))
     };
     for style in [
-        "startArrow=open;",
         "startArrow=openThin;",
         "startArrow=classicThin;",
-        "startArrow=block;",
         "startArrow=blockThin;",
-        "endArrow=open;",
         "endArrow=openThin;",
         "endArrow=classicThin;",
-        "endArrow=block;",
         "endArrow=blockThin;",
         "endArrow=diamond;",
         "startFill=0;",
@@ -1255,6 +1251,124 @@ fn connector_marker_and_port_approximations_require_confirmation() {
             restored.warnings.is_empty(),
             "{style}: {:?}",
             restored.warnings
+        );
+    }
+}
+
+#[test]
+fn open_and_block_connector_markers_round_trip_with_both_ends() {
+    let marker = |name| match name {
+        "open" => Some(ConnectorMarkerKind::Open),
+        "block" => Some(ConnectorMarkerKind::Block),
+        _ => None,
+    };
+    for start in ["none", "classic", "open", "block"] {
+        for end in ["none", "classic", "open", "block"] {
+            let xml = page(&format!(
+                r#"<mxCell id="e" style="startArrow={start};endArrow={end};startSize=6;endSize=6;startFill=1;endFill=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/><Array as="points"><mxPoint x="50" y="20"/></Array></mxGeometry></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert!(
+                report.warnings.is_empty(),
+                "{start}, {end}: {:?}",
+                report.warnings
+            );
+            let connector = connectors(&report.workbook.sheets[0])[0];
+            assert_eq!(connector.arrow_start, start != "none");
+            assert_eq!(connector.arrow_end, end != "none");
+            assert_eq!(
+                connector.start_marker.map(|value| value.kind),
+                marker(start)
+            );
+            assert_eq!(connector.end_marker.map(|value| value.kind), marker(end));
+            let native_version = crate::required_native_version(&report.workbook);
+            assert_eq!(
+                native_version,
+                if marker(start).is_some() || marker(end).is_some() {
+                    11
+                } else {
+                    10
+                }
+            );
+            let exported = export(&report.workbook).unwrap();
+            let exported_text = std::str::from_utf8(&exported).unwrap();
+            assert!(exported_text.contains(&format!("endArrow={end};")));
+            if start != "none" {
+                assert!(exported_text.contains(&format!("startArrow={start};")));
+            }
+            let restored = import(&exported).unwrap();
+            assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+            let restored = connectors(&restored.workbook.sheets[0])[0];
+            assert_eq!(restored.start_marker.map(|value| value.kind), marker(start));
+            assert_eq!(restored.end_marker.map(|value| value.kind), marker(end));
+            assert_eq!(restored.arrow_start, start != "none");
+            assert_eq!(restored.arrow_end, end != "none");
+        }
+    }
+}
+
+#[test]
+fn supported_connector_markers_survive_link_and_clipboard_conversion() {
+    let xml = page(
+        r#"<mxCell id="e" style="startArrow=block;endArrow=open;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert!(linked.warnings.is_empty(), "{:?}", linked.warnings);
+    let connector = connectors(&linked.workbook.sheets[0])[0];
+    assert_eq!(
+        connector.start_marker.unwrap().kind,
+        ConnectorMarkerKind::Block
+    );
+    assert_eq!(
+        connector.end_marker.unwrap().kind,
+        ConnectorMarkerKind::Open
+    );
+
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
+    let assert_markers = |payload: &thinoda_core::clipboard::BoardClipboardPayload| {
+        let mut sheet = Sheet::new("Paste", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        thinoda_core::clipboard::paste_board_selection(&mut sheet, payload, Vec2::ZERO).unwrap();
+        let connector = connectors(&sheet)[0];
+        assert_eq!(
+            connector.start_marker.unwrap().kind,
+            ConnectorMarkerKind::Block
+        );
+        assert_eq!(
+            connector.end_marker.unwrap().kind,
+            ConnectorMarkerKind::Open
+        );
+    };
+    assert_markers(&pasted.payload);
+    let copy = crate::drawio_clipboard::encode(&pasted.payload).unwrap();
+    let restored = crate::drawio_clipboard::decode(&copy).unwrap();
+    assert_markers(&restored.payload);
+}
+
+#[test]
+fn editable_drawio_images_preserve_supported_connector_markers() {
+    let report = load(&page(
+        r#"<mxCell id="e" style="startArrow=block;endArrow=open;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+    ));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        let bytes = export_bytes(&report.workbook, format, &ExportOptions::default()).unwrap();
+        let restored = import(&bytes).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{format:?}: {:?}",
+            restored.warnings
+        );
+        let connector = connectors(&restored.workbook.sheets[0])[0];
+        assert_eq!(
+            connector.start_marker.unwrap().kind,
+            ConnectorMarkerKind::Block
+        );
+        assert_eq!(
+            connector.end_marker.unwrap().kind,
+            ConnectorMarkerKind::Open
         );
     }
 }
@@ -1345,7 +1459,7 @@ fn attached_connectors_warn_before_marker_and_port_data_is_discarded() {
     assert_eq!(linked.warnings, vec![ImportWarning::Formatting]);
 
     let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
-    assert!(exported.contains("endArrow=classic;"));
+    assert!(exported.contains("endArrow=open;"));
     assert!(!exported.contains("exitX="));
     assert!(!exported.contains("entryX="));
 }

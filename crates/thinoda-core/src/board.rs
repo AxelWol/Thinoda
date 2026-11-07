@@ -205,6 +205,14 @@ impl CanvasLayer {
             matches!(&object.kind, CanvasObjectKind::Connector(c) if !c.waypoints.is_empty())
         })
     }
+
+    /// Whether this layer needs marker-aware persistence.
+    pub fn has_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.start_marker.is_some() || c.end_marker.is_some())
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -813,7 +821,22 @@ pub enum ConnectorRoute {
     Curve,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Non-default connector marker shapes. A missing marker uses the legacy
+/// filled arrow indicated by the corresponding arrow boolean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectorMarkerKind {
+    Open,
+    Block,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorMarker {
+    pub kind: ConnectorMarkerKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanvasConnector {
     pub from: Endpoint,
     pub to: Endpoint,
@@ -826,12 +849,69 @@ pub struct CanvasConnector {
     pub arrow_start: bool,
     #[serde(default = "default_true")]
     pub arrow_end: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_marker: Option<ConnectorMarker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_marker: Option<ConnectorMarker>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
     #[serde(default = "default_connector_width")]
     pub width: f32,
+}
+
+#[derive(Deserialize)]
+struct StoredCanvasConnector {
+    from: Endpoint,
+    to: Endpoint,
+    #[serde(default)]
+    route: ConnectorRoute,
+    #[serde(default)]
+    waypoints: Arc<[Vec2]>,
+    #[serde(default)]
+    arrow_start: bool,
+    #[serde(default = "default_true")]
+    arrow_end: bool,
+    #[serde(default)]
+    start_marker: Option<ConnectorMarker>,
+    #[serde(default)]
+    end_marker: Option<ConnectorMarker>,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    color: Option<Color>,
+    #[serde(default = "default_connector_width")]
+    width: f32,
+}
+
+impl<'de> Deserialize<'de> for CanvasConnector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let stored = StoredCanvasConnector::deserialize(deserializer)?;
+        if (stored.start_marker.is_some() && !stored.arrow_start)
+            || (stored.end_marker.is_some() && !stored.arrow_end)
+        {
+            return Err(serde::de::Error::custom(
+                "connector marker conflicts with its arrow flag",
+            ));
+        }
+        Ok(Self {
+            from: stored.from,
+            to: stored.to,
+            route: stored.route,
+            waypoints: stored.waypoints,
+            arrow_start: stored.arrow_start,
+            arrow_end: stored.arrow_end,
+            start_marker: stored.start_marker,
+            end_marker: stored.end_marker,
+            label: stored.label,
+            color: stored.color,
+            width: stored.width,
+        })
+    }
 }
 
 fn default_true() -> bool {
@@ -855,9 +935,25 @@ impl CanvasConnector {
             waypoints: Arc::default(),
             arrow_start: false,
             arrow_end: true,
+            start_marker: None,
+            end_marker: None,
             label: String::new(),
             color: None,
             width: default_connector_width(),
+        }
+    }
+
+    pub fn set_arrow_start(&mut self, enabled: bool) {
+        self.arrow_start = enabled;
+        if !enabled {
+            self.start_marker = None;
+        }
+    }
+
+    pub fn set_arrow_end(&mut self, enabled: bool) {
+        self.arrow_end = enabled;
+        if !enabled {
+            self.end_marker = None;
         }
     }
 }
@@ -1114,6 +1210,13 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             valid_text(&c.label, "connector label")?;
             if !valid_width(c.width) {
                 return Err(format!("connector {id} has an invalid width"));
+            }
+            if (c.start_marker.is_some() && !c.arrow_start)
+                || (c.end_marker.is_some() && !c.arrow_end)
+            {
+                return Err(format!(
+                    "connector {id} marker conflicts with its arrow flag"
+                ));
             }
             if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
                 return Err(format!(
