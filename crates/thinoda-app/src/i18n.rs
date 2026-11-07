@@ -1241,6 +1241,11 @@ const DE: &[(&str, &str)] = &[
         "Vorschau der konvertierten Gliederung",
     ),
     (
+        "Converted drawing labels (up to 8)",
+        "Beschriftungen der konvertierten Zeichnung (bis zu 8)",
+    ),
+    ("Conversion warnings", "Konvertierungswarnungen"),
+    (
         "showing the first 8 topics",
         "die ersten 8 Themen werden angezeigt",
     ),
@@ -2368,6 +2373,27 @@ const DE: &[(&str, &str)] = &[
     ("Save All", "Alle speichern"),
     ("Close", "Schließen"),
     ("Import", "Importieren"),
+    ("Import draw.io link…", "draw.io-Link importieren…"),
+    (
+        "draw.io link or #R fragment",
+        "draw.io-Link oder #R-Fragment",
+    ),
+    (
+        "Paste a self-contained link. The link contains the diagram and is decoded locally; no website is contacted.",
+        "Fügen Sie einen eigenständigen Link ein. Der Link enthält das Diagramm und wird lokal dekodiert; es wird keine Website kontaktiert.",
+    ),
+    (
+        "Could not import draw.io link",
+        "Der draw.io-Link konnte nicht importiert werden",
+    ),
+    (
+        "This draw.io link exceeds the supported size limit.",
+        "Dieser draw.io-Link überschreitet die unterstützte Größenbegrenzung.",
+    ),
+    (
+        "This import may omit unsupported content. Your original link is unchanged.",
+        "Beim Import können nicht unterstützte Inhalte entfallen. Ihr ursprünglicher Link bleibt unverändert.",
+    ),
     ("Export", "Exportieren"),
     ("Settings…", "Einstellungen…"),
     ("Settings", "Einstellungen"),

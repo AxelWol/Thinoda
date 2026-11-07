@@ -86,6 +86,15 @@ fn check(path: &Path) -> Result<String, String> {
     let book = report.workbook;
     book.validate()
         .map_err(|e| format!("invalid workbook: {e}"))?;
+    let xml = std::str::from_utf8(&bytes).map_err(|e| format!("source is not UTF-8: {e}"))?;
+    let link = format!(
+        "#R{}",
+        thinoda_io::drawio_clipboard::encode_uri_component(xml)
+    );
+    let linked = thinoda_io::import_drawio_link(&link).map_err(|e| format!("link import: {e}"))?;
+    if linked.workbook != book || linked.warnings != report.warnings {
+        return Err("link import differs from the original file import".into());
+    }
     let count = items(&book);
     if count == 0 {
         return Err("no items imported".into());

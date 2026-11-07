@@ -125,6 +125,7 @@ impl ThinodaApp {
             ("Save As…", Cmd::SaveAs),
             ("Save All", Cmd::SaveAll),
             ("Import", Cmd::Import),
+            ("Import draw.io link…", Cmd::ImportDrawioLink),
         ]));
         #[cfg(not(target_arch = "wasm32"))]
         file.push(item("Move to New Window", Cmd::MoveToNewWindow));

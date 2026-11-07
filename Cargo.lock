@@ -4938,6 +4938,7 @@ dependencies = [
  "tempfile",
  "thinoda-core",
  "thiserror 2.0.21",
+ "url",
  "xsd-schema",
  "zip",
 ]

@@ -1879,6 +1879,7 @@ impl ThinodaApp {
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
         self.protect_ai_prompt_input(&ctx);
+        self.protect_drawio_link_ime(&ctx);
         if self.palette.open {
             let id = egui::Id::unique("thinoda_command_palette_input");
             if self.dialogs.palette_composing || ctx.memory(|memory| memory.has_focus(id)) {
@@ -2358,6 +2359,7 @@ impl ThinodaApp {
             || self.dialogs.powerpoint_export
             || self.dialogs.mindmanager_save.is_some()
             || self.dialogs.board_export.is_some()
+            || self.dialogs.drawio_link.is_some()
             || !self.dialogs.imports.is_empty()
     }
 
@@ -2382,6 +2384,7 @@ impl ThinodaApp {
             || self.dialogs.symbol_export.is_some()
             || self.dialogs.note_export.is_some()
             || self.dialogs.board_export.is_some()
+            || self.dialogs.drawio_link.is_some()
         {
             return true;
         }
@@ -7098,6 +7101,9 @@ impl ThinodaApp {
         if self.board_preflight_ui(ctx) {
             return;
         }
+        if self.drawio_link_ui(ctx) {
+            return;
+        }
         self.cloud_change_dialogs(ctx);
         self.show_cloud_dialogs(ctx);
         if self.fim_dialogs(ctx) {
@@ -7343,37 +7349,24 @@ impl ThinodaApp {
             }
             return;
         }
-        if let Some((path, document, warnings)) = self.dialogs.imports.front() {
-            let mut message = format!(
-                "{}\n\n{}",
-                path.display(),
-                t("This import may omit unsupported content. The source file is preserved.")
-            );
-            let sheet = document.doc.sheet();
-            message.push_str(&format!(
-                "\n\n{} ({}; {}):",
-                t("Converted outline preview"),
-                sheet.topic_count(),
-                t("showing the first 8 topics")
-            ));
-            let mut preview: Vec<_> = if sheet.is_anchor(sheet.root) {
-                sheet
-                    .content_top_level_ids()
-                    .into_iter()
-                    .rev()
-                    .map(|id| (id, 0usize))
-                    .collect()
-            } else {
-                vec![(sheet.root, 0usize)]
+        if let Some((path, document, warnings, owner)) = self.dialogs.imports.front() {
+            if owner.is_some_and(|owner| owner != self.current_viewport) {
+                return;
+            }
+            let (source, notice) = match path {
+                Some(path) => (
+                    path.display().to_string(),
+                    t("This import may omit unsupported content. The source file is preserved."),
+                ),
+                None => (
+                    t(crate::drawio_link::LINK_LABEL).into(),
+                    t(crate::drawio_link::SOURCE_NOTICE),
+                ),
             };
-            for _ in 0..8 {
-                let Some((id, depth)) = preview.pop() else {
-                    break;
-                };
-                let topic = &sheet.topics[&id];
-                let title: String = topic
-                    .title
-                    .chars()
+            let mut message = format!("{}\n\n{}", source, notice);
+            let sheet = document.doc.sheet();
+            let preview_text = |text: &str| -> String {
+                text.chars()
                     .map(|character| {
                         if character.is_control() {
                             ' '
@@ -7382,10 +7375,53 @@ impl ThinodaApp {
                         }
                     })
                     .take(120)
-                    .collect();
-                message.push_str(&format!("\n{}- {}", "  ".repeat(depth.min(12)), title));
-                preview.extend(topic.children.iter().rev().map(|child| (*child, depth + 1)));
+                    .collect()
+            };
+            if sheet.topic_count() > 0 {
+                message.push_str(&format!(
+                    "\n\n{} ({}; {}):",
+                    t("Converted outline preview"),
+                    sheet.topic_count(),
+                    t("showing the first 8 topics")
+                ));
+                let mut preview: Vec<_> = if sheet.is_anchor(sheet.root) {
+                    sheet
+                        .content_top_level_ids()
+                        .into_iter()
+                        .rev()
+                        .map(|id| (id, 0usize))
+                        .collect()
+                } else {
+                    vec![(sheet.root, 0usize)]
+                };
+                for _ in 0..8 {
+                    let Some((id, depth)) = preview.pop() else {
+                        break;
+                    };
+                    let topic = &sheet.topics[&id];
+                    message.push_str(&format!(
+                        "\n{}- {}",
+                        "  ".repeat(depth.min(12)),
+                        preview_text(&topic.title)
+                    ));
+                    preview.extend(topic.children.iter().rev().map(|child| (*child, depth + 1)));
+                }
             }
+            let labels: Vec<_> = sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| object.label())
+                .filter(|label| !label.trim().is_empty())
+                .take(8)
+                .collect();
+            if !labels.is_empty() {
+                message.push_str(&format!("\n\n{}:", t("Converted drawing labels (up to 8)")));
+                for label in labels {
+                    message.push_str(&format!("\n- {}", preview_text(label)));
+                }
+            }
+            message.push_str(&format!("\n\n{}:", t("Conversion warnings")));
             for warning in warnings {
                 let label = match warning {
                     thinoda_io::ImportWarning::Formatting => "Formatting and styles",

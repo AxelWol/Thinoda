@@ -377,6 +377,72 @@ fn golden_compressed_page_imports() {
 }
 
 #[test]
+fn published_link_from_the_editor_imports_without_network() {
+    // Created using File > Publish > Link > Include a copy of my diagram.
+    let published = concat!(
+        "https://viewer.diagrams.net/?tags=%7B%7D&lightbox=1&highlight=0000ff",
+        "&edit=_blank&layers=1&nav=1&dark=auto#R%3Cmxfile%3E%3Cdiagram%20",
+        "name%3D%22Page-1%22%20id%3D%22ccow51MBEuUA37MJHwmB%22%3E",
+        "jZLLboMwEEW%2FxstIgFPSbssjXbRSVRZRV5WFJ9iSwciYAvn6mjIEUFopG2vmzMu%2BY0Kjsj8aVos3zUGRwOM9oTEJgsfw4M4RDAj2wQQKI%2FmE%2FAVk8gIIPaSt5NBsEq3Wysp6C3NdVZDbDWPG6G6bdtZqO7VmBdyALGfqlp4ktwJfERwW%2FgKyEPNkP3yaIiWbk%2FEljWBcdytEE0Ijo7WdrLKPQI3azbpMdek%2F0evFDFT2noJLnMafH0l12n0F2Xubvp6jbPdHF0SNHWYNjG4rDmMbj9DnTkgLWc3yMdq5pTsmbKmc5ztzqv5mqsVqBGAs9KsJeMkj6BKsGVyKWOkYomjdork%2FC4ld6AP6%2BLP2HvoMV15cWy%2BqOAOFmd1lAb%2Bx1S%2BmyQ8%3D",
+        "%3C%2Fdiagram%3E%3C%2Fmxfile%3E",
+    );
+    for link in [
+        published.to_owned(),
+        format!("#{}", published.split_once('#').unwrap().1),
+        published.replacen("https://viewer.diagrams.net", "https://example.invalid", 1),
+    ] {
+        let report = import_link(&link).unwrap();
+        assert_eq!(report.format, Format::DrawIo);
+        assert_eq!(report.workbook.sheets.len(), 1);
+        assert_eq!(report.workbook.sheets[0].title, "Page-1");
+        assert_eq!(shapes(&report.workbook.sheets[0]).len(), 1);
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn published_links_accept_multiple_pages_and_compressed_graphs() {
+    let xml = String::from_utf8(export(&board()).unwrap()).unwrap();
+    let link = format!(
+        "https://example.invalid/view?mode=test#R{}",
+        percent_encode(&xml)
+    );
+    let report = import_link(&link).unwrap();
+    assert_eq!(report.workbook.sheets.len(), 2);
+    assert_eq!(report.workbook.sheets[1].title, "Second & <page>");
+    assert!(
+        shapes(&report.workbook.sheets[0])
+            .iter()
+            .any(|shape| shape.label() == "Cloud & <co>\nline 2")
+    );
+
+    let compressed = format!("#R{}", percent_encode(GOLDEN_COMPRESSED));
+    let sheet = &import_link(&compressed).unwrap().workbook.sheets[0];
+    assert_eq!(shapes(sheet)[0].label(), "Start & go");
+    assert_eq!(shapes(sheet)[1].label(), "Ünïcode");
+}
+
+#[test]
+fn published_links_reject_invalid_or_external_data() {
+    for link in [
+        "",
+        "https://viewer.diagrams.net/",
+        "https://viewer.diagrams.net/#Uhttps%3A%2F%2Fexample.invalid%2Fmap.drawio",
+        "https://viewer.diagrams.net/#R",
+        "https://viewer.diagrams.net/#R%ZZ",
+        "https://viewer.diagrams.net/#R%FF",
+        "https://viewer.diagrams.net/#Rnot-base64",
+        "file:///tmp/diagram#R%3Cmxfile%2F%3E",
+        "https://viewer.diagrams.net/#R%3Cmxfile%3E",
+    ] {
+        assert!(import_link(link).is_err(), "{link}");
+    }
+    let dtd = percent_encode("<!DOCTYPE mxfile><mxfile><diagram/></mxfile>");
+    assert!(import_link(&format!("#R{dtd}")).is_err());
+    assert!(import_link(&format!("#R{}", "x".repeat(MAX_LINK_BYTES))).is_err());
+}
+
+#[test]
 fn zlib_wrapped_page_and_bare_graph_model_import() {
     let inner = "<mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/><mxCell id=\"v\" value=\"Z\" vertex=\"1\" parent=\"1\"><mxGeometry width=\"10\" height=\"10\" as=\"geometry\"/></mxCell></root></mxGraphModel>";
     let data = miniz_oxide::deflate::compress_to_vec_zlib(inner.as_bytes(), 6);

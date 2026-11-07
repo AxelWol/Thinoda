@@ -30,6 +30,8 @@ use thinoda_core::{
 
 /// Largest accepted input and inflated diagram text.
 const MAX_BYTES: usize = 64 * 1024 * 1024;
+/// Largest published-link input accepted, including its URL and fragment.
+pub const MAX_LINK_BYTES: usize = MAX_BYTES;
 const MAX_XML_DEPTH: usize = 64;
 const MAX_XML_ELEMENTS: usize = 400_000;
 const MAX_PAGES: usize = 1_000;
@@ -243,6 +245,43 @@ fn decode_compressed(text: &str) -> Result<String, IoError> {
     let raw = inflate(&data).ok_or_else(|| invalid("draw.io page data cannot be decompressed"))?;
     let text = String::from_utf8(raw).map_err(|_| invalid("draw.io page data is not UTF-8"))?;
     Ok(uri_decode(text))
+}
+
+/// Imports only self-contained `#R` fragments, without loading their URL.
+pub(crate) fn import_link(link: &str) -> Result<ImportReport, IoError> {
+    if link.len() > MAX_LINK_BYTES {
+        return Err(invalid("draw.io link exceeds size limit"));
+    }
+    let link = link.trim();
+    let parsed = if link.starts_with('#') {
+        None
+    } else {
+        let url = url::Url::parse(link).map_err(|_| invalid("invalid draw.io link"))?;
+        if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
+            return Err(invalid("draw.io link must use HTTP or HTTPS"));
+        }
+        Some(url)
+    };
+    let fragment = match &parsed {
+        Some(url) => url.fragment(),
+        None => link.strip_prefix('#'),
+    };
+    let encoded = fragment
+        .and_then(|fragment| fragment.strip_prefix('R'))
+        .filter(|payload| !payload.is_empty())
+        .ok_or_else(|| invalid("draw.io link has no embedded #R diagram"))?;
+    let decoded = percent_decode(encoded)
+        .ok_or_else(|| invalid("draw.io link has invalid percent encoding or UTF-8"))?;
+    let xml = if decoded
+        .trim_start_matches('\u{feff}')
+        .trim_start()
+        .starts_with('<')
+    {
+        decoded
+    } else {
+        decode_compressed(&decoded)?
+    };
+    import(xml.as_bytes())
 }
 
 fn latin1(bytes: &[u8]) -> String {

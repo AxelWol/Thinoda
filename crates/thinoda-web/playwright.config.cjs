@@ -12,6 +12,7 @@ module.exports = defineConfig({
         "board-pptx.browser.spec.ts",
         "board-toolbar.browser.spec.ts",
         "board-workflows.browser.spec.ts",
+        "drawio-link.browser.spec.ts",
         "image-card.browser.spec.ts",
         "language.browser.spec.ts",
         "recovery-legacy-lock.browser.spec.ts",

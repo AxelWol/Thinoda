@@ -342,7 +342,11 @@ impl ThinodaApp {
             return;
         }
         if self.activate_open_path(path)
-            || self.dialogs.imports.iter().any(|(p, ..)| p == path)
+            || self
+                .dialogs
+                .imports
+                .iter()
+                .any(|(p, ..)| p.as_deref() == Some(path))
             || self.file_ops.opening_path(path)
         {
             return;

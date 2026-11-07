@@ -12,6 +12,7 @@ mod command_icons;
 mod command_ids;
 mod context_menus;
 pub mod doc;
+mod drawio_link;
 mod equations;
 mod export_preflight;
 pub mod file_ops;

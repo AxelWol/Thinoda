@@ -617,6 +617,17 @@ pub fn import_named_bytes(name: &Path, bytes: &[u8]) -> Result<Workbook, IoError
     Ok(report.workbook)
 }
 
+/// Largest self-contained draw.io published link accepted for local import.
+pub const MAX_DRAWIO_LINK_BYTES: usize = drawio::MAX_LINK_BYTES;
+
+/// Imports the diagram embedded in a draw.io `#R` link or fragment.
+///
+/// The link is never fetched. Callers must inspect the returned conversion
+/// warnings before presenting the imported workbook as an editable copy.
+pub fn import_drawio_link(link: &str) -> Result<ImportReport, IoError> {
+    drawio::import_link(link)
+}
+
 /// File counterpart of [`import_bytes_with_report`].
 pub fn import_file_with_report(path: &Path) -> Result<ImportReport, IoError> {
     let b = if let Some(policy) = import_read_policy(path) {

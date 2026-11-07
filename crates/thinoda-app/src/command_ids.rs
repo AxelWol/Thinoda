@@ -24,6 +24,7 @@ impl Cmd {
             Self::MoveToNewWindow => "window.move-to-new-window",
             Self::NextDoc => "view.next-document",
             Self::Import => "file.import",
+            Self::ImportDrawioLink => "file.import-drawio-link",
             Self::MergeFiles => "file.merge",
             Self::MaskedCopy => "file.masked-copy",
             Self::MapShot => "tools.map-shot",

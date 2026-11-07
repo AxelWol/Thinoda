@@ -110,6 +110,12 @@ conversion warnings and keep a `.thinoda` copy; unsupported content can block
 export. These are export formats, not Save As or lossless save-back. See the
 [draw.io plan and current limitations](DRAWIO.md).
 
+**File > Import draw.io link…** imports self-contained published `#R` links
+or fragments locally, without contacting the link's website. The result is an
+unsaved converted copy; review any conversion warning and save or download a
+`.thinoda` copy. Links containing remote references such as `#U` are not
+supported, and ordinary paste does not invoke this import.
+
 ## Durable browser documents (C1 platform integration)
 
 The platform provides `browser_storage::BrowserStorageProvider::new(backup)`

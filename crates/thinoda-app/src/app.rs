@@ -89,6 +89,7 @@ pub enum Cmd {
     MoveToNewWindow,
     NextDoc,
     Import,
+    ImportDrawioLink,
     MergeFiles,
     MaskedCopy,
     MapShot,
@@ -260,6 +261,14 @@ pub struct RenameSheetDraft {
     pub(crate) focus_requested: bool,
 }
 
+/// Source path, converted document, warnings and originating viewport for an import.
+pub type PendingImport = (
+    Option<PathBuf>,
+    OpenDoc,
+    Vec<thinoda_io::ImportWarning>,
+    Option<egui::ViewportId>,
+);
+
 #[derive(Default)]
 pub struct Dialogs {
     pub mindmanager_export: bool,
@@ -270,8 +279,9 @@ pub struct Dialogs {
     pub mindmanager_save: Option<(String, PathBuf, bool)>,
     pub(crate) mindmanager_save_deliver: bool,
     pub(crate) board_export: Option<crate::export_preflight::BoardPreflight>,
+    pub(crate) drawio_link: Option<crate::drawio_link::LinkDraft>,
     pub(crate) save_close_tab: Option<String>,
-    pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
+    pub imports: std::collections::VecDeque<PendingImport>,
     pub symbol_export: Option<(usize, Format)>,
     pub note_export: Option<(Format, bool)>,
     pub(crate) export_owner: Option<(String, usize, u64)>,
@@ -716,12 +726,14 @@ impl ThinodaApp {
             .values()
             .any(|owner| *owner == viewport)
         {
+            self.return_drawio_import_viewport(viewport);
             self.window_active_documents.remove(&viewport);
             self.last_titles.remove(&viewport);
         }
     }
 
     fn return_document_window_to_root(&mut self, viewport: egui::ViewportId) {
+        self.return_drawio_import_viewport(viewport);
         self.document_windows.retain(|_, owner| *owner != viewport);
         self.window_active_documents.remove(&viewport);
         self.last_titles.remove(&viewport);
@@ -757,7 +769,12 @@ impl ThinodaApp {
         if self.activate_open_path(path) {
             return;
         }
-        if self.dialogs.imports.iter().any(|(p, ..)| p == path) {
+        if self
+            .dialogs
+            .imports
+            .iter()
+            .any(|(p, ..)| p.as_deref() == Some(path))
+        {
             return;
         }
         self.add_opened(path, OpenDoc::open_with_report(path));
@@ -794,13 +811,18 @@ impl ThinodaApp {
         }
         match opened {
             Ok((d, warnings)) if !warnings.is_empty() => {
-                if !self.dialogs.imports.iter().any(|(p, ..)| p == path) {
+                if !self
+                    .dialogs
+                    .imports
+                    .iter()
+                    .any(|(p, ..)| p.as_deref() == Some(path))
+                {
                     self.dialogs
                         .imports
-                        .push_back((path.to_path_buf(), d, warnings));
+                        .push_back((Some(path.to_path_buf()), d, warnings, None));
                 }
             }
-            Ok((d, _)) => self.install_opened_doc(path, d),
+            Ok((d, _)) => self.install_opened_doc(Some(path), d),
             Err(e) => {
                 self.toasts
                     .error(format!("{} {}: {e}", t("Could not open"), path.display()));
@@ -809,14 +831,17 @@ impl ThinodaApp {
     }
 
     pub fn resolve_import(&mut self, accept: bool) {
-        if let Some((path, d, _)) = self.dialogs.imports.pop_front()
+        if let Some((path, d, _, owner)) = self.dialogs.imports.pop_front()
             && accept
         {
-            self.install_opened_doc(&path, d);
+            let previous = self.current_viewport;
+            self.current_viewport = owner.unwrap_or(previous);
+            self.install_opened_doc(path.as_deref(), d);
+            self.current_viewport = previous;
         }
     }
 
-    fn install_opened_doc(&mut self, path: &Path, mut d: OpenDoc) {
+    pub(crate) fn install_opened_doc(&mut self, path: Option<&Path>, mut d: OpenDoc) {
         let native = is_native(d.format) && d.import_source.is_none();
         if d.doc.sheet().fim.is_some() {
             self.format_tab = FormatTab::Fim;
@@ -841,7 +866,7 @@ impl ThinodaApp {
         self.docs.push(d);
         self.active = self.docs.len() - 1;
         self.assign_document_window(&key, self.current_viewport);
-        if native {
+        if native && let Some(path) = path {
             self.settings.add_recent(path);
             self.save_settings();
         }
@@ -890,6 +915,7 @@ impl ThinodaApp {
                 | Cmd::Home
                 | Cmd::Open
                 | Cmd::OpenPath(_)
+                | Cmd::ImportDrawioLink
                 | Cmd::NextDoc
                 | Cmd::CloseTab(_)
                 | Cmd::CloseWindow
@@ -923,6 +949,7 @@ impl ThinodaApp {
                 | Cmd::Home
                 | Cmd::Open
                 | Cmd::OpenPath(_)
+                | Cmd::ImportDrawioLink
                 | Cmd::NextDoc
         ) && let Some(doc) = self.doc_mut()
         {
@@ -1128,6 +1155,13 @@ impl ThinodaApp {
                 .unwrap_or_default()
                 {
                     self.request_open_from_ui(ctx, &f, CardOpenOrder::CurrentInput);
+                }
+            }
+            Cmd::ImportDrawioLink => {
+                if self.command_available(&Cmd::ImportDrawioLink) {
+                    self.begin_drawio_link(ctx);
+                } else {
+                    self.toasts.warning(t("Not possible here"));
                 }
             }
             Cmd::MergeFiles => {
@@ -1877,6 +1911,9 @@ impl ThinodaApp {
             Cmd::Palette => {
                 self.palette.open
                     || (!self.any_modal_open() && !self.dialogs.settings && !self.dialogs.about)
+            }
+            Cmd::ImportDrawioLink => {
+                !self.any_modal_open() && !self.dialogs.settings && !self.dialogs.about
             }
             Cmd::Export(Format::FimXdf2 | Format::FimXdf3) => {
                 self.save_all.is_none()
@@ -4095,6 +4132,7 @@ impl ThinodaApp {
             (Cmd::SaveAs, "Save As…", "", "File"),
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
+            (Cmd::ImportDrawioLink, "Import draw.io link…", "", "File"),
             (Cmd::Settings, "Settings…", "", "Edit"),
             (Cmd::TaskPlanning, "Task Planning", "", "Insert"),
             (Cmd::EditFimNode, "Edit FIM node", "", "Edit"),

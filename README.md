@@ -729,6 +729,10 @@ those system-owned controls. WinGet publishing remains paused.
   the image is **not redacted**. Conversion may simplify or omit features; review
   the export warnings and retain a `.thinoda` copy. Unsupported content can
   prevent export. Editable image export is not Save As or lossless save-back.
+  **File > Import draw.io link…** also accepts self-contained published `#R`
+  links or fragments, decodes them locally without contacting the URL, and
+  opens an unsaved converted copy. Remote-reference links such as `#U` are not
+  supported; ordinary paste does not invoke this import.
   See [draw.io support and limitations](docs/DRAWIO.md).
 - Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`

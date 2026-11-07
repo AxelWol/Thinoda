@@ -2177,6 +2177,29 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn published_drawio_links_remain_plain_text_when_pasted_normally() {
+        use crate::app::Cmd;
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        let link = "https://viewer.diagrams.net/#R%3Cmxfile%3Eexample%3C%2Fmxfile%3E";
+        assert!(!thinoda_io::drawio_clipboard::looks_like_drawio(link));
+        clipboard.borrow_mut().text = link.into();
+        let objects = app.doc().unwrap().doc.sheet().canvas.objects.len();
+
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.sheet().canvas.objects.len(), objects);
+        assert_eq!(doc.view.selection.len(), 1);
+        assert_eq!(
+            doc.doc.sheet().topic(doc.view.selection[0]).unwrap().title,
+            link
+        );
+        assert!(app.dialogs.drawio_link.is_none());
+        assert!(app.dialogs.imports.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn copy_as_drawio_writes_plain_encoded_model_that_pastes_back() {
         use crate::app::Cmd;
         let (mut app, clipboard) = empty_board_app();
