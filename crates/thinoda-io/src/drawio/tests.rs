@@ -585,6 +585,95 @@ fn published_drawio_png_export_imports_its_embedded_diagram() {
     assert_eq!(objects[0].rect, rect(350.0, 380.0, 120.0, 60.0));
 }
 
+fn html_viewer(xml: &str) -> String {
+    let data = serde_json::json!({ "xml": xml, "edit": "_blank" }).to_string();
+    format!(
+        r#"<div class="example mxgraph" data-mxgraph="{}"></div>"#,
+        html_escape::encode_double_quoted_attribute(&data)
+    )
+}
+
+#[test]
+fn published_drawio_html_export_imports_its_embedded_diagram() {
+    let html = include_bytes!("../../tests/fixtures/published-rectangle.drawio.html");
+    for name in ["published.html", "published.HTM", "published.drawio.html"] {
+        assert_eq!(Format::from_path(Path::new(name)), Some(Format::DrawIoHtml));
+        assert_eq!(
+            detect_format(Path::new(name), html),
+            Some(Format::DrawIoHtml)
+        );
+        let report = crate::import_named_bytes_with_report(Path::new(name), html).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let sheet = &report.workbook.sheets[0];
+        assert_eq!(sheet.title, "Page-1");
+        let objects = shapes(sheet);
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].label(), "Published PNG");
+        assert_eq!(objects[0].style.fill, Some(Color::rgb(0xd5, 0xe8, 0xd4)));
+        assert_eq!(objects[0].rect, rect(350.0, 380.0, 120.0, 60.0));
+    }
+    assert_eq!(
+        detect_format(Path::new("without-extension"), html),
+        Some(Format::DrawIoHtml)
+    );
+    assert!(Format::DrawIoHtml.can_import());
+    assert!(!Format::DrawIoHtml.can_export());
+}
+
+#[test]
+fn html_viewer_preserves_entities_pages_and_ignores_inert_markup() {
+    let xml = r#"<mxfile><diagram name="First"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="A &amp; B &quot;C&quot; ü" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram><diagram name="Second"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>"#;
+    let fake = r#"<div class="mxgraph" data-mxgraph="not a diagram"></div>"#;
+    let html = format!(
+        "<!DOCTYPE html><html><head><style>{fake}</style><script>{fake}</script></head><body><!-- {fake} --><textarea>{fake}</textarea><img src=\"https://example.invalid/image\">{}</body></html>",
+        html_viewer(xml)
+    );
+    let report = import_html(html.as_bytes()).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(report.workbook.sheets.len(), 2);
+    assert_eq!(report.workbook.sheets[0].title, "First");
+    assert_eq!(report.workbook.sheets[1].title, "Second");
+    assert_eq!(
+        shapes(&report.workbook.sheets[0])[0].label(),
+        "A & B \"C\" ü"
+    );
+}
+
+#[test]
+fn html_viewer_rejects_missing_remote_malformed_and_ambiguous_diagrams() {
+    let valid = html_viewer(&page(""));
+    for html in [
+        r#"<html><body>No diagram</body></html>"#.to_owned(),
+        r#"<div class="mxgraph"></div>"#.to_owned(),
+        r#"<div class="mxgraph" data-mxgraph="not JSON"></div>"#.to_owned(),
+        r#"<div class="mxgraph" data-mxgraph='{"url":"https://example.invalid/diagram"}'></div>"#
+            .to_owned(),
+        r#"<div class="mxgraph" data-mxgraph='{"xml":42}'></div>"#.to_owned(),
+        format!("{valid}{valid}"),
+        format!(r#"<div class="mxgraph"></div>{valid}"#),
+    ] {
+        assert!(import_html(html.as_bytes()).is_err(), "{html}");
+    }
+    let remote =
+        r#"<div class="mxgraph" data-mxgraph='{"url":"https://example.invalid/diagram"}'></div>"#;
+    assert!(matches!(
+        import_html(remote.as_bytes()),
+        Err(IoError::DrawIoHtml(
+            crate::DrawIoHtmlError::NoEmbeddedDiagram
+        ))
+    ));
+    assert!(matches!(
+        import_html(format!("{valid}{valid}").as_bytes()),
+        Err(IoError::DrawIoHtml(crate::DrawIoHtmlError::MultipleViewers))
+    ));
+    assert!(matches!(
+        import_html(b"<div>\xff</div>"),
+        Err(IoError::DrawIoHtml(crate::DrawIoHtmlError::InvalidEncoding))
+    ));
+    let dtd = html_viewer(r#"<!DOCTYPE mxfile [<!ENTITY x SYSTEM "file:///secret">]><mxfile/>"#);
+    assert!(import_html(dtd.as_bytes()).is_err());
+}
+
 #[test]
 fn editable_image_exports_embed_only_the_selected_sheet() {
     let mut first = Sheet::new("First", "");

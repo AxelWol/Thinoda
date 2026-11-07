@@ -926,3 +926,6 @@ Copy as draw.io|Copiar como draw.io
 Copied for draw.io; paste it into a diagram|Copiado para o draw.io; cole em um diagrama
 Pasted from draw.io; some content was simplified|Colado do draw.io; parte do conteúdo foi simplificada
 Could not paste draw.io content|Não foi possível colar o conteúdo do draw.io
+This HTML contains multiple draw.io diagrams. Export each diagram separately.|Este arquivo HTML contém vários diagramas draw.io. Exporte cada diagrama separadamente.
+This HTML viewer has no embedded diagram. Remote references are not loaded.|Este visualizador HTML não tem um diagrama incorporado. As referências remotas não são carregadas.
+Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.|Não foi possível ler um diagrama draw.io incorporado neste arquivo HTML. Ele pode ser inválido, grande demais ou inseguro.

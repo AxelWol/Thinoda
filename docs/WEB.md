@@ -110,6 +110,11 @@ conversion warnings and keep a `.thinoda` copy; unsupported content can block
 export. These are export formats, not Save As or lossless save-back. See the
 [draw.io plan and current limitations](DRAWIO.md).
 
+An `.html` or `.htm` file with one embedded draw.io viewer can be opened or
+dropped as an unsaved converted copy. The page is treated as data: scripts and
+remote resources are never loaded. HTML with remote-only viewers or multiple
+diagrams is not imported; export each diagram as a separate editable file.
+
 **File > Import draw.io link…** imports self-contained published `#R` links
 or fragments locally, without contacting the link's website. The result is an
 unsaved converted copy; review any conversion warning and save or download a

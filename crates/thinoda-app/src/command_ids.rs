@@ -170,6 +170,7 @@ impl Cmd {
                 Format::DrawIo => "export.drawio",
                 Format::DrawIoSvg => "export.drawio-svg",
                 Format::DrawIoPng => "export.drawio-png",
+                Format::DrawIoHtml => return None,
                 Format::Svg => "export.svg",
                 Format::Png => "export.png",
                 Format::Jpeg => "export.jpeg",

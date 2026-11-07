@@ -1293,6 +1293,19 @@ const DE: &[(&str, &str)] = &[
     ("draw.io", "draw.io"),
     ("draw.io SVG (editable)", "draw.io SVG (bearbeitbar)"),
     ("draw.io PNG (editable)", "draw.io PNG (bearbeitbar)"),
+    ("draw.io HTML (editable)", "draw.io HTML (bearbeitbar)"),
+    (
+        "This HTML contains multiple draw.io diagrams. Export each diagram separately.",
+        "Diese HTML-Datei enthält mehrere draw.io-Diagramme. Exportiere jedes Diagramm einzeln.",
+    ),
+    (
+        "This HTML viewer has no embedded diagram. Remote references are not loaded.",
+        "Dieser HTML-Viewer enthält kein eingebettetes Diagramm. Entfernte Verweise werden nicht geladen.",
+    ),
+    (
+        "Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.",
+        "Ein eingebettetes draw.io-Diagramm konnte aus dieser HTML-Datei nicht gelesen werden. Sie ist möglicherweise ungültig, zu groß oder unsicher.",
+    ),
     ("SVG", "SVG"),
     ("PNG", "PNG"),
     ("JPEG", "JPEG"),

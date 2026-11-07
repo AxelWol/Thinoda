@@ -254,8 +254,9 @@ holders.
 
 ## Notable licenses
 
-- **MPL-2.0** (`option-ext`): file-level copyleft. The unmodified source is
-  available from the linked repository.
+- **MPL-2.0** (`option-ext`, `cssparser`, `cssparser-macros`, `dtoa-short`,
+  `selectors`): file-level copyleft. The unmodified source is available from
+  the linked repositories.
 - **CDLA-Permissive-2.0** (`webpki-roots`): data license for the bundled
   Mozilla root certificate list.
 - **Unicode-3.0** (ICU4X crates): Unicode data and software license.
@@ -277,7 +278,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-616 crates.
+636 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -363,12 +364,15 @@ LGPL/MPL licensing:
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | <https://github.com/servo/core-foundation-rs> |
 | core-graphics | 0.23.2 | MIT OR Apache-2.0 | <https://github.com/servo/core-foundation-rs> |
 | core-graphics-types | 0.1.3 | MIT OR Apache-2.0 | <https://github.com/servo/core-foundation-rs> |
+| core_detect | 1.0.0 | MIT/Apache-2.0 | <https://github.com/thomcc/core_detect> |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/utils> |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/utils> |
 | crc32fast | 1.5.2 | MIT OR Apache-2.0 | <https://github.com/srijs/rust-crc32fast> |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 | <https://github.com/crossbeam-rs/crossbeam> |
 | crunchy | 0.2.4 | MIT | <https://github.com/eira-fransham/crunchy> |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/traits> |
+| cssparser | 0.36.0 | MPL-2.0 | <https://github.com/servo/rust-cssparser> |
+| cssparser-macros | 0.6.1 | MPL-2.0 | <https://github.com/servo/rust-cssparser> |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | <https://github.com/rust-windowing/cursor-icon> |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url> |
 | dbus | 0.9.12 | Apache-2.0/MIT | <https://github.com/diwic/dbus-rs> |
@@ -377,6 +381,8 @@ LGPL/MPL licensing:
 | defmt-macros | 1.2.0 | MIT OR Apache-2.0 | <https://github.com/knurling-rs/defmt> |
 | defmt-parser | 1.1.0 | MIT OR Apache-2.0 | <https://github.com/knurling-rs/defmt> |
 | deranged | 0.5.9 | MIT OR Apache-2.0 | <https://github.com/jhpratt/deranged> |
+| derive_more | 2.1.1 | MIT | <https://github.com/JelteF/derive_more> |
+| derive_more-impl | 2.1.1 | MIT | <https://github.com/JelteF/derive_more> |
 | digest | 0.10.7 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/traits> |
 | directories | 6.0.0 | MIT OR Apache-2.0 | <https://github.com/soc/directories-rs> |
 | dirs-sys | 0.5.0 | MIT OR Apache-2.0 | <https://github.com/dirs-dev/dirs-sys-rs> |
@@ -387,6 +393,8 @@ LGPL/MPL licensing:
 | document-features | 0.2.12 | MIT OR Apache-2.0 | <https://github.com/slint-ui/document-features> |
 | downcast-rs | 1.2.1 | MIT/Apache-2.0 | <https://github.com/marcianx/downcast-rs> |
 | dpi | 0.1.2 | Apache-2.0 AND MIT | <https://github.com/rust-windowing/winit> |
+| dtoa | 1.0.11 | MIT OR Apache-2.0 | <https://github.com/dtolnay/dtoa> |
+| dtoa-short | 0.3.5 | MPL-2.0 | <https://github.com/upsuper/dtoa-short> |
 | earcutr | 0.5.0 | ISC | <https://github.com/frewsxcv/earcutr/> |
 | ecolor | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui> |
 | eframe | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/eframe> |
@@ -397,6 +405,7 @@ LGPL/MPL licensing:
 | egui_system_font_provider | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/egui_system_font_provider> |
 | either | 1.19.0 | MIT OR Apache-2.0 | <https://github.com/rayon-rs/either> |
 | emath | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/emath> |
+| encoding_rs | 0.8.44 | (Apache-2.0 OR MIT) AND BSD-3-Clause | <https://github.com/hsivonen/encoding_rs> |
 | endi | 1.1.1 | MIT | <https://github.com/zeenix/endi> |
 | enum_dispatch | 0.3.13 | MIT OR Apache-2.0 | <https://gitlab.com/antonok/enum_dispatch> |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 | <https://github.com/meithecatte/enumflags2> |
@@ -461,6 +470,7 @@ LGPL/MPL licensing:
 | hex | 0.4.3 | MIT OR Apache-2.0 | <https://github.com/KokaKiwi/rust-hex> |
 | hkdf | 0.12.4 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/KDFs/> |
 | hmac | 0.12.1 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/MACs> |
+| html-escape | 0.3.0 | MIT | <https://github.com/magiclen/html-escape> |
 | http | 1.5.0 | MIT OR Apache-2.0 | <https://github.com/hyperium/http> |
 | http-body | 1.1.0 | MIT | <https://github.com/hyperium/http-body> |
 | http-body-util | 0.1.5 | MIT | <https://github.com/hyperium/http-body> |
@@ -528,19 +538,23 @@ LGPL/MPL licensing:
 | litrs | 1.0.1 | MIT OR Apache-2.0 | <https://github.com/LukasKalbertodt/litrs> |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | <https://github.com/Amanieu/parking_lot> |
 | log | 0.4.34 | MIT OR Apache-2.0 | <https://github.com/rust-lang/log> |
+| lol_html | 3.0.3 | BSD-3-Clause | <https://github.com/cloudflare/lol-html> |
 | lru-slab | 0.1.3 | MIT OR Apache-2.0 OR Zlib | <https://github.com/Ralith/lru-slab> |
 | memchr | 2.8.3 | Unlicense OR MIT | <https://github.com/BurntSushi/memchr> |
 | memmap2 | 0.9.11 | MIT OR Apache-2.0 | <https://github.com/RazrFalcon/memmap2-rs> |
 | memoffset | 0.9.1 | MIT | <https://github.com/Gilnaa/memoffset> |
+| mime | 0.3.18 | MIT OR Apache-2.0 | <https://github.com/hyperium/mime> |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | <https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide> |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | <https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide> |
 | mio | 1.2.4 | MIT | <https://github.com/tokio-rs/mio> |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | <https://github.com/awxkee/moxcms.git> |
+| multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT | <https://github.com/hsivonen/multiversion_no_op> |
 | naga | 30.0.1 | MIT OR Apache-2.0 | <https://github.com/gfx-rs/wgpu> |
 | naga-types | 30.0.1 | MIT OR Apache-2.0 | <https://github.com/gfx-rs/wgpu> |
 | ndk | 0.9.0 | MIT OR Apache-2.0 | <https://github.com/rust-mobile/ndk> |
 | ndk-context | 0.1.1 | MIT OR Apache-2.0 | <https://github.com/rust-windowing/android-ndk-rs> |
 | ndk-sys | 0.6.0+11769913 | MIT OR Apache-2.0 | <https://github.com/rust-mobile/ndk> |
+| new_debug_unreachable | 1.0.6 | MIT | <https://github.com/mbrubeck/rust-debug-unreachable> |
 | nix | 0.29.0 | MIT | <https://github.com/nix-rust/nix> |
 | nix | 0.31.3 | MIT | <https://github.com/nix-rust/nix> |
 | nohash-hasher | 0.2.0 | Apache-2.0 OR MIT | <https://github.com/paritytech/nohash-hasher> |
@@ -597,9 +611,13 @@ LGPL/MPL licensing:
 | peniko | 0.6.1 | Apache-2.0 OR MIT | <https://github.com/linebender/peniko> |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url/> |
 | petgraph | 0.8.3 | MIT OR Apache-2.0 | <https://github.com/petgraph/petgraph> |
+| phf | 0.13.1 | MIT | <https://github.com/rust-phf/rust-phf> |
 | phf | 0.14.0 | MIT | <https://github.com/rust-phf/rust-phf> |
+| phf_generator | 0.13.1 | MIT | <https://github.com/rust-phf/rust-phf> |
 | phf_generator | 0.14.0 | MIT | <https://github.com/rust-phf/rust-phf> |
+| phf_macros | 0.13.1 | MIT | <https://github.com/rust-phf/rust-phf> |
 | phf_macros | 0.14.0 | MIT | <https://github.com/rust-phf/rust-phf> |
+| phf_shared | 0.13.1 | MIT | <https://github.com/rust-phf/rust-phf> |
 | phf_shared | 0.14.0 | MIT | <https://github.com/rust-phf/rust-phf> |
 | pico-args | 0.5.0 | MIT | <https://github.com/RazrFalcon/pico-args> |
 | pin-project | 1.1.13 | Apache-2.0 OR MIT | <https://github.com/taiki-e/pin-project> |
@@ -618,6 +636,7 @@ LGPL/MPL licensing:
 | potential_utf | 0.1.6 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | powerfmt | 0.2.1 | MIT OR Apache-2.0 | <https://github.com/jhpratt/powerfmt> |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | <https://github.com/cryptocorrosion/cryptocorrosion> |
+| precomputed-hash | 0.1.1 | MIT | <https://github.com/emilio/precomputed-hash> |
 | presser | 0.3.1 | MIT OR Apache-2.0 | <https://github.com/EmbarkStudios/presser> |
 | proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 | <https://github.com/bkchr/proc-macro-crate> |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | <https://github.com/dtolnay/proc-macro2> |
@@ -680,6 +699,7 @@ LGPL/MPL licensing:
 | security-framework | 2.11.1 | MIT OR Apache-2.0 | <https://github.com/kornelski/rust-security-framework> |
 | security-framework | 3.7.0 | MIT OR Apache-2.0 | <https://github.com/kornelski/rust-security-framework> |
 | security-framework-sys | 2.17.0 | MIT OR Apache-2.0 | <https://github.com/kornelski/rust-security-framework> |
+| selectors | 0.37.0 | MPL-2.0 | <https://github.com/servo/stylo> |
 | self_cell | 1.3.0 | Apache-2.0 OR GPL-2.0-only | <https://github.com/Voultapher/self_cell> |
 | semver | 1.0.28 | MIT OR Apache-2.0 | <https://github.com/dtolnay/semver> |
 | send_wrapper | 0.6.0 | MIT/Apache-2.0 | <https://github.com/thk1/send_wrapper> |
@@ -690,6 +710,7 @@ LGPL/MPL licensing:
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | <https://github.com/dtolnay/serde-repr> |
 | serde_spanned | 1.1.2 | MIT OR Apache-2.0 | <https://github.com/toml-rs/toml> |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 | <https://github.com/nox/serde_urlencoded> |
+| servo_arc | 0.4.3 | MIT OR Apache-2.0 | <https://github.com/servo/stylo> |
 | sha1 | 0.10.7 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/hashes> |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/hashes> |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | <https://github.com/vorner/signal-hook> |

@@ -48,6 +48,7 @@ pub enum Format {
     DrawIo,
     DrawIoSvg,
     DrawIoPng,
+    DrawIoHtml,
     Svg,
     Png,
     Jpeg,
@@ -73,6 +74,7 @@ impl Format {
         Self::DrawIo,
         Self::DrawIoSvg,
         Self::DrawIoPng,
+        Self::DrawIoHtml,
         Self::Word,
     ];
     pub const EXPORTABLE: &'static [Format] = &[
@@ -120,6 +122,7 @@ impl Format {
             "xmmap" => Self::MindManagerXml,
             "textpack" | "textbundle" => Self::TextBundle,
             "drawio" | "dio" => Self::DrawIo,
+            "html" | "htm" => Self::DrawIoHtml,
             "svg" => Self::Svg,
             "png" => Self::Png,
             "jpg" | "jpeg" => Self::Jpeg,
@@ -147,6 +150,7 @@ impl Format {
             Self::DrawIo => &["drawio", "dio"],
             Self::DrawIoSvg => &["drawio.svg"],
             Self::DrawIoPng => &["drawio.png"],
+            Self::DrawIoHtml => &["html", "htm"],
             Self::Svg => &["svg"],
             Self::Png => &["png"],
             Self::Jpeg => &["jpg", "jpeg"],
@@ -173,6 +177,7 @@ impl Format {
             Self::DrawIo => "draw.io",
             Self::DrawIoSvg => "draw.io SVG (editable)",
             Self::DrawIoPng => "draw.io PNG (editable)",
+            Self::DrawIoHtml => "draw.io HTML (editable)",
             Self::Svg => "SVG",
             Self::Png => "PNG",
             Self::Jpeg => "JPEG",
@@ -191,7 +196,10 @@ impl Format {
     }
 
     pub fn is_drawio(self) -> bool {
-        matches!(self, Self::DrawIo | Self::DrawIoSvg | Self::DrawIoPng)
+        matches!(
+            self,
+            Self::DrawIo | Self::DrawIoSvg | Self::DrawIoPng | Self::DrawIoHtml
+        )
     }
 
     pub fn is_drawio_image(self) -> bool {
@@ -273,6 +281,8 @@ pub enum IoError {
     NewerVersion(String),
     #[error("invalid document: {0}")]
     Invalid(String),
+    #[error("draw.io HTML: {0}")]
+    DrawIoHtml(#[from] DrawIoHtmlError),
     #[error("Gantt export contains no tasks")]
     GanttNoTasks,
     #[error("Gantt export exceeds supported {0} limit")]
@@ -318,6 +328,27 @@ pub enum IoError {
         topic: String,
         reason: thinoda_core::notes::NoteExportError,
     },
+}
+
+/// Failures while extracting an embedded draw.io HTML viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum DrawIoHtmlError {
+    #[error("the HTML exceeds the supported size limit")]
+    SizeLimit,
+    #[error("the HTML exceeds the supported structure limit")]
+    StructureLimit,
+    #[error("the HTML is not UTF-8")]
+    InvalidEncoding,
+    #[error("the HTML cannot be parsed safely")]
+    InvalidMarkup,
+    #[error("the HTML has no embedded draw.io viewer configuration")]
+    NoViewer,
+    #[error("the draw.io viewer configuration is invalid")]
+    InvalidViewer,
+    #[error("the HTML viewer has no embedded diagram; remote references are not loaded")]
+    NoEmbeddedDiagram,
+    #[error("the HTML contains multiple draw.io viewers; export each diagram separately")]
+    MultipleViewers,
 }
 
 pub use board_export::{
@@ -375,7 +406,7 @@ pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
             return detected;
         }
     }
-    // draw.io stores editable diagrams in .drawio.svg/.drawio.png and plain .xml files.
+    // draw.io stores editable diagrams in images, HTML and plain .xml files.
     let named = Format::from_path(path);
     if matches!(
         named,
@@ -385,6 +416,9 @@ pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
     ) && drawio::sniff(bytes)
     {
         return Some(Format::DrawIo);
+    }
+    if named.is_none() && drawio::sniff_html(bytes) {
+        return Some(Format::DrawIoHtml);
     }
     if let Some(f) = named {
         return Some(f);
@@ -473,6 +507,7 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
         Format::Word => office::docx_import(bytes)?,
         Format::FreeMind => formats::freemind_import_with_report(bytes)?,
         Format::DrawIo | Format::DrawIoSvg | Format::DrawIoPng => drawio::import(bytes)?,
+        Format::DrawIoHtml => drawio::import_html(bytes)?,
         _ => {
             let workbook = match format {
                 Format::Thinoda => formats::native_import(bytes)?,
@@ -556,6 +591,7 @@ fn import_read_policy(name: &Path) -> Option<ImportReadPolicy> {
             | Format::DrawIo
             | Format::DrawIoSvg
             | Format::DrawIoPng
+            | Format::DrawIoHtml
             | Format::Svg
             | Format::Png,
         ) => Some(ImportReadPolicy::Archive),

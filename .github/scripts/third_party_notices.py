@@ -130,8 +130,9 @@ holders.
 
 ## Notable licenses
 
-- **MPL-2.0** (`option-ext`): file-level copyleft. The unmodified source is
-  available from the linked repository.
+- **MPL-2.0** (`option-ext`, `cssparser`, `cssparser-macros`, `dtoa-short`,
+  `selectors`): file-level copyleft. The unmodified source is available from
+  the linked repositories.
 - **CDLA-Permissive-2.0** (`webpki-roots`): data license for the bundled
   Mozilla root certificate list.
 - **Unicode-3.0** (ICU4X crates): Unicode data and software license.

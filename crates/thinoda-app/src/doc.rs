@@ -1279,6 +1279,24 @@ pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, Str
 }
 
 pub(crate) fn import_error(path: &Path, error: thinoda_io::IoError) -> String {
+    match error {
+        thinoda_io::IoError::DrawIoHtml(thinoda_io::DrawIoHtmlError::MultipleViewers) => {
+            return t(
+                "This HTML contains multiple draw.io diagrams. Export each diagram separately.",
+            )
+            .into();
+        }
+        thinoda_io::IoError::DrawIoHtml(thinoda_io::DrawIoHtmlError::NoEmbeddedDiagram) => {
+            return t(
+                "This HTML viewer has no embedded diagram. Remote references are not loaded.",
+            )
+            .into();
+        }
+        thinoda_io::IoError::DrawIoHtml(_) => {
+            return t("Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.").into();
+        }
+        _ => {}
+    }
     if matches!(error, thinoda_io::IoError::MindManager(_))
         || matches!(
             Format::from_path(path),
@@ -1620,6 +1638,66 @@ mod tests {
         let doc = OpenDoc::new(Workbook::new(sheet));
         assert_eq!(doc.view.primary(), Some(first));
         assert!(!doc.view.selection.contains(&doc.doc.sheet().root));
+    }
+
+    #[test]
+    fn drawio_html_import_preserves_its_source_and_requires_warning_consent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("diagram.html");
+        let html = include_str!("../../thinoda-io/tests/fixtures/published-rectangle.drawio.html")
+            .replace("rounded=0;", "rounded=0;dashed=1;");
+        std::fs::write(&path, &html).unwrap();
+
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert!(warnings.contains(&thinoda_io::ImportWarning::Formatting));
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert!(same_destination(document.import_source.as_deref().unwrap(), &path).unwrap());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+
+        let native = directory.path().join("copy.thinoda");
+        document.save_to(&native, false).unwrap();
+        assert!(native.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+    }
+
+    #[test]
+    fn drawio_html_errors_are_actionable_and_localized() {
+        let cases = [
+            (
+                thinoda_io::DrawIoHtmlError::MultipleViewers,
+                "This HTML contains multiple draw.io diagrams. Export each diagram separately.",
+            ),
+            (
+                thinoda_io::DrawIoHtmlError::NoEmbeddedDiagram,
+                "This HTML viewer has no embedded diagram. Remote references are not loaded.",
+            ),
+            (
+                thinoda_io::DrawIoHtmlError::InvalidViewer,
+                "Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.",
+            ),
+        ];
+        for (error, message) in cases {
+            assert_eq!(
+                import_error(Path::new("diagram.html"), error.into()),
+                t(message)
+            );
+            for language in crate::i18n::Lang::ALL {
+                let translation = crate::i18n::t_in(language, message);
+                assert!(!translation.trim().is_empty(), "{language:?}: {message}");
+                if language != crate::i18n::Lang::En {
+                    assert_ne!(translation, message, "{language:?}: {message}");
+                }
+            }
+        }
     }
 
     // macOS filesystems reject this deliberately invalid UTF-8 filename.

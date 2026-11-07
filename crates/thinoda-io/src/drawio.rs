@@ -1,4 +1,4 @@
-//! draw.io / diagrams.net documents (`.drawio`, `.dio`, `.drawio.svg`, `.drawio.png`).
+//! draw.io / diagrams.net documents and embedded SVG, PNG and HTML diagrams.
 //!
 //! Import converts every page into a Freeform board sheet: vertices become shapes,
 //! notes become cards, swimlanes and containers become Zones, groups become board
@@ -27,6 +27,8 @@ use thinoda_core::{
     layout_sheet,
     resources::{MAX_RESOURCE_BYTES, Resource},
 };
+
+mod html;
 
 /// Largest accepted input and inflated diagram text.
 const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -370,6 +372,24 @@ pub(crate) fn sniff(bytes: &[u8]) -> bool {
         },
         None => false,
     }
+}
+
+pub(crate) fn sniff_html(bytes: &[u8]) -> bool {
+    const ATTRIBUTE: &[u8] = b"data-mxgraph";
+    if bytes.len() > MAX_BYTES
+        || !bytes
+            .windows(ATTRIBUTE.len())
+            .any(|window| window.eq_ignore_ascii_case(ATTRIBUTE))
+    {
+        return false;
+    }
+    html::extract(bytes).is_ok_and(|xml| {
+        root_start(&xml).is_some_and(|root| matches!(root.name.as_str(), "mxfile" | "mxGraphModel"))
+    })
+}
+
+pub(crate) fn import_html(bytes: &[u8]) -> Result<ImportReport, IoError> {
+    import(html::extract(bytes)?.as_bytes())
 }
 
 struct Page {

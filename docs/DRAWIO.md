@@ -604,6 +604,12 @@ connections arrive in Phase 8 without changing the gestures).
 ### Phase 11 — Embedded containers & clipboard (`p11-embedded-clipboard`)
 - `.drawio.svg` / `.drawio.png` read+write; html/PDF/`#R` import; clipboard copy as
   draw.io / paste from draw.io (native + web), size-capped.
+- PDF import must handle both URI-encoded `/Info` `/Subject` metadata and
+  `application/vnd.jgraph.mxfile` embedded attachments, as documented in the
+  [draw.io file format](https://github.com/jgraph/drawio/wiki/File-Format). Bound aggregate
+  cross-reference, object-stream and attachment decoding, including nesting and
+  cycles, before using a parser on untrusted files; do not identify metadata by
+  scanning arbitrary PDF stream bytes.
 
 ### Phase 12 — Vendor library download (`p12-vendor-libraries`)
 - Libraries manager; pinned manifest (URL, version, SHA-256, license URL); cache dir /
@@ -928,8 +934,32 @@ preview for board-only diagrams; the new command has a distinct link badge, its
 editor is height-bounded with nearby actions, and the confirmation separates
 drawing labels from warnings. The checks do not establish fidelity for complex
 diagrams or every published-link variant:
-remote-reference (`#U`) and cloud links, HTML/PDF containers, lossless
+remote-reference (`#U`) and cloud links, PDF containers, lossless
 round-tripping and save-back remain unimplemented.
+
+**Embedded HTML import (partial Phase 11).** File Open, Import and drop accept
+`.html` and `.htm` containing one `div.mxgraph` viewer with inline diagram XML.
+The source is parsed as inert data, without executing scripts or loading its
+viewer, images or remote diagram URLs. The result uses the existing conversion
+warnings and opens as a dirty native copy; the HTML source is not overwritten.
+Remote-only viewers, missing or malformed metadata, and multiple viewers are
+rejected rather than silently fetching or discarding diagrams. Input, HTML
+parser memory and element counts, and the existing XML and inflation limits
+are bounded. Embedded PDF and lossless save-back remain separate work.
+
+**HTML slice critique.** The published-editor fixture covers an actual inline
+viewer, while synthetic cases exercise multiple pages, Unicode and entities,
+inert markup, malformed inputs and parser limits. Source protection and the
+existing conversion-warning consent are reused rather than introducing a
+separate save-back path. Chromium, Firefox and WebKit open and drop the
+published fixture, save a native copy, and verify that neither the viewer
+script nor an external image is requested. This intentionally supports a
+single self-contained viewer, not arbitrary HTML or remote URLs; legacy
+semicolonless HTML character references are not guaranteed, and older viewers
+that store compressed data in a nested `div` rather than `data-mxgraph` are
+not yet imported. The streaming parser's memory budget is not a global
+process-memory limit: decoding the JSON and XML can require additional bounded
+copies.
 
 **Corpus validation (docs/draw-io-examples).** `crates/thinoda-io/tests/drawio_corpus.rs`
 runs every `.drawio`/`.xml` file in the user-supplied example corpus (89 files from

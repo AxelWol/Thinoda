@@ -37,8 +37,9 @@ const MAP_FILTERS: &[files::Filter<'static>] = &[
     ("draw.io", &["drawio"]),
 ];
 
-/// Editable draw.io SVG and PNG files carry their diagram inside an image file.
-const DRAWIO_OPEN_FILTER: files::Filter<'static> = ("draw.io", &["drawio", "dio", "svg", "png"]);
+/// Embedded draw.io diagrams can also be opened from editable images and HTML.
+const DRAWIO_OPEN_FILTER: files::Filter<'static> =
+    ("draw.io", &["drawio", "dio", "svg", "png", "html", "htm"]);
 
 const MAX_PENDING_RECOVERY_CLEANUPS: usize = 256;
 pub(crate) const RECOVERY_CLEANUP_WARNING: &str =

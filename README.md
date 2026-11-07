@@ -729,6 +729,9 @@ those system-owned controls. WinGet publishing remains paused.
   the image is **not redacted**. Conversion may simplify or omit features; review
   the export warnings and retain a `.thinoda` copy. Unsupported content can
   prevent export. Editable image export is not Save As or lossless save-back.
+  HTML exports with one embedded draw.io viewer can also be opened or dropped
+  as converted copies; Thinoda never runs their scripts or loads remote URLs.
+  Remote-only viewers and HTML containing multiple diagrams are not imported.
   **File > Import draw.io link…** also accepts self-contained published `#R`
   links or fragments, decodes them locally without contacting the URL, and
   opens an unsaved converted copy. Remote-reference links such as `#U` are not
