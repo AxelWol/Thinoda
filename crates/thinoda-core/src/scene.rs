@@ -19,6 +19,8 @@ use std::{
 pub const HIT_TOLERANCE: f32 = 3.0;
 /// Segments used to flatten curved connectors.
 const CURVE_SEGMENTS: usize = 16;
+/// Segments per quadratic span of an explicitly controlled curve.
+const WAYPOINT_CURVE_SEGMENTS: usize = 8;
 
 /// Paint bands, bottom to top. UI overlays are drawn above `AboveMap` and are not part
 /// of the scene.
@@ -346,7 +348,7 @@ pub(crate) fn resolved_object_centers(
         .filter_map(|object| {
             let center = match &object.kind {
                 CanvasObjectKind::Connector(connector) => {
-                    points_bounds(&connectors.path(object.id, connector)?)?.center()
+                    crate::board::polyline_midpoint(&connectors.path(object.id, connector)?)?
                 }
                 _ => object.rect.center(),
             };
@@ -514,6 +516,9 @@ fn clip_to_polygon(outline: &[Vec2], center: Vec2, toward: Vec2) -> Option<Vec2>
 }
 
 fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    if !connector.waypoints.is_empty() {
+        return routed_waypoints(connector, a, b);
+    }
     let (ca, cb) = (a.rect.center(), b.rect.center());
     match connector.route {
         ConnectorRoute::Straight => vec![a.clip(cb), b.clip(ca)],
@@ -533,6 +538,95 @@ fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<V
                 .collect()
         }
     }
+}
+
+fn push_distinct(points: &mut Vec<Vec2>, point: Vec2) {
+    if points.last() != Some(&point) {
+        points.push(point);
+    }
+}
+
+fn routed_waypoints(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let mut points = Vec::with_capacity(connector.waypoints.len() + 2);
+    points.push(a.rect.center());
+    for &waypoint in connector.waypoints.iter() {
+        if connector.route == ConnectorRoute::Curve {
+            points.push(waypoint);
+        } else {
+            push_distinct(&mut points, waypoint);
+        }
+    }
+    if connector.route == ConnectorRoute::Curve {
+        points.push(b.rect.center());
+    } else {
+        push_distinct(&mut points, b.rect.center());
+    }
+    if points.len() == 1 {
+        points.push(points[0]);
+    }
+
+    if connector.route == ConnectorRoute::Elbow {
+        let mut orthogonal = Vec::with_capacity(points.len() * 2);
+        orthogonal.push(points[0]);
+        for &next in &points[1..] {
+            let previous = *orthogonal.last().expect("path starts with a point");
+            if previous.x != next.x && previous.y != next.y {
+                push_distinct(&mut orthogonal, Vec2::new(next.x, previous.y));
+            }
+            push_distinct(&mut orthogonal, next);
+        }
+        if orthogonal.len() == 1 {
+            orthogonal.push(orthogonal[0]);
+        }
+        points = orthogonal;
+    }
+
+    let last = points.len() - 1;
+    let first_toward = points[1..]
+        .iter()
+        .copied()
+        .find(|point| *point != points[0])
+        .unwrap_or(points[last]);
+    let last_toward = points[..last]
+        .iter()
+        .rev()
+        .copied()
+        .find(|point| *point != points[last])
+        .unwrap_or(points[0]);
+    points[0] = a.clip(first_toward);
+    points[last] = b.clip(last_toward);
+
+    if connector.route != ConnectorRoute::Curve || points.len() == 2 {
+        points.dedup();
+        if points.len() == 1 {
+            points.push(points[0]);
+        }
+        return points;
+    }
+
+    // draw.io's curved polylines use each control point as the handle of a
+    // quadratic span, with intermediate spans meeting halfway between handles.
+    let mut curved = vec![points[0]];
+    let mut start = points[0];
+    for index in 1..last {
+        let control = points[index];
+        let end = if index + 1 == last {
+            points[last]
+        } else {
+            (control + points[index + 1]) * 0.5
+        };
+        for step in 1..=WAYPOINT_CURVE_SEGMENTS {
+            let t = step as f32 / WAYPOINT_CURVE_SEGMENTS as f32;
+            let point =
+                start * ((1.0 - t) * (1.0 - t)) + control * (2.0 * (1.0 - t) * t) + end * (t * t);
+            push_distinct(&mut curved, point);
+        }
+        start = end;
+    }
+    if curved.len() == 1 {
+        curved.push(curved[0]);
+    }
+    curved
 }
 
 struct ConnectorResolver<'a> {

@@ -460,6 +460,133 @@ fn svg_and_png_containers_are_detected_and_imported() {
 }
 
 #[test]
+fn nested_connector_waypoints_import_and_round_trip_in_parent_coordinates() {
+    let xml = page(
+        r#"
+        <mxCell id="g" style="group" vertex="1" parent="1"><mxGeometry x="100" y="200" width="300" height="200" as="geometry"/></mxCell>
+        <mxCell id="a" value="A" vertex="1" parent="g"><mxGeometry width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="e" value="Route" style="edgeStyle=none;endArrow=none;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="50" y="10" as="sourcePoint"/><mxPoint x="150" y="90" as="targetPoint"/><Array as="points"><mxPoint x="80" y="10"/><mxPoint x="80" y="90"/></Array></mxGeometry></mxCell>
+        "#,
+    );
+    let sheet = clean(&xml);
+    let connector = connectors(&sheet)[0];
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(150.0, 210.0)));
+    assert_eq!(connector.to, Endpoint::Point(Vec2::new(250.0, 290.0)));
+    assert_eq!(
+        connector.waypoints.as_ref(),
+        &[Vec2::new(180.0, 210.0), Vec2::new(180.0, 290.0)]
+    );
+    let restored = roundtrip(&Workbook::new(sheet));
+    let connector = connectors(&restored.sheets[0])[0];
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(150.0, 210.0)));
+    assert_eq!(
+        connector.waypoints.as_ref(),
+        &[Vec2::new(180.0, 210.0), Vec2::new(180.0, 290.0)]
+    );
+}
+
+#[test]
+fn malformed_waypoints_are_reported_and_do_not_create_fabricated_points() {
+    let xml = page(
+        r#"
+        <mxCell id="e" style="edgeStyle=none;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/><Array as="points"><mxPoint x="5" y="6"/><mxPoint x="NaN" y="3"/><mxPoint x="5" y="invalid"/><mxPoint y="9"/></Array></mxGeometry></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    assert_eq!(
+        connectors(&report.workbook.sheets[0])[0].waypoints.as_ref(),
+        &[Vec2::new(5.0, 6.0), Vec2::new(0.0, 9.0)]
+    );
+}
+
+#[test]
+fn curved_waypoints_round_trip_and_orthogonal_hints_report_approximation() {
+    let cell = |style: &str| {
+        format!(
+            r#"<mxCell id="e" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="200" y="0" as="targetPoint"/><Array as="points"><mxPoint x="50" y="80"/><mxPoint x="150" y="80"/></Array></mxGeometry></mxCell>"#
+        )
+    };
+    let curved = clean(&page(&cell("curved=1;edgeStyle=none;endArrow=none;")));
+    let connector = connectors(&curved)[0];
+    assert_eq!(connector.route, ConnectorRoute::Curve);
+    let expected = [Vec2::new(50.0, 80.0), Vec2::new(150.0, 80.0)];
+    assert_eq!(connector.waypoints.as_ref(), &expected);
+    let restored = roundtrip(&Workbook::new(curved));
+    let connector = connectors(&restored.sheets[0])[0];
+    assert_eq!(connector.route, ConnectorRoute::Curve);
+    assert_eq!(connector.waypoints.as_ref(), &expected);
+
+    let report = load(&page(&cell("edgeStyle=orthogonalEdgeStyle;endArrow=none;")));
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let connector = connectors(&report.workbook.sheets[0])[0];
+    assert_eq!(connector.route, ConnectorRoute::Elbow);
+    assert_eq!(connector.waypoints.as_ref(), &expected);
+    let bytes = export(&report.workbook).unwrap();
+    let restored = import(&bytes).unwrap();
+    assert_eq!(restored.warnings, vec![ImportWarning::Formatting]);
+    assert_eq!(
+        connectors(&restored.workbook.sheets[0])[0]
+            .waypoints
+            .as_ref(),
+        &expected
+    );
+}
+
+#[test]
+fn excessive_connector_waypoints_are_reported() {
+    let points =
+        r#"<mxPoint x="10" y="20"/>"#.repeat(thinoda_core::board::MAX_CONNECTOR_WAYPOINTS + 1);
+    let xml = page(&format!(
+        r#"<mxCell id="e" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/><Array as="points">{points}</Array></mxGeometry></mxCell>"#
+    ));
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    assert!(connectors(&report.workbook.sheets[0]).is_empty());
+}
+
+#[test]
+fn waypoint_connector_attachments_export_at_path_midpoint_with_loss_warning() {
+    let mut sheet = Sheet::new("Attachments", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut target = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(250.0, 100.0)),
+    );
+    target.waypoints = vec![Vec2::new(200.0, 0.0), Vec2::new(200.0, 100.0)].into();
+    target.label = "Target".into();
+    let target_id = sheet
+        .add_canvas_object(CanvasObject::connector(target))
+        .unwrap();
+    let mut dependent = CanvasConnector::new(
+        Endpoint::Object(target_id),
+        Endpoint::Point(Vec2::new(300.0, 200.0)),
+    );
+    dependent.label = "Dependent".into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(dependent))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(
+        export_losses(&book, Format::DrawIo, &ExportOptions::default()),
+        vec![ExportLoss::ConnectorAttachmentsDetached(1)]
+    );
+    assert!(matches!(
+        export_bytes(&book, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(1))
+    ));
+    let bytes =
+        crate::export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true)
+            .unwrap();
+    let restored = import(&bytes).unwrap().workbook;
+    let dependent = connectors(&restored.sheets[0])
+        .into_iter()
+        .find(|connector| connector.label == "Dependent")
+        .unwrap();
+    assert_eq!(dependent.from, Endpoint::Point(Vec2::new(175.0, 0.0)));
+}
+
+#[test]
 fn nested_geometry_groups_containers_and_edge_labels() {
     let xml = page(
         r#"

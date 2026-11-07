@@ -27,6 +27,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::OrientedImageMetadataDropped(15),
         ExportLoss::BoardSettingsDropped,
         ExportLoss::InlineTextDropped(16),
+        ExportLoss::ConnectorAttachmentsDetached(17),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -42,6 +43,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         assert!(line.starts_with(&format!("{count} — ")), "{line}");
     }
     assert!(lines[15].starts_with("16 — "), "{}", lines[15]);
+    assert!(lines[16].starts_with("17 — "), "{}", lines[16]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -103,6 +105,124 @@ fn oriented_photo_metadata_warning_is_localized() {
         if language != i18n::Lang::En {
             assert_ne!(value, key, "missing {language:?} warning");
         }
+    }
+}
+
+fn connector_attachment_book() -> Workbook {
+    use thinoda_core::{CanvasConnector, Endpoint, SheetRootMode};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut target = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(250.0, 100.0)),
+    );
+    target.waypoints = vec![Vec2::new(200.0, 0.0), Vec2::new(200.0, 100.0)].into();
+    let target = sheet
+        .add_canvas_object(CanvasObject::connector(target))
+        .unwrap();
+    let mut dependent = CanvasConnector::new(
+        Endpoint::Object(target),
+        Endpoint::Point(Vec2::new(300.0, 200.0)),
+    );
+    dependent.label = "Dependent".into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(dependent))
+        .unwrap();
+    Workbook::new(sheet)
+}
+
+#[test]
+fn drawio_connector_attachment_loss_requires_localized_consent() {
+    let book = connector_attachment_book();
+    let options = ExportOptions::default();
+    let key = "Connector-to-connector attachments detached";
+    let message = require_board_consent(&book, Format::DrawIo, &options, false).unwrap_err();
+    assert!(
+        i18n::Lang::ALL
+            .into_iter()
+            .any(|language| message.contains(&format!("1 — {}", i18n::t_in(language, key)))),
+        "{message}"
+    );
+    assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+    assert!(
+        !SaveConsent {
+            board: false,
+            mindmanager: true,
+        }
+        .for_io(Format::DrawIo)
+    );
+    assert!(
+        !SaveConsent {
+            board: true,
+            mindmanager: false,
+        }
+        .for_io(Format::MindManager)
+    );
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn drawio_attachment_consent_reaches_document_and_sheet_saves() {
+    use thinoda_core::{CanvasObjectKind, Endpoint};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut doc = OpenDoc::new(connector_attachment_book());
+    let sheet_path = directory.path().join("sheet.drawio");
+    assert!(
+        doc.save_sheet_to_with_consent(&sheet_path, false, false, false)
+            .is_err()
+    );
+    assert!(!sheet_path.exists());
+    doc.save_sheet_to_with_consent(&sheet_path, false, true, false)
+        .unwrap();
+
+    let document_path = directory.path().join("document.drawio");
+    assert!(
+        doc.save_to_with_backup_directory_and_consent(
+            &document_path,
+            false,
+            None,
+            SaveConsent::default(),
+        )
+        .is_err()
+    );
+    assert!(!document_path.exists());
+    doc.save_to_with_backup_directory_and_consent(
+        &document_path,
+        false,
+        None,
+        SaveConsent {
+            board: true,
+            mindmanager: false,
+        },
+    )
+    .unwrap();
+
+    for path in [&sheet_path, &document_path] {
+        let report =
+            thinoda_io::import_bytes_with_report(Format::DrawIo, &std::fs::read(path).unwrap())
+                .unwrap();
+        let dependent = report.workbook.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .find_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector) if connector.label == "Dependent" => {
+                    Some(connector)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(dependent.from, Endpoint::Point(Vec2::new(175.0, 0.0)));
     }
 }
 

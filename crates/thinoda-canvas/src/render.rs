@@ -14,7 +14,7 @@ use std::{
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, SceneBand, SceneId,
     ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
-    board::{rotate_around, rotated_bounds, rotated_corners, shape_label_rect},
+    board::{polyline_midpoint, rotate_around, rotated_bounds, rotated_corners, shape_label_rect},
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
     scene::{Scene, SceneGeometry, build_scene, topic_clip_zone},
@@ -1257,6 +1257,7 @@ fn paint_canvas_object(
                 .or(object.style.stroke.map(color32))
                 .unwrap_or_else(|| default_object_stroke(opts));
             let color = opacity_color(color, object.style.opacity);
+            let label_center = polyline_midpoint(points);
             let points: Vec<Pos2> = points.iter().copied().map(|point| xf.pos(point)).collect();
             let stroke = Stroke::new((connector.width * z).max(0.5), color);
             painter.add(Shape::line(points.clone(), stroke));
@@ -1275,7 +1276,7 @@ fn paint_canvas_object(
                     );
                 }
                 if !connector.label.is_empty() {
-                    let mid = points[points.len() / 2];
+                    let mid = xf.pos(label_center.expect("a connector path has points"));
                     let font = FontId::proportional((12.0 * z).max(7.0));
                     let galley = painter.layout_no_wrap(connector.label.clone(), font, color);
                     let rect = Rect::from_center_size(mid, galley.size() + vec2(8.0, 4.0) * z);

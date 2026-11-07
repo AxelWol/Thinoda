@@ -5,11 +5,12 @@
 //! topic data. Older session-only topic tokens are recognized for a warned
 //! plain-text fallback. The marker is never inferred from plain text.
 
+use std::collections::HashSet;
 use thinoda_canvas::{Action, ObjectSelection, apply_action};
 #[cfg(test)]
 use thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
 use thinoda_core::{
-    CanvasObjectId, TopicId,
+    CanvasObjectId, CanvasObjectKind, Endpoint, TopicId,
     clipboard::{self, MAX_BOARD_CLIPBOARD_BYTES},
 };
 use web_time::Instant;
@@ -321,8 +322,10 @@ pub(crate) fn paste(
     }
 }
 
-/// Encodes the selection as draw.io clipboard text without changing the document.
-pub(crate) fn prepare_drawio_copy(doc: &mut OpenDoc) -> Result<Option<String>, String> {
+/// Commits pending edits and encodes the selection as draw.io clipboard text.
+pub(crate) fn prepare_drawio_copy(
+    doc: &mut OpenDoc,
+) -> Result<Option<thinoda_io::drawio_clipboard::DrawioCopy>, String> {
     doc.view
         .try_commit_edit(&mut doc.doc)
         .map_err(localize_error)?;
@@ -339,9 +342,49 @@ pub(crate) fn prepare_drawio_copy(doc: &mut OpenDoc) -> Result<Option<String>, S
     else {
         return Ok(None);
     };
-    thinoda_io::drawio_clipboard::encode(&payload)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    let selected: HashSet<_> = payload.source_object_ids().collect();
+    let sheet = doc.doc.sheet();
+    let connector_ids: HashSet<_> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| object.is_connector())
+        .map(|object| object.id)
+        .collect();
+    let detached_external = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| selected.contains(&object.id))
+        .filter_map(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector) => Some([connector.from, connector.to]),
+            _ => None,
+        })
+        .flatten()
+        .filter(|end| {
+            matches!(end, Endpoint::Object(id) if !selected.contains(id) && connector_ids.contains(id))
+        })
+        .count();
+    let mut copy = thinoda_io::drawio_clipboard::encode_with_report(&payload)
+        .map_err(|error| error.to_string())?;
+    if detached_external > 0 {
+        if let Some(thinoda_io::ExportLoss::ConnectorAttachmentsDetached(count)) =
+            copy.losses.iter_mut().find(|loss| {
+                matches!(
+                    loss,
+                    thinoda_io::ExportLoss::ConnectorAttachmentsDetached(_)
+                )
+            })
+        {
+            *count += detached_external;
+        } else {
+            copy.losses
+                .push(thinoda_io::ExportLoss::ConnectorAttachmentsDetached(
+                    detached_external,
+                ));
+        }
+    }
+    Ok(Some(copy))
 }
 
 /// Pastes draw.io clipboard text as one undoable edit centred in the view.
@@ -369,8 +412,8 @@ impl crate::app::ThinodaApp {
         let Some(doc) = self.docs.get_mut(self.active) else {
             return;
         };
-        let text = match prepare_drawio_copy(doc) {
-            Ok(Some(text)) => text,
+        let copy = match prepare_drawio_copy(doc) {
+            Ok(Some(copy)) => copy,
             Ok(None) => {
                 self.toasts.warning(crate::i18n::t("Not possible here"));
                 return;
@@ -388,11 +431,23 @@ impl crate::app::ThinodaApp {
         for doc in &mut self.docs {
             doc.view.invalidate_clipboard();
         }
-        match self.clipboard_bridge.write_text(ctx, text) {
+        match self.clipboard_bridge.write_text(ctx, copy.text) {
             Ok(()) => {
-                self.toasts.info(crate::i18n::t(
-                    "Copied for draw.io; paste it into a diagram",
-                ));
+                let message = crate::i18n::t("Copied for draw.io; paste it into a diagram");
+                if copy.losses.is_empty() {
+                    self.toasts.info(message);
+                } else {
+                    let report = crate::export_preflight::LossReport {
+                        losses: copy.losses,
+                        ..Default::default()
+                    };
+                    let lines =
+                        crate::export_preflight::loss_lines(&report, thinoda_io::Format::DrawIo);
+                    self.toasts.sticky(
+                        thinoda_ui::toast::ToastKind::Warning,
+                        format!("{message}\n{}", lines.join("\n")),
+                    );
+                }
             }
             Err(error) => {
                 self.toasts.error(format!(
@@ -2142,6 +2197,110 @@ mod tests {
 
         app.exec(&ctx, Cmd::MenuPaste);
         assert_eq!(board_item_count(&app), items + 3);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn copy_as_drawio_warns_when_waypoint_connector_attachments_detach() {
+        use crate::app::Cmd;
+        use thinoda_core::{CanvasConnector, Endpoint, SheetRootMode};
+
+        for include_target in [false, true] {
+            let (mut app, clipboard) = empty_board_app();
+            let doc = app.doc_mut().unwrap();
+            let mut target = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(250.0, 100.0)),
+            );
+            target.waypoints = vec![Vec2::new(200.0, 0.0), Vec2::new(200.0, 100.0)].into();
+            let target = doc
+                .doc
+                .add_canvas_object(CanvasObject::connector(target))
+                .unwrap();
+            let mut dependent = CanvasConnector::new(
+                Endpoint::Object(target),
+                Endpoint::Point(Vec2::new(300.0, 200.0)),
+            );
+            dependent.label = "Dependent".into();
+            let dependent = doc
+                .doc
+                .add_canvas_object(CanvasObject::connector(dependent))
+                .unwrap();
+            doc.view.board_selection = if include_target {
+                vec![target, dependent]
+            } else {
+                vec![dependent]
+            };
+            let before = doc.doc.workbook().clone();
+
+            app.exec(&egui::Context::default(), Cmd::CopyAsDrawio);
+            let text = clipboard.borrow().text.clone();
+            assert!(text.starts_with("%3CmxGraphModel"));
+            let pasted = thinoda_io::drawio_clipboard::decode(&text).unwrap();
+            let mut restored = thinoda_core::Sheet::new("Restored", "");
+            restored.root_mode = SheetRootMode::Hidden;
+            clipboard::paste_board_selection(&mut restored, &pasted.payload, Vec2::ZERO).unwrap();
+            let dependent = restored
+                .canvas
+                .objects
+                .iter()
+                .find_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) if connector.label == "Dependent" => {
+                        Some(connector)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(dependent.from, Endpoint::Point(Vec2::new(175.0, 0.0)));
+            let expected: Vec<_> = crate::i18n::Lang::ALL
+                .into_iter()
+                .map(|language| {
+                    format!(
+                        "1 — {}",
+                        crate::i18n::t_in(language, "Connector-to-connector attachments detached")
+                    )
+                })
+                .collect();
+            let has_warning = |app: &crate::app::ThinodaApp| {
+                app.toasts
+                    .texts()
+                    .any(|text| expected.iter().any(|line| text.contains(line)))
+            };
+            assert!(has_warning(&app));
+            app.toasts.tick(10.0);
+            assert!(has_warning(&app));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn copy_as_drawio_counts_selected_and_external_connector_attachments_together() {
+        use thinoda_core::CanvasConnector;
+
+        let (mut app, _) = empty_board_app();
+        let doc = app.doc_mut().unwrap();
+        let make_target = |start: f32| {
+            CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(start, 0.0)),
+                Endpoint::Point(Vec2::new(start + 100.0, 0.0)),
+            ))
+        };
+        let selected = doc.doc.add_canvas_object(make_target(0.0)).unwrap();
+        let external = doc.doc.add_canvas_object(make_target(200.0)).unwrap();
+        let dependent = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Object(selected),
+                Endpoint::Object(external),
+            )))
+            .unwrap();
+        doc.view.board_selection = vec![selected, dependent];
+        let copy = prepare_drawio_copy(doc).unwrap().unwrap();
+        assert_eq!(
+            copy.losses,
+            vec![thinoda_io::ExportLoss::ConnectorAttachmentsDetached(2)]
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

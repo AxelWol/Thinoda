@@ -107,7 +107,7 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         board.tool.pixel-eraser board.tool.select board.tool.shape board.tool.sticky board.tool.text
         board.ungroup board.unlock board.zoom-selection
         zone.add-selection zone.remove-selection zone.remove
-        edit.command-palette edit.copy edit.cut edit.find edit.find-replace edit.paste edit.presentation edit.redo edit.settings edit.undo edit.zone
+        edit.command-palette edit.copy edit.copy-drawio edit.cut edit.find edit.find-replace edit.paste edit.presentation edit.redo edit.settings edit.undo edit.zone
         export.csv export.drawio export.excel export.fim-xdf2 export.fim-xdf3 export.freemind export.jpeg export.markdown export.mindmanager
         export.opml export.pdf export.png export.powerpoint export.svg export.text export.textbundle export.thinoda export.word export.xmind
         file.close-tab file.home file.import file.masked-copy file.merge file.new file.open file.print
@@ -149,6 +149,7 @@ fn active_tab_resolution_and_non_palette_targets_are_explicit() {
     for (id, expected) in [
         ("topic.edit", Cmd::Canvas(Action::StartEdit)),
         ("edit.copy", Cmd::Canvas(Action::Copy)),
+        ("edit.copy-drawio", Cmd::CopyAsDrawio),
         ("edit.cut", Cmd::Canvas(Action::Cut)),
         ("edit.paste", Cmd::MenuPaste),
         (

@@ -29,6 +29,16 @@ pub(crate) struct SaveConsent {
     pub mindmanager: bool,
 }
 
+impl SaveConsent {
+    pub(crate) fn for_io(self, format: Format) -> bool {
+        if format == Format::DrawIo {
+            self.board
+        } else {
+            self.mindmanager
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Owner {
     key: String,
@@ -168,6 +178,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::MapElementsFlattened(count) => {
                     (*count, "Mind-map topics and links flattened to shapes")
                 }
+                ExportLoss::ConnectorAttachmentsDetached(count) => {
+                    (*count, "Connector-to-connector attachments detached")
+                }
                 ExportLoss::TopicDetailsDropped(count) => {
                     (*count, "Topic notes, labels, markers or tasks omitted")
                 }
@@ -283,7 +296,12 @@ impl ThinodaApp {
         let owner = Owner::of(doc);
         let losses = export_loss_report(doc.doc.workbook(), format, &ExportOptions::default());
         if losses.is_empty() {
-            self.perform_preflight_export(format, allow_symbol_color_loss, allow_note_format_loss);
+            self.perform_preflight_export(
+                format,
+                allow_symbol_color_loss,
+                allow_note_format_loss,
+                false,
+            );
         } else {
             self.dialogs.board_export = Some(BoardPreflight {
                 owner: Some(owner),
@@ -590,6 +608,7 @@ impl ThinodaApp {
                 format,
                 allow_symbol_color_loss,
                 allow_note_format_loss,
+                true,
             ),
             Action::Presentation {
                 sheet,

@@ -4,24 +4,26 @@
 
 use crate::{ExportOptions, Format};
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use thinoda_core::{
-    Sheet, Topic, Workbook,
+    CanvasObjectId, Endpoint, Sheet, Topic, Workbook,
     board::{CanvasObjectKind, SheetRootMode},
     model::PresentationSource,
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 9;
+pub const NATIVE_FORMAT_VERSION: u64 = 10;
 
 /// Lowest native format version able to represent `book`.
 ///
 /// 2 is the base format, 3 adds embedded resources, 4 formatted notes, 5 FIM documents,
 /// 6 Freeform board semantics, 7 independent Zone background colors, and 8 inline card
-/// text formatting, and 9 explicit Zone object membership. Workbooks without newer
-/// content keep their previous format version.
+/// text formatting, 9 explicit Zone object membership, and 10 connector waypoints.
+/// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book
+    if book.has_connector_waypoints() {
+        10
+    } else if book
         .sheets
         .iter()
         .any(|sheet| sheet.zones.iter().any(|zone| !zone.objects.is_empty()))
@@ -47,6 +49,29 @@ pub fn required_native_version(book: &Workbook) -> u64 {
     } else {
         2
     }
+}
+
+pub(crate) fn connector_attachment_counts(sheet: &Sheet) -> HashMap<CanvasObjectId, usize> {
+    let connector_ids: HashSet<_> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| object.is_connector())
+        .map(|object| object.id)
+        .collect();
+    let mut counts = HashMap::new();
+    for object in &sheet.canvas.objects {
+        if let CanvasObjectKind::Connector(connector) = &object.kind {
+            for end in [connector.from, connector.to] {
+                if let Endpoint::Object(id) = end
+                    && connector_ids.contains(&id)
+                {
+                    *counts.entry(id).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    counts
 }
 
 /// Whether `sheet` uses content only native format version 6 can represent.
@@ -162,6 +187,8 @@ pub enum ExportLoss {
     /// Mind-map topics, branches and annotations are written as unlinked drawn
     /// shapes and lines: they no longer reflow or form a hierarchy.
     MapElementsFlattened(usize),
+    /// Connector ends attached to other connectors are written as free points.
+    ConnectorAttachmentsDetached(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -321,6 +348,7 @@ fn drawio_losses(book: &Workbook) -> Vec<ExportLoss> {
     let mut details = 0;
     let mut slides = 0;
     let mut inline_text = 0;
+    let mut connector_attachments = 0;
     let mut settings = false;
     for sheet in &book.sheets {
         for (id, topic) in &sheet.topics {
@@ -337,6 +365,7 @@ fn drawio_losses(book: &Workbook) -> Vec<ExportLoss> {
         }
         flattened += sheet.relationships.len() + sheet.boundaries.len() + sheet.summaries.len();
         slides += sheet.presentation.slides.len();
+        connector_attachments += connector_attachment_counts(sheet).values().sum::<usize>();
         settings |= sheet.board.grid == thinoda_core::GridKind::Dots || sheet.board.snap;
     }
     let mut out = Vec::new();
@@ -344,6 +373,10 @@ fn drawio_losses(book: &Workbook) -> Vec<ExportLoss> {
         (
             ExportLoss::MapElementsFlattened as fn(usize) -> ExportLoss,
             flattened,
+        ),
+        (
+            ExportLoss::ConnectorAttachmentsDetached,
+            connector_attachments,
         ),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),

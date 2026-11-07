@@ -7,7 +7,8 @@ use thinoda_core::{
     CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, EditError, EditResult,
     Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
     board::{
-        BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, rotate_around, rotated_corners,
+        BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
+        rotate_around, rotated_corners,
     },
     scene::{SceneGeometry, SceneItem},
 };
@@ -3867,7 +3868,9 @@ pub(super) fn show_label_editor(
         }
         CanvasObjectKind::Connector(_) => {
             let point = match &item.geometry {
-                SceneGeometry::Polyline { points, .. } => points[points.len() / 2],
+                SceneGeometry::Polyline { points, .. } => {
+                    polyline_midpoint(points).unwrap_or(item.bounds.center())
+                }
                 _ => item.bounds.center(),
             };
             thinoda_core::Rect::from_center_size(point, Vec2::new(140.0, 40.0))

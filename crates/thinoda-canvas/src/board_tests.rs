@@ -4048,6 +4048,49 @@ fn connector_label_draft_is_available_for_snapshot_recovery() {
 }
 
 #[test]
+fn connector_label_editor_tracks_asymmetric_waypoint_path() {
+    let mut sheet = board();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-200.0, -100.0)),
+        Endpoint::Point(Vec2::new(100.0, 100.0)),
+    );
+    connector.waypoints = vec![Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)].into();
+    connector.label = "Before".into();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(2);
+    let expected = h
+        .state()
+        .view
+        .xf()
+        .rect(thinoda_core::Rect::from_center_size(
+            Vec2::new(0.0, -50.0),
+            Vec2::new(140.0, 40.0),
+        ))
+        .expand(2.0);
+    let editor = h.get_by_label("Board object label").rect();
+    assert!(
+        editor.min.distance(expected.min) < 1.0,
+        "editor {editor:?} should start at {expected:?}"
+    );
+    h.get_by_label("Board object label").type_text("After");
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(id).unwrap().label(),
+        "After"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn changed_board_label_source_rejects_snapshot_but_retains_draft() {
     let mut sheet = board();
     let id = shape(&mut sheet, 0.0, 0.0, "Original");

@@ -5,7 +5,7 @@
 //! pasting. These helpers convert between that text and Thinoda's validated
 //! board clipboard payload, so pasting reuses the ordinary undoable board paste.
 
-use crate::{ImportWarning, IoError, drawio};
+use crate::{ExportLoss, ExportOptions, Format, ImportWarning, IoError, drawio, export_losses};
 use thinoda_core::{
     ApproxMeasure, Rect, Sheet, SheetRootMode, Vec2, Workbook,
     clipboard::{
@@ -26,6 +26,13 @@ pub struct DrawioPaste {
     /// Visible sheet-space bounds of the content, used to place the paste.
     pub bounds: Option<Rect>,
     pub warnings: Vec<ImportWarning>,
+}
+
+/// draw.io clipboard text and the changes made while converting the selection.
+#[derive(Debug)]
+pub struct DrawioCopy {
+    pub text: String,
+    pub losses: Vec<ExportLoss>,
 }
 
 /// `true` when clipboard text looks like draw.io diagram data.
@@ -99,12 +106,26 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
 }
 
 /// Encodes a board payload as draw.io clipboard text (`encodeURIComponent` of
-/// an `mxGraphModel`), which draw.io pastes as editable cells.
+/// an `mxGraphModel`), which draw.io pastes as editable cells. Refuses a lossy
+/// conversion of the prepared fragment; use [`encode_with_report`] to handle
+/// losses explicitly. The caller must report any losses in preparing it.
 pub fn encode(payload: &BoardClipboardPayload) -> Result<String, IoError> {
+    let copy = encode_with_report(payload)?;
+    if !copy.losses.is_empty() {
+        return Err(IoError::DrawioClipboardLoss(copy.losses));
+    }
+    Ok(copy.text)
+}
+
+/// Encodes an already-prepared fragment and reports conversion losses in it.
+/// Losses incurred while preparing the fragment must be reported by the caller.
+pub fn encode_with_report(payload: &BoardClipboardPayload) -> Result<DrawioCopy, IoError> {
     let mut sheet = Sheet::new("Page-1", "");
     sheet.root_mode = SheetRootMode::Hidden;
     paste_board_selection(&mut sheet, payload, Vec2::ZERO).map_err(IoError::Invalid)?;
-    let file = drawio::export(&Workbook::new(sheet))?;
+    let book = Workbook::new(sheet);
+    let losses = export_losses(&book, Format::DrawIo, &ExportOptions::default());
+    let file = drawio::export(&book)?;
     let file = String::from_utf8(file)
         .map_err(|_| IoError::Invalid("draw.io export is not UTF-8".into()))?;
     let start = file
@@ -120,7 +141,7 @@ pub fn encode(payload: &BoardClipboardPayload) -> Result<String, IoError> {
             "draw.io clipboard data exceeds the size limit".into(),
         ));
     }
-    Ok(text)
+    Ok(DrawioCopy { text, losses })
 }
 
 /// JavaScript `encodeURIComponent`, which draw.io uses for clipboard text.
@@ -191,6 +212,61 @@ mod tests {
         let again = decode(&text).unwrap();
         assert_eq!(kinds(&again.payload), (2, 1));
         assert_eq!(again.bounds, pasted.bounds);
+    }
+
+    #[test]
+    fn encoded_waypoint_connector_attachments_are_reported() {
+        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut target = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(250.0, 100.0)),
+        );
+        target.waypoints = vec![Vec2::new(200.0, 0.0), Vec2::new(200.0, 100.0)].into();
+        let target = sheet
+            .add_canvas_object(CanvasObject::connector(target))
+            .unwrap();
+        let mut dependent = CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(300.0, 200.0)),
+        );
+        dependent.label = "Dependent".into();
+        let dependent = sheet
+            .add_canvas_object(CanvasObject::connector(dependent))
+            .unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let payload = copy_board_selection(&sheet, &layout, &[], &[target, dependent])
+            .unwrap()
+            .unwrap();
+        let copied = encode_with_report(&payload).unwrap();
+        assert_eq!(
+            copied.losses,
+            vec![ExportLoss::ConnectorAttachmentsDetached(1)]
+        );
+        assert!(matches!(
+            encode(&payload),
+            Err(IoError::DrawioClipboardLoss(losses))
+                if losses == vec![ExportLoss::ConnectorAttachmentsDetached(1)]
+        ));
+
+        let pasted = decode(&copied.text).unwrap();
+        let mut restored = Sheet::new("Restored", "");
+        restored.root_mode = SheetRootMode::Hidden;
+        paste_board_selection(&mut restored, &pasted.payload, Vec2::ZERO).unwrap();
+        let dependent = restored
+            .canvas
+            .objects
+            .iter()
+            .find_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector) if connector.label == "Dependent" => {
+                    Some(connector)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(dependent.from, Endpoint::Point(Vec2::new(175.0, 0.0)));
     }
 
     #[test]

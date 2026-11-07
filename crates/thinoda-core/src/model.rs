@@ -745,6 +745,11 @@ impl Sheet {
             .any(|topic| !topic.inline_text.is_empty())
     }
 
+    /// Whether the sheet needs waypoint-aware persistence.
+    pub fn has_connector_waypoints(&self) -> bool {
+        self.canvas.has_connector_waypoints()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2218,6 +2223,11 @@ impl Workbook {
     /// Whether any sheet needs inline-card-text-aware persistence.
     pub fn has_inline_text(&self) -> bool {
         self.sheets.iter().any(Sheet::has_inline_text)
+    }
+
+    /// Whether any sheet needs waypoint-aware persistence.
+    pub fn has_connector_waypoints(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_waypoints)
     }
 
     pub fn active(&self) -> &Sheet {

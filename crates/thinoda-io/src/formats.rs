@@ -97,9 +97,19 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "explicit Zone object membership requires native format version 9".into(),
             ));
         }
+        if version < 10 && book.has_connector_waypoints() {
+            return Err(IoError::Invalid(
+                "connector waypoints require native format version 10".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_connector_waypoints() {
+            return Err(IoError::Invalid(
+                "connector waypoints require a versioned native archive".into(),
+            ));
+        }
         if has_zone_objects(&book) {
             return Err(IoError::Invalid(
                 "explicit Zone object membership requires a versioned native archive".into(),

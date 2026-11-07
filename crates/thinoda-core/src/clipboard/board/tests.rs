@@ -537,6 +537,75 @@ fn mixed_copy_preserves_resources_annotations_groups_styles_and_ink() {
 }
 
 #[test]
+fn connector_waypoints_follow_cross_document_clipboard_paste() {
+    let mut source = Sheet::new("Source", "Root");
+    let target = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(300.0, 40.0, 90.0, 90.0),
+        ))
+        .unwrap();
+    let mut connector = CanvasConnector::new(Endpoint::Point(Vec2::ZERO), Endpoint::Object(target));
+    connector.waypoints = vec![Vec2::new(30.0, 50.0), Vec2::new(150.0, 80.0)].into();
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(WAYPOINT_BOARD_PREFIX));
+    let decoded = decode_board_payload(&encoded).unwrap();
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..=2 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-3",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(
+            decode_board_payload(&forged)
+                .unwrap_err()
+                .contains("connector waypoints require board clipboard version 3")
+        );
+    }
+
+    let card = source
+        .add_card(
+            "Formatted",
+            Vec2::new(100.0, 200.0),
+            Card::new(CardKind::Text, Vec2::new(80.0, 50.0)),
+        )
+        .unwrap();
+    source
+        .topic_mut(card)
+        .unwrap()
+        .inline_text
+        .update_range("Formatted", 0..3, |style| style.bold = Some(true))
+        .unwrap();
+    let combined = copy(&source, &[card], &[id]);
+    let combined_wire = encode_board_payload(&combined).unwrap();
+    assert!(combined_wire.starts_with(WAYPOINT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&combined_wire).unwrap(), combined);
+
+    let mut destination = Sheet::new("Destination", "Root");
+    let delta = Vec2::new(100.0, -20.0);
+    let pasted = paste_board_selection(&mut destination, &decoded, delta).unwrap();
+    let CanvasObjectKind::Connector(connector) =
+        &destination.canvas.object(pasted.objects[0]).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(
+        connector.waypoints.as_ref(),
+        &[Vec2::new(130.0, 30.0), Vec2::new(250.0, 60.0)]
+    );
+    assert!(matches!(connector.to, Endpoint::Point(_)));
+    destination.validate().unwrap();
+}
+
+#[test]
 fn connectors_keep_selected_targets_and_detach_external_targets_at_rendered_points() {
     let mut source = Sheet::new("Source", "Root");
     let external_topic = source.add_child(source.root, None, "External");

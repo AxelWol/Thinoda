@@ -19,6 +19,7 @@ use std::io::{self, Write};
 
 const BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-1\n";
 const INLINE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-2\n";
+const WAYPOINT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-3\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -37,7 +38,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_inline_text() {
+        if self.fragment.has_connector_waypoints() {
+            WAYPOINT_BOARD_PREFIX
+        } else if self.fragment.has_inline_text() {
             INLINE_BOARD_PREFIX
         } else {
             BOARD_PREFIX
@@ -213,9 +216,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(INLINE_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-2\r\n"))
-        .map(|json| (2, json))
+        .strip_prefix(WAYPOINT_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-3\r\n"))
+        .map(|json| (3, json))
+        .or_else(|| {
+            text.strip_prefix(INLINE_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-2\r\n"))
+                .map(|json| (2, json))
+        })
         .or_else(|| {
             text.strip_prefix(BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-1\r\n"))
@@ -224,6 +232,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 3 && payload.fragment.has_connector_waypoints() {
+        return Err("connector waypoints require board clipboard version 3".into());
+    }
     if version < 2 && payload.fragment.has_inline_text() {
         return Err("inline card text requires board clipboard version 2".into());
     }
@@ -1063,6 +1074,15 @@ pub fn paste_board_selection(
                 };
                 connector.from = remap(connector.from)?;
                 connector.to = remap(connector.to)?;
+                if !connector.waypoints.is_empty() {
+                    connector.waypoints = connector
+                        .waypoints
+                        .iter()
+                        .copied()
+                        .map(&translate)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into();
+                }
             }
             CanvasObjectKind::Shape { .. } => {}
         }

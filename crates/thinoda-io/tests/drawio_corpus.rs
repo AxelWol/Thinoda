@@ -4,7 +4,10 @@
 //! them in `docs/draw-io-examples` (not committed; the test skips when absent).
 
 use std::path::{Path, PathBuf};
-use thinoda_core::Workbook;
+use thinoda_core::{
+    Sheet, Vec2, Workbook,
+    board::{CanvasObjectKind, ConnectorRoute},
+};
 use thinoda_io::{ExportOptions, Format};
 
 fn corpus_dir() -> Option<PathBuf> {
@@ -21,6 +24,55 @@ fn items(book: &Workbook) -> usize {
         .iter()
         .map(|sheet| sheet.topics.len().saturating_sub(1) + sheet.canvas.objects.len())
         .sum()
+}
+
+fn waypoint_paths(sheet: &Sheet) -> Vec<(ConnectorRoute, &[Vec2])> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector) if !connector.waypoints.is_empty() => {
+                Some((connector.route, connector.waypoints.as_ref()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn check_waypoints(before: &Workbook, after: &Workbook) -> Result<(), String> {
+    let close = |a: f32, b: f32| {
+        (a - b).abs() <= 0.001 + 2.0 * f32::EPSILON * a.abs().max(b.abs()).max(1.0)
+    };
+    for (index, (original, restored)) in before.sheets.iter().zip(&after.sheets).enumerate() {
+        let paths = waypoint_paths(original);
+        let mut remaining = waypoint_paths(restored);
+        for (route, points) in paths {
+            let Some(found) = remaining.iter().position(|(other_route, other)| {
+                route == *other_route
+                    && points.len() == other.len()
+                    && points
+                        .iter()
+                        .zip(*other)
+                        .all(|(a, b)| close(a.x, b.x) && close(a.y, b.y))
+            }) else {
+                return Err(format!(
+                    "page {} lost a {route:?} path with {} waypoints",
+                    index + 1,
+                    points.len()
+                ));
+            };
+            remaining.swap_remove(found);
+        }
+        if !remaining.is_empty() {
+            return Err(format!(
+                "page {} gained {} waypoint paths",
+                index + 1,
+                remaining.len()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn check(path: &Path) -> Result<String, String> {
@@ -56,6 +108,7 @@ fn check(path: &Path) -> Result<String, String> {
     if round_trip < count {
         return Err(format!("round trip lost items {count} -> {round_trip}"));
     }
+    check_waypoints(&book, &again)?;
 
     let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
         .map_err(|e| format!("native export: {e}"))?;
@@ -64,6 +117,9 @@ fn check(path: &Path) -> Result<String, String> {
     if items(&reopened) != count {
         return Err("native round trip changed the item count".into());
     }
+    if reopened != book {
+        return Err("native round trip changed workbook content".into());
+    }
     thinoda_io::export_bytes(&book, Format::Svg, &opts).map_err(|e| format!("svg: {e}"))?;
 
     let text = String::from_utf8_lossy(&bytes);
@@ -71,8 +127,12 @@ fn check(path: &Path) -> Result<String, String> {
         thinoda_io::drawio_clipboard::decode(&text).map_err(|e| format!("clipboard: {e}"))?;
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} warning kind(s)",
         book.sheets.len(),
+        book.sheets
+            .iter()
+            .map(|sheet| waypoint_paths(sheet).len())
+            .sum::<usize>(),
         report.warnings.len()
     ))
 }

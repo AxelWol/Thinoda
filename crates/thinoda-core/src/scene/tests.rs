@@ -238,6 +238,102 @@ fn ink_hit_respects_width_and_rotation() {
 }
 
 #[test]
+fn waypoint_paths_clip_to_shapes_and_participate_in_hit_testing() {
+    let mut sheet = Sheet::new("Waypoints", "Root");
+    let from = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(1000.0, 1000.0, 40.0, 40.0),
+        Band::Above,
+    );
+    let to = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(1200.0, 1000.0, 40.0, 40.0),
+        Band::Above,
+    );
+    let mut connector = CanvasConnector::new(Endpoint::Object(from), Endpoint::Object(to));
+    connector.waypoints = vec![Vec2::new(1020.0, 1100.0), Vec2::new(1220.0, 1100.0)].into();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    let (layout, scene) = scene(&sheet);
+    let path = connector_path(&sheet, &layout, &connector);
+    assert_eq!(
+        path,
+        vec![
+            Vec2::new(1020.0, 1040.0),
+            Vec2::new(1020.0, 1100.0),
+            Vec2::new(1220.0, 1100.0),
+            Vec2::new(1220.0, 1040.0),
+        ]
+    );
+    assert_eq!(
+        scene.hit_test(Vec2::new(1120.0, 1102.0)),
+        Some(SceneHit::Object(id))
+    );
+    assert_eq!(scene.hit_test(Vec2::new(1120.0, 1050.0)), None);
+    let SceneGeometry::Polyline { points, .. } = &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        panic!("expected connector path");
+    };
+    assert_eq!(points, &path);
+}
+
+#[test]
+fn waypoint_routes_preserve_controls_and_keep_elbows_orthogonal() {
+    let sheet = Sheet::new("Waypoints", "Root");
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let start = Vec2::new(1000.0, 1200.0);
+    let control = Vec2::new(1050.0, 1260.0);
+    let end = Vec2::new(1100.0, 1300.0);
+    let mut connector = CanvasConnector::new(Endpoint::Point(start), Endpoint::Point(end));
+    connector.waypoints = vec![control].into();
+    assert_eq!(
+        connector_path(&sheet, &layout, &connector),
+        vec![start, control, end]
+    );
+
+    connector.route = ConnectorRoute::Elbow;
+    let elbow = connector_path(&sheet, &layout, &connector);
+    assert!(elbow.contains(&control));
+    assert!(
+        elbow
+            .windows(2)
+            .all(|pair| { pair[0].x == pair[1].x || pair[0].y == pair[1].y })
+    );
+
+    connector.route = ConnectorRoute::Curve;
+    connector.waypoints = vec![Vec2::new(1050.0, 1300.0)].into();
+    let curve = connector_path(&sheet, &layout, &connector);
+    assert_eq!(curve.first(), Some(&start));
+    assert_eq!(curve.last(), Some(&end));
+    assert_eq!(curve[4], Vec2::new(1050.0, 1275.0));
+
+    connector.waypoints = vec![start, end].into();
+    let curve = connector_path(&sheet, &layout, &connector);
+    assert_eq!(curve.first(), Some(&start));
+    assert_eq!(curve.last(), Some(&end));
+    assert!(
+        curve
+            .iter()
+            .all(|point| ((point.x - start.x) - (point.y - start.y)).abs() < 0.001)
+    );
+
+    connector.waypoints = vec![
+        Vec2::new(1020.0, 1280.0),
+        Vec2::new(1020.0, 1280.0),
+        Vec2::new(1080.0, 1280.0),
+    ]
+    .into();
+    let curve = connector_path(&sheet, &layout, &connector);
+    assert!(
+        curve.contains(&Vec2::new(1020.0, 1280.0)),
+        "repeated controls are significant"
+    );
+}
+
+#[test]
 fn connectors_resolve_endpoints_and_hit() {
     let mut s = Sheet::new("Conn", "Root");
     let f = s.add_floating("F", Vec2::new(600.0, 0.0));

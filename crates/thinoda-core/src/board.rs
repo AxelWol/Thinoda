@@ -25,6 +25,10 @@ pub const MAX_CARD_STATES: usize = MAX_CANVAS_OBJECTS;
 pub const MAX_STROKE_POINTS: usize = 20_000;
 /// Ink points of all strokes of a sheet.
 pub const MAX_TOTAL_INK_POINTS: usize = 2_000_000;
+/// Explicit bend or control points of one connector.
+pub const MAX_CONNECTOR_WAYPOINTS: usize = 1_024;
+/// Explicit connector points across one sheet.
+pub const MAX_TOTAL_CONNECTOR_WAYPOINTS: usize = 200_000;
 /// Absolute limit for board coordinates and sizes.
 pub const MAX_BOARD_COORDINATE: f32 = 1_000_000.0;
 /// Characters of a shape/connector label or an alt text.
@@ -183,6 +187,24 @@ impl CanvasLayer {
             })
             .sum()
     }
+
+    /// Total number of explicit connector points.
+    pub fn connector_waypoint_count(&self) -> usize {
+        self.objects
+            .iter()
+            .map(|o| match &o.kind {
+                CanvasObjectKind::Connector(connector) => connector.waypoints.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Whether this layer needs waypoint-aware persistence.
+    pub fn has_connector_waypoints(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if !c.waypoints.is_empty())
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -299,11 +321,7 @@ impl CanvasObject {
 
     /// Free connector; its frame is updated from the endpoints when possible.
     pub fn connector(connector: CanvasConnector) -> Self {
-        let rect = match (connector.from, connector.to) {
-            (Endpoint::Point(a), Endpoint::Point(b)) => points_bounds(&[a, b]).unwrap_or_default(),
-            (Endpoint::Point(a), _) | (_, Endpoint::Point(a)) => Rect::from_min_size(a, Vec2::ZERO),
-            _ => Rect::default(),
-        };
+        let rect = connector_bounds(&connector).unwrap_or_default();
         Self::new(CanvasObjectKind::Connector(connector), rect)
     }
 
@@ -801,6 +819,9 @@ pub struct CanvasConnector {
     pub to: Endpoint,
     #[serde(default)]
     pub route: ConnectorRoute,
+    /// Explicit bend points or curve controls in sheet coordinates.
+    #[serde(default, skip_serializing_if = "waypoints_are_empty")]
+    pub waypoints: Arc<[Vec2]>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub arrow_start: bool,
     #[serde(default = "default_true")]
@@ -821,12 +842,17 @@ fn default_connector_width() -> f32 {
     2.0
 }
 
+fn waypoints_are_empty(waypoints: &Arc<[Vec2]>) -> bool {
+    waypoints.is_empty()
+}
+
 impl CanvasConnector {
     pub fn new(from: Endpoint, to: Endpoint) -> Self {
         Self {
             from,
             to,
             route: ConnectorRoute::Straight,
+            waypoints: Arc::default(),
             arrow_start: false,
             arrow_end: true,
             label: String::new(),
@@ -834,6 +860,16 @@ impl CanvasConnector {
             width: default_connector_width(),
         }
     }
+}
+
+fn connector_bounds(connector: &CanvasConnector) -> Option<Rect> {
+    let mut points = connector.waypoints.to_vec();
+    for end in [connector.from, connector.to] {
+        if let Endpoint::Point(point) = end {
+            points.push(point);
+        }
+    }
+    points_bounds(&points)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -1079,6 +1115,14 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             if !valid_width(c.width) {
                 return Err(format!("connector {id} has an invalid width"));
             }
+            if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
+                return Err(format!(
+                    "connector {id} exceeds {MAX_CONNECTOR_WAYPOINTS} waypoints"
+                ));
+            }
+            if c.waypoints.iter().any(|point| !valid_position(*point)) {
+                return Err(format!("connector {id} has an invalid waypoint"));
+            }
             for end in [c.from, c.to] {
                 match end {
                     Endpoint::Point(p) if !valid_position(p) => {
@@ -1154,6 +1198,7 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     let mut ids = HashSet::new();
     let mut group_counts: HashMap<CanvasGroupId, usize> = HashMap::new();
     let mut total_points = 0usize;
+    let mut total_waypoints = 0usize;
     for o in &canvas.objects {
         if !ids.insert(o.id) {
             return Err(format!("duplicate canvas object id {}", o.id));
@@ -1164,6 +1209,14 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             if total_points > MAX_TOTAL_INK_POINTS {
                 return Err(format!(
                     "ink exceeds {MAX_TOTAL_INK_POINTS} points per sheet"
+                ));
+            }
+        }
+        if let CanvasObjectKind::Connector(connector) = &o.kind {
+            total_waypoints = total_waypoints.saturating_add(connector.waypoints.len());
+            if total_waypoints > MAX_TOTAL_CONNECTOR_WAYPOINTS {
+                return Err(format!(
+                    "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
                 ));
             }
         }
@@ -1839,6 +1892,17 @@ impl Sheet {
             ));
         }
         if let CanvasObjectKind::Connector(c) = &object.kind {
+            if !c.waypoints.is_empty()
+                && self
+                    .canvas
+                    .connector_waypoint_count()
+                    .saturating_add(c.waypoints.len())
+                    > MAX_TOTAL_CONNECTOR_WAYPOINTS
+            {
+                return Err(format!(
+                    "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
+                ));
+            }
             for end in [c.from, c.to] {
                 self.check_endpoint(end)?;
             }
@@ -1877,8 +1941,8 @@ impl Sheet {
         Ok(())
     }
 
-    /// Removes objects. Connectors attached to them keep a free end at the removed
-    /// object's centre; emptied groups are dissolved.
+    /// Removes objects. Attached connectors keep a free end at the removed shape's
+    /// centre or connector's path midpoint; emptied groups are dissolved.
     pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> Result<(), String> {
         if ids.is_empty() {
             return Err("nothing selected".into());
@@ -1965,6 +2029,9 @@ impl Sheet {
                         if let Endpoint::Point(p) = end {
                             *p = *p + delta;
                         }
+                    }
+                    if !c.waypoints.is_empty() {
+                        c.waypoints = c.waypoints.iter().map(|point| *point + delta).collect();
                     }
                 }
                 CanvasObjectKind::Shape { .. } => {}
@@ -2080,17 +2147,16 @@ impl Sheet {
                         *point = rotate_around(*point, pivot, degrees);
                     }
                 }
+                if !connector.waypoints.is_empty() {
+                    connector.waypoints = connector
+                        .waypoints
+                        .iter()
+                        .map(|point| rotate_around(*point, pivot, degrees))
+                        .collect();
+                }
                 // The stored connector frame is only a fallback; the scene uses
-                // resolved paths. Keep it consistent with its free endpoints.
-                object.rect = match (connector.from, connector.to) {
-                    (Endpoint::Point(a), Endpoint::Point(b)) => {
-                        points_bounds(&[a, b]).expect("two points")
-                    }
-                    (Endpoint::Point(point), _) | (_, Endpoint::Point(point)) => {
-                        Rect::from_min_size(point, Vec2::ZERO)
-                    }
-                    _ => object.rect,
-                };
+                // resolved paths. Keep it consistent with its explicit points.
+                object.rect = connector_bounds(connector).unwrap_or(object.rect);
             } else {
                 let center = object.rect.center();
                 let translation = rotate_around(center, pivot, degrees) - center;
@@ -2222,6 +2288,22 @@ impl Sheet {
         object.rotation = normalize_rotation(object.rotation);
         validate_object(&object)?;
         if let CanvasObjectKind::Connector(c) = &object.kind {
+            let old_waypoints = match &self.canvas.object(id).expect("checked").kind {
+                CanvasObjectKind::Connector(old) => old.waypoints.len(),
+                _ => 0,
+            };
+            if c.waypoints.len() > old_waypoints
+                && self
+                    .canvas
+                    .connector_waypoint_count()
+                    .saturating_sub(old_waypoints)
+                    .saturating_add(c.waypoints.len())
+                    > MAX_TOTAL_CONNECTOR_WAYPOINTS
+            {
+                return Err(format!(
+                    "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
+                ));
+            }
             for end in [c.from, c.to] {
                 self.check_endpoint(end)?;
             }
@@ -2592,8 +2674,9 @@ impl Sheet {
     }
 
     /// Converts connector ends whose topic or object was deleted into free points at the
-    /// target's centre in `before` (the sheet state before the deletion). Used by every
-    /// deletion path so a deletion and its endpoint conversion form one edit.
+    /// target's centre, or a connector's path midpoint, in `before` (the sheet state
+    /// before the deletion). Used by every deletion path so a deletion and its endpoint
+    /// conversion form one edit.
     /// Returns the number of converted ends.
     pub fn fix_dangling_endpoints(&mut self, before: &Sheet) -> usize {
         if !self.has_dangling_endpoints() {

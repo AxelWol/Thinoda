@@ -666,7 +666,25 @@ fn point(element: &Element) -> Vec2 {
     Vec2::new(number(element, "x"), number(element, "y"))
 }
 
-fn read_geometry(element: Option<&Element>) -> Geometry {
+fn waypoint(element: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Option<Vec2> {
+    let coordinate = |key| match element.attr(key) {
+        None => Some(0.0),
+        Some(value) => value
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite()),
+    };
+    match (coordinate("x"), coordinate("y")) {
+        (Some(x), Some(y)) => Some(Vec2::new(x, y)),
+        _ => {
+            warnings.insert(ImportWarning::Other);
+            None
+        }
+    }
+}
+
+fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarning>) -> Geometry {
     let Some(element) = element else {
         return Geometry::default();
     };
@@ -688,7 +706,7 @@ fn read_geometry(element: Option<&Element>) -> Geometry {
                     .children
                     .iter()
                     .filter(|p| p.name == "mxPoint")
-                    .map(point)
+                    .filter_map(|p| waypoint(p, warnings))
                     .collect();
             }
             _ => {}
@@ -697,7 +715,12 @@ fn read_geometry(element: Option<&Element>) -> Geometry {
     geometry
 }
 
-fn read_cell(outer: &Element, inner: &Element, user: Option<&Element>) -> Cell {
+fn read_cell(
+    outer: &Element,
+    inner: &Element,
+    user: Option<&Element>,
+    warnings: &mut BTreeSet<ImportWarning>,
+) -> Cell {
     let owned = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(str::to_owned);
     Cell {
         id: outer.attr("id").unwrap_or_default().to_owned(),
@@ -714,7 +737,7 @@ fn read_cell(outer: &Element, inner: &Element, user: Option<&Element>) -> Cell {
         source: owned(inner.attr("source")),
         target: owned(inner.attr("target")),
         visible: inner.attr("visible") != Some("0"),
-        geometry: read_geometry(inner.child("mxGeometry")),
+        geometry: read_geometry(inner.child("mxGeometry"), warnings),
         link: owned(user.and_then(|u| u.attr("link"))),
         tooltip: owned(user.and_then(|u| u.attr("tooltip"))),
     }
@@ -728,7 +751,7 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
     let mut ids = HashSet::new();
     for element in &root.children {
         let mut cell = match element.name.as_str() {
-            "mxCell" => read_cell(element, element, None),
+            "mxCell" => read_cell(element, element, None, warnings),
             "UserObject" | "object" => {
                 let Some(inner) = element.child("mxCell") else {
                     warnings.insert(ImportWarning::Other);
@@ -742,7 +765,7 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
                 }) {
                     warnings.insert(ImportWarning::Other);
                 }
-                read_cell(element, inner, Some(element))
+                read_cell(element, inner, Some(element), warnings)
             }
             _ => {
                 warnings.insert(ImportWarning::Other);
@@ -1457,7 +1480,11 @@ impl<'a> PageImport<'a> {
                 return;
             }
         };
-        if style.formatting_loss(true) || !cell.geometry.points.is_empty() {
+        let routed_hints = !cell.geometry.points.is_empty()
+            && style
+                .get("edgeStyle")
+                .is_some_and(|value| !value.is_empty() && value != "none");
+        if style.formatting_loss(true) || routed_hints {
             self.warn(ImportWarning::Formatting);
         }
         if cell.link.is_some() {
@@ -1487,6 +1514,12 @@ impl<'a> PageImport<'a> {
         } else {
             ConnectorRoute::Straight
         };
+        connector.waypoints = cell
+            .geometry
+            .points
+            .iter()
+            .map(|point| origin + *point)
+            .collect();
         connector.arrow_end = style.get("endArrow") != Some("none");
         connector.arrow_start = style
             .get("startArrow")
@@ -1879,6 +1912,7 @@ struct PageWriter<'a> {
     topics: HashSet<TopicId>,
     object_zone: HashMap<CanvasObjectId, ZoneId>,
     root_zone: HashMap<TopicId, ZoneId>,
+    connector_midpoints: HashMap<CanvasObjectId, Vec2>,
     groups: HashMap<CanvasGroupId, (String, Rect)>,
     written_groups: HashSet<CanvasGroupId>,
     written: HashSet<BoardMember>,
@@ -1893,6 +1927,24 @@ impl<'a> PageWriter<'a> {
             .copied()
             .filter(|id| !sheet.is_anchor(*id))
             .collect();
+        let edge_targets = crate::board_export::connector_attachment_counts(sheet);
+        let connector_midpoints = if edge_targets.is_empty() {
+            HashMap::new()
+        } else {
+            thinoda_core::build_scene(sheet, &layout)
+                .items
+                .into_iter()
+                .filter_map(|item| match (item.id, item.geometry) {
+                    (
+                        thinoda_core::SceneId::Object(id),
+                        thinoda_core::scene::SceneGeometry::Polyline { points, .. },
+                    ) if edge_targets.contains_key(&id) => {
+                        thinoda_core::board::polyline_midpoint(&points).map(|point| (id, point))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
         let mut writer = Self {
             sheet,
             out: String::new(),
@@ -1900,6 +1952,7 @@ impl<'a> PageWriter<'a> {
             topics,
             object_zone: HashMap::new(),
             root_zone: HashMap::new(),
+            connector_midpoints,
             groups: HashMap::new(),
             written_groups: HashSet::new(),
             written: HashSet::new(),
@@ -2083,6 +2136,14 @@ impl<'a> PageWriter<'a> {
                 Some(object) if matches!(object.kind, CanvasObjectKind::Shape { .. }) => {
                     Terminal::Cell(format!("o{}", id.0))
                 }
+                Some(object) if object.is_connector() => {
+                    Terminal::Point(self.connector_midpoints.get(&id).copied().unwrap_or_else(
+                        || {
+                            log::warn!("draw.io connector target {id} has no resolved path");
+                            object.rotated_bounds().center()
+                        },
+                    ))
+                }
                 Some(object) => Terminal::Point(object.rotated_bounds().center()),
                 None => Terminal::Point(Vec2::ZERO),
             },
@@ -2209,11 +2270,20 @@ impl<'a> PageWriter<'a> {
             CanvasObjectKind::Connector(connector) => {
                 let mut style = String::from("html=1;");
                 match connector.route {
-                    ConnectorRoute::Straight => {}
+                    ConnectorRoute::Straight => {
+                        if !connector.waypoints.is_empty() {
+                            style.push_str("edgeStyle=none;");
+                        }
+                    }
                     ConnectorRoute::Elbow => style.push_str(
                         "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;",
                     ),
-                    ConnectorRoute::Curve => style.push_str("curved=1;"),
+                    ConnectorRoute::Curve => {
+                        style.push_str("curved=1;");
+                        if !connector.waypoints.is_empty() {
+                            style.push_str("edgeStyle=none;");
+                        }
+                    }
                 }
                 style.push_str(if connector.arrow_end {
                     "endArrow=classic;"
@@ -2240,7 +2310,7 @@ impl<'a> PageWriter<'a> {
                     &parent,
                     origin,
                     ends,
-                    &[],
+                    &connector.waypoints,
                     &object.alt_text,
                 );
             }

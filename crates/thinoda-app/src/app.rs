@@ -2836,6 +2836,7 @@ impl ThinodaApp {
         format: Format,
         allow_symbol_color_loss: bool,
         allow_note_format_loss: bool,
+        allow_board_loss: bool,
     ) {
         if let Some(doc) = self.doc()
             && let Err(error) = doc.ensure_no_pending_ink()
@@ -2873,7 +2874,11 @@ impl ThinodaApp {
             d.doc.workbook(),
             format,
             &opts,
-            format == Format::MindManager,
+            crate::export_preflight::SaveConsent {
+                board: allow_board_loss,
+                mindmanager: format == Format::MindManager,
+            }
+            .for_io(format),
             visual,
         )
         .map_err(crate::doc::export_error)

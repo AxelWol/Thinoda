@@ -1,4 +1,5 @@
 use crate::{IoError, zip_entry};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -14,6 +15,7 @@ use thinoda_core::{
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 const MAX_XMIND_ARCHIVE_ENTRIES: usize = MAX_RESOURCES + 5;
+const WAYPOINT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-WAYPOINTS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -702,9 +704,36 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
     ))
 }
 
+fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
+    if book.has_connector_waypoints() {
+        Ok(serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, book))?)
+    } else {
+        Ok(serde_json::to_string(book)?)
+    }
+}
+
+fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
+    if let Some(contents) = source.trim_start().strip_prefix('[') {
+        let version = String::deserialize(&mut serde_json::Deserializer::from_str(contents))?;
+        if version != WAYPOINT_SNAPSHOT_VERSION {
+            return Err(IoError::NewerVersion(version));
+        }
+        let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        Ok(workbook)
+    } else {
+        let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_connector_waypoints() {
+            return Err(IoError::Invalid(
+                "connector waypoints require a versioned private XMind snapshot".into(),
+            ));
+        }
+        Ok(workbook)
+    }
+}
+
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
     let resource_files = export_resource_files(book)?;
-    let stable = serde_json::to_string(book)?;
+    let stable = private_snapshot(book)?;
     let sheets = public_content(book)?;
     let content = serde_json::to_vec(&sheets)?;
     let metadata = serde_json::to_vec(&json!({
@@ -1215,7 +1244,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 .and_then(|m| m.get("thinodaWorkbook"))
                 .and_then(Value::as_str)
             {
-                match serde_json::from_str::<Workbook>(w) {
+                match read_private_snapshot(w) {
                     Ok(workbook) => {
                         if let Err(e) = workbook.validate() {
                             log::warn!("Ignoring invalid private XMind snapshot: {e}");
@@ -1263,6 +1292,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                             );
                         }
                     }
+                    Err(error @ IoError::NewerVersion(_)) => return Err(error),
                     Err(e) => log::warn!("Ignoring unreadable private XMind snapshot: {e}"),
                 }
             }

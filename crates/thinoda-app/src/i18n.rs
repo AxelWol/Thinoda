@@ -467,6 +467,10 @@ const DE: &[(&str, &str)] = &[
         "Mind-Map-Themen und -Verbindungen in Formen umgewandelt",
     ),
     (
+        "Connector-to-connector attachments detached",
+        "Verbindungen zwischen Verbindungslinien gelöst",
+    ),
+    (
         "Topic notes, labels, markers or tasks omitted",
         "Notizen, Beschriftungen, Markierungen oder Aufgaben von Themen ausgelassen",
     ),
@@ -4755,6 +4759,7 @@ mod tests {
             "Boundaries omitted",
             "Inline card text and list formatting omitted",
             "Mind-map topics and links flattened to shapes",
+            "Connector-to-connector attachments detached",
             "Topic notes, labels, markers or tasks omitted",
             "Presentation slides omitted",
         ];

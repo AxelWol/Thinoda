@@ -85,10 +85,10 @@ Anything outside a tier is reported in diagnostics as "preserved, shown approxim
 - Board model (`crates/thinoda-core/src/board.rs`): `CanvasObjectKind = Shape | Ink |
   Connector` (331-341); 29 `ShapeKind`s; `ObjectStyle {fill, stroke, text_color,
   stroke_width, opacity}` (218-242); connector `{from/to: Topic|Object|Point, route:
-  Straight|Elbow|Curve, arrow_start/end: bool, label, color, width}` (764-821); flat
+  Straight|Elbow|Curve, waypoints, arrow_start/end: bool, label, color, width}`; flat
   groups (no nesting), lock flags, single `CanvasLayer` with `Band::{Below,Above}` paint
   bands; cards (Sticky/Text/Image) are floating topics; zones are sheet-level.
-- **Missing for draw.io**: waypoints, ports/fixed connection points, arrow-type enum, dash
+- **Missing for draw.io**: waypoint editing and exact routing, ports/fixed connection points, arrow-type enum, dash
   patterns, fonts/size/alignment per shape, gradients, shadows, rounded/arcSize params,
   flip, named layers (visibility/lock), nested groups/containers, swimlanes/tables, free
   text & image objects, hyperlinks/custom properties/tooltips on objects, stencil shapes,
@@ -97,7 +97,7 @@ Anything outside a tier is reported in diagnostics as "preserved, shown approxim
   `from_path` (extension only → `.drawio.svg` double extensions need special handling),
   `detect_format` (`.xml` is sniffed for FIM first, then falls back), `ImportReport` +
   `ImportWarning` consent flow, `ExportLoss` preflight (`board_export.rs`),
-  `NATIVE_FORMAT_VERSION = 9` with `required_native_version` gating.
+  `NATIVE_FORMAT_VERSION = 10` with `required_native_version` gating.
 - Deps already present: `quick-xml 0.42`, `base64 0.23`, `image` (png/jpeg), `resvg 0.48`.
   Raw-deflate/zlib is only *transitive* (via `zip`) → a **direct** dependency (e.g.
   `miniz_oxide`) must be added, wasm-checked and license-noted.
@@ -136,7 +136,7 @@ flowchart LR
     S[drawio::stencil<br/>parser + resolver] --> I
   end
   subgraph thinoda-core
-    B[board model v10<br/>+ DiagramExt passthrough]
+    B[versioned board model<br/>+ DiagramExt passthrough]
     G[stencil geometry<br/>path language]
   end
   I --> B
@@ -194,10 +194,13 @@ Rules (each backed by a test):
 8. **Non-draw.io documents** never get these fields; a native sheet saved to draw.io gets
    fresh ids and default envelope.
 
-- **Native format v10** gate: `required_native_version` returns 10 only if a workbook uses
-  any new field **or passthrough** (so existing documents keep writing v6–v9 exactly as
-  today). Older
-  Thinoda builds refuse v10 instead of silently dropping data (existing pattern).
+- **Native format gates:** v10 currently covers connector waypoints. Every later
+  field or passthrough representation that a v10 reader cannot preserve must
+  require a higher native version, with `required_native_version` choosing the
+  oldest version that can represent the complete workbook. Older builds must
+  reject that version instead of silently dropping data. Version sheet/board
+  clipboard, recovery and private XMind envelopes separately whenever an older
+  reader could otherwise ignore new data; reject forged older envelopes too.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 
@@ -241,7 +244,7 @@ Rules (each backed by a test):
 | Text | `CanvasObjectKind::Text` (free text) and `Image { resource | external_url, aspect }`; `LabelStyle { font_family, font_size, bold/italic/underline/strike, align, v_align, wrap, spacing, label_position, background, border }`; rich labels reuse the v8 inline-text model; HTML→rich text mapping table (b/i/u/s/font/color/br/p/ul/ol/li/a/sub/sup) with anything else kept as preserved HTML + plain-text fallback. Fonts: family name kept; missing fonts fall back via existing font stack, noted in diagnostics. |
 | Connection style | Per object `ConnectionStyle { perimeter: Option<Perimeter>, perimeter_spacing, ports: PortPolicy (Default per kind / Constraints(list) / None), connectable }`; `None` = default derived from `ShapeKind`/stencil (Phase 1 uses only these derived defaults). Imported non-default values affect routing, hit-testing, export (tested). |
 | Style | `ObjectStyle` += `dash: Option<DashPattern>`, `fill_opacity`, `stroke_opacity`, `gradient: Option<Gradient>`, `shadow`, `rounded + arc_size`, `flip_h/v`, `direction`, `fill_style`, `sketch`. Colors: `ThemedColor = Fixed(Color) | Default | None | LightDark(Color, Color)`. |
-| Connectors | `waypoints: Vec<Vec2>`; `route` += `Orthogonal`, `EntityRelation`, `Isometric`, `Segment`, `Loop`, `SideToSide`, `TopToBottom` (Elbow kept); `start_marker/end_marker: Option<Marker { kind: ArrowKind(34), filled, size }>`; `Endpoint::Port { object, x, y, dx, dy, perimeter }`; labels per 3.2.1; `jump: Option<LineJump>`; dash. |
+| Connectors | `waypoints: Arc<[Vec2]>` (stored; editing is future work); `route` += `Orthogonal`, `EntityRelation`, `Isometric`, `Segment`, `Loop`, `SideToSide`, `TopToBottom` (Elbow kept); `start_marker/end_marker: Option<Marker { kind: ArrowKind(34), filled, size }>`; `Endpoint::Port { object, x, y, dx, dy, perimeter }`; labels per 3.2.1; `jump: Option<LineJump>`; dash. |
 | Structure | Named **layers** `Vec<BoardLayer { id, name, visible, locked }>` in `CanvasLayer`; objects reference layer via `parent`. |
 | Metadata | Per-object `link: Option<Link>` (`Url` w/ scheme allow-list, `Sheet(SheetId)`, `Action(raw)` preserved-only), `tooltip`, `properties: Vec<(String,String)>`, `tags`, `placeholders`. |
 | Sheet | `DiagramPage { page_size, page_scale, grid, background, background_image, math, adaptive_colors }` in `BoardSettings`. |
@@ -251,12 +254,13 @@ Rules (each backed by a test):
   `None`/`Classic(filled, default size)`; add `start_marker`/`end_marker` fields that are
   serialized **only** for non-default markers. Custom `Deserialize` helper reads both;
   if both present and inconsistent → validation error. In-memory API is the new
-  `Marker`; bools derived. v≤9 files therefore round-trip byte-identically and older
-  Thinoda builds never see a marker field they would silently ignore (v10 gate).
+  `Marker`; bools derived. Files without new marker data retain their legacy
+  representation, and older Thinoda builds reject non-default markers through a
+  new version gate rather than silently ignoring them.
 - Same pattern for every other extended field: legacy representation preserved, new
   field present only when it carries information, `required_native_version` detects
-  every new field (exhaustive test that constructs one workbook per new field and
-  asserts version 10, plus forged v9 manifests containing v10 fields are rejected).
+  every new field (construct one workbook per new field and assert its minimum
+  supported version, plus rejection of forged manifests with older versions).
 
 Mind-map topics/cards remain untouched; draw.io import produces **hidden-root board
 sheets** (`SheetRootMode::Hidden`) so mind-map features stay unaffected.
@@ -429,8 +433,8 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
 - `is_native` stays Thinoda|XMind; new `DocFormat::is_editable_foreign()` = XMind|DrawIo*
   used by `from_import_report` (keep source path only for editable formats),
   `prepare_save`/`finish_save` (write same container + compression policy from
-  `DrawIoDocumentExt`), autosave & crash recovery (recovery snapshot is always native
-  `.thinoda` v10, restoring origin metadata), cloud/VFS save paths.
+  `DrawIoDocumentExt`), autosave & crash recovery (recovery snapshots retain a
+  versioned native workbook and restore origin metadata), cloud/VFS save paths.
 - Source fingerprint (size+mtime+hash) captured on open; Save detects external change
   and offers *Overwrite / Save as… / Reload*.
 - Mixed workbooks (user adds a mind-map sheet to a draw.io document): sheets are
@@ -458,7 +462,8 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
 
 ### 3.7 Non-breaking guardrails
 - All model additions optional/defaulted; existing documents serialize byte-identically
-  (golden tests over all existing fixtures); v10 only when new data is present.
+  (golden tests over all existing fixtures). Each new version is required only when
+  its new data is present.
 - `Format` additions don't change existing extension mapping (sniffing only on open).
 - **Exhaustive-consumer inventory** (Phase 0) of `CanvasObjectKind`, `ShapeKind`,
   `Endpoint`, `ConnectorRoute`, `Format`, `ExportLoss`, `ImportWarning`, `BoardTool`;
@@ -488,7 +493,7 @@ commit with explicit pathspecs (never `git add -A`).
 | 0 | Foundations | — | ADR/issue, corpus, provenance, consumer inventory, benchmarks, docs |
 | 1 | Shape placement, quick actions & perimeters | 0 | draw.io-style pick / hover-edit / click-to-create, direction arrows, quick-shape popover, floating toolbars, true-outline connectors |
 | 2 | Codec, AST & security | 0 | Bounded read/write of every container to typed AST |
-| 3 | Core scene model & round-trip contract | 0 | Hierarchy, v10 fields, ownership/passthrough, marker migration |
+| 3 | Core scene model & round-trip contract | 0 | Hierarchy, version-gated fields, ownership/passthrough, marker migration |
 | 4 | Renderer-neutral primitives & parity | 3 | One scene description for canvas + all exports |
 | 5 | Stencil engine & generic baseline | 3, 4 | Stencil parser, core JS shapes, constraints → ports, bundled generic libs |
 | 6 | Import MVP | 2, 3, 4, 5 | Open `.drawio` → board sheets, diagnostics, page links |
@@ -547,8 +552,10 @@ connections arrive in Phase 8 without changing the gestures).
 - 3.1.1 + 3.2 in `thinoda-core`: `SceneParent`, containers, edge labels, layers,
   Text/Image/Stencil/opaque kinds, style/connector/metadata fields, `DrawIoDocumentExt`/
   `DrawIoPageExt`/`DrawIoCellExt`, ownership table, tombstones, marker migration.
-- `required_native_version` → 10 for every new field; forged-manifest rejection;
-  `validate.rs` (no cycles, depth bound, layers/ports/parents exist, ownership disjoint).
+- `required_native_version` gates every field at the first version that supports
+  it: v10 covers waypoints, and subsequent additions need a higher version.
+  Reject forged older manifests and version the other persistence envelopes too;
+  `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
 - Tests: golden byte-identity of existing fixtures; edit/delete/dup/group/ungroup/
   cross-doc paste/undo/save-reopen lifecycle tests.
@@ -578,7 +585,7 @@ connections arrive in Phase 8 without changing the gestures).
   corpus file; Thinoda-native sheet → draw.io → Thinoda stable.
 
 ### Phase 8 — Connector editing UX (`p8-connectors`)
-- Remaining 3.4.1a items that need the v10 model: fixed connection points (×) incl.
+- Remaining 3.4.1a items that need further model extensions: fixed connection points (×) incl.
   default per-kind point sets and stencil constraints, floating/fixed toggle (Alt),
   virtual bends + waypoints, orthogonal segment dragging, all route styles in the edge
   toolbar, 34-marker picker, line jumps, multiple edge labels, smart guides; direction
@@ -821,7 +828,10 @@ or raw XML back. Thinoda now matches both directions:
 - **Copy:** *Edit ▸ Copy as draw.io* (also in the board item context menu and the ribbon's
   Clipboard group) exports the selected board items through the export codec and writes the
   `encodeURIComponent` form as plain text, so pasting in diagrams.net yields editable
-  cells. Ordinary *Copy* is unchanged (readable text plus Thinoda's private rich format).
+  cells. Conversion losses are listed in a persistent, localized warning after the
+  clipboard write; pending text edits are committed first, but the conversion does not
+  otherwise change the source document. Ordinary *Copy* is unchanged (readable text plus
+  Thinoda's private rich format).
 - Limits: container membership from draw.io (Thinoda zones) is not part of a board
   clipboard fragment, so pasted children arrive as free items; multi-page `mxfile` text
   pastes its first page.
@@ -888,6 +898,46 @@ partial sides) need new `ShapeKind`s and stay with Phase 4/13. Tests:
 `built_in_shape_aliases_map_to_their_thinoda_equivalents`,
 `waypoints_become_small_dots_in_the_stroke_color`; corpus still 89/89.
 
+**Connector waypoints (fidelity slice 3; partial Phases 3 and 8).** Explicit
+draw.io connector points import in sheet coordinates and export relative to
+their parent; the native model retains them through save, undo/redo,
+copy/paste, connector moves and group rotation. The points are shared between
+history snapshots, with limits of 1,024 per connector and 200,000 per sheet.
+Native format v10 is required only when at least one connector has points;
+older documents without them retain their previous version and serialization.
+Waypoint-bearing sheet and board clipboard data use versions 6 and 3,
+respectively, and recovery and private XMind snapshots use waypoint-aware
+envelopes. Readers reject forged older clipboard and recovery versions. Older
+Thinoda versions cannot restore the versioned private XMind snapshot and
+instead fall back to XMind's public content, where canvas objects are omitted;
+the XMind export preflight already warns about that loss.
+
+Straight routes pass through their points; curves use sampled quadratic spans;
+elbow routes use a horizontal-first orthogonal approximation. Rendering,
+hit-testing, visual export, labels and the label editor use the same resolved
+path. Edge-to-edge attachments meet the path midpoint, and deleting the
+target leaves the endpoint there. No-point connectors keep their previous
+routing. Import reports a Formatting warning when draw.io routing hints need
+approximation; the original routing style of a curved orthogonal edge is not
+preserved. Malformed waypoint coordinates are omitted with an import warning.
+draw.io file export currently detaches connector-to-connector
+attachments at the target's path midpoint and requires consent through a
+localized loss warning; the public export API also rejects that loss unless
+explicitly authorized. Copy as draw.io reports that loss after copying in a
+persistent warning, including attachments to connectors outside the copied
+selection; its report-returning API exposes losses in the prepared fragment,
+while the text-only encoder refuses those lossy conversions. Callers must report
+any losses incurred while preparing a fragment. Interactive waypoint handles,
+exact mxGraph routing, fixed ports and lossless style preservation remain future
+work.
+
+Regression coverage includes coordinate and native-version round trips,
+parent-relative groups, limits, transforms, history, clipboard, path hit
+testing, label editing, attachment deletion, persistence versioning and export
+preflight. The 89-file example corpus passes with 564 waypoint-bearing edges;
+the corpus test additionally checks waypoint paths and native workbook
+equality, not only page and item counts.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.
@@ -914,7 +964,7 @@ partial sides) need new `ShapeKind`s and stay with Phase 4/13. Tests:
 | 3 | major | doc.rs only treats Thinoda/XMind as writable | 3.5 editable-format contract (Phase 7) |
 | 4 | major | No workbook-level home for mxfile data | `DrawIoDocumentExt`/`DrawIoPageExt` |
 | 5 | major | Stencils/constraints/page links needed before import | Phase 5 before Phase 6; link map in Phase 6/7 |
-| 6 | major | bool→marker migration underspecified | 3.2.3 dual representation + exhaustive v10 tests |
+| 6 | major | bool→marker migration underspecified | 3.2.3 dual representation + exhaustive version-gate tests |
 | 7 | major | Renderers not unified; exhaustive matches | 3.7 inventory + Phase 4 primitives |
 | 8 | major | `ImportWarning` too coarse | `ImportDiagnostic`, derived coarse warning |
 | 9 | major | Security criteria vague | 3.6 acceptance criteria + adversarial corpus |
@@ -934,3 +984,11 @@ partial sides) need new `ShapeKind`s and stay with Phase 4/13. Tests:
 | R7 | major | "Full fidelity" vs placeholders | Three-tier support matrix with release gates (§1) |
 | R8 | major | "Cap before decoding" not implementable for deflate | Incremental chunked inflate with in-flight ceiling |
 | R9 | minor | No touch gesture for quick-shape popover | Press-and-hold on the arrow itself (implemented in 1b part 2 instead of the chevron); object long-press unchanged |
+
+**Waypoint slice follow-up:**
+| # | Severity | Finding | Resolution |
+|---|---|---|---|
+| W1 | blocker | The plan assigned all later fields to v10 even though a waypoint-aware v10 reader now exists; it could silently discard later fields. | Require new native and alternate-envelope versions for subsequent unsupported data; reject forged older versions. |
+| W2 | major | draw.io export and copying could silently detach connector-to-connector attachments, including targets outside the selection. | Resolve the fallback at the path midpoint; require export consent at the API and app layers, or show a persistent clipboard warning. |
+| W3 | major | A future private XMind snapshot with an incompatible body could fall back before its version was checked. | Check the version tag first and reject unknown versions. |
+| W4 | minor | Adding Copy as draw.io made the expanded Edit menu taller, so its Settings test attempted to click an off-screen item. | Check that both commands can be revealed, then scroll Settings into view before activating it. |

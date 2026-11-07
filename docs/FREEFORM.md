@@ -33,6 +33,18 @@ Moving a Zone expands rigid board groups and rejects locked or invalid moves
 without changing any contents. Explicit object membership requires native format
 v9 so older applications refuse the file rather than silently dropping ownership.
 
+### Connector waypoint foundation
+
+Connector bends and curve controls imported from draw.io are retained in sheet
+coordinates and participate in rendering, hit-testing, visual export, undo,
+copy/paste and connector transforms. Explicit points require native format v10;
+documents without them keep their previous version. Waypoint-bearing sheet and
+mixed-board clipboard payloads use versions 6 and 3, and recovery and private
+XMind snapshots use waypoint-aware envelopes. The model limits points to 1,024
+per connector and 200,000 per sheet. Interactive waypoint editing and exact
+draw.io orthogonal routing are not yet available; see
+[DRAWIO.md](DRAWIO.md) for conversion warnings and remaining work.
+
 ## 1. Goal
 
 Thinoda should also work as a **whiteboard**, not only as a tree-shaped mind map,

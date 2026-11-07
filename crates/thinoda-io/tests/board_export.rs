@@ -135,6 +135,60 @@ fn all_text(bytes: &[u8]) -> String {
 // --- native versioning --------------------------------------------------------------
 
 #[test]
+fn connector_waypoints_require_v10_and_render_in_svg() {
+    let mut sheet = Sheet::new("Route", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 0.0)),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.waypoints = vec![Vec2::new(20.0, 40.0), Vec2::new(80.0, 40.0)].into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    assert_eq!(required_native_version(&book), 10);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 10);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    assert_eq!(
+        export(
+            &import_bytes(Format::Thinoda, &native).unwrap(),
+            Format::Thinoda
+        ),
+        native
+    );
+
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":9,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("connector waypoints require native format version 10")
+    );
+    assert!(
+        import_bytes(Format::Thinoda, &content)
+            .unwrap_err()
+            .to_string()
+            .contains("connector waypoints require a versioned native archive")
+    );
+
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(
+        svg.contains("M 0.00,0.00 L 20.00,40.00 L 80.00,40.00 L 100.00,0.00"),
+        "{svg}"
+    );
+}
+
+#[test]
 fn explicit_zone_objects_require_native_v9_and_round_trip() {
     let mut wb = board();
     let sheet = &mut wb.sheets[0];
@@ -1565,6 +1619,47 @@ fn xmind_hidden_root_is_titled_with_the_sheet_and_round_trips() {
     // The private snapshot restores the full board.
     let back = import_bytes(Format::XMind, &bytes).unwrap();
     assert_eq!(back, wb);
+}
+
+#[test]
+fn xmind_private_snapshot_versions_and_preserves_connector_waypoints() {
+    let mut sheet = Sheet::new("Routes", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.waypoints = vec![Vec2::new(50.0, 40.0)].into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let bytes = export(&book, Format::XMind);
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&entry(&bytes, "metadata.json")).unwrap();
+    let snapshot = metadata["thinodaWorkbook"].as_str().unwrap();
+    let mut tagged: serde_json::Value = serde_json::from_str(snapshot).unwrap();
+    assert_eq!(tagged[0], "THINODA-XMIND-WAYPOINTS-1");
+    assert!(serde_json::from_str::<Workbook>(snapshot).is_err());
+    assert_eq!(import_bytes(Format::XMind, &bytes).unwrap(), book);
+
+    tagged[0] = serde_json::json!("THINODA-XMIND-WAYPOINTS-999");
+    tagged[1] = serde_json::json!({"sheets": "incompatible future schema"});
+    metadata["thinodaWorkbook"] = serde_json::Value::String(tagged.to_string());
+    let metadata = serde_json::to_vec(&metadata).unwrap();
+    let content = entry(&bytes, "content.json");
+    let manifest = entry(&bytes, "manifest.json");
+    let legacy = entry(&bytes, "content.xml");
+    let future = zip_with(&[
+        ("metadata.json", &metadata),
+        ("content.json", &content),
+        ("manifest.json", &manifest),
+        ("content.xml", &legacy),
+    ]);
+    assert!(matches!(
+        import_bytes(Format::XMind, &future),
+        Err(thinoda_io::IoError::NewerVersion(version))
+            if version == "THINODA-XMIND-WAYPOINTS-999"
+    ));
 }
 
 #[test]

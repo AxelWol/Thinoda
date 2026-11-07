@@ -259,6 +259,14 @@ pub enum IoError {
     #[error("import requires confirmation because unsupported content may be omitted: {0:?}")]
     ImportNeedsConfirmation(Vec<ImportWarning>),
     #[error(
+        "draw.io clipboard conversion would lose content: {0:?}; handle the conversion report explicitly"
+    )]
+    DrawioClipboardLoss(Vec<ExportLoss>),
+    #[error(
+        "draw.io export would detach {0} connector-to-connector attachment(s); explicit consent is required"
+    )]
+    DrawioConnectorAttachmentsNeedConfirmation(usize),
+    #[error(
         "MindManager export requires confirmation: only the selected sheet and supported features are written"
     )]
     MindManagerExportNeedsConfirmation,
@@ -611,8 +619,9 @@ pub fn export_bytes_with_visual_context(
     export_bytes_with_consent_and_visual_context(book, format, opts, false, visual)
 }
 
-/// Export with explicit consent to omit unsupported MindManager content.
-/// Other format policies are unchanged.
+/// Export with explicit consent to omit unsupported MindManager content or
+/// detach connector-to-connector attachments in draw.io. Callers should also
+/// inspect [`export_losses`] for other changes.
 pub fn export_bytes_with_consent(
     book: &Workbook,
     format: Format,
@@ -661,6 +670,17 @@ pub fn export_bytes_with_consent_and_visual_context(
     })?;
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
+    }
+    if format == Format::DrawIo
+        && !allow_lossy
+        && let Some(count) = export_losses(book, format, opts)
+            .into_iter()
+            .find_map(|loss| match loss {
+                ExportLoss::ConnectorAttachmentsDetached(count) => Some(count),
+                _ => None,
+            })
+    {
+        return Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(count));
     }
     if format == Format::MindManager
         && !allow_lossy

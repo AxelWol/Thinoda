@@ -15,6 +15,7 @@ Board > Hide central topic moves any central-topic content to a floating topic. 
 Save boards as .thinoda to preserve cards, shapes, connectors, frames and board settings. Other formats may change or omit board content; review the export warnings.|Salve os quadros como .thinoda para preservar cartões, formas, conectores, molduras e configurações do quadro. Outros formatos podem alterar ou omitir conteúdo do quadro; confira os avisos de exportação.
 Inline card text and list formatting omitted|Formatação e listas do texto dos cartões omitidas
 Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa mental convertidos em formas
+Connector-to-connector attachments detached|Conexões entre conectores desfeitas
 Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
 Presentation slides omitted|Slides de apresentação omitidos
 Thinoda on GitHub|Thinoda no GitHub

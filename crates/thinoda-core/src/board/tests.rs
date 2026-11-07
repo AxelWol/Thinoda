@@ -35,6 +35,170 @@ fn board() -> (Sheet, TopicId, TopicId, TopicId) {
 // ---- serde ------------------------------------------------------------------------------
 
 #[test]
+fn connector_waypoint_limits_and_edits_are_atomic() {
+    let mut connector =
+        CanvasConnector::new(Endpoint::Point(Vec2::ZERO), Endpoint::Point(Vec2::ZERO));
+    let default_json = serde_json::to_string(&connector).unwrap();
+    assert!(!default_json.contains("waypoints"));
+
+    connector.waypoints = vec![Vec2::ZERO; MAX_CONNECTOR_WAYPOINTS].into();
+    validate_object(&CanvasObject::connector(connector.clone())).unwrap();
+    connector.waypoints = vec![Vec2::ZERO; MAX_CONNECTOR_WAYPOINTS + 1].into();
+    assert!(
+        validate_object(&CanvasObject::connector(connector.clone()))
+            .unwrap_err()
+            .contains("waypoints")
+    );
+    connector.waypoints = vec![Vec2::new(f32::NAN, 0.0)].into();
+    assert!(
+        validate_object(&CanvasObject::connector(connector.clone()))
+            .unwrap_err()
+            .contains("invalid waypoint")
+    );
+
+    let mut sheet = Sheet::new("Limits", "Root");
+    connector.waypoints = vec![Vec2::ZERO; MAX_CONNECTOR_WAYPOINTS].into();
+    for _ in 0..MAX_TOTAL_CONNECTOR_WAYPOINTS / MAX_CONNECTOR_WAYPOINTS {
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector.clone()))
+            .unwrap();
+    }
+    connector.waypoints =
+        vec![Vec2::ZERO; MAX_TOTAL_CONNECTOR_WAYPOINTS % MAX_CONNECTOR_WAYPOINTS].into();
+    let last = sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    assert_eq!(
+        sheet.canvas.connector_waypoint_count(),
+        MAX_TOTAL_CONNECTOR_WAYPOINTS
+    );
+    sheet.validate().unwrap();
+    let before = sheet.canvas.clone();
+    connector.waypoints = vec![Vec2::ZERO].into();
+    assert!(
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap_err()
+            .contains("waypoints per sheet")
+    );
+    assert!(
+        sheet
+            .update_canvas_object(last, |object| {
+                if let CanvasObjectKind::Connector(c) = &mut object.kind {
+                    let mut points = c.waypoints.to_vec();
+                    points.push(Vec2::ZERO);
+                    c.waypoints = points.into();
+                }
+            })
+            .unwrap_err()
+            .contains("waypoints per sheet")
+    );
+    assert_eq!(sheet.canvas, before);
+}
+
+#[test]
+fn connector_waypoints_follow_move_rotation_and_undo() {
+    let mut sheet = Sheet::new("Waypoints", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 0.0)),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.waypoints = vec![Vec2::new(20.0, 50.0), Vec2::new(80.0, 50.0)].into();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    let mut doc = Document::new(crate::Workbook::new(sheet));
+    doc.move_canvas_objects(&[id], Vec2::new(10.0, 30.0))
+        .unwrap();
+    let CanvasObjectKind::Connector(moved) = &doc.sheet().canvas.object(id).unwrap().kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(
+        moved.waypoints.as_ref(),
+        &[Vec2::new(30.0, 80.0), Vec2::new(90.0, 80.0)]
+    );
+    assert_eq!(moved.from, Endpoint::Point(Vec2::new(10.0, 30.0)));
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().canvas.object(id).unwrap().kind,
+        CanvasObjectKind::Connector(connector)
+    );
+
+    doc.edit_sheet("Rotate connector", |sheet| {
+        sheet
+            .rotate_board_members(&[BoardMember::Object(id)], Vec2::ZERO, 90.0)
+            .map_err(crate::EditError::Invalid)
+    })
+    .unwrap();
+    let CanvasObjectKind::Connector(rotated) = &doc.sheet().canvas.object(id).unwrap().kind else {
+        panic!("expected connector");
+    };
+    assert!((rotated.waypoints[0] - Vec2::new(-50.0, 20.0)).length() < 0.001);
+    assert!((rotated.waypoints[1] - Vec2::new(-50.0, 80.0)).length() < 0.001);
+    assert!(doc.undo());
+
+    let mut near_limit =
+        CanvasConnector::new(Endpoint::Point(Vec2::ZERO), Endpoint::Point(Vec2::ZERO));
+    near_limit.waypoints = vec![Vec2::new(MAX_BOARD_COORDINATE, 0.0)].into();
+    let mut sheet = Sheet::new("Limit", "Root");
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(near_limit))
+        .unwrap();
+    let before = sheet.canvas.clone();
+    assert!(
+        sheet
+            .move_canvas_objects(&[id], Vec2::new(1.0, 0.0))
+            .is_err()
+    );
+    assert_eq!(sheet.canvas, before);
+}
+
+#[test]
+fn deleting_a_waypoint_connector_keeps_edge_attachments_on_its_path() {
+    let mut sheet = Sheet::new("Attachments", "");
+    let mut target = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(250.0, 100.0)),
+    );
+    target.waypoints = vec![Vec2::new(200.0, 0.0), Vec2::new(200.0, 100.0)].into();
+    let target = sheet
+        .add_canvas_object(CanvasObject::connector(target))
+        .unwrap();
+    let attached = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(300.0, 200.0)),
+        )))
+        .unwrap();
+    let expected = Endpoint::Point(Vec2::new(175.0, 0.0));
+
+    let before = sheet.clone();
+    sheet.canvas.objects.retain(|object| object.id != target);
+    assert_eq!(sheet.fix_dangling_endpoints(&before), 1);
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(attached).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, expected);
+
+    let mut document = Document::new(crate::Workbook::new(before));
+    document.remove_canvas_objects(&[target]).unwrap();
+    let CanvasObjectKind::Connector(connector) =
+        &document.sheet().canvas.object(attached).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, expected);
+    assert!(document.undo());
+    let CanvasObjectKind::Connector(connector) =
+        &document.sheet().canvas.object(attached).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, Endpoint::Object(target));
+}
+
+#[test]
 fn zone_membership_transfers_mixed_members_and_retains_empty_zones_with_undo() {
     let (mut sheet, first, second, card) = board();
     let object = sheet

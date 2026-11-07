@@ -44,16 +44,21 @@ pub struct Snapshot {
 }
 
 const INLINE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INLINE-1";
+const WAYPOINT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-WAYPOINTS-1";
 
 fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    if !workbook.has_inline_text() {
+    let version = if workbook.has_connector_waypoints() {
+        WAYPOINT_WORKBOOK_VERSION
+    } else if workbook.has_inline_text() {
+        INLINE_WORKBOOK_VERSION
+    } else {
         return workbook.serialize(serializer);
-    }
+    };
     let mut tuple = serializer.serialize_tuple(2)?;
-    tuple.serialize_element(INLINE_WORKBOOK_VERSION)?;
+    tuple.serialize_element(version)?;
     tuple.serialize_element(workbook)?;
     tuple.end()
 }
@@ -74,7 +79,13 @@ where
         where
             A: MapAccess<'de>,
         {
-            Workbook::deserialize(MapAccessDeserializer::new(map))
+            let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_connector_waypoints() {
+                return Err(A::Error::custom(
+                    "connector waypoints require a versioned recovery workbook",
+                ));
+            }
+            Ok(workbook)
         }
 
         fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Workbook, A::Error>
@@ -84,14 +95,19 @@ where
             let version: String = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook version"))?;
-            if version != INLINE_WORKBOOK_VERSION {
+            if version != INLINE_WORKBOOK_VERSION && version != WAYPOINT_WORKBOOK_VERSION {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
                 )));
             }
-            let workbook = seq
+            let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version == INLINE_WORKBOOK_VERSION && workbook.has_connector_waypoints() {
+                return Err(A::Error::custom(
+                    "connector waypoints require a waypoint-aware recovery workbook",
+                ));
+            }
             if seq.next_element::<IgnoredAny>()?.is_some() {
                 return Err(A::Error::custom("unexpected recovery workbook data"));
             }
@@ -820,6 +836,53 @@ mod lock_tests {
                 .unwrap()
                 .push(serde_json::json!(null));
             assert!(serde_json::from_value::<Snapshot>(value).is_err());
+        }
+    }
+
+    #[test]
+    fn recovery_workbook_versions_protect_waypoints_on_inactive_sheets() {
+        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint, Sheet, Vec2};
+
+        let mut sheet = Sheet::new("Routes", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.waypoints = vec![Vec2::new(50.0, 50.0)].into();
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let meta = SnapshotMeta::default();
+        for mut book in [
+            Workbook::default(),
+            formatted_workbook(thinoda_core::CardKind::Text),
+        ] {
+            book.sheets.push(sheet.clone());
+            book.validate().unwrap();
+            let bytes = Snapshot::to_bytes(meta.clone(), &book).unwrap();
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+            assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["workbook"][0], WAYPOINT_WORKBOOK_VERSION);
+            let mut inline_only = value.clone();
+            inline_only["workbook"][0] = serde_json::json!(INLINE_WORKBOOK_VERSION);
+            assert!(
+                serde_json::from_value::<Snapshot>(inline_only)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector waypoints require a waypoint-aware recovery workbook")
+            );
+            let mut unversioned = value.clone();
+            unversioned["workbook"] = value["workbook"][1].clone();
+            assert!(
+                serde_json::from_value::<Snapshot>(unversioned)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector waypoints require a versioned recovery workbook")
+            );
         }
     }
 

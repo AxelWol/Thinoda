@@ -692,7 +692,11 @@ impl OpenDoc {
             &workbook,
             format,
             &ExportOptions::default(),
-            allow_mindmanager_loss,
+            crate::export_preflight::SaveConsent {
+                board: allow_board_loss,
+                mindmanager: allow_mindmanager_loss,
+            }
+            .for_io(format),
         )
         .map_err(export_error)?;
         atomic_write(path, &bytes, backup).map_err(|e| e.to_string())
@@ -1001,7 +1005,11 @@ pub(crate) fn write_workbook(
         workbook,
         format,
         &ExportOptions::default(),
-        allow_mindmanager_loss,
+        crate::export_preflight::SaveConsent {
+            board: allow_board_loss,
+            mindmanager: allow_mindmanager_loss,
+        }
+        .for_io(format),
     )
     .map_err(export_error)?;
     atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
@@ -1053,7 +1061,7 @@ pub(crate) async fn write_workbook_async(
         workbook,
         format,
         &ExportOptions::default(),
-        consent.mindmanager,
+        consent.for_io(format),
     )
     .map_err(|error| StorageError::Remote(export_error(error)))?;
     let provider = document_provider(path, backup, backup_directory.as_deref());
@@ -1231,6 +1239,13 @@ pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
             format!("{}: {topic}", t(message))
         }
         thinoda_io::IoError::MindManagerExportNeedsConfirmation => t("MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.").into(),
+        thinoda_io::IoError::DrawioConnectorAttachmentsNeedConfirmation(count) => {
+            let report = crate::export_preflight::LossReport {
+                losses: vec![thinoda_io::ExportLoss::ConnectorAttachmentsDetached(count)],
+                ..Default::default()
+            };
+            crate::export_preflight::loss_message(&report, Format::DrawIo)
+        }
         thinoda_io::IoError::MindManagerExport(detail) => {
             log::warn!("MindManager export failed: {detail}");
             t("Could not write this MindManager file. The map may be too large or contain invalid data.").into()
