@@ -20,7 +20,10 @@ use thinoda_core::{
 
 use crate::{
     actions::{Action, apply_action},
-    ink_controller::{InkController, InkControllerError, InkMode, InkOutcome, InkSettings},
+    ink_controller::{
+        InkController, InkControllerError, InkMode, InkOutcome, InkRecoveryBlock, InkSettings,
+        RecoveredInkGesture,
+    },
     ink_input::{InkSample, StrokeFinishOptions},
     measure::EguiMeasure,
     minimap::{
@@ -546,6 +549,39 @@ impl MapView {
     /// Whether a rejected sample prevents retrying the retained gesture.
     pub fn pending_ink_has_rejected_input(&self) -> bool {
         self.ink_controller.pending_has_rejected_input()
+    }
+
+    pub fn pending_ink_recovery_revision(&self) -> u64 {
+        self.ink_controller.recovery_revision()
+    }
+
+    pub fn pending_ink_recovery_block(&self) -> Option<InkRecoveryBlock> {
+        self.ink_controller.pending_recovery_block()
+    }
+
+    pub fn pending_ink_was_recovered(&self) -> bool {
+        self.ink_controller.pending_was_recovered()
+    }
+
+    pub fn pending_ink_source_is_current(&self, doc: &Document) -> bool {
+        self.ink_controller.pending_source_is_current(doc)
+    }
+
+    pub fn pending_ink_for_recovery(
+        &self,
+        doc: &Document,
+        has_other_drafts: bool,
+    ) -> Option<RecoveredInkGesture> {
+        self.ink_controller
+            .pending_for_recovery(doc, has_other_drafts)
+    }
+
+    pub fn restore_recovered_ink(
+        &mut self,
+        doc: &Document,
+        recovered: &RecoveredInkGesture,
+    ) -> Result<(), String> {
+        self.ink_controller.restore_recovered_ink(doc, recovered)
     }
 
     /// Release pointer ownership without discarding the buffered gesture.
@@ -2366,7 +2402,9 @@ impl MapCanvas {
         let paint_scene = build_scene(sheet, &layout);
         paint_map_scene(&painter, sheet, &layout, xf, &opts, &paint_scene, None);
         board_input::paint(&painter, view, sheet, &layout, &paint_scene, pointer);
-        view.ink_controller.paint_preview(&painter, xf, view.accent);
+        if view.ink_controller.pending_preview_sheet() == Some(doc.active_index()) {
+            view.ink_controller.paint_preview(&painter, xf, view.accent);
+        }
         image_resize::paint(&painter, view, sheet, &layout, !space && !touch_navigation);
         crate::relationship_editing::paint_target(&painter, view, sheet, &layout);
         if !space && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. }) {

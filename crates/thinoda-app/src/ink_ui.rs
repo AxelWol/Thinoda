@@ -3,19 +3,91 @@
 use std::fmt::Write as _;
 
 use egui::{Align2, Context, Id, RichText, vec2};
+use serde::{Deserialize, Serialize};
 use thinoda_canvas::{
-    ink_controller::{InkCancelReason, InkControllerError, InkMode, InkOutcome},
+    ink_controller::{
+        InkCancelReason, InkControllerError, InkMode, InkOutcome, InkRecoveryBlock,
+        RecoveredInkGesture,
+    },
     ink_input::{InkInputError, MAX_INPUT_SAMPLES},
 };
 use thinoda_core::board::MAX_BOARD_COORDINATE;
+use thinoda_platform::recovery::MAX_PENDING_INK_BYTES;
 
 use crate::{app::ThinodaApp, doc::OpenDoc, i18n::t};
 
 /// Keep structured rejected samples beyond the canvas frame that reported them.
 #[derive(Debug, Default)]
 pub(crate) struct InkFeedback {
-    errors: Vec<InkControllerError>,
+    errors: Vec<InkFeedbackEntry>,
     overflow: usize,
+    revision: u64,
+}
+
+#[derive(Debug)]
+enum InkFeedbackEntry {
+    Live(InkControllerError),
+    Recovered(RecoveredFeedback),
+}
+
+impl InkFeedbackEntry {
+    fn details(&self) -> String {
+        match self {
+            Self::Live(error) => format!("{error:?}"),
+            Self::Recovered(error) => error.details.clone(),
+        }
+    }
+
+    fn guidance(&self) -> InkGuidance {
+        match self {
+            Self::Live(error) => InkGuidance::for_error(error),
+            Self::Recovered(error) => error.guidance,
+        }
+    }
+
+    fn retain_after_completion(&self) -> bool {
+        match self {
+            Self::Live(error) => contains_unaccepted_sample(error),
+            Self::Recovered(error) => error.retain_after_completion,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveredFeedback {
+    details: String,
+    retain_after_completion: bool,
+    guidance: InkGuidance,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum InkGuidance {
+    PointerHeld,
+    Interrupted,
+    EditorBlocked,
+    UncorrelatedPen,
+    UncorrelatedTouch,
+    Rejected,
+    StaleDocument,
+    CameraChanged,
+    Locked,
+    ClipWouldChange,
+    Simplification,
+    SceneDependent,
+    Other,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InkRecovery {
+    version: u8,
+    gesture: Option<RecoveredInkGesture>,
+    feedback: Vec<RecoveredFeedback>,
+    overflow: usize,
+    retry_tolerance_bits: u32,
+    retry_smooth: bool,
 }
 
 impl InkFeedback {
@@ -25,20 +97,52 @@ impl InkFeedback {
 
     pub(crate) fn record(&mut self, error: InkControllerError) {
         if self.errors.len() < MAX_INPUT_SAMPLES {
-            self.errors.push(error);
+            self.errors.push(InkFeedbackEntry::Live(error));
         } else {
             self.overflow = self.overflow.saturating_add(1);
         }
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn completed(&mut self) {
         // A later successful gesture must not erase a separate rejected start.
-        self.errors.retain(contains_unaccepted_sample);
+        let before = self.errors.len();
+        self.errors
+            .retain(InkFeedbackEntry::retain_after_completion);
+        if self.errors.len() != before {
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 
     fn clear(&mut self) {
+        if !self.is_empty() {
+            self.revision = self.revision.wrapping_add(1);
+        }
         self.errors.clear();
         self.overflow = 0;
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn for_recovery(&self) -> Result<Vec<RecoveredFeedback>, String> {
+        let mut size = 0usize;
+        self.errors
+            .iter()
+            .map(|error| {
+                let details = error.details();
+                size = size.saturating_add(details.len());
+                if size > MAX_PENDING_INK_BYTES {
+                    return Err("pending ink feedback exceeds the recovery size limit".into());
+                }
+                Ok(RecoveredFeedback {
+                    details,
+                    retain_after_completion: error.retain_after_completion(),
+                    guidance: error.guidance(),
+                })
+            })
+            .collect()
     }
 }
 
@@ -59,51 +163,132 @@ fn contains_unaccepted_sample(error: &InkControllerError) -> bool {
     }
 }
 
-fn guidance(error: &InkControllerError) -> &'static str {
-    match error {
-        InkControllerError::GesturePending => {
-            "The pointer is still down. Release it before retrying."
+impl InkGuidance {
+    fn for_error(error: &InkControllerError) -> Self {
+        match error {
+            InkControllerError::GesturePending => Self::PointerHeld,
+            InkControllerError::Interrupted(_) => Self::Interrupted,
+            InkControllerError::BlockedByEditor { .. } => Self::EditorBlocked,
+            InkControllerError::UncorrelatedPenInput { .. } => Self::UncorrelatedPen,
+            InkControllerError::UncorrelatedTouchInput { .. } => Self::UncorrelatedTouch,
+            InkControllerError::InvalidSample(_)
+            | InkControllerError::InvalidPathSample(_)
+            | InkControllerError::TooManyPathSamples { .. }
+            | InkControllerError::RejectedInputPending => Self::Rejected,
+            InkControllerError::StaleDocument { .. } => Self::StaleDocument,
+            InkControllerError::CameraChanged { .. } => Self::CameraChanged,
+            InkControllerError::Locked(_) => Self::Locked,
+            InkControllerError::ClipWouldChange(_) => Self::ClipWouldChange,
+            InkControllerError::RecoveryNeedsReview => Self::SceneDependent,
+            InkControllerError::Ink(
+                InkInputError::TooManyPoints { .. }
+                | InkInputError::SimplificationTooComplex { .. }
+                | InkInputError::InvalidTolerance(_),
+            ) => Self::Simplification,
+            _ => Self::Other,
         }
-        InkControllerError::Interrupted(_) => {
-            "The ink gesture was interrupted. Retry it or discard it."
+    }
+
+    fn text(self) -> &'static str {
+        match self {
+            Self::PointerHeld => "The pointer is still down. Release it before retrying.",
+            Self::Interrupted => "The ink gesture was interrupted. Retry it or discard it.",
+            Self::EditorBlocked => "Finish the active text editor before drawing again.",
+            Self::UncorrelatedPen => {
+                "Pen input could not be matched. No stroke was started; dismiss this message and try again."
+            }
+            Self::UncorrelatedTouch => {
+                "Touch pointer input could not be matched. Check the gesture or dismiss this message."
+            }
+            Self::Rejected => {
+                "Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it."
+            }
+            Self::StaleDocument => {
+                "The document changed during the gesture. Copy its samples or discard it."
+            }
+            Self::CameraChanged => {
+                "The canvas changed during the gesture. Copy its samples or discard it."
+            }
+            Self::Locked => {
+                "Ink could not be applied to a locked object. Copy the samples or discard the gesture."
+            }
+            Self::ClipWouldChange => {
+                "This operation would change frame clipping. Copy the samples or discard the gesture."
+            }
+            Self::Simplification => {
+                "Adjust ink simplification and retry, or copy the samples and discard the gesture."
+            }
+            Self::SceneDependent => {
+                "Recovered eraser or lasso input cannot be retried. Copy its samples or discard it."
+            }
+            Self::Other => "The ink gesture could not be completed. Retry it or discard it.",
         }
-        InkControllerError::BlockedByEditor { .. } => {
-            "Finish the active text editor before drawing again."
-        }
-        InkControllerError::UncorrelatedPenInput { .. } => {
-            "Pen input could not be matched. No stroke was started; dismiss this message and try again."
-        }
-        InkControllerError::UncorrelatedTouchInput { .. } => {
-            "Touch pointer input could not be matched. Check the gesture or dismiss this message."
-        }
-        InkControllerError::InvalidSample(_)
-        | InkControllerError::InvalidPathSample(_)
-        | InkControllerError::TooManyPathSamples { .. }
-        | InkControllerError::RejectedInputPending => {
-            "Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it."
-        }
-        InkControllerError::StaleDocument { .. } => {
-            "The document changed during the gesture. Copy its samples or discard it."
-        }
-        InkControllerError::CameraChanged { .. } => {
-            "The canvas changed during the gesture. Copy its samples or discard it."
-        }
-        InkControllerError::Locked(_) => {
-            "Ink could not be applied to a locked object. Copy the samples or discard the gesture."
-        }
-        InkControllerError::ClipWouldChange(_) => {
-            "This operation would change frame clipping. Copy the samples or discard the gesture."
-        }
-        InkControllerError::Ink(
-            InkInputError::TooManyPoints { .. }
-            | InkInputError::SimplificationTooComplex { .. }
-            | InkInputError::InvalidTolerance(_),
-        ) => "Adjust ink simplification and retry, or copy the samples and discard the gesture.",
-        _ => "The ink gesture could not be completed. Retry it or discard it.",
     }
 }
 
 impl OpenDoc {
+    pub(crate) fn pending_ink_for_recovery(
+        &self,
+        has_other_drafts: bool,
+    ) -> Result<String, String> {
+        let record = InkRecovery {
+            version: 1,
+            gesture: self
+                .view
+                .pending_ink_for_recovery(&self.doc, has_other_drafts),
+            feedback: self.ink_feedback.for_recovery()?,
+            overflow: self.ink_feedback.overflow,
+            retry_tolerance_bits: self.view.ink_settings.finish.tolerance.to_bits(),
+            retry_smooth: self.view.ink_settings.finish.smooth,
+        };
+        let payload = serde_json::to_string(&record).map_err(|error| error.to_string())?;
+        if payload.len() > MAX_PENDING_INK_BYTES {
+            return Err("pending ink exceeds the recovery size limit".into());
+        }
+        Ok(payload)
+    }
+
+    pub(crate) fn restore_pending_ink(&mut self, payload: &str) -> Result<(), String> {
+        if payload.len() > MAX_PENDING_INK_BYTES {
+            return Err("pending ink exceeds the recovery size limit".into());
+        }
+        let record: InkRecovery =
+            serde_json::from_str(payload).map_err(|error| error.to_string())?;
+        if record.version != 1
+            || record.feedback.len() > MAX_INPUT_SAMPLES
+            || record.feedback.iter().any(|error| error.details.is_empty())
+            || (record.gesture.is_none() && record.feedback.is_empty() && record.overflow == 0)
+        {
+            return Err("invalid or unsupported pending ink recovery".into());
+        }
+        if self.has_unresolved_ink() {
+            return Err("ink input is already active".into());
+        }
+        if let Some(gesture) = &record.gesture {
+            self.view.restore_recovered_ink(&self.doc, gesture)?;
+            self.view.ink_settings.finish.tolerance = f32::from_bits(record.retry_tolerance_bits);
+            self.view.ink_settings.finish.smooth = record.retry_smooth;
+        }
+        let has_gesture = record.gesture.is_some();
+        self.ink_feedback.errors = record
+            .feedback
+            .into_iter()
+            .map(|mut error| {
+                if matches!(error.guidance, InkGuidance::PointerHeld) {
+                    error.guidance = if has_gesture {
+                        InkGuidance::Interrupted
+                    } else {
+                        InkGuidance::Other
+                    };
+                }
+                InkFeedbackEntry::Recovered(error)
+            })
+            .collect();
+        self.ink_feedback.overflow = record.overflow;
+        self.ink_feedback.revision = self.ink_feedback.revision.wrapping_add(1);
+        Ok(())
+    }
+
     pub(crate) fn record_ink_output(
         &mut self,
         outcomes: &[InkOutcome],
@@ -192,7 +377,7 @@ impl OpenDoc {
         if !self.ink_feedback.is_empty() {
             let _ = writeln!(text, "{}", t("Rejected input"));
             for error in &self.ink_feedback.errors {
-                let _ = writeln!(text, "{error:?}");
+                let _ = writeln!(text, "{}", error.details());
             }
             if self.ink_feedback.overflow > 0 {
                 let _ = writeln!(
@@ -216,7 +401,11 @@ impl ThinodaApp {
         }
         let pending = doc.view.has_pending_ink_gesture();
         let released = doc.view.has_released_ink_gesture();
-        let retryable = released && !doc.view.pending_ink_has_rejected_input();
+        let stale = pending && !doc.view.pending_ink_source_is_current(&doc.doc);
+        let retryable = released
+            && !stale
+            && !doc.view.pending_ink_has_rejected_input()
+            && doc.view.pending_ink_recovery_block().is_none();
         let mut copied = false;
         egui::Window::new(t("Pending ink gesture"))
             .id(Id::unique(("pending_ink", &doc.key, ctx.viewport_id())))
@@ -225,14 +414,24 @@ impl ThinodaApp {
             .collapsible(false)
             .resizable(true)
             .show(ctx, |ui| {
-                ui.label(t("Ink is not saved or included in crash recovery until it is finished."));
+                ui.label(t("Pending ink is not in the saved file. Crash recovery may miss recent samples."));
+                if doc.view.pending_ink_was_recovered() {
+                    ui.label(t("Recovered ink may be incomplete. Review it before retrying."));
+                }
                 if pending && !released {
                     ui.label(t("The pointer is still down. Release it before retrying."));
                 } else if doc.view.pending_ink_has_rejected_input() {
                     ui.label(t("Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it."));
+                } else if stale {
+                    ui.label(t("The document changed during the gesture. Copy its samples or discard it."));
+                } else if let Some(reason) = doc.view.pending_ink_recovery_block() {
+                    ui.label(t(match reason {
+                        InkRecoveryBlock::StaleDocument => "The document changed during the gesture. Copy its samples or discard it.",
+                        InkRecoveryBlock::SceneDependent => "Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.",
+                    }));
                 }
                 if let Some(error) = doc.ink_feedback.errors.last() {
-                    ui.label(RichText::new(t(guidance(error))).strong());
+                    ui.label(RichText::new(t(error.guidance().text())).strong());
                 }
                 if doc.ink_feedback.overflow > 0 {
                     ui.label(format!(
@@ -268,7 +467,7 @@ impl ThinodaApp {
                                     doc.ink_feedback.errors.len(),
                                     |ui, rows| {
                                         for error in &doc.ink_feedback.errors[rows] {
-                                            ui.monospace(format!("{error:?}"));
+                                            ui.monospace(error.details());
                                         }
                                     },
                                 );

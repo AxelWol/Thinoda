@@ -583,7 +583,7 @@ impl ThinodaApp {
                         .success(format!("{} {}", t("Saved to"), save.target.display()));
                     if index.is_some_and(|index| self.docs[index].has_unresolved_ink()) {
                         self.toasts.warning(t(
-                            "Ink is not saved or included in crash recovery until it is finished.",
+                            "Pending ink is not in the saved file. Crash recovery may miss recent samples.",
                         ));
                     }
                 }

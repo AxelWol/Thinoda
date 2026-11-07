@@ -375,8 +375,16 @@ const DE: &[(&str, &str)] = &[
     ),
     ("Pending ink gesture", "Ausstehende Freihandgeste"),
     (
-        "Ink is not saved or included in crash recovery until it is finished.",
-        "Die Freihandeingabe wird nicht gespeichert und nicht in die Wiederherstellung nach einem Absturz aufgenommen, bis die Geste abgeschlossen ist.",
+        "Pending ink is not in the saved file. Crash recovery may miss recent samples.",
+        "Die ausstehende Freihandeingabe ist nicht in der gespeicherten Datei enthalten. Bei der Wiederherstellung nach einem Absturz können die neuesten Messwerte fehlen.",
+    ),
+    (
+        "Recovered ink may be incomplete. Review it before retrying.",
+        "Wiederhergestellte Freihandeingabe kann unvollständig sein. Prüfen Sie sie, bevor Sie es erneut versuchen.",
+    ),
+    (
+        "Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.",
+        "Eine wiederhergestellte Radierer- oder Lasso-Geste kann nicht erneut ausgeführt werden. Kopieren Sie ihre Messwerte oder verwerfen Sie sie.",
     ),
     (
         "Finish the pending ink gesture before continuing. Retry it or discard it.",
@@ -4659,7 +4667,9 @@ mod tests {
     fn pending_ink_feedback_exists_in_every_catalog() {
         let keys = [
             "Pending ink gesture",
-            "Ink is not saved or included in crash recovery until it is finished.",
+            "Pending ink is not in the saved file. Crash recovery may miss recent samples.",
+            "Recovered ink may be incomplete. Review it before retrying.",
+            "Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.",
             "Finish the pending ink gesture before continuing. Retry it or discard it.",
             "Resolve pending ink before continuing. Retry, copy, or discard it.",
             "The pointer is still down. Release it before retrying.",

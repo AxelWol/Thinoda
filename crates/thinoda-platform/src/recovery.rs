@@ -33,18 +33,92 @@ pub struct SnapshotMeta {
 }
 
 /// On-disk envelope; callers can serialize off the UI thread and queue the bytes.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Snapshot {
     pub meta: SnapshotMeta,
-    #[serde(
-        serialize_with = "serialize_workbook",
-        deserialize_with = "deserialize_workbook"
-    )]
     pub workbook: Workbook,
+    /// Application-owned, versioned pending-ink data, if present.
+    pub pending_ink: Option<String>,
 }
 
 const INLINE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INLINE-1";
 const WAYPOINT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-WAYPOINTS-1";
+const INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-1";
+
+/// Bound the transient input envelope separately from the workbook.
+pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
+
+struct BorrowedWorkbook<'a> {
+    workbook: &'a Workbook,
+    pending_ink: Option<&'a str>,
+}
+
+impl Serialize for BorrowedWorkbook<'_> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(pending_ink) = self.pending_ink else {
+            return serialize_workbook(self.workbook, serializer);
+        };
+        if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
+            return Err(serde::ser::Error::custom("invalid pending ink size"));
+        }
+        let mut tuple = serializer.serialize_tuple(3)?;
+        tuple.serialize_element(INK_WORKBOOK_VERSION)?;
+        tuple.serialize_element(self.workbook)?;
+        tuple.serialize_element(pending_ink)?;
+        tuple.end()
+    }
+}
+
+#[derive(Serialize)]
+struct BorrowedSnapshot<'a> {
+    meta: &'a SnapshotMeta,
+    workbook: BorrowedWorkbook<'a>,
+}
+
+impl Serialize for Snapshot {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        BorrowedSnapshot {
+            meta: &self.meta,
+            workbook: BorrowedWorkbook {
+                workbook: &self.workbook,
+                pending_ink: self.pending_ink.as_deref(),
+            },
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Snapshot {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct StoredSnapshot {
+            meta: SnapshotMeta,
+            #[serde(deserialize_with = "deserialize_workbook")]
+            workbook: SnapshotWorkbook,
+        }
+
+        let stored = StoredSnapshot::deserialize(deserializer)?;
+        Ok(Self {
+            meta: stored.meta,
+            workbook: stored.workbook.workbook,
+            pending_ink: stored.workbook.pending_ink,
+        })
+    }
+}
+
+struct SnapshotWorkbook {
+    workbook: Workbook,
+    pending_ink: Option<String>,
+}
 
 fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
@@ -63,19 +137,19 @@ where
     tuple.end()
 }
 
-fn deserialize_workbook<'de, D>(deserializer: D) -> std::result::Result<Workbook, D::Error>
+fn deserialize_workbook<'de, D>(deserializer: D) -> std::result::Result<SnapshotWorkbook, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct WorkbookVisitor;
     impl<'de> Visitor<'de> for WorkbookVisitor {
-        type Value = Workbook;
+        type Value = SnapshotWorkbook;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             formatter.write_str("a legacy workbook or a versioned recovery workbook")
         }
 
-        fn visit_map<A>(self, map: A) -> std::result::Result<Workbook, A::Error>
+        fn visit_map<A>(self, map: A) -> std::result::Result<SnapshotWorkbook, A::Error>
         where
             A: MapAccess<'de>,
         {
@@ -85,17 +159,23 @@ where
                     "connector waypoints require a versioned recovery workbook",
                 ));
             }
-            Ok(workbook)
+            Ok(SnapshotWorkbook {
+                workbook,
+                pending_ink: None,
+            })
         }
 
-        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Workbook, A::Error>
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<SnapshotWorkbook, A::Error>
         where
             A: SeqAccess<'de>,
         {
             let version: String = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook version"))?;
-            if version != INLINE_WORKBOOK_VERSION && version != WAYPOINT_WORKBOOK_VERSION {
+            if version != INLINE_WORKBOOK_VERSION
+                && version != WAYPOINT_WORKBOOK_VERSION
+                && version != INK_WORKBOOK_VERSION
+            {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
                 )));
@@ -108,10 +188,24 @@ where
                     "connector waypoints require a waypoint-aware recovery workbook",
                 ));
             }
+            let pending_ink = if version == INK_WORKBOOK_VERSION {
+                let pending_ink: String = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing pending ink"))?;
+                if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
+                    return Err(A::Error::custom("invalid pending ink size"));
+                }
+                Some(pending_ink)
+            } else {
+                None
+            };
             if seq.next_element::<IgnoredAny>()?.is_some() {
                 return Err(A::Error::custom("unexpected recovery workbook data"));
             }
-            Ok(workbook)
+            Ok(SnapshotWorkbook {
+                workbook,
+                pending_ink,
+            })
         }
     }
 
@@ -121,13 +215,31 @@ where
 impl Snapshot {
     /// Serialize a recovery envelope, without writing or taking a recovery lock.
     pub fn to_bytes(meta: SnapshotMeta, workbook: &Workbook) -> Result<Vec<u8>> {
-        #[derive(Serialize)]
-        struct Borrowed<'a> {
-            meta: SnapshotMeta,
-            #[serde(serialize_with = "serialize_workbook")]
-            workbook: &'a Workbook,
-        }
-        Ok(serde_json::to_vec(&Borrowed { meta, workbook })?)
+        Self::to_bytes_with_optional_ink(meta, workbook, None)
+    }
+
+    /// Serialize a snapshot whose application-owned ink data must not be discarded
+    /// by readers that understand only older workbook versions.
+    pub fn to_bytes_with_pending_ink(
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+        pending_ink: &str,
+    ) -> Result<Vec<u8>> {
+        Self::to_bytes_with_optional_ink(meta, workbook, Some(pending_ink))
+    }
+
+    fn to_bytes_with_optional_ink(
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+        pending_ink: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        Ok(serde_json::to_vec(&BorrowedSnapshot {
+            meta: &meta,
+            workbook: BorrowedWorkbook {
+                workbook,
+                pending_ink,
+            },
+        })?)
     }
 }
 
@@ -280,8 +392,24 @@ impl RecoveryManager {
         meta: SnapshotMeta,
         workbook: &Workbook,
     ) -> Result<()> {
-        check_key(doc_key)?;
         let bytes = Snapshot::to_bytes(meta, workbook)?;
+        self.persist_snapshot_bytes(doc_key, &bytes)
+    }
+
+    /// Persist a complete ink-aware handoff without queuing an abandoned write.
+    pub fn persist_snapshot_with_pending_ink(
+        &self,
+        doc_key: &str,
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+        pending_ink: &str,
+    ) -> Result<()> {
+        let bytes = Snapshot::to_bytes_with_pending_ink(meta, workbook, pending_ink)?;
+        self.persist_snapshot_bytes(doc_key, &bytes)
+    }
+
+    fn persist_snapshot_bytes(&self, doc_key: &str, bytes: &[u8]) -> Result<()> {
+        check_key(doc_key)?;
         let state = self.state.lock().map_err(|_| Error::Poisoned)?;
         if state.finished {
             return Err(Error::Finished);
@@ -293,7 +421,7 @@ impl RecoveryManager {
             self.session_dir
                 .join("docs")
                 .join(format!("{doc_key}.json")),
-            &bytes,
+            bytes,
             false,
         )?;
         pending.remove(doc_key);
@@ -706,6 +834,17 @@ pub struct OrphanDoc {
 impl OrphanDoc {
     /// Deserialize and validate before exposing a workbook to application code.
     pub fn load(&self) -> Result<Workbook> {
+        let snapshot = self.load_snapshot()?;
+        if snapshot.pending_ink.is_some() {
+            return Err(Error::InvalidRecovery(
+                "pending ink requires an ink-aware recovery consumer".into(),
+            ));
+        }
+        Ok(snapshot.workbook)
+    }
+
+    /// Load the complete envelope without silently discarding pending ink.
+    pub fn load_snapshot(&self) -> Result<Snapshot> {
         let guard = self.lease.lock.lock().map_err(|_| Error::Poisoned)?;
         guard.as_ref().ok_or(Error::Finished)?.refresh()?;
         let snapshot: Snapshot = serde_json::from_slice(&fs::read(&self.path)?)?;
@@ -713,7 +852,7 @@ impl OrphanDoc {
             .workbook
             .validate()
             .map_err(Error::InvalidWorkbook)?;
-        Ok(snapshot.workbook)
+        Ok(snapshot)
     }
 
     /// Copy the raw browser storage record while this session is still claimed.
@@ -750,6 +889,48 @@ mod lock_tests {
     struct LegacySnapshot {
         meta: SnapshotMeta,
         workbook: Workbook,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct PreviousVersionedSnapshot {
+        #[serde(rename = "workbook", deserialize_with = "previous_versioned_workbook")]
+        _workbook: (),
+    }
+
+    fn previous_versioned_workbook<'de, D>(deserializer: D) -> std::result::Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PreviousVisitor;
+        impl<'de> Visitor<'de> for PreviousVisitor {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a previously supported recovery workbook")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> std::result::Result<(), A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let version: String = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing version"))?;
+                if version != INLINE_WORKBOOK_VERSION && version != WAYPOINT_WORKBOOK_VERSION {
+                    return Err(A::Error::custom(format!(
+                        "unsupported recovery workbook version {version}"
+                    )));
+                }
+                let _: IgnoredAny = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing workbook"))?;
+                if seq.next_element::<IgnoredAny>()?.is_some() {
+                    return Err(A::Error::custom("unexpected recovery workbook data"));
+                }
+                Ok(())
+            }
+        }
+        deserializer.deserialize_any(PreviousVisitor)
     }
 
     fn formatted_workbook(kind: thinoda_core::CardKind) -> Workbook {
@@ -884,6 +1065,139 @@ mod lock_tests {
                     .contains("connector waypoints require a versioned recovery workbook")
             );
         }
+    }
+
+    #[test]
+    fn pending_ink_envelope_round_trips_and_rejects_old_readers() {
+        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint, Vec2};
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.waypoints = vec![Vec2::new(50.0, 50.0)].into();
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        book.validate().unwrap();
+        assert!(book.has_inline_text());
+        assert!(book.has_connector_waypoints());
+        let meta = SnapshotMeta {
+            title: "Pending ink".into(),
+            dirty: true,
+            ..SnapshotMeta::default()
+        };
+        let payload = r#"{"version":1,"samples":[[0,4294967295]],"feedback":"NaN"}"#;
+        let bytes = Snapshot::to_bytes_with_pending_ink(meta.clone(), &book, payload).unwrap();
+        let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(snapshot.meta, meta);
+        assert_eq!(snapshot.workbook, book);
+        assert_eq!(snapshot.pending_ink.as_deref(), Some(payload));
+        assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+        assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+        let old_error = serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes)
+            .unwrap_err()
+            .to_string();
+        assert!(old_error.contains("unsupported recovery workbook version"));
+
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["workbook"][0], INK_WORKBOOK_VERSION);
+        let mut future = value.clone();
+        future["workbook"][0] = serde_json::json!("THINODA-RECOVERY-INK-999");
+        assert!(serde_json::from_value::<Snapshot>(future).is_err());
+        let mut missing = value.clone();
+        missing["workbook"].as_array_mut().unwrap().pop();
+        assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+        let mut extra = value.clone();
+        extra["workbook"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!(null));
+        assert!(serde_json::from_value::<Snapshot>(extra).is_err());
+        let mut empty = value.clone();
+        empty["workbook"][2] = serde_json::json!("");
+        assert!(serde_json::from_value::<Snapshot>(empty).is_err());
+        let mut wrong_type = value;
+        wrong_type["workbook"][2] = serde_json::json!({});
+        assert!(serde_json::from_value::<Snapshot>(wrong_type).is_err());
+        assert!(Snapshot::to_bytes_with_pending_ink(meta, &book, "").is_err());
+    }
+
+    #[test]
+    fn pending_ink_size_limit_is_enforced_on_read_and_write() {
+        let book = Workbook::default();
+        let payload = "a".repeat(MAX_PENDING_INK_BYTES);
+        let bytes =
+            Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, &payload).unwrap();
+        let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(snapshot.pending_ink.as_deref(), Some(payload.as_str()));
+
+        let oversized = "a".repeat(MAX_PENDING_INK_BYTES + 1);
+        assert!(
+            Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, &oversized)
+                .is_err()
+        );
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["workbook"][2] = serde_json::json!(oversized);
+        assert!(serde_json::from_value::<Snapshot>(value).is_err());
+    }
+
+    #[test]
+    fn pending_ink_orphan_requires_a_complete_consumer_and_survives_handoff() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let source = RecoveryManager::start(&paths).unwrap();
+        let book = Workbook::default();
+        let meta = SnapshotMeta {
+            title: "Interrupted".into(),
+            dirty: true,
+            ..SnapshotMeta::default()
+        };
+        source
+            .persist_snapshot_with_pending_ink("doc", meta.clone(), &book, "pending")
+            .unwrap();
+        let path = source.session_dir().join("docs").join("doc.json");
+        let original = std::fs::read(&path).unwrap();
+        assert!(
+            source
+                .persist_snapshot_with_pending_ink("doc", meta.clone(), &book, "")
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(source.try_flush_for_crash());
+        source.suspend().unwrap();
+        drop(source);
+
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans.len(), 1);
+        let document = &orphans[0].docs[0];
+        assert!(matches!(document.load(), Err(Error::InvalidRecovery(_))));
+        let snapshot = document.load_snapshot().unwrap();
+        assert_eq!(snapshot.workbook, book);
+        assert_eq!(snapshot.pending_ink.as_deref(), Some("pending"));
+
+        let replacement = RecoveryManager::start(&paths).unwrap();
+        replacement
+            .persist_snapshot_with_pending_ink(
+                "replacement",
+                snapshot.meta,
+                &snapshot.workbook,
+                snapshot.pending_ink.as_deref().unwrap(),
+            )
+            .unwrap();
+        orphans[0].discard().unwrap();
+        drop(orphans);
+        assert!(replacement.try_flush_for_crash());
+        replacement.suspend().unwrap();
+        drop(replacement);
+        let recovered = RecoveryManager::find_orphans(&paths);
+        assert_eq!(recovered.len(), 1);
+        let snapshot = recovered[0].docs[0].load_snapshot().unwrap();
+        assert_eq!(snapshot.workbook, book);
+        assert_eq!(snapshot.pending_ink.as_deref(), Some("pending"));
+        recovered[0].discard().unwrap();
+        drop(recovered);
     }
 
     #[test]

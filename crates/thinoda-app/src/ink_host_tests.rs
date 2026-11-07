@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -20,7 +21,10 @@ use thinoda_canvas::{
 };
 use thinoda_core::{CanvasObjectKind, Sheet, Vec2, Workbook};
 use thinoda_io::Format;
-use thinoda_platform::{Paths, recovery::RecoveryManager};
+use thinoda_platform::{
+    Paths,
+    recovery::{RecoveryManager, Snapshot},
+};
 
 use crate::{
     app::{CloseIntent, Cmd, ThinodaApp},
@@ -71,6 +75,33 @@ fn harness() -> Harness<'static, ThinodaApp> {
         .view
         .set_board_tool(BoardTool::Pen);
     h.run_steps(2);
+    h
+}
+
+fn restore_after_crash(
+    source: RecoveryManager,
+    paths: &Paths,
+) -> (ThinodaApp, Arc<RecoveryManager>) {
+    assert!(source.try_flush_for_crash());
+    source.suspend().unwrap();
+    drop(source);
+    let orphans = RecoveryManager::find_orphans(paths);
+    assert_eq!(orphans.len(), 1);
+    let target = Arc::new(RecoveryManager::start(paths).unwrap());
+    let mut app = ThinodaApp::headless();
+    app.services.recovery = Some(target.clone());
+    app.dialogs.recovery = orphans;
+    app.restore_orphans(None);
+    assert!(app.dialogs.recovery.is_empty());
+    (app, target)
+}
+
+fn restored_harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
+    let mut h = Harness::builder()
+        .with_size(vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(3);
     h
 }
 
@@ -1289,7 +1320,7 @@ fn successful_retry_does_not_erase_a_separate_rejected_start() {
 }
 
 #[test]
-fn recovery_keeps_the_previous_snapshot_until_ink_is_resolved() {
+fn recovery_preserves_concurrent_edits_and_marks_stale_ink_review_only() {
     let scratch = Scratch::new();
     let recovery = RecoveryManager::start(&Paths::from_root(scratch.path())).unwrap();
     let mut h = harness();
@@ -1321,11 +1352,430 @@ fn recovery_keeps_the_previous_snapshot_until_ink_is_resolved() {
         assert_eq!(doc.view.pending_ink_samples(), samples);
     }
     recovery.flush().unwrap();
-    assert_eq!(std::fs::read(&snapshot).unwrap(), first);
+    let latest = std::fs::read(&snapshot).unwrap();
+    assert!(latest != first);
+    let recovered: Snapshot = serde_json::from_slice(&latest).unwrap();
+    assert_eq!(recovered.workbook.active().root_topic().title, "Second");
+    let payload: serde_json::Value =
+        serde_json::from_str(recovered.pending_ink.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["gesture"]["source_current"], false);
+    assert_eq!(
+        payload["gesture"]["samples"].as_array().unwrap().len(),
+        samples.len()
+    );
     h.state_mut().doc_mut().unwrap().discard_pending_ink();
     h.state_mut().doc_mut().unwrap().snapshot(&recovery);
     recovery.flush().unwrap();
-    assert_ne!(std::fs::read(&snapshot).unwrap(), first);
+    let resolved: Snapshot = serde_json::from_slice(&std::fs::read(&snapshot).unwrap()).unwrap();
+    assert_eq!(resolved.workbook.active().root_topic().title, "Second");
+    assert!(resolved.pending_ink.is_none());
+    recovery.finish().unwrap();
+}
+
+#[test]
+fn held_touch_ink_survives_restart_and_can_be_retried_with_undo() {
+    let scratch = Scratch::new();
+    let paths = Paths::from_root(scratch.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut original = harness();
+    let canvas = original.state().doc().unwrap().view.canvas_rect();
+    let point = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    original.hover_at(point);
+    original.run_steps(1);
+    touch(&mut original, TouchPhase::Start, point, Some(0.2));
+    touch(
+        &mut original,
+        TouchPhase::Move,
+        point + vec2(30.0, 10.0),
+        Some(0.8),
+    );
+    let doc = original.state_mut().doc_mut().unwrap();
+    let samples = doc.view.pending_ink_samples().to_vec();
+    let settings = doc.view.pending_ink_settings().unwrap();
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let source_path = recovery
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", doc.key));
+    let source: Snapshot = serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
+    let original_payload = source.pending_ink.unwrap();
+    let (app, target) = restore_after_crash(recovery, &paths);
+    assert!(!source_path.exists());
+    let restored = app.doc().unwrap();
+    assert!(restored.is_dirty());
+    assert!(restored.view.has_released_ink_gesture());
+    assert!(restored.view.pending_ink_was_recovered());
+    assert_eq!(restored.view.pending_ink_settings(), Some(settings));
+    assert_eq!(restored.view.pending_ink_samples(), samples);
+    assert!(restored.doc.sheet().canvas.objects.is_empty());
+    let target_path = target
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", restored.key));
+    let handoff: Snapshot = serde_json::from_slice(&std::fs::read(target_path).unwrap()).unwrap();
+    assert_eq!(
+        handoff.pending_ink.as_deref(),
+        Some(original_payload.as_str())
+    );
+
+    let mut h = restored_harness(app);
+    assert!(
+        h.query_by_label("Recovered ink may be incomplete. Review it before retrying.")
+            .is_some()
+    );
+    let retry = h.get_by_role_and_label(Role::Button, "Retry ink");
+    assert!(!retry.accesskit_node().is_disabled());
+    retry.click();
+    h.run_steps(2);
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(!doc.has_unresolved_ink());
+    let CanvasObjectKind::Ink(stroke) = &doc.doc.sheet().canvas.objects[0].kind else {
+        panic!("expected recovered ink")
+    };
+    assert_eq!(stroke.pressure.as_deref(), Some(&[0.2, 0.8][..]));
+    assert!(doc.doc.undo());
+    assert!(doc.doc.sheet().canvas.objects.is_empty());
+    assert!(doc.doc.redo());
+    assert_eq!(doc.doc.sheet().canvas.objects.len(), 1);
+    h.state_mut().services.recovery = None;
+    target.finish().unwrap();
+}
+
+#[test]
+fn rejected_touch_input_remains_copyable_after_restart_and_discard() {
+    let scratch = Scratch::new();
+    let paths = Paths::from_root(scratch.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut original = harness();
+    let canvas = original.state().doc().unwrap().view.canvas_rect();
+    let point = canvas.left_top() + vec2(canvas.width() * 0.3, canvas.height() * 0.65);
+    original.hover_at(point);
+    original.run_steps(1);
+    touch(&mut original, TouchPhase::Start, point, Some(0.2));
+    touch(
+        &mut original,
+        TouchPhase::Move,
+        point + vec2(15.0, 0.0),
+        Some(1.5),
+    );
+    touch(
+        &mut original,
+        TouchPhase::End,
+        point + vec2(30.0, 0.0),
+        Some(0.8),
+    );
+    let doc = original.state_mut().doc_mut().unwrap();
+    assert!(doc.view.pending_ink_has_rejected_input());
+    let samples = doc.view.pending_ink_samples().to_vec();
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let (app, target) = restore_after_crash(recovery, &paths);
+    assert_eq!(app.doc().unwrap().view.pending_ink_samples(), samples);
+    let mut h = restored_harness(app);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Retry ink")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Copy ink samples")
+        .click();
+    h.run_steps(1);
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(copied.contains("InvalidSample"));
+    assert!(copied.contains("1.5"));
+    assert!(copied.contains("0.2"));
+    assert!(copied.contains("0.8"));
+    h.get_by_role_and_label(Role::Button, "Discard ink").click();
+    h.run_steps(2);
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(!doc.has_unresolved_ink());
+    doc.snapshot(&target);
+    target.flush().unwrap();
+    let path = target
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", doc.key));
+    let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert!(snapshot.pending_ink.is_none());
+    h.state_mut().services.recovery = None;
+    target.finish().unwrap();
+}
+
+#[test]
+fn standalone_nonfinite_ink_feedback_survives_restart() {
+    let scratch = Scratch::new();
+    let paths = Paths::from_root(scratch.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut original = harness();
+    let doc = original.state_mut().doc_mut().unwrap();
+    doc.ink_feedback
+        .record(InkControllerError::InvalidSettings {
+            reason: "invalid input".into(),
+            sample: InkSample::new(Vec2::new(f32::NAN, f32::INFINITY), Some(f32::NEG_INFINITY)),
+        });
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let (app, target) = restore_after_crash(recovery, &paths);
+    assert!(app.doc().unwrap().has_unresolved_ink());
+    assert!(!app.doc().unwrap().view.has_pending_ink_gesture());
+    let mut h = restored_harness(app);
+    h.get_by_role_and_label(Role::Button, "Copy ink samples")
+        .click();
+    h.run_steps(1);
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(copied.contains("InvalidSettings"));
+    assert!(copied.contains("NaN"));
+    assert!(copied.contains("inf"));
+    h.get_by_role_and_label(Role::Button, "Dismiss ink feedback")
+        .click();
+    h.run_steps(2);
+    assert!(!h.state().doc().unwrap().has_unresolved_ink());
+    h.state_mut().services.recovery = None;
+    target.finish().unwrap();
+}
+
+#[test]
+fn ongoing_ink_recovery_is_throttled_but_does_not_wait_for_idle() {
+    let scratch = Scratch::new();
+    let recovery = RecoveryManager::start(&Paths::from_root(scratch.path())).unwrap();
+    let mut h = harness();
+    let point = start(&mut h);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        assert!(doc.recovery_due(1.0));
+        doc.snapshot(&recovery);
+        assert!(!doc.recovery_due(1.0));
+    }
+    recovery.flush().unwrap();
+    let path = recovery
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", h.state().doc().unwrap().key));
+    h.state_mut().doc_mut().unwrap().snapshot(&recovery);
+    assert!(!recovery.has_unflushed_snapshots());
+
+    move_to(&mut h, point + vec2(20.0, 10.0));
+    let doc = h.state_mut().doc_mut().unwrap();
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Concurrent", |sheet| sheet.set_title(root, "Still active"))
+        .unwrap();
+    doc.tick();
+    assert!(doc.idle_secs() < 1.0);
+    doc.backdate_ink_recovery_attempt(2);
+    assert!(doc.recovery_due(1.0));
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        snapshot.workbook.active().root_topic().title,
+        "Still active"
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(snapshot.pending_ink.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["gesture"]["samples"].as_array().unwrap().len(), 2);
+
+    doc.view.ink_settings.finish.tolerance = 1.25;
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let payload: serde_json::Value =
+        serde_json::from_str(snapshot.pending_ink.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["retry_tolerance_bits"], 1.25_f32.to_bits());
+    doc.discard_pending_ink();
+    recovery.finish().unwrap();
+}
+
+#[test]
+fn ordinary_recovery_keeps_its_existing_idle_cap() {
+    let mut h = harness();
+    let doc = h.state_mut().doc_mut().unwrap();
+    doc.backdate_change(3);
+    assert!(doc.recovery_due(2.0));
+    assert!(doc.recovery_due(30.0));
+}
+
+#[test]
+fn resolved_ink_recovery_retries_cleanup_without_waiting_for_ordinary_idle() {
+    let scratch = Scratch::new();
+    let recovery = RecoveryManager::start(&Paths::from_root(scratch.path())).unwrap();
+    let mut h = harness();
+    start(&mut h);
+    let doc = h.state_mut().doc_mut().unwrap();
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let path = recovery
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", doc.key));
+    assert!(path.exists());
+
+    recovery.suspend().unwrap();
+    doc.discard_pending_ink();
+    doc.backdate_ink_recovery_attempt(3);
+    assert!(doc.recovery_due(30.0));
+    doc.snapshot(&recovery);
+    assert!(doc.recovery_cleanup_failed);
+    assert!(path.exists());
+    assert!(!doc.recovery_due(30.0));
+
+    recovery.resume().unwrap();
+    doc.backdate_ink_recovery_attempt(3);
+    assert!(doc.recovery_due(30.0));
+    doc.snapshot(&recovery);
+    assert!(!doc.recovery_cleanup_failed);
+    assert!(!path.exists());
+    recovery.finish().unwrap();
+}
+
+#[test]
+fn stale_recovered_ink_stays_copyable_and_retry_is_disabled() {
+    let scratch = Scratch::new();
+    let paths = Paths::from_root(scratch.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut original = harness();
+    let point = start(&mut original);
+    move_to(&mut original, point + vec2(10.0, 5.0));
+    let doc = original.state_mut().doc_mut().unwrap();
+    let samples = doc.view.pending_ink_samples().to_vec();
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Concurrent", |sheet| sheet.set_title(root, "Changed"))
+        .unwrap();
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let (app, target) = restore_after_crash(recovery, &paths);
+    let doc = app.doc().unwrap();
+    assert_eq!(doc.doc.sheet().root_topic().title, "Changed");
+    assert_eq!(doc.view.pending_ink_samples(), samples);
+    let mut h = restored_harness(app);
+    assert!(
+        h.query_by_label(
+            "The document changed during the gesture. Copy its samples or discard it."
+        )
+        .is_some()
+    );
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Retry ink")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .objects
+            .is_empty()
+    );
+    h.state_mut().services.recovery = None;
+    target.finish().unwrap();
+}
+
+#[test]
+fn recovered_eraser_and_lasso_are_review_only() {
+    for tool in [
+        BoardTool::ObjectEraser,
+        BoardTool::PixelEraser,
+        BoardTool::Lasso,
+    ] {
+        let scratch = Scratch::new();
+        let paths = Paths::from_root(scratch.path());
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        let mut original = harness();
+        original
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(tool);
+        original.run_steps(1);
+        let point = start(&mut original);
+        move_to(&mut original, point + vec2(15.0, 5.0));
+        original.state_mut().doc_mut().unwrap().snapshot(&recovery);
+        recovery.flush().unwrap();
+        let (app, target) = restore_after_crash(recovery, &paths);
+        let mut h = restored_harness(app);
+        assert!(
+            h.query_by_label(
+                "Recovered eraser or lasso input cannot be retried. Copy its samples or discard it."
+            )
+            .is_some()
+        );
+        assert!(
+            h.get_by_role_and_label(Role::Button, "Retry ink")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .objects
+                .is_empty()
+        );
+        h.state_mut().services.recovery = None;
+        target.finish().unwrap();
+    }
+}
+
+#[test]
+fn failed_ink_recovery_flush_keeps_previous_snapshot_and_retries() {
+    let scratch = Scratch::new();
+    let paths = Paths::from_root(scratch.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut h = harness();
+    let doc = h.state_mut().doc_mut().unwrap();
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Before", |sheet| sheet.set_title(root, "Before"))
+        .unwrap();
+    doc.snapshot(&recovery);
+    recovery.flush().unwrap();
+    let path = recovery
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", doc.key));
+    let before = std::fs::read(&path).unwrap();
+    recovery.suspend().unwrap();
+    let point = start(&mut h);
+    move_to(&mut h, point + vec2(15.0, 5.0));
+    h.state_mut().doc_mut().unwrap().snapshot(&recovery);
+    assert!(recovery.flush().is_err());
+    assert!(recovery.last_flush_failed());
+    assert!(recovery.has_unflushed_snapshots());
+    assert!(std::fs::read(&path).unwrap() == before);
+    assert!(h.state().doc().unwrap().view.has_pending_ink_gesture());
+    recovery.resume().unwrap();
+    recovery.flush().unwrap();
+    assert!(!recovery.last_flush_failed());
+    let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert!(snapshot.pending_ink.is_some());
+    h.state_mut().doc_mut().unwrap().discard_pending_ink();
     recovery.finish().unwrap();
 }
 
@@ -1395,6 +1845,11 @@ fn background_save_cannot_close_a_tab_after_new_ink_arrives() {
     assert!(h.state().doc().unwrap().is_dirty());
     assert_eq!(h.state().doc().unwrap().view.pending_ink_samples(), samples);
     assert!(h.state().dialogs.save_close_tab.is_none());
+    assert!(h.state().toasts.texts().any(|text| {
+        text == crate::i18n::t(
+            "Pending ink is not in the saved file. Crash recovery may miss recent samples.",
+        )
+    }));
     assert!(path.exists());
 }
 

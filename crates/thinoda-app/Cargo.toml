@@ -43,6 +43,7 @@ sys-locale.workspace = true
 web-time.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "wasmbind"] }
 serde_json.workspace = true
+serde.workspace = true
 semver.workspace = true
 raw-window-handle = "0.6"
 pulldown-cmark.workspace = true

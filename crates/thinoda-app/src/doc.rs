@@ -158,6 +158,15 @@ impl InspectorEdit {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct InkSnapshotVersion {
+    gesture: u64,
+    feedback: u64,
+    source_current: bool,
+    retry_tolerance_bits: u32,
+    retry_smooth: bool,
+}
+
 /// One open document (a tab).
 pub struct OpenDoc {
     /// App-local chat binding, never serialized into the workbook or recovery.
@@ -193,6 +202,8 @@ pub struct OpenDoc {
     snapshot_board_label: Option<(CanvasObjectId, String, String)>,
     last_seen_board_label: Option<(CanvasObjectId, String, String)>,
     snapshot_saw_ink: bool,
+    snapshot_ink_version: Option<InkSnapshotVersion>,
+    last_ink_snapshot_attempt: Option<Instant>,
     fim_draft_revision: u64,
     snapshot_fim_revision: u64,
 }
@@ -233,6 +244,8 @@ impl OpenDoc {
             snapshot_board_label: None,
             last_seen_board_label: None,
             snapshot_saw_ink: false,
+            snapshot_ink_version: None,
+            last_ink_snapshot_attempt: None,
             fim_draft_revision: 0,
             snapshot_fim_revision: 0,
         }
@@ -496,8 +509,27 @@ impl OpenDoc {
         self.last_change = earlier.unwrap_or(self.last_change);
     }
 
+    #[cfg(test)]
+    pub(crate) fn backdate_ink_recovery_attempt(&mut self, secs: u64) {
+        if let Some(attempt) = &mut self.last_ink_snapshot_attempt {
+            *attempt = attempt
+                .checked_sub(std::time::Duration::from_secs(secs))
+                .unwrap_or(*attempt);
+        }
+    }
+
     pub fn idle_secs(&self) -> f32 {
         self.last_change.elapsed().as_secs_f32()
+    }
+
+    pub(crate) fn recovery_due(&self, interval_secs: f32) -> bool {
+        let interval = interval_secs.min(2.0);
+        if self.has_unresolved_ink() || self.snapshot_saw_ink {
+            self.last_ink_snapshot_attempt
+                .is_none_or(|attempt| attempt.elapsed().as_secs_f32() >= interval)
+        } else {
+            self.idle_secs() >= interval
+        }
     }
 
     /// Whether the file changed or its identity cannot be verified.
@@ -712,6 +744,10 @@ impl OpenDoc {
 
     pub(crate) fn document_with_drafts(&self) -> Result<Document, String> {
         self.ensure_no_pending_ink()?;
+        self.document_with_drafts_for_recovery()
+    }
+
+    fn document_with_drafts_for_recovery(&self) -> Result<Document, String> {
         let board_label = if self.view.has_board_label_changes() {
             self.view
                 .validated_board_label_draft(&self.doc)
@@ -818,12 +854,19 @@ impl OpenDoc {
 
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
-        // Never replace an earlier complete snapshot with one that silently
-        // omits retained canvas input. The recovery panel explains the gap.
-        if self.has_unresolved_ink() {
-            self.snapshot_saw_ink = true;
-            return;
+        let ink_version = self.has_unresolved_ink().then(|| InkSnapshotVersion {
+            gesture: self.view.pending_ink_recovery_revision(),
+            feedback: self.ink_feedback.revision(),
+            source_current: self.view.pending_ink_source_is_current(&self.doc),
+            retry_tolerance_bits: self.view.ink_settings.finish.tolerance.to_bits(),
+            retry_smooth: self.view.ink_settings.finish.smooth,
+        });
+        if ink_version.is_some() || self.snapshot_saw_ink {
+            self.last_ink_snapshot_attempt = Some(Instant::now());
+        } else {
+            self.last_ink_snapshot_attempt = None;
         }
+        self.snapshot_saw_ink |= ink_version.is_some();
         let s = self.doc.state_id();
         let title_draft = self
             .view
@@ -840,7 +883,8 @@ impl OpenDoc {
             && title_draft == self.snapshot_title
             && board_label == self.snapshot_board_label
             && self.fim_draft_revision == self.snapshot_fim_revision
-            && !self.snapshot_saw_ink
+            && ink_version == self.snapshot_ink_version
+            && (ink_version.is_some() || !self.snapshot_saw_ink)
             && !self.recovery_cleanup_failed
         {
             self.recovery_snapshot_failed = false;
@@ -856,6 +900,8 @@ impl OpenDoc {
                 self.snapshot_board_label = board_label;
                 self.snapshot_fim_revision = self.fim_draft_revision;
                 self.snapshot_saw_ink = false;
+                self.snapshot_ink_version = None;
+                self.last_ink_snapshot_attempt = None;
             }
             return;
         }
@@ -866,14 +912,34 @@ impl OpenDoc {
             dirty: true,
             ..Default::default()
         };
-        let snapshot = match self.document_with_drafts() {
+        let snapshot = match self.document_with_drafts_for_recovery() {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 self.record_recovery_snapshot_failure(error);
                 return;
             }
         };
-        match Snapshot::to_bytes(meta, snapshot.workbook()) {
+        let pending_ink = if ink_version.is_some() {
+            let has_other_drafts = self.view.has_title_changes()
+                || self.view.has_board_label_changes()
+                || self.has_inspector_changes()
+                || self.fim_edit.is_some();
+            match self.pending_ink_for_recovery(has_other_drafts) {
+                Ok(pending_ink) => Some(pending_ink),
+                Err(error) => {
+                    self.record_recovery_snapshot_failure(error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let bytes = if let Some(pending_ink) = &pending_ink {
+            Snapshot::to_bytes_with_pending_ink(meta, snapshot.workbook(), pending_ink)
+        } else {
+            Snapshot::to_bytes(meta, snapshot.workbook())
+        };
+        match bytes {
             Ok(bytes) => match recovery.queue_snapshot(&self.key, bytes) {
                 Ok(()) => {
                     self.snapshot_state = s;
@@ -882,7 +948,11 @@ impl OpenDoc {
                     self.snapshot_title = title_draft;
                     self.snapshot_board_label = board_label;
                     self.snapshot_fim_revision = self.fim_draft_revision;
-                    self.snapshot_saw_ink = false;
+                    self.snapshot_saw_ink = ink_version.is_some();
+                    self.snapshot_ink_version = ink_version;
+                    if ink_version.is_none() {
+                        self.last_ink_snapshot_attempt = None;
+                    }
                     self.recovery_snapshot_failed = false;
                     self.recovery_cleanup_failed = false;
                 }

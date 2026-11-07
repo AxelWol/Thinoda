@@ -26,10 +26,10 @@ localized controls and light/dark themes. The Freeform research, F0–F6 phases,
 implemented features and phase critiques remain in [FREEFORM.md](FREEFORM.md).
 The following are outstanding priorities, not claims of release acceptance:
 
-1. Make pending or rejected ink crash-recoverable without silently committing
-   stale or incomplete gestures. Preserve accepted samples and captured style,
-   bind recovery to document ownership and revision, and cover restart, undo,
-   write failures, quota and concurrent browser tabs.
+1. Pending or rejected ink now has a bounded crash-recovery snapshot with
+   explicit review rather than automatic commit. Continue validating incomplete
+   input, storage failures, ownership and device behavior; see the
+   [recovery critique](FREEFORM.md#pending-ink-recovery-checkpoint-critique).
 2. Define quantitative ink/image workload and latency budgets and verify them
    on representative native, browser, GPU, touch and stylus devices. Pressure
    is currently persisted metadata, not pressure-dependent stroke width;
@@ -91,7 +91,8 @@ expanding source auto-fit; a fixed-crop browser fixture covers Pitch, PDF,
 slide-image and PowerPoint exports. Clipping is not redaction. See the critiques
 in [FREEFORM.md](FREEFORM.md#f5-ink-checkpoint-critique) and
 [PRESENTATIONS.md](PRESENTATIONS.md#scene-object-isolation-follow-up).
-Pending-ink crash recovery, realistic performance, accessibility and broader
+Pending-ink recovery has focused coverage but still has storage, timing and
+device limitations. Realistic performance, accessibility and broader
 browser/Office/device acceptance remain open.
 
 All slices must fit light/dark themes and constrained windows, retain localized

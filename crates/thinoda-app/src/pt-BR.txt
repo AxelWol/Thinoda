@@ -1,6 +1,8 @@
 # Regional wording for pending freehand input.
 Ink settings|Configurações da entrada à mão livre
-Ink is not saved or included in crash recovery until it is finished.|A entrada à mão livre não é salva nem incluída na recuperação após falha até o gesto terminar.
+Pending ink is not in the saved file. Crash recovery may miss recent samples.|A entrada à mão livre pendente não está no arquivo salvo. A recuperação após falha pode não incluir as amostras recentes.
+Recovered ink may be incomplete. Review it before retrying.|A entrada à mão livre recuperada pode estar incompleta. Revise-a antes de tentar novamente.
+Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.|A entrada recuperada da borracha ou do laço não pode ser tentada novamente. Copie as amostras ou descarte-a.
 The pointer is still down. Release it before retrying.|O ponteiro ainda está pressionado. Solte-o antes de tentar novamente.
 Accepted samples|Amostras aceitas
 Pen input could not be matched. No stroke was started; dismiss this message and try again.|Não foi possível identificar a entrada da caneta. Nenhum traço foi iniciado; feche esta mensagem e tente novamente.

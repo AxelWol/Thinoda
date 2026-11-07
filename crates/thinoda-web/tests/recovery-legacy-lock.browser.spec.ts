@@ -19,6 +19,11 @@ async function recoverySnapshots(page: Page) {
         .map((key) => ({ key, value: localStorage.getItem(key) })));
 }
 
+function snapshotContents(value: string | null) {
+    if (!value) throw new Error("Missing recovery snapshot");
+    return (JSON.parse(value) as { d: string }).d;
+}
+
 async function waitForSnapshot(page: Page, text: string) {
     await expect.poll(async () => {
         const snapshots = await recoverySnapshots(page);
@@ -29,6 +34,59 @@ async function waitForSnapshot(page: Page, text: string) {
     const [snapshot] = await recoverySnapshots(page);
     if (!snapshot?.value) throw new Error("Missing recovery snapshot");
     return { key: snapshot.key, value: snapshot.value };
+}
+
+type PendingInk = {
+    gesture: {
+        mode: string;
+        pointer: { kind: string };
+        source_current: boolean;
+        was_held: boolean;
+        samples: { x_bits: number; y_bits: number; pressure_bits: number | null }[];
+    } | null;
+};
+
+async function pendingInkSnapshots(page: Page) {
+    return (await recoverySnapshots(page)).flatMap(({ key, value }) => {
+        if (!value) return [];
+        const entry: { d: string } = JSON.parse(value);
+        const snapshot: { workbook: unknown } = JSON.parse(Buffer.from(entry.d, "base64").toString("utf8"));
+        if (!Array.isArray(snapshot.workbook) || snapshot.workbook[0] !== "THINODA-RECOVERY-INK-1") return [];
+        return [{
+            key,
+            value,
+            workbook: snapshot.workbook[1] as {
+                sheets: { canvas?: { objects: { kind: { ink?: unknown } }[] } }[];
+            },
+            ink: JSON.parse(snapshot.workbook[2]) as PendingInk,
+        }];
+    });
+}
+
+async function waitForPendingInk(page: Page, key?: string) {
+    await expect.poll(async () => {
+        const snapshot = (await pendingInkSnapshots(page)).find(item => !key || item.key === key);
+        return snapshot?.ink.gesture?.samples.length ?? 0;
+    }, { timeout: 20_000 }).toBeGreaterThanOrEqual(2);
+    const snapshot = (await pendingInkSnapshots(page)).find(item => !key || item.key === key);
+    if (!snapshot?.ink.gesture) throw new Error("Missing pending ink snapshot");
+    return snapshot;
+}
+
+async function startHeldPen(page: Page) {
+    await command(page, "Pen");
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchMouseEvent", {
+        type: "mousePressed", x: 350, y: 800, button: "left", buttons: 1,
+        clickCount: 1, pointerType: "pen", force: 0.2,
+    });
+    await frames(page);
+    await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved", x: 500, y: 850, button: "left", buttons: 1,
+        pointerType: "pen", force: 0.6,
+    });
+    await frames(page);
+    return cdp;
 }
 
 async function addSticky(page: Page, text: string, x: number) {
@@ -97,6 +155,169 @@ function recoveryWarnings(page: Page) {
     });
     return warnings;
 }
+
+test("held ink survives browser reload and repeated recovery handoffs", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "Pen input synthesis requires the Chromium DevTools protocol");
+    page.on("dialog", dialog => dialog.accept());
+    const initial = await startBoard(page);
+    const cdp = await startHeldPen(page);
+    const captured = await waitForPendingInk(page, initial.key);
+    expect(captured.ink.gesture?.mode).toBe("pen");
+    expect(captured.ink.gesture?.pointer.kind).toBe("pen");
+    expect(captured.ink.gesture?.was_held).toBe(true);
+    expect(captured.ink.gesture?.source_current).toBe(true);
+    const pressures = captured.ink.gesture!.samples.map(sample => {
+        if (sample.pressure_bits === null) throw new Error("Missing pen pressure");
+        const bytes = Buffer.allocUnsafe(4);
+        bytes.writeUInt32LE(sample.pressure_bits);
+        return bytes.readFloatLE();
+    });
+    expect(pressures[0]).toBeCloseTo(0.2, 2);
+    expect(pressures.at(-1)).toBeCloseTo(0.6, 2);
+    expect((captured.workbook.sheets[0].canvas?.objects ?? []).some(object => object.kind.ink)).toBe(false);
+    await cdp.detach();
+
+    let previousKey = initial.key;
+    for (let restart = 0; restart < 2; restart++) {
+        await page.reload();
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const orphan = await waitForPendingInk(page, previousKey);
+        await recoveryTabs(page, 4);
+        await page.keyboard.press("Enter");
+        await expect.poll(async () => {
+            const snapshots = await pendingInkSnapshots(page);
+            return snapshots.some(item => item.key !== previousKey)
+                && !snapshots.some(item => item.key === previousKey);
+        }, { timeout: 20_000 }).toBe(true);
+        const handedOff = (await pendingInkSnapshots(page)).find(item => item.key !== previousKey);
+        if (!handedOff?.ink.gesture) throw new Error("Missing handed-off ink");
+        expect(handedOff.ink.gesture.samples).toEqual(orphan.ink.gesture?.samples);
+        expect(handedOff.ink.gesture.source_current).toBe(true);
+        expect((handedOff.workbook.sheets[0].canvas?.objects ?? []).some(object => object.kind.ink)).toBe(false);
+        previousKey = handedOff.key;
+    }
+
+    await page.evaluate(() => { window.prompt = () => "unexpected-partial-ink.thinoda"; });
+    const download = page.waitForEvent("download", { timeout: 2_000 }).then(() => true, () => false);
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+Shift+s");
+    expect(await download).toBe(false);
+});
+
+test("ink recovery retries after a browser quota failure without replacing the prior snapshot", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "Pen input synthesis requires the Chromium DevTools protocol");
+    const warnings = recoveryWarnings(page);
+    const initial = await startBoard(page);
+    await page.evaluate((snapshotKey) => {
+        const original = Storage.prototype.setItem;
+        Reflect.set(window, "__restoreInkRecoveryStorage", () => { Storage.prototype.setItem = original; });
+        Storage.prototype.setItem = function (key, value) {
+            if (key === snapshotKey) throw new DOMException("synthetic quota", "QuotaExceededError");
+            return original.call(this, key, value);
+        };
+    }, initial.key);
+    const cdp = await startHeldPen(page);
+    await expect.poll(() => warnings.length, { timeout: 10_000 }).toBe(1);
+    await expect(page.locator("#thinoda-recovery-availability")).toHaveText(
+        "Crash recovery is unavailable. Save or download your work.",
+    );
+    expect(snapshotContents(await page.evaluate(key => localStorage.getItem(key), initial.key)))
+        .toBe(snapshotContents(initial.value));
+    await page.evaluate(() => (Reflect.get(window, "__restoreInkRecoveryStorage") as () => void)());
+    const recovered = await waitForPendingInk(page, initial.key);
+    expect(recovered.ink.gesture?.was_held).toBe(true);
+    expect(recovered.ink.gesture?.source_current).toBe(true);
+    await expect(page.locator("#thinoda-recovery-availability")).toBeEmpty();
+    await cdp.detach();
+});
+
+test("real browser storage exhaustion preserves and retries pending ink", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "Pen input synthesis requires the Chromium DevTools protocol");
+    const initial = await startBoard(page);
+    await page.evaluate((snapshotKey) => {
+        const failures: string[] = [];
+        Reflect.set(window, "__inkQuotaFailures", failures);
+        const original = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (key, value) {
+            try {
+                return original.call(this, key, value);
+            } catch (error) {
+                if (key === snapshotKey && error instanceof DOMException) failures.push(error.name);
+                throw error;
+            }
+        };
+        let low = 0;
+        let high = 10 * 1024 * 1024;
+        while (low + 1 < high) {
+            const size = Math.floor((low + high) / 2);
+            try {
+                localStorage.setItem("__thinoda_ink_quota_fixture", "x".repeat(size));
+                low = size;
+            } catch (error) {
+                if (!(error instanceof DOMException) || error.name !== "QuotaExceededError") throw error;
+                high = size;
+            }
+        }
+        if (low === 0) throw new Error("Could not fill browser storage");
+    }, initial.key);
+
+    const cdp = await startHeldPen(page);
+    await expect.poll(
+        () => page.evaluate(() => (Reflect.get(window, "__inkQuotaFailures") as string[])
+            .includes("QuotaExceededError")),
+        { timeout: 20_000 },
+    ).toBe(true);
+    await expect(page.locator("#thinoda-recovery-availability")).toHaveText(
+        "Crash recovery is unavailable. Save or download your work.",
+    );
+    expect(snapshotContents(await page.evaluate(key => localStorage.getItem(key), initial.key)))
+        .toBe(snapshotContents(initial.value));
+    await page.evaluate(() => localStorage.removeItem("__thinoda_ink_quota_fixture"));
+    const recovered = await waitForPendingInk(page, initial.key);
+    expect(recovered.ink.gesture?.source_current).toBe(true);
+    await expect(page.locator("#thinoda-recovery-availability")).toBeEmpty();
+    await cdp.detach();
+});
+
+test("a competing browser tab claims pending ink without an old page overwriting it", async ({ page, context, browserName }) => {
+    test.skip(browserName !== "chromium", "Pen input synthesis requires the Chromium DevTools protocol");
+    const warnings = recoveryWarnings(page);
+    const initial = await startBoard(page);
+    const cdp = await startHeldPen(page);
+    await waitForPendingInk(page, initial.key);
+    const lockKey = initial.key.replace(/\/docs\/[^/]+\.json$/, "/lock");
+    const lockOwner = () => page.evaluate((key) => {
+        const value = localStorage.getItem(key);
+        if (!value) return null;
+        const entry: { d: string } = JSON.parse(value);
+        return (JSON.parse(atob(entry.d)) as { owner: string }).owner;
+    }, lockKey);
+    const originalOwner = await lockOwner();
+    expect(originalOwner).not.toBeNull();
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
+    const retained = await page.evaluate(key => localStorage.getItem(key), initial.key);
+    expect(retained).not.toBeNull();
+    expect(await page.evaluate(key => localStorage.getItem(key), lockKey)).toBeNull();
+
+    const other = await context.newPage();
+    await other.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(other.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await expect.poll(lockOwner).not.toBeNull();
+    const competingOwner = await lockOwner();
+    expect(competingOwner).not.toBe(originalOwner);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+    await page.bringToFront();
+    await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved", x: 550, y: 875, button: "left", buttons: 1,
+        pointerType: "pen", force: 0.8,
+    });
+    await expect.poll(() => warnings.length, { timeout: 10_000 }).toBe(1);
+    await page.waitForTimeout(2_000);
+    expect(await page.evaluate(key => localStorage.getItem(key), initial.key)).toBe(retained);
+    expect(await lockOwner()).toBe(competingOwner);
+    await cdp.detach();
+    await other.close();
+});
 
 for (const fault of ["fresh owner", "stale owner", "missing lock", "corrupt lock"] as const) {
     test(`a ${fault} cannot be overwritten by the old owner`, async ({ page }) => {

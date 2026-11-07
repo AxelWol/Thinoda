@@ -3170,7 +3170,7 @@ impl ThinodaApp {
             let interval = self.settings.recovery_interval_secs.max(1) as f32;
             let cleanup_retry_due = self.last_poll.elapsed() > Duration::from_millis(500);
             for d in &mut self.docs {
-                if (d.idle_secs() >= interval.min(2.0) || d.idle_secs() >= interval)
+                if d.recovery_due(interval)
                     && (!d.recovery_cleanup_failed || d.is_dirty() || cleanup_retry_due)
                 {
                     d.snapshot(&r);
@@ -3420,59 +3420,92 @@ impl ThinodaApp {
                 keep.push(s);
                 continue;
             }
-            let workbooks = s
+            let snapshots = s
                 .docs
                 .iter()
                 .map(|doc| {
-                    doc.load().map_err(|error| {
+                    doc.load_snapshot().map_err(|error| {
                         format!("{} {}: {error}", t("Could not open"), doc.meta.title)
                     })
                 })
                 .collect::<Result<Vec<_>, _>>();
-            match workbooks {
-                Ok(workbooks) => {
-                    let mut restored = Vec::new();
-                    for (doc, wb) in s.docs.iter().zip(workbooks) {
-                        let mut d = OpenDoc::new(wb);
-                        d.view.titles = new_topic_titles();
-                        d.path = doc
-                            .meta
-                            .original_path
-                            .clone()
-                            .filter(|p| files::document_exists(p));
-                        d.import_source = doc.meta.import_source.clone();
-                        if let Some(p) = &d.path {
-                            d.format = Format::from_path(p).unwrap_or(Format::Thinoda);
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
-                                d.storage_revision = d
-                                    .fingerprint
-                                    .as_ref()
-                                    .map(thinoda_platform::storage::revision_from_fingerprint);
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            if !files::is_durable_document(p) {
-                                d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
-                                d.storage_revision = d
-                                    .fingerprint
-                                    .as_ref()
-                                    .map(thinoda_platform::storage::revision_from_fingerprint);
-                            }
+            match snapshots {
+                Ok(snapshots) => {
+                    let restored =
+                        s.docs
+                            .iter()
+                            .zip(snapshots)
+                            .map(|(source, snapshot)| {
+                                let mut doc = OpenDoc::new(snapshot.workbook);
+                                doc.view.titles = new_topic_titles();
+                                doc.path = source
+                                    .meta
+                                    .original_path
+                                    .clone()
+                                    .filter(|p| files::document_exists(p));
+                                doc.import_source = source.meta.import_source.clone();
+                                if let Some(p) = &doc.path {
+                                    doc.format = Format::from_path(p).unwrap_or(Format::Thinoda);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        doc.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
+                                        doc.storage_revision = doc.fingerprint.as_ref().map(
+                                            thinoda_platform::storage::revision_from_fingerprint,
+                                        );
+                                    }
+                                    #[cfg(target_arch = "wasm32")]
+                                    if !files::is_durable_document(p) {
+                                        doc.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
+                                        doc.storage_revision = doc.fingerprint.as_ref().map(
+                                            thinoda_platform::storage::revision_from_fingerprint,
+                                        );
+                                    }
+                                }
+                                // Rebind a safe recovered gesture only after the new
+                                // document's recovery-dirty state has been established.
+                                doc.doc.mark_dirty();
+                                if let Some(pending_ink) = &snapshot.pending_ink {
+                                    doc.restore_pending_ink(pending_ink).map_err(|error| {
+                                        format!(
+                                            "{} {}: {error}",
+                                            t("Could not open"),
+                                            source.meta.title
+                                        )
+                                    })?;
+                                }
+                                Ok((doc, snapshot.pending_ink))
+                            })
+                            .collect::<Result<Vec<_>, String>>();
+                    let restored = match restored {
+                        Ok(restored) => restored,
+                        Err(message) => {
+                            log::warn!("Recovery restore failed: {message}");
+                            self.warn_incomplete_recovery_discovery();
+                            self.toasts.error(message);
+                            keep.push(s);
+                            continue;
                         }
-                        d.doc.mark_dirty();
-                        restored.push(d);
-                    }
+                    };
                     if let Some(recovery) = self.services.recovery.clone() {
                         let mut attempted = Vec::new();
-                        let persisted =
-                            restored.iter().zip(&s.docs).try_for_each(|(doc, source)| {
+                        let persisted = restored.iter().zip(&s.docs).try_for_each(
+                            |((doc, pending_ink), source)| {
                                 let mut meta = source.meta.clone();
                                 meta.original_path = doc.path.clone();
                                 meta.dirty = true;
                                 attempted.push(doc.key.clone());
-                                recovery.persist_snapshot(&doc.key, meta, doc.doc.workbook())
-                            });
+                                if let Some(pending_ink) = pending_ink {
+                                    recovery.persist_snapshot_with_pending_ink(
+                                        &doc.key,
+                                        meta,
+                                        doc.doc.workbook(),
+                                        pending_ink,
+                                    )
+                                } else {
+                                    recovery.persist_snapshot(&doc.key, meta, doc.doc.workbook())
+                                }
+                            },
+                        );
                         if let Err(error) = persisted {
                             log::warn!("Recovery handoff failed: {error}");
                             self.toasts
@@ -3491,7 +3524,7 @@ impl ThinodaApp {
                             t("Recover Unsaved Work")
                         ));
                     }
-                    for (doc, source) in restored.into_iter().zip(&s.docs) {
+                    for ((doc, _), source) in restored.into_iter().zip(&s.docs) {
                         #[cfg(target_arch = "wasm32")]
                         if let Some(path) = &doc.path
                             && files::is_durable_document(path)
@@ -4909,7 +4942,13 @@ mod tests {
         app.close_tab_now(0);
         assert_eq!(app.docs.len(), 1);
         assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert!(app.docs[0].recovery_cleanup_failed);
+        assert!(!app.docs[0].recovery_cleanup_failed);
+        assert!(recovery.has_unflushed_snapshots());
+        recovery.flush().unwrap();
+        let pending: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(pending.pending_ink.is_some());
+        assert_eq!(pending.workbook.active().root_topic().title, "Before");
         app.docs[0].discard_pending_ink();
         snapshot_edit(&mut app.docs[0], &recovery, "After");
         assert!(!app.docs[0].recovery_cleanup_failed);
@@ -5068,6 +5107,132 @@ mod tests {
         app.restore_orphans(None);
         assert_eq!(app.docs.len(), 3);
         assert!(app.dialogs.recovery.is_empty());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn failed_pending_ink_handoff_keeps_the_claimed_original_until_retry() {
+        use thinoda_canvas::ink_controller::InkControllerError;
+
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let original = RecoveryManager::start(&paths).unwrap();
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.ink_feedback.record(InkControllerError::GesturePending);
+        let pending_ink = doc.pending_ink_for_recovery(false).unwrap();
+        original
+            .persist_snapshot_with_pending_ink(
+                "ink",
+                Default::default(),
+                doc.doc.workbook(),
+                &pending_ink,
+            )
+            .unwrap();
+        let source = original.session_dir().join("docs").join("ink.json");
+        let previous = std::fs::read(&source).unwrap();
+        assert!(original.try_flush_for_crash());
+        original.suspend().unwrap();
+        drop(original);
+
+        let recovery = Arc::new(RecoveryManager::start(&paths).unwrap());
+        let mut app = ThinodaApp::new(
+            Settings::default(),
+            Services {
+                recovery: Some(Arc::clone(&recovery)),
+                ..Services::default()
+            },
+            &[],
+        );
+        app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        assert!(RecoveryManager::find_orphans(&paths).is_empty());
+        recovery.suspend().unwrap();
+        app.restore_orphans(None);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        assert_eq!(std::fs::read(&source).unwrap(), previous);
+
+        recovery.resume().unwrap();
+        app.retry_closed_recovery_cleanup();
+        app.restore_orphans(None);
+        assert_eq!(app.docs.len(), 1);
+        assert!(app.doc().unwrap().has_unresolved_ink());
+        assert!(app.dialogs.recovery.is_empty());
+        assert!(!source.exists());
+        let destination = snapshot_path(&recovery, &app.docs[0].key);
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(destination).unwrap()).unwrap();
+        assert_eq!(snapshot.pending_ink.as_deref(), Some(pending_ink.as_str()));
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn unknown_pending_ink_data_cannot_be_restored_or_discarded_implicitly() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let original = RecoveryManager::start(&paths).unwrap();
+        let future = r#"{"version":999,"gesture":null,"feedback":[],"overflow":1,"retry_tolerance_bits":0,"retry_smooth":false}"#;
+        original
+            .persist_snapshot_with_pending_ink(
+                "future",
+                Default::default(),
+                &Workbook::default(),
+                future,
+            )
+            .unwrap();
+        let source = original.session_dir().join("docs").join("future.json");
+        let previous = std::fs::read(&source).unwrap();
+        assert!(original.try_flush_for_crash());
+        original.suspend().unwrap();
+        drop(original);
+        let recovery = Arc::new(RecoveryManager::start(&paths).unwrap());
+        let mut app = ThinodaApp::new(
+            Settings::default(),
+            Services {
+                recovery: Some(Arc::clone(&recovery)),
+                ..Services::default()
+            },
+            &[],
+        );
+        app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+        app.restore_orphans(None);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        assert!(app.recovery_discovery_incomplete);
+        app.discard_orphans();
+        assert_eq!(std::fs::read(&source).unwrap(), previous);
+        app.dialogs.recovery.remove(0).discard().unwrap();
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn oversized_ink_feedback_warns_without_overwriting_previous_recovery() {
+        use thinoda_canvas::{ink_controller::InkControllerError, ink_input::InkSample};
+        use thinoda_platform::recovery::MAX_PENDING_INK_BYTES;
+
+        let (_dir, recovery, mut app) = recovery_fixture();
+        snapshot_edit(app.doc_mut().unwrap(), &recovery, "Before");
+        recovery.flush().unwrap();
+        let path = snapshot_path(&recovery, &app.docs[0].key);
+        let previous = std::fs::read(&path).unwrap();
+        app.docs[0]
+            .ink_feedback
+            .record(InkControllerError::InvalidSettings {
+                reason: "a".repeat(MAX_PENDING_INK_BYTES + 1),
+                sample: InkSample::new(thinoda_core::Vec2::ZERO, None),
+            });
+        app.docs[0].snapshot(&recovery);
+        assert!(app.docs[0].recovery_snapshot_failed);
+        assert!(app.docs[0].has_unresolved_ink());
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        app.docs[0].discard_pending_ink();
+        app.docs[0].snapshot(&recovery);
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(!app.docs[0].recovery_snapshot_failed);
+        assert!(app.recovery_warning.is_none());
         recovery.finish().unwrap();
     }
 

@@ -1168,8 +1168,9 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   cover the slice; physical touch, screen readers and realistic performance
   remain separate acceptance gates.
 - Ink gestures commit atomically, and pending or rejected gestures are exposed
-  for retry or cancellation rather than silently discarded. Pending ink is not
-  crash-recoverable until it is committed.
+  for review, retry where safe, or cancellation rather than silently discarded.
+  The bounded [pending-ink recovery checkpoint](#pending-ink-recovery-checkpoint-critique)
+  records crash-recovery behavior and its limitations.
 - A touch-host regression checks captured style and pressure through one stroke,
   undo/redo and native save/reopen; invalid pressure leaves accepted samples
   pending. A browser bridge uses trusted pen pointer events and only pairs
@@ -1205,9 +1206,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   WebKit cannot run the Chromium-specific pen synthesis. An interrupted stroke
   retains earlier accepted samples for an explicit retry or discard, but
   uncorrelated samples cannot be recovered and retry can produce an incomplete
-  stroke. Pending ink is not crash-recoverable. Pressure still does not affect
-  rendering, and tilt, eraser-end behavior, palm rejection, latency, screen
-  readers and real-device acceptance remain open.
+  stroke. Recovery can preserve accepted pending samples but cannot reconstruct
+  missing input. Pressure still does not affect rendering, and tilt, eraser-end
+  behavior, palm rejection, latency, screen readers and real-device acceptance
+  remain open.
 - Pixel erasing can split strokes while retaining their metadata and undo
   behavior. Sixteen focused canvas tests cover geometry, limits, atomicity,
   grouping and undo. A production-browser regression checks the saved
@@ -1221,6 +1223,45 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   release without forwarding a canceled ink gesture; multi-touch cancellation
   and subsequent clicks remain covered by automated regressions. Real touch
   device acceptance remains open.
+
+#### Pending-ink recovery checkpoint: critique
+
+- Recovery snapshots can include accepted samples, captured tool settings,
+  pointer kind, original sheet and bounded rejected-input details, including
+  non-finite values. Accepted floating-point data is stored as bits. Rejected
+  details are readable diagnostic text, not a reconstruction of the original
+  structured error. Overflow is counted and reported rather than silently
+  discarded.
+- Restored input is detached and released; it is never committed automatically.
+  A matching pen or highlighter gesture can be explicitly retried as one
+  undoable edit after review. Rejected or stale gestures remain copy/discard
+  only. Recovered eraser and lasso gestures also remain review-only because
+  their original scene or selection cannot safely be reconstructed. Concurrent
+  document or draft changes make the recovery conservative rather than
+  rebinding it to a different owner.
+- The versioned recovery envelope makes older readers reject ink-aware
+  snapshots instead of silently omitting the input. Handoff writes the complete
+  replacement before discarding the claimed original; failed or unsupported
+  recovery keeps the original available. Pending ink remains outside normal
+  saved files until explicitly resolved.
+- Ongoing input is snapshotted without waiting for document idle, with attempts
+  throttled to the smaller of the configured recovery interval and two seconds.
+  Ordinary edits retain the existing idle-based cadence with the same cap.
+  Resolved ink is removed from recovery on the short retry schedule. Failed
+  writes preserve the last successful copy and surface a warning.
+- **Not a zero-loss guarantee:** recent samples can be lost between snapshots,
+  after a serialization or storage failure, or on browser `pagehide`, which
+  flushes queued snapshots but does not itself capture newer in-memory input.
+  The ink payload is capped at 16 MiB and real browser storage quotas may be
+  smaller. A size or quota failure keeps the older snapshot, not the latest
+  samples. Physical pens and touch devices, real assistive technology,
+  non-Chromium input, and large-board latency/memory acceptance remain open.
+- Focused native regressions cover restoration, retry and undo/redo, stale and
+  rejected input, unsupported data, failed handoffs and writes, and the snapshot
+  cadence. Chromium browser tests exercise a synthesized held pen across two
+  reloads, a competing tab's claim, injected failures, and actual localStorage
+  exhaustion followed by retry. These tests use a debug web build and do not
+  establish physical-device, other-browser, or performance acceptance.
 
 ### F6 presentation checkpoint: critique
 

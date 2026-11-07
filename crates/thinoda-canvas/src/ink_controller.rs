@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use egui::{Color32, Event, Key, Painter, PointerButton, Pos2, Rect, Shape, Stroke, TouchPhase};
+use serde::{Deserialize, Serialize};
 use thinoda_core::board::{
     BoardMember, MAX_BOARD_COORDINATE, MAX_CANVAS_OBJECTS, MAX_TOTAL_INK_POINTS, points_bounds,
 };
@@ -24,7 +25,8 @@ use crate::render::{Xf, color32};
 use crate::touch_input::TouchPointerIssue;
 
 /// Ink modes are separate from the board's shape/selection tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InkMode {
     Pen,
     Highlighter,
@@ -56,6 +58,107 @@ impl Default for InkSettings {
             finish: StrokeFinishOptions::default(),
         }
     }
+}
+
+/// Process-independent description of the pointer that owned a captured gesture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RecoveredPointer {
+    Mouse,
+    Pen { id: i32 },
+    Touch { device: u64, id: u64 },
+}
+
+/// Float bit patterns avoid JSON's loss of non-finite values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveredInkSample {
+    pub x_bits: u32,
+    pub y_bits: u32,
+    pub pressure_bits: Option<u32>,
+}
+
+impl From<InkSample> for RecoveredInkSample {
+    fn from(sample: InkSample) -> Self {
+        Self {
+            x_bits: sample.position.x.to_bits(),
+            y_bits: sample.position.y.to_bits(),
+            pressure_bits: sample.pressure.map(f32::to_bits),
+        }
+    }
+}
+
+impl From<RecoveredInkSample> for InkSample {
+    fn from(sample: RecoveredInkSample) -> Self {
+        Self {
+            position: Vec2::new(f32::from_bits(sample.x_bits), f32::from_bits(sample.y_bits)),
+            pressure: sample.pressure_bits.map(f32::from_bits),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveredInkSettings {
+    pub color: Color,
+    pub width_bits: u32,
+    pub opacity_bits: u32,
+    pub band: Band,
+    pub eraser_radius_bits: u32,
+    pub tolerance_bits: u32,
+    pub smooth: bool,
+}
+
+impl From<InkSettings> for RecoveredInkSettings {
+    fn from(settings: InkSettings) -> Self {
+        Self {
+            color: settings.color,
+            width_bits: settings.width.to_bits(),
+            opacity_bits: settings.opacity.to_bits(),
+            band: settings.band,
+            eraser_radius_bits: settings.eraser_radius.to_bits(),
+            tolerance_bits: settings.finish.tolerance.to_bits(),
+            smooth: settings.finish.smooth,
+        }
+    }
+}
+
+impl From<RecoveredInkSettings> for InkSettings {
+    fn from(settings: RecoveredInkSettings) -> Self {
+        Self {
+            color: settings.color,
+            width: f32::from_bits(settings.width_bits),
+            opacity: f32::from_bits(settings.opacity_bits),
+            band: settings.band,
+            eraser_radius: f32::from_bits(settings.eraser_radius_bits),
+            finish: StrokeFinishOptions {
+                tolerance: f32::from_bits(settings.tolerance_bits),
+                smooth: settings.smooth,
+            },
+        }
+    }
+}
+
+/// Accepted input and its original ownership, without process-local addresses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveredInkGesture {
+    pub mode: InkMode,
+    pub settings: RecoveredInkSettings,
+    pub pointer: RecoveredPointer,
+    pub sheet: usize,
+    pub was_held: bool,
+    pub rejected: bool,
+    pub source_current: bool,
+    pub additive: bool,
+    pub samples: Vec<RecoveredInkSample>,
+}
+
+/// Reasons a recovered gesture must remain available for review only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InkRecoveryBlock {
+    StaleDocument,
+    SceneDependent,
 }
 
 /// Events and ownership supplied by the containing canvas for one frame.
@@ -154,6 +257,7 @@ pub enum InkControllerError {
         limit: usize,
     },
     RejectedInputPending,
+    RecoveryNeedsReview,
     StaleDocument {
         sample: Option<InkSample>,
     },
@@ -214,6 +318,12 @@ impl fmt::Display for InkControllerError {
             }
             Self::TooManyPathSamples { limit, .. } => write!(f, "gesture exceeds {limit} samples"),
             Self::RejectedInputPending => write!(f, "gesture contains rejected input; cancel it"),
+            Self::RecoveryNeedsReview => {
+                write!(
+                    f,
+                    "the recovered gesture needs its original scene and selection"
+                )
+            }
             Self::StaleDocument { .. } => write!(f, "the document changed during the gesture"),
             Self::CameraChanged { .. } => write!(f, "the camera changed during the gesture"),
             Self::StaleScene(id) => write!(f, "the scene is stale for ink object {id}"),
@@ -310,6 +420,9 @@ struct Gesture {
     additive: bool,
     held: bool,
     rejected: bool,
+    recovery_origin: Option<(RecoveredPointer, bool)>,
+    recovery_block: Option<InkRecoveryBlock>,
+    preview_sheet: usize,
     buffer: GestureBuffer,
 }
 
@@ -345,12 +458,35 @@ impl Gesture {
         }
         result
     }
+
+    fn ensure_retryable(&self, document: &Document) -> Result<(), InkControllerError> {
+        if self.held {
+            return Err(InkControllerError::GesturePending);
+        }
+        if self.rejected {
+            return Err(InkControllerError::RejectedInputPending);
+        }
+        match self.recovery_block {
+            Some(InkRecoveryBlock::StaleDocument) => {
+                return Err(InkControllerError::StaleDocument { sample: None });
+            }
+            Some(InkRecoveryBlock::SceneDependent) => {
+                return Err(InkControllerError::RecoveryNeedsReview);
+            }
+            None => {}
+        }
+        if !self.stamp.matches(document) {
+            return Err(InkControllerError::StaleDocument { sample: None });
+        }
+        Ok(())
+    }
 }
 
 /// Retained outside `Document`; one successful release is one undoable edit.
 #[derive(Default)]
 pub struct InkController {
     gesture: Option<Gesture>,
+    recovery_revision: u64,
     touches: Vec<TouchKey>,
     block_touch: bool,
     suppress_mouse: bool,
@@ -386,6 +522,146 @@ impl InkController {
         self.gesture
             .as_ref()
             .is_some_and(|gesture| gesture.rejected)
+    }
+
+    /// Monotonic in-process revision of the retained gesture.
+    pub fn recovery_revision(&self) -> u64 {
+        self.recovery_revision
+    }
+
+    pub fn pending_recovery_block(&self) -> Option<InkRecoveryBlock> {
+        self.gesture
+            .as_ref()
+            .and_then(|gesture| gesture.recovery_block)
+    }
+
+    pub fn pending_was_recovered(&self) -> bool {
+        self.gesture
+            .as_ref()
+            .is_some_and(|gesture| gesture.recovery_origin.is_some())
+    }
+
+    pub fn pending_preview_sheet(&self) -> Option<usize> {
+        self.gesture.as_ref().map(|gesture| gesture.preview_sheet)
+    }
+
+    pub fn pending_source_is_current(&self, document: &Document) -> bool {
+        self.gesture.as_ref().is_some_and(|gesture| {
+            gesture.recovery_block != Some(InkRecoveryBlock::StaleDocument)
+                && gesture.stamp.matches(document)
+        })
+    }
+
+    /// Capture accepted samples and settings without reviving the original pointer.
+    pub fn pending_for_recovery(
+        &self,
+        document: &Document,
+        has_other_drafts: bool,
+    ) -> Option<RecoveredInkGesture> {
+        let gesture = self.gesture.as_ref()?;
+        let (pointer, was_held) = gesture.recovery_origin.unwrap_or_else(|| {
+            let pointer = match gesture.owner {
+                PointerOwner::Mouse => RecoveredPointer::Mouse,
+                PointerOwner::Pen(id) => RecoveredPointer::Pen { id },
+                PointerOwner::Touch(TouchKey(device, id)) => RecoveredPointer::Touch {
+                    device: device.0,
+                    id: id.0,
+                },
+            };
+            (pointer, gesture.held)
+        });
+        Some(RecoveredInkGesture {
+            mode: gesture.mode,
+            settings: gesture.settings.into(),
+            pointer,
+            sheet: gesture.preview_sheet,
+            was_held,
+            rejected: gesture.rejected,
+            source_current: self.pending_source_is_current(document) && !has_other_drafts,
+            additive: gesture.additive,
+            samples: gesture.samples().iter().copied().map(Into::into).collect(),
+        })
+    }
+
+    /// Restore a detached, released gesture; only matching pen strokes can be retried.
+    pub fn restore_recovered_ink(
+        &mut self,
+        document: &Document,
+        recovered: &RecoveredInkGesture,
+    ) -> Result<(), String> {
+        if self.needs_input_tracking() {
+            return Err("ink input is already active".into());
+        }
+        if recovered.samples.is_empty() || recovered.samples.len() > MAX_INPUT_SAMPLES {
+            return Err("invalid recovered ink sample count".into());
+        }
+        if recovered.source_current && recovered.sheet != document.active_index() {
+            return Err("recovered ink sheet does not match its workbook".into());
+        }
+        let settings: InkSettings = recovered.settings.into();
+        if !settings.opacity.is_finite() || !(0.0..=1.0).contains(&settings.opacity) {
+            return Err("invalid recovered ink opacity".into());
+        }
+        let samples = recovered.samples.iter().copied().map(InkSample::from);
+        let buffer = match recovered.mode {
+            InkMode::Pen | InkMode::Highlighter => {
+                let tool = if recovered.mode == InkMode::Pen {
+                    InkTool::Pen
+                } else {
+                    InkTool::Highlighter
+                };
+                let mut input = InkInput::new(tool, settings.color, settings.width)
+                    .map_err(|error| error.to_string())?;
+                for sample in samples {
+                    input.push(sample).map_err(|error| error.to_string())?;
+                }
+                GestureBuffer::Draw(input)
+            }
+            InkMode::ObjectEraser | InkMode::PixelEraser | InkMode::Lasso => {
+                if recovered.mode != InkMode::Lasso
+                    && (!settings.eraser_radius.is_finite()
+                        || !(0.0..=MAX_BOARD_COORDINATE).contains(&settings.eraser_radius))
+                {
+                    return Err("invalid recovered eraser radius".into());
+                }
+                let samples: Vec<_> = samples.collect();
+                if samples
+                    .iter()
+                    .copied()
+                    .any(|sample| !valid_path_sample(sample))
+                {
+                    return Err("invalid recovered gesture sample".into());
+                }
+                GestureBuffer::Path(samples)
+            }
+        };
+        let recovery_block = if !recovered.source_current {
+            Some(InkRecoveryBlock::StaleDocument)
+        } else if !matches!(recovered.mode, InkMode::Pen | InkMode::Highlighter) {
+            Some(InkRecoveryBlock::SceneDependent)
+        } else {
+            None
+        };
+        self.gesture = Some(Gesture {
+            mode: recovered.mode,
+            settings,
+            owner: PointerOwner::Mouse,
+            stamp: DocumentStamp::capture(document),
+            transform: Xf {
+                origin: Pos2::ZERO,
+                zoom: 1.0,
+            },
+            canvas: Rect::from_min_size(Pos2::ZERO, egui::Vec2::ZERO),
+            additive: recovered.additive,
+            held: false,
+            rejected: recovered.rejected,
+            recovery_origin: Some((recovered.pointer, recovered.was_held)),
+            recovery_block,
+            preview_sheet: recovered.sheet,
+            buffer,
+        });
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
+        Ok(())
     }
 
     pub(crate) fn accepts_start_event(&self, event: &Event, frame_has_touch: bool) -> bool {
@@ -463,6 +739,9 @@ impl InkController {
     /// until the current mouse button or all active touches are released.
     pub fn cancel(&mut self) -> bool {
         let had_gesture = self.gesture.take().is_some();
+        if had_gesture {
+            self.recovery_revision = self.recovery_revision.wrapping_add(1);
+        }
         if self.mouse_down {
             self.suppress_mouse = true;
         }
@@ -480,6 +759,7 @@ impl InkController {
             return false;
         };
         gesture.held = false;
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         if self.mouse_down {
             self.suppress_mouse = true;
         }
@@ -590,17 +870,10 @@ impl InkController {
         scene: &Scene,
     ) -> Result<InkOutcome, InkControllerError> {
         let gesture = self.gesture.as_ref().ok_or(InkControllerError::NoGesture)?;
-        if gesture.held {
-            return Err(InkControllerError::GesturePending);
-        }
-        if gesture.rejected {
-            return Err(InkControllerError::RejectedInputPending);
-        }
-        if !gesture.stamp.matches(document) {
-            return Err(InkControllerError::StaleDocument { sample: None });
-        }
+        gesture.ensure_retryable(document)?;
         let outcome = finish_gesture(gesture, document, scene)?;
         self.gesture = None;
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         Ok(outcome)
     }
 
@@ -613,19 +886,12 @@ impl InkController {
         options: StrokeFinishOptions,
     ) -> Result<InkOutcome, InkControllerError> {
         let gesture = self.gesture.as_mut().ok_or(InkControllerError::NoGesture)?;
-        if gesture.held {
-            return Err(InkControllerError::GesturePending);
-        }
-        if gesture.rejected {
-            return Err(InkControllerError::RejectedInputPending);
-        }
-        if !gesture.stamp.matches(document) {
-            return Err(InkControllerError::StaleDocument { sample: None });
-        }
+        gesture.ensure_retryable(document)?;
         if !matches!(&gesture.buffer, GestureBuffer::Draw(_)) {
             return Err(InkControllerError::NotDrawingGesture);
         }
         gesture.settings.finish = options;
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         self.retry(document, scene)
     }
 
@@ -1173,8 +1439,12 @@ impl InkController {
             additive: modifiers.shift || modifiers.command || modifiers.ctrl,
             held: true,
             rejected: false,
+            recovery_origin: None,
+            recovery_block: None,
+            preview_sheet: document.active_index(),
             buffer,
         });
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         Ok(())
     }
 
@@ -1192,11 +1462,13 @@ impl InkController {
             Ok(sample) => sample,
             Err(error) => {
                 self.gesture.as_mut().expect("owned").rejected = true;
+                self.recovery_revision = self.recovery_revision.wrapping_add(1);
                 output.errors.push(error);
                 return;
             }
         };
         let gesture = self.gesture.as_mut().expect("owned");
+        let mut changed = true;
         if !gesture.stamp.matches(document) {
             gesture.rejected = true;
             output.errors.push(InkControllerError::StaleDocument {
@@ -1207,10 +1479,15 @@ impl InkController {
             output.errors.push(InkControllerError::CameraChanged {
                 sample: Some(sample),
             });
-        } else if gesture.samples().last() != Some(&sample)
-            && let Err(error) = gesture.push(sample)
-        {
-            output.errors.push(error);
+        } else if gesture.samples().last() != Some(&sample) {
+            if let Err(error) = gesture.push(sample) {
+                output.errors.push(error);
+            }
+        } else {
+            changed = false;
+        }
+        if changed {
+            self.recovery_revision = self.recovery_revision.wrapping_add(1);
         }
     }
 
@@ -1225,6 +1502,7 @@ impl InkController {
         self.sample(document, pointer, input, output);
         if let Some(gesture) = &mut self.gesture {
             gesture.held = false;
+            self.recovery_revision = self.recovery_revision.wrapping_add(1);
         }
         match self.retry(document, scene) {
             Ok(outcome) => output.outcomes.push(outcome),
@@ -1889,6 +2167,216 @@ mod tests {
         assert!(!document.can_undo());
         assert!(document.redo());
         assert_eq!(document.sheet().canvas.objects.len(), 1);
+    }
+
+    #[test]
+    fn recovered_pen_is_detached_reviewable_and_undoable() {
+        let mut document = Document::default();
+        let original_scene = scene(&document);
+        let mut controller = InkController::default();
+        let settings = InkSettings {
+            color: Color::rgb(10, 20, 30),
+            width: 4.0,
+            opacity: 0.6,
+            band: Band::Below,
+            finish: StrokeFinishOptions {
+                tolerance: 0.0,
+                smooth: false,
+            },
+            ..InkSettings::default()
+        };
+        let revision = controller.recovery_revision();
+        frame(
+            &mut controller,
+            &mut document,
+            &original_scene,
+            Some(InkMode::Pen),
+            settings,
+            xf(),
+            &[button(pos2(10.0, 10.0), true)],
+        );
+        assert!(controller.recovery_revision() > revision);
+        let revision = controller.recovery_revision();
+        frame(
+            &mut controller,
+            &mut document,
+            &original_scene,
+            Some(InkMode::Pen),
+            settings,
+            xf(),
+            &[Event::PointerMoved(pos2(30.0, 20.0))],
+        );
+        assert!(controller.recovery_revision() > revision);
+        let recovered = controller.pending_for_recovery(&document, false).unwrap();
+        assert!(recovered.was_held);
+        assert!(recovered.source_current);
+        assert_eq!(recovered.pointer, RecoveredPointer::Mouse);
+        assert_eq!(recovered.samples.len(), 2);
+
+        let mut restarted = Document::new(document.workbook().clone());
+        restarted.mark_dirty();
+        let mut restored = InkController::default();
+        restored
+            .restore_recovered_ink(&restarted, &recovered)
+            .unwrap();
+        assert!(restored.pending_was_recovered());
+        assert!(restored.has_released_gesture());
+        assert_eq!(restored.pending_settings(), Some(settings));
+        assert_eq!(restored.pending_samples(), controller.pending_samples());
+        assert_eq!(
+            restored
+                .pending_for_recovery(&restarted, false)
+                .unwrap()
+                .pointer,
+            recovered.pointer
+        );
+        assert!(restarted.sheet().canvas.objects.is_empty());
+        let restarted_scene = scene(&restarted);
+        assert!(matches!(
+            restored.retry(&mut restarted, &restarted_scene),
+            Ok(InkOutcome::Drawn(_))
+        ));
+        let object = &restarted.sheet().canvas.objects[0];
+        assert_eq!(object.band, Band::Below);
+        assert_eq!(object.style.opacity, 0.6);
+        assert!(restarted.undo());
+        assert!(restarted.sheet().canvas.objects.is_empty());
+        assert!(restarted.redo());
+        assert_eq!(restarted.sheet().canvas.objects.len(), 1);
+    }
+
+    #[test]
+    fn recovered_stale_rejected_and_scene_dependent_input_cannot_retry() {
+        let mut document = Document::default();
+        let original_scene = scene(&document);
+        let mut controller = InkController::default();
+        frame(
+            &mut controller,
+            &mut document,
+            &original_scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[button(pos2(10.0, 10.0), true)],
+        );
+        let current = controller.pending_for_recovery(&document, false).unwrap();
+        assert!(
+            !controller
+                .pending_for_recovery(&document, true)
+                .unwrap()
+                .source_current
+        );
+        let root = document.sheet().root;
+        document
+            .edit_sheet("Concurrent", |sheet| sheet.set_title(root, "Changed"))
+            .unwrap();
+        let stale = controller.pending_for_recovery(&document, false).unwrap();
+        assert!(!stale.source_current);
+        let mut restored = InkController::default();
+        restored.restore_recovered_ink(&document, &stale).unwrap();
+        let updated_scene = scene(&document);
+        assert_eq!(
+            restored.pending_recovery_block(),
+            Some(InkRecoveryBlock::StaleDocument)
+        );
+        assert!(matches!(
+            restored.retry(&mut document, &updated_scene),
+            Err(InkControllerError::StaleDocument { .. })
+        ));
+        assert!(restored.pending_samples().len() == 1);
+        restored.cancel();
+
+        let mut rejected = current.clone();
+        rejected.rejected = true;
+        restored
+            .restore_recovered_ink(&document, &rejected)
+            .unwrap();
+        assert!(matches!(
+            restored.retry(&mut document, &updated_scene),
+            Err(InkControllerError::RejectedInputPending)
+        ));
+        restored.cancel();
+
+        for mode in [InkMode::ObjectEraser, InkMode::PixelEraser, InkMode::Lasso] {
+            let mut path = current.clone();
+            path.mode = mode;
+            restored.restore_recovered_ink(&document, &path).unwrap();
+            assert_eq!(
+                restored.pending_recovery_block(),
+                Some(InkRecoveryBlock::SceneDependent)
+            );
+            assert!(matches!(
+                restored.retry(&mut document, &updated_scene),
+                Err(InkControllerError::RecoveryNeedsReview)
+            ));
+            assert_eq!(restored.pending_samples().len(), 1);
+            restored.cancel();
+        }
+    }
+
+    #[test]
+    fn malformed_recovered_ink_is_rejected_without_replacing_input() {
+        let document = Document::default();
+        let valid = RecoveredInkGesture {
+            mode: InkMode::Pen,
+            settings: InkSettings::default().into(),
+            pointer: RecoveredPointer::Pen { id: 7 },
+            sheet: document.active_index(),
+            was_held: true,
+            rejected: false,
+            source_current: true,
+            additive: false,
+            samples: vec![InkSample::new(Vec2::ZERO, Some(0.7)).into()],
+        };
+        let mut cases = Vec::new();
+        let mut empty = valid.clone();
+        empty.samples.clear();
+        cases.push(empty);
+        let mut too_many = valid.clone();
+        too_many.samples = vec![valid.samples[0]; MAX_INPUT_SAMPLES + 1];
+        cases.push(too_many);
+        let mut nonfinite = valid.clone();
+        nonfinite.samples[0].x_bits = f32::NAN.to_bits();
+        cases.push(nonfinite);
+        let mut pressure = valid.clone();
+        pressure.samples[0].pressure_bits = Some(f32::INFINITY.to_bits());
+        cases.push(pressure);
+        let mut width = valid.clone();
+        width.settings.width_bits = f32::NAN.to_bits();
+        cases.push(width);
+        let mut opacity = valid.clone();
+        opacity.settings.opacity_bits = f32::NAN.to_bits();
+        cases.push(opacity);
+        let mut sheet = valid.clone();
+        sheet.sheet += 1;
+        cases.push(sheet);
+        let mut controller = InkController::default();
+        for case in cases {
+            assert!(controller.restore_recovered_ink(&document, &case).is_err());
+            assert!(!controller.has_pending_gesture());
+        }
+        let mut invalid_tolerance = valid.clone();
+        invalid_tolerance.settings.tolerance_bits = f32::NAN.to_bits();
+        controller
+            .restore_recovered_ink(&document, &invalid_tolerance)
+            .unwrap();
+        assert!(
+            controller
+                .pending_settings()
+                .unwrap()
+                .finish
+                .tolerance
+                .is_nan()
+        );
+        assert_eq!(
+            controller
+                .pending_for_recovery(&document, false)
+                .unwrap()
+                .pointer,
+            RecoveredPointer::Pen { id: 7 }
+        );
+        assert!(controller.restore_recovered_ink(&document, &valid).is_err());
+        assert_eq!(controller.pending_samples().len(), 1);
     }
 
     #[test]
