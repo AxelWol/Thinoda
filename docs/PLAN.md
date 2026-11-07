@@ -18,6 +18,36 @@ file format), the concept (native board model + lossless round-trip contract,
 downloaded on demand) and phases 0–14. Phase 1 changes shape placement on all
 boards to draw.io behaviour and ships independently of file support.
 
+## Combined draw.io, Freeform, ink and presentation continuation
+
+The Freeform and draw.io plans continue together; neither supersedes the
+other. Preserve existing mind maps, the newer target-specific context menus,
+localized controls and light/dark themes. The Freeform research, F0–F6 phases,
+implemented features and phase critiques remain in [FREEFORM.md](FREEFORM.md).
+The following are outstanding priorities, not claims of release acceptance:
+
+1. Make pending or rejected ink crash-recoverable without silently committing
+   stale or incomplete gestures. Preserve accepted samples and captured style,
+   bind recovery to document ownership and revision, and cover restart, undo,
+   write failures, quota and concurrent browser tabs.
+2. Define quantitative ink/image workload and latency budgets and verify them
+   on representative native, browser, GPU, touch and stylus devices. Pressure
+   is currently persisted metadata, not pressure-dependent stroke width;
+   synthetic tests do not establish device acceptance.
+3. Finish scene and export acceptance across crops, browsers, PDF viewers and
+   current Office versions. View slides are spatial; Branch and Zone slides use
+   source isolation. Viewport PowerPoint slides are flattened, and visual
+   clipping is not secure redaction. See [PRESENTATIONS.md](PRESENTATIONS.md).
+4. Complete integrated board accessibility and device/IME acceptance, and the
+   rich-aware editing, history, clipboard, rendering, export and accessibility
+   needed for selected-range card formatting and lists. Existing card controls
+   apply to the whole card.
+5. Keep integrated cloud accounts disabled until publisher registration,
+   local-save-equivalent draft and export-loss safeguards, revision/cancellation
+   tests and live-provider acceptance are complete. Browser recovery races,
+   large-board limits and real OS clipboard behavior remain open; see
+   [CLOUD-STORAGE.md](CLOUD-STORAGE.md) and [WEB-STARTUP.md](WEB-STARTUP.md).
+
 ## Current Freeform and web-startup status
 
 **2026-11-03 contextual board editing request (in progress):** use the supplied
