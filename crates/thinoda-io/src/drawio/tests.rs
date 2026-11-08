@@ -48,6 +48,392 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
     Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h))
 }
 
+const MOCKUP_RECTANGLES: &[&str] = &[
+    "mxgraph.mockup.rrect",
+    "mxgraph.mockup.forms.rrect",
+    "mxgraph.mockup.containers.rrect",
+    "mxgraph.mockup.misc.rrect",
+    "mxgraph.mockup.graphics.rrect",
+    "mxgraph.mockup.text.rrect",
+    "mxgraph.ios.rrect",
+];
+
+#[test]
+fn mockup_rectangle_aliases_preserve_square_geometry_and_attachment() {
+    for alias in MOCKUP_RECTANGLES {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="Label" style="shape={alias};rSize=0;fillColor=#ff0000;strokeColor=#008000;fontColor=#0000ff;strokeWidth=2;rotation=30;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="b" style="shape={alias};rSize=0;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##
+        ));
+        let sheet = clean(&xml);
+        let objects = shapes(&sheet);
+        assert_eq!(objects.len(), 2, "{alias}");
+        for object in &objects {
+            assert!(matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::Rectangle,
+                    ..
+                }
+            ));
+        }
+        assert_eq!(objects[0].label(), "Label");
+        assert_eq!(objects[0].rect, rect(10.0, 20.0, 100.0, 60.0));
+        assert_eq!(objects[0].rotation, 30.0);
+        assert_eq!(objects[0].style.fill, Some(Color::rgb(255, 0, 0)));
+        assert_eq!(objects[0].style.stroke, Some(Color::rgb(0, 128, 0)));
+        assert_eq!(objects[0].style.text_color, Some(Color::rgb(0, 0, 255)));
+        assert_eq!(objects[0].style.stroke_width, 2.0);
+        let edge = connectors(&sheet)[0];
+        assert_eq!(edge.from, Endpoint::Object(objects[0].id));
+        assert_eq!(edge.to, Endpoint::Object(objects[1].id));
+
+        let book = Workbook::new(sheet);
+        book.validate().unwrap();
+        let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+        let restored = crate::import_bytes(Format::Thinoda, &native).unwrap();
+        assert_eq!(restored, book);
+    }
+}
+
+#[test]
+fn mockup_rectangle_radius_uses_drawio_style_resolution() {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+
+    for (value, expected) in [
+        ("0", Some(Equal)),
+        ("  -0.5", Some(Equal)),
+        ("+0X000tail", Some(Equal)),
+        ("0.9", Some(Equal)),
+        (".9", Some(Equal)),
+        ("-1e-2", Some(Equal)),
+        ("1e-6", Some(Equal)),
+        ("1e-999", Some(Equal)),
+        ("0b10", Some(Equal)),
+        ("0e99", Some(Equal)),
+        ("0x10", Some(Greater)),
+        ("1e-7", Some(Greater)),
+        ("1e2", Some(Greater)),
+        ("1e999", Some(Greater)),
+        ("123ignored", Some(Greater)),
+        ("999999999999999999999999999999999999", Some(Greater)),
+        ("none", Some(Greater)),
+        ("-1e-7", Some(Less)),
+        ("-0x10", Some(Less)),
+        ("-1", Some(Less)),
+        ("", None),
+        ("0x", None),
+        ("NaN", None),
+        ("--1", None),
+    ] {
+        assert_eq!(mockup_radius_sign(value), expected, "{value:?}");
+    }
+}
+
+#[test]
+fn mockup_rectangle_radius_and_inherited_color_report_approximations() {
+    for alias in MOCKUP_RECTANGLES {
+        for (radius, shape, warning) in [
+            ("", ShapeKind::RoundedRectangle, true),
+            ("rSize=none;", ShapeKind::RoundedRectangle, true),
+            ("rSize=0;", ShapeKind::Rectangle, false),
+            ("rSize=0.9;", ShapeKind::Rectangle, false),
+            ("rSize=.9;", ShapeKind::Rectangle, false),
+            ("rSize=1e-2;", ShapeKind::Rectangle, false),
+            ("rSize=0b10;", ShapeKind::Rectangle, false),
+            ("rSize=0x10;", ShapeKind::RoundedRectangle, true),
+            ("rSize=1e-7;", ShapeKind::RoundedRectangle, true),
+            ("rSize=1e2;", ShapeKind::RoundedRectangle, true),
+            ("rSize=-1;", ShapeKind::Rectangle, true),
+            ("rSize=NaN;", ShapeKind::Rectangle, true),
+        ] {
+            let xml = page(&format!(
+                r##"<mxCell id="a" style="shape={alias};{radius}fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+            ));
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings,
+                if warning {
+                    vec![ImportWarning::Formatting]
+                } else {
+                    vec![]
+                },
+                "{alias};{radius}"
+            );
+            assert!(matches!(
+                shapes(&report.workbook.sheets[0])[0].kind,
+                CanvasObjectKind::Shape { shape: actual, .. } if actual == shape
+            ));
+            let paste = crate::drawio_clipboard::decode(&xml).unwrap();
+            assert_eq!(paste.warnings, report.warnings);
+            let mut pasted_sheet = Sheet::new("Paste", "");
+            pasted_sheet.root_mode = SheetRootMode::Hidden;
+            thinoda_core::clipboard::paste_board_selection(
+                &mut pasted_sheet,
+                &paste.payload,
+                Vec2::ZERO,
+            )
+            .unwrap();
+            assert!(matches!(
+                shapes(&pasted_sheet)[0].kind,
+                CanvasObjectKind::Shape { shape: actual, .. } if actual == shape
+            ));
+            let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+            let linked = crate::import_drawio_link(&link).unwrap();
+            assert_eq!(linked.warnings, report.warnings);
+            assert_eq!(linked.workbook, report.workbook);
+            let native =
+                export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+            let restored = crate::import_bytes(Format::Thinoda, &native).unwrap();
+            assert_eq!(restored, report.workbook);
+        }
+    }
+
+    for key in ["fillColor", "strokeColor", "fontColor", "gradientColor"] {
+        for value in [
+            "inherit",
+            "swimlane",
+            "indicated",
+            "fillColor",
+            "strokeColor",
+            "red",
+            "bad",
+            "fff",
+            "##fff",
+            "light-dark(#aabbcc,#ddeeff)",
+        ] {
+            let xml = page(&format!(
+                r##"<mxCell id="a" style="shape=mxgraph.mockup.rrect;rSize=0;fillColor=#fff;strokeColor=#000;fontColor=#000;{key}={value};" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+            ));
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings,
+                vec![ImportWarning::Formatting],
+                "{key}={value}"
+            );
+            assert!(matches!(
+                shapes(&report.workbook.sheets[0])[0].kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::Rectangle,
+                    ..
+                }
+            ));
+            let paste = crate::drawio_clipboard::decode(&xml).unwrap();
+            assert_eq!(paste.warnings, report.warnings);
+            let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+            let linked = crate::import_drawio_link(&link).unwrap();
+            assert_eq!(linked.warnings, report.warnings);
+            assert_eq!(linked.workbook, report.workbook);
+        }
+    }
+}
+
+#[test]
+fn mockup_rectangle_warns_about_unresolved_default_colors_and_opacity() {
+    for (prefix, style, warning) in [
+        ("", "", true),
+        (";", "", true),
+        (
+            "",
+            "fillColor=default;strokeColor=#000;fontColor=#000;",
+            true,
+        ),
+        ("", "fillColor=#fff;strokeColor=#000;fontColor=none;", false),
+        ("", "strokeColor=#000;fontColor=#000;fillOpacity=40;", true),
+        ("", "fillColor=#fff;fontColor=#000;strokeOpacity=40;", true),
+        ("", "fillColor=#fff;strokeColor=#000;textOpacity=40;", true),
+        (
+            "",
+            "fillColor=#fff;strokeColor=#000;fontColor=#000;fillOpacity=invalid;",
+            true,
+        ),
+        ("", "fillColor=#fff;strokeColor=#000;fontColor=#000;", false),
+        (";", "fillColor=#fff;strokeColor=#000;fontColor=#000;", true),
+        (
+            "",
+            "fillColor=none;strokeColor=none;fontColor=#000;fillOpacity=40;",
+            false,
+        ),
+        (
+            "",
+            "fillColor=#ff0000;strokeColor=#000;fontColor=#000;fillOpacity=40;",
+            false,
+        ),
+        (
+            "",
+            "fillColor=#fff;strokeColor=#008000;fontColor=#000;strokeOpacity=40;",
+            false,
+        ),
+        (
+            "",
+            "fillColor=#fff;strokeColor=#000;fontColor=#0000ff;textOpacity=40;",
+            false,
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="{prefix}shape=mxgraph.mockup.rrect;rSize=0;{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings,
+            if warning {
+                vec![ImportWarning::Formatting]
+            } else {
+                vec![]
+            },
+            "{prefix}{style}"
+        );
+        if style.starts_with("fillColor=#ff0000;") {
+            assert_eq!(
+                shapes(&report.workbook.sheets[0])[0].style.fill,
+                Some(Color::rgba(255, 0, 0, 102))
+            );
+        }
+    }
+}
+
+#[test]
+fn mockup_none_font_color_uses_drawio_black_and_text_opacity() {
+    for alias in MOCKUP_RECTANGLES {
+        for (radius, warning) in [("0", false), ("10", true)] {
+            let xml = page(&format!(
+                r##"<mxCell id="a" value="Readable" style="shape={alias};rSize={radius};fillColor=#fff;strokeColor=#000;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+            ));
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings,
+                if warning {
+                    vec![ImportWarning::Formatting]
+                } else {
+                    vec![]
+                }
+            );
+            let object = shapes(&report.workbook.sheets[0])[0];
+            assert_eq!(object.label(), "Readable");
+            assert_eq!(object.style.text_color, Some(Color::rgba(0, 0, 0, 102)));
+            let native =
+                export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+            let restored = crate::import_bytes(Format::Thinoda, &native).unwrap();
+            assert_eq!(restored, report.workbook);
+        }
+    }
+}
+
+#[test]
+fn mockup_rectangle_warns_about_unresolved_named_styles() {
+    let xml = page(
+        r##"<mxCell id="a" style="shape=mxgraph.mockup.rrect;customStyle;rSize=0;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert!(matches!(
+        shapes(&report.workbook.sheets[0])[0].kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Rectangle,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn mockup_shape_identifiers_are_not_treated_as_named_styles() {
+    for alias in MOCKUP_RECTANGLES {
+        let xml = page(&format!(
+            r##"<mxCell id="a" style="{alias};rSize=10;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Other], "{alias}");
+        assert!(matches!(
+            shapes(&report.workbook.sheets[0])[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Rectangle,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
+fn supplied_requirements_flow_classifies_real_mockup_rectangles() {
+    let dir = std::env::var_os("THINODA_DRAWIO_CORPUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("docs")
+                .join("draw-io-examples")
+        });
+    let path = dir.join("requirements-flow.drawio");
+    if !path.is_file() {
+        eprintln!("optional requirements-flow.drawio is absent; skipping");
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let pages = read_pages(&bytes).unwrap();
+    let mut squares = 0;
+    let mut rounded = 0;
+    for source_page in &pages {
+        let cells = read_cells(&source_page.model, &mut BTreeSet::new());
+        for cell in &cells {
+            if !cell
+                .style
+                .get("shape")
+                .is_some_and(|shape| MOCKUP_RECTANGLES.contains(&shape))
+            {
+                continue;
+            }
+            let expected = match cell.style.get("rSize") {
+                Some("0") => {
+                    assert!(matches!(
+                        classify(&cell.style),
+                        Kind::Shape(ShapeKind::Rectangle, ..)
+                            | Kind::Approx(ShapeKind::Rectangle, ..)
+                    ));
+                    squares += 1;
+                    ShapeKind::Rectangle
+                }
+                Some(value) if value.parse::<u32>().is_ok_and(|value| value > 0) => {
+                    assert!(matches!(
+                        classify(&cell.style),
+                        Kind::Approx(ShapeKind::RoundedRectangle, ..)
+                    ));
+                    rounded += 1;
+                    ShapeKind::RoundedRectangle
+                }
+                _ => continue,
+            };
+            let mut parts = cell.style.tokens.clone();
+            parts.extend(
+                cell.style
+                    .map
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}")),
+            );
+            let mut style = parts.join(";");
+            if cell.style.suppress_defaults {
+                style.insert(0, ';');
+            }
+            let xml = page(&format!(
+                r#"<mxCell id="a" style="{}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+                esc(&style)
+            ));
+            let converted = load(&xml);
+            assert!(matches!(
+                shapes(&converted.workbook.sheets[0])[0].kind,
+                CanvasObjectKind::Shape { shape, .. } if shape == expected
+            ));
+            if expected == ShapeKind::RoundedRectangle {
+                assert!(converted.warnings.contains(&ImportWarning::Formatting));
+            }
+        }
+    }
+    eprintln!("classified {squares} square and {rounded} rounded supplied mockup rectangles");
+    let report = import(&bytes).unwrap();
+    report.workbook.validate().unwrap();
+}
+
 fn shape(kind: ShapeKind, frame: Rect, label: &str) -> CanvasObject {
     let mut object = CanvasObject::shape(kind, frame);
     if let CanvasObjectKind::Shape { label: text, .. } = &mut object.kind {

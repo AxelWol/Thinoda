@@ -1563,6 +1563,38 @@ decompression and peak memory. The 30-minute acceptance campaign has not been
 run for this candidate; full interoperability and the other hardening gates
 remain open.
 
+**Adjustable mockup rectangles (partial Phase 5) — critique.** Seven published
+mockup/iOS `shape=...rrect` identifiers now import as editable native shapes
+instead of unknown placeholders. A zero `rSize` becomes a rectangle; positive,
+absent or removed (`none`) `rSize` becomes a rounded rectangle with a Formatting
+warning. The source stylesheet first normalizes numeric values and the renderer
+then uses JavaScript `parseInt`: for example, `1e-2` yields zero, `1e-7` yields
+one, and `0x10` yields 16. Malformed values or negative parsed radii use square
+corners with a Formatting warning, in line with the SVG fallback. A removed
+font color falls back to black with the source text opacity instead of hiding
+the label. Unresolved default, inherited or dynamic colors, opacity, suppressed
+default styles and additional named styles are reported rather than silently
+claiming their appearance was preserved. Bare identifiers are not treated as
+registered named styles. File, link and
+clipboard imports share this behavior. The reference implementations are the
+published [mockup renderers](https://github.com/jgraph/drawio/tree/dev/src/main/webapp/shapes/mockup),
+[stylesheet](https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/view/mxStylesheet.js),
+and [SVG canvas](https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/util/mxSvgCanvas2D.js);
+the numeric examples were also checked in the published editor.
+
+The supplied `requirements-flow.drawio` contains 206 zero-radius and nine
+positive-radius examples; their source styles are exercised individually as
+well as through the full corpus. Existing geometry, labels, representable
+colors and attached connectors stay editable and survive native round trips.
+Validation passed 142 I/O library tests and 12 corpus, fuzz-seed and mutation
+integration tests; native and WebAssembly Clippy passed with warnings denied.
+This is not a general stencil engine or lossless round-trip: Thinoda's rounded
+rectangle uses a fixed, frame-relative radius while draw.io uses an adjustable
+absolute radius, and the original stencil identity and radius are not retained
+when saving the converted document. Dynamic or inherited colors and unresolved
+named styles are warned about, not resolved. Other stylesheet, text-layout and
+stencil details still require the planned fidelity work.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

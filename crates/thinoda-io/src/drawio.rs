@@ -564,15 +564,19 @@ impl Style {
             .and_then(|v| v.split(',').next())
             .unwrap_or(value)
             .trim();
-        let mut color = match value {
+        let color = match value {
             "" | "default" | "inherit" => return None,
             "none" => return Some(Color::TRANSPARENT),
             hex => Color::from_hex(hex)?,
         };
+        Some(self.color_with_opacity(color, opacity_key))
+    }
+
+    fn color_with_opacity(&self, mut color: Color, opacity_key: &str) -> Color {
         if let Some(opacity) = self.num(opacity_key) {
             color.a = (f32::from(color.a) * (opacity / 100.0).clamp(0.0, 1.0)).round() as u8;
         }
-        Some(color)
+        color
     }
 
     fn stroke_width(&self) -> f32 {
@@ -1032,6 +1036,109 @@ enum Kind {
     Unknown,
 }
 
+/// Resolves draw.io's numeric style values before its mockup renderer calls `parseInt`.
+fn mockup_radius_sign(value: &str) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+
+    let value = value.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    if value == "none" {
+        return Some(Ordering::Greater);
+    }
+    if let Ok(number) = value.parse::<f64>()
+        && number.is_finite()
+    {
+        let magnitude = number.abs();
+        // JavaScript stringifies smaller nonzero numbers in exponent notation.
+        return Some(if number == 0.0 || (1e-6..1.0).contains(&magnitude) {
+            Ordering::Equal
+        } else if number < 0.0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        });
+    }
+
+    let (negative, value) = if let Some(value) = value.strip_prefix('-') {
+        (true, value)
+    } else {
+        (false, value.strip_prefix('+').unwrap_or(value))
+    };
+    let (hex, value) = if let Some(value) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        (true, value)
+    } else {
+        (false, value)
+    };
+    let mut digits = value
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit() || (hex && byte.is_ascii_hexdigit()))
+        .peekable();
+    digits.peek()?;
+    let nonzero = digits.any(|byte| byte != b'0');
+    Some(match (negative, nonzero) {
+        (_, false) => Ordering::Equal,
+        (false, true) => Ordering::Greater,
+        (true, true) => Ordering::Less,
+    })
+}
+
+fn is_mockup_rectangle(style: &Style) -> bool {
+    matches!(
+        style.get("shape"),
+        Some(
+            "mxgraph.mockup.rrect"
+                | "mxgraph.mockup.forms.rrect"
+                | "mxgraph.mockup.containers.rrect"
+                | "mxgraph.mockup.misc.rrect"
+                | "mxgraph.mockup.graphics.rrect"
+                | "mxgraph.mockup.text.rrect"
+                | "mxgraph.ios.rrect"
+        )
+    )
+}
+
+fn mockup_rectangle(style: &Style) -> Kind {
+    use std::cmp::Ordering;
+
+    let radius = style
+        .get("rSize")
+        .map_or(Some(Ordering::Greater), mockup_radius_sign);
+    let unresolved_color = ["fillColor", "strokeColor", "fontColor"]
+        .iter()
+        .any(|key| match style.get(key) {
+            Some("none") => false,
+            Some(value) => !value
+                .strip_prefix('#')
+                .is_some_and(|hex| !hex.starts_with('#') && Color::from_hex(hex).is_some()),
+            _ => true,
+        });
+    let unresolved_opacity = [
+        ("fillColor", "fillOpacity"),
+        ("strokeColor", "strokeOpacity"),
+        ("fontColor", "textOpacity"),
+    ]
+    .iter()
+    .any(|(color, opacity)| {
+        style.get(opacity).is_some_and(|_| {
+            style
+                .num(opacity)
+                .is_none_or(|value| value != 100.0 && style.color(color, opacity).is_none())
+        })
+    });
+    let unresolved_stylesheet = style.suppress_defaults || !style.tokens.is_empty();
+    match radius {
+        Some(Ordering::Equal)
+            if !unresolved_color && !unresolved_opacity && !unresolved_stylesheet =>
+        {
+            Kind::Shape(ShapeKind::Rectangle, 0.0, true)
+        }
+        Some(Ordering::Greater) => Kind::Approx(ShapeKind::RoundedRectangle, 0.0, true),
+        _ => Kind::Approx(ShapeKind::Rectangle, 0.0, true),
+    }
+}
+
 fn classify(style: &Style) -> Kind {
     if style.has("group") {
         return Kind::Group;
@@ -1050,6 +1157,9 @@ fn classify(style: &Style) -> Kind {
     }
     if style.get("image").is_some_and(|v| !v.is_empty()) {
         return Kind::Image;
+    }
+    if is_mockup_rectangle(style) {
+        return mockup_rectangle(style);
     }
     use ShapeKind as S;
     let shape = |kind, base| Kind::Shape(kind, base, false);
@@ -1464,6 +1574,10 @@ impl<'a> PageImport<'a> {
                     rect
                 };
                 let mut object = shape_object(shape, frame, total + style.rotation(), label);
+                if is_mockup_rectangle(style) && style.get("fontColor") == Some("none") {
+                    object.style.text_color =
+                        Some(style.color_with_opacity(Color::BLACK, "textOpacity"));
+                }
                 if style.shape() == "partialRectangle" && matches!(kind, Kind::Approx(..)) {
                     object.style.stroke = Some(Color::TRANSPARENT);
                 }
