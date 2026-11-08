@@ -45,12 +45,12 @@ disabled and paused until publisher registrations are complete; see
 [FREEFORM.md](FREEFORM.md) for phase critiques.
 
 **Completed user requests:** the first-level Board menu remains available; the
-newer target-specific blank-canvas context menu groups creation tools under Add
-and drawing tools under Draw. Other targets expose their relevant actions. The
-Zone editor exposes separate frame/background colors and uses a deterministic
-accent cycle for new Zones; template frames keep their explicit palettes and
-older Zone data retains its previous fill semantics. See the design and critique
-in [PLAN.md](PLAN.md).
+target-specific canvas context menus place drawing and card creation under
+Tools, with separate Board, Grid and Align groups. Where Styles is relevant,
+Zones follows it. The Zone editor exposes separate frame/background colors and
+uses a deterministic accent cycle for new Zones; template frames keep their
+explicit palettes and older Zone data retains its previous fill semantics. See
+the design and critique in [PLAN.md](PLAN.md).
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout

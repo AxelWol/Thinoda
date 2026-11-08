@@ -79,7 +79,7 @@ fn open_toolbar_from_context(h: &mut Harness<'_, ThinodaApp>) {
         h.run_steps(1);
     }
     h.run_steps(4);
-    h.get_by_role_and_label(Role::Button, "Format").hover();
+    h.get_by_role_and_label(Role::Button, "Styles").hover();
     h.run_steps(6);
     scroll_and_click(h, Role::Button, card_text_label());
 }
@@ -3707,7 +3707,7 @@ fn canvas_context_menu_opens_the_toolbar_even_when_topic_toolbar_is_disabled() {
 }
 
 #[test]
-fn blank_canvas_draw_submenu_remains_scrollable_in_a_short_viewport() {
+fn blank_canvas_tools_submenu_remains_scrollable_in_a_short_viewport() {
     let mut app = ThinodaApp::headless();
     app.settings.ai.enabled = false;
     app.new_doc(Workbook::new(Sheet::new("Board", "Root")));
@@ -3726,19 +3726,20 @@ fn blank_canvas_draw_submenu_remains_scrollable_in_a_short_viewport() {
         h.run_steps(1);
     }
     h.run_steps(4);
-    h.get_by_role_and_label(Role::Button, "Draw").scroll_to_me();
+    h.get_by_role_and_label(Role::Button, "Tools")
+        .scroll_to_me();
     h.run_steps(3);
     assert!(
         h.ctx
             .content_rect()
-            .contains_rect(h.get_by_role_and_label(Role::Button, "Draw").rect())
+            .contains_rect(h.get_by_role_and_label(Role::Button, "Tools").rect())
     );
-    h.get_by_role_and_label(Role::Button, "Draw").click();
+    h.get_by_role_and_label(Role::Button, "Tools").click();
     h.run_steps(3);
     assert_eq!(
         h.query_all_by_role_and_label(Role::Button, "Pen").count(),
         2,
-        "the Draw submenu and toolbox both expose Pen"
+        "the Tools submenu and toolbox both expose Pen"
     );
     h.query_all_by_role_and_label(Role::Button, "Pen")
         .next()

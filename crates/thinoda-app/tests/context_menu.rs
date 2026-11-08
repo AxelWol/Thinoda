@@ -101,9 +101,13 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                     "Paste",
                     "Add",
                     "Structure",
-                    "Format",
-                    "Select",
+                    "Styles",
                     "Zones",
+                    "Board",
+                    "Grid",
+                    "Align",
+                    "Select",
+                    "Tools",
                     "View",
                     "Command Palette…",
                     "Delete",
@@ -112,7 +116,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                 }
                 for (submenu, labels) in [
                     (
-                        "Format",
+                        "Styles",
                         &[
                             "Topic style",
                             "Format Panel",
@@ -124,7 +128,10 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                     ),
                     ("Structure", &["Indent", "Outdent", "New Sheet from Topic"]),
                     ("Add", &["To-Do", "Task Planning", "Edit notes", "Boundary"]),
-                    ("View", &["Zoom to selection", "Fit Map", "Select tool"]),
+                    ("View", &["Fit Map", "Expand All", "Collapse All"]),
+                    ("Board", &["Zoom to selection", "Hide central topic"]),
+                    ("Align", &["Align Left", "Distribute Vertical Centers"]),
+                    ("Tools", &["Sticky note", "Image card", "Pen", "Lasso"]),
                 ] {
                     reveal(&mut h, t(submenu));
                     menu_action(&h, t(submenu)).click();
@@ -184,7 +191,15 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                     canvas.right_bottom() - egui::vec2(8.0, 8.0),
                 ] {
                     right_click(&mut h, edge);
-                    for label in ["Floating Topic", "Paste", "Add", "Draw", "View"] {
+                    for label in [
+                        "Floating Topic",
+                        "Paste",
+                        "Tools",
+                        "Board",
+                        "Grid",
+                        "Align",
+                        "View",
+                    ] {
                         reveal(&mut h, t(label));
                     }
                     h.key_press(egui::Key::Escape);
@@ -212,8 +227,13 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
         "Cut",
         "Add",
         "Structure",
-        "Format",
+        "Styles",
+        "Zones",
+        "Board",
+        "Grid",
+        "Align",
         "Select",
+        "Tools",
         "View",
         "Command Palette…",
         "Delete",
@@ -224,7 +244,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
         .collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(h.state().style_clipboard.is_none());
-    menu_action(&h, t("Format")).click();
+    menu_action(&h, t("Styles")).click();
     h.run_steps(3);
     let style_order = [
         "Topic style",
@@ -247,7 +267,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     h.run_steps(2);
     let blank = h.state().doc().unwrap().view.canvas_rect().left_top() + egui::vec2(8.0, 80.0);
     right_click(&mut h, blank);
-    menu_action(&h, t("Add")).click();
+    menu_action(&h, t("Tools")).click();
     h.run_steps(3);
     reveal(&mut h, t("Sticky note"));
     menu_action(&h, t("Sticky note")).click();
@@ -277,9 +297,28 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     };
     right_click(&mut h, pos);
     assert_eq!(h.state().doc().unwrap().view.board_selection, vec![shape]);
-    for label in ["Cut", "Format", "Arrange", "Layers", "Zones", "Delete"] {
+    for label in [
+        "Cut", "Styles", "Zones", "Board", "Grid", "Align", "Tools", "Delete",
+    ] {
         reveal(&mut h, t(label));
     }
+    let order = ["Styles", "Zones", "Board", "Grid", "Align"];
+    let positions: Vec<_> = order
+        .iter()
+        .map(|label| menu_action(&h, t(label)).rect().min.y)
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    menu_action(&h, t("Tools")).click();
+    h.run_steps(3);
+    reveal(&mut h, t("Image card"));
+    assert!(
+        !menu_action(&h, t("Image card"))
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    right_click(&mut h, pos);
     menu_action(&h, t("Zones")).click();
     h.run_steps(3);
     for label in [
@@ -295,6 +334,25 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     h.get_by_role_and_label(Role::Button, t("Cancel")).click();
     h.run_steps(3);
     right_click(&mut h, pos);
+    menu_action(&h, t("Grid")).click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::CheckBox, t("Dot grid"))
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().board.grid,
+        thinoda_core::GridKind::Dots
+    );
+    right_click(&mut h, pos);
+    menu_action(&h, t("Align")).click();
+    h.run_steps(3);
+    reveal(&mut h, t("Align Left"));
+    reveal(&mut h, t("Distribute Vertical Centers"));
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    right_click(&mut h, pos);
+    menu_action(&h, t("Board")).click();
+    h.run_steps(3);
     reveal(&mut h, t("Lock board selection"));
     let lock = menu_action(&h, t("Lock board selection"));
     assert!(!lock.accesskit_node().is_disabled());
@@ -314,5 +372,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     right_click(&mut h, pos);
+    menu_action(&h, t("Board")).click();
+    h.run_steps(3);
     reveal(&mut h, t("Unlock board selection"));
 }

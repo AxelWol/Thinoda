@@ -584,7 +584,7 @@ fn style_shortcuts_and_context_actions_share_availability() {
     let d = h.state().doc().unwrap();
     let root_rect = d.view.selected_topic_rect(&d.doc).unwrap();
     right_click_at(&mut h, root_rect.center());
-    open_context_submenu(&mut h, "Format");
+    open_context_submenu(&mut h, "Styles");
     assert!(
         h.get_by_role_and_label(Role::Button, "Paste Style")
             .accesskit_node()
@@ -625,7 +625,7 @@ fn style_shortcuts_and_context_actions_share_availability() {
     let d = h.state().doc().unwrap();
     let rect = d.view.selected_topic_rect(&d.doc).unwrap();
     right_click_at(&mut h, rect.center());
-    open_context_submenu(&mut h, "Format");
+    open_context_submenu(&mut h, "Styles");
     h.get_by_role_and_label(Role::Button, "Reset Style").click();
     h.run_steps(3);
     h.state_mut().doc_mut().unwrap().view.selection.clear();

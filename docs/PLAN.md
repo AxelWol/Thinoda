@@ -392,7 +392,7 @@ implemented feature is not treated as fully validated.
 | Final integration | ⬜ Open | Re-run the integrated native/Wasm/browser matrix after the remaining acceptance gates |
 | Publish reviewed checkpoints | ⬜ Open | Publish a reviewed, tested checkpoint without claiming the open workstreams complete |
 | Add Moodboard starter | ✅ Complete locally | Six independent image cards and an ideas note; richer collage behavior remains out of scope |
-| Move board tools to context menu | ✅ Complete locally | The newer target-specific blank-canvas menu groups drawing tools under Draw |
+| Move board tools to context menu | ✅ Complete locally | Target-specific menus group drawing and card tools under Tools, with separate Board, Grid and Align groups |
 | Add editable and automatic Zone colors | ✅ Complete locally | Independent frame/background colors and deterministic new-Zone accents preserve legacy behavior |
 
 ## Current next-value state (2026-10-30)

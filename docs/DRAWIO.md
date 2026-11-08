@@ -511,6 +511,24 @@ commit with explicit pathspecs (never `git add -A`).
 | 13 | Advanced fidelity | 7 | Sketch, math, placeholders, adaptive colors, page view, tooltips |
 | 14 | Hardening & release | all | Perf budgets, fuzz, a11y, i18n, docs |
 
+**User-directed continuation:** update the target-specific canvas context menus so
+Image card is in Tools, Zones immediately follows Styles, and Board is followed
+by separate Grid and Align menus. Cover placement, command availability, dispatch,
+localization and short-window scrolling. In parallel, resolve the reported
+Windows pen-ink interruption and add an atomic SVG representation alongside the
+existing Copy Sheet data where the platform supports it. Rebuild and launch the
+current Windows app for review after these changes; record platform and physical
+device limitations rather than claiming unverified acceptance.
+
+**Context-menu slice — critique:** Tools now includes Image card alongside the
+other drawing and card tools; applicable target menus place Zones after Styles
+and Grid and Align after Board. The existing commands, icons and target-specific
+availability are reused. The extra groups make some menus longer, so the existing
+scrolling and localized short-window checks remain important. Blank canvas,
+topics and board objects have different applicable actions; Zone and annotation
+menus retain their specialized layouts. Physical touch and assistive-technology
+acceptance are still open.
+
 Phase 1 is independent of draw.io file support and delivers the requested interaction
 change early; it only uses today's `Endpoint::Object` connections (port-precise
 connections arrive in Phase 8 without changing the gestures).

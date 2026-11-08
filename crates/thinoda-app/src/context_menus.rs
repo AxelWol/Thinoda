@@ -10,7 +10,7 @@ use crate::{
     app::{Cmd, FocusField, ThinodaApp},
 };
 use thinoda_canvas::{Action, BoardAction, BoardTool, FloatingArrangement, ObjectSelection};
-use thinoda_core::{Band, GridKind, ShapeKind, SheetRootMode, Vec2, ZOrder, board::BoardMember};
+use thinoda_core::{Band, GridKind, SheetRootMode, Vec2, ZOrder, board::BoardMember};
 
 /// Bounded menu target used for layout and for optional usage-count keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -108,7 +108,6 @@ struct Target {
     single: bool,
     cards: bool,
     objects: bool,
-    floating: bool,
     branch: bool,
     link: bool,
     summary: bool,
@@ -168,10 +167,6 @@ impl ThinodaApp {
                 .iter()
                 .any(|id| sheet.board_member_for_topic(*id).is_some()),
             objects: !view.board_selection.is_empty(),
-            floating: view
-                .selection
-                .iter()
-                .any(|id| sheet.is_floating(*id) && sheet.board_member_for_topic(*id).is_none()),
             branch: view
                 .selection
                 .iter()
@@ -226,7 +221,7 @@ impl ThinodaApp {
         };
         delete.push(canvas(label, Action::Delete));
         grouped(vec![
-            vec![self.view_menu()],
+            vec![self.view_menu(true)],
             vec![cmd("Command Palette…", Cmd::Palette)],
             delete,
         ])
@@ -237,44 +232,18 @@ impl ThinodaApp {
             .doc()
             .and_then(|doc| doc.view.context_point)
             .unwrap_or(Vec2::new(0.0, -260.0));
-        let tool = |label, tool| cmd(label, Cmd::BoardTool(tool));
         grouped(vec![
             vec![
                 canvas("Floating Topic", Action::InsertFloating(point)),
                 cmd("Paste", Cmd::MenuPaste),
             ],
             vec![
-                submenu(
-                    "Add",
-                    grouped(vec![
-                        vec![
-                            tool("Sticky note", BoardTool::Sticky),
-                            tool("Text card", BoardTool::Text),
-                            cmd("Image card", Cmd::BoardImage),
-                        ],
-                        vec![
-                            tool("Shape tool", BoardTool::Shape(ShapeKind::Rectangle)),
-                            tool("Connector tool", BoardTool::Connector),
-                            tool("Frame tool", BoardTool::Frame),
-                        ],
-                    ]),
-                ),
-                submenu(
-                    "Draw",
-                    grouped(vec![
-                        vec![
-                            tool("Pen", BoardTool::Pen),
-                            tool("Highlighter", BoardTool::Highlighter),
-                        ],
-                        vec![tool("Lasso", BoardTool::Lasso)],
-                        vec![
-                            tool("Object eraser", BoardTool::ObjectEraser),
-                            tool("Pixel eraser", BoardTool::PixelEraser),
-                        ],
-                    ]),
-                ),
+                self.tools_menu(),
                 self.short_select_menu(),
-                self.view_menu(),
+                self.board_options_menu(None),
+                self.grid_menu(),
+                self.align_menu(false),
+                self.view_menu(false),
                 cmd("Manage Zones", Cmd::Zones),
             ],
             vec![CtxEntry::Submenu {
@@ -310,15 +279,16 @@ impl ThinodaApp {
             self.add_menu(),
             self.structure_menu(),
             self.format_menu(target),
+            self.zones_menu(),
+            self.board_options_menu(None),
+            self.grid_menu(),
+            self.align_menu(false),
         ]);
-        if target.floating {
-            submenus.push(self.arrange_menu(false));
-        }
         submenus.extend([
             self.select_menu(),
-            self.zones_menu(),
+            self.tools_menu(),
             self.ai_menu(),
-            self.view_menu(),
+            self.view_menu(false),
         ]);
         let mut collapse = Vec::new();
         if target.branch {
@@ -347,49 +317,27 @@ impl ThinodaApp {
         if target.link {
             create.push(cmd("Open Link", Cmd::OpenLink));
         }
-        let mut organize = vec![
-            cmd(
-                "Group board selection",
-                Cmd::BoardAction(BoardAction::Group),
-            ),
-            cmd(
-                "Ungroup board selection",
-                Cmd::BoardAction(BoardAction::Ungroup),
-            ),
-        ];
-        let lock = cmd(
-            "Lock board selection",
-            Cmd::BoardAction(BoardAction::Lock(true)),
-        );
-        let unlock = cmd(
-            "Unlock board selection",
-            Cmd::BoardAction(BoardAction::Lock(false)),
-        );
-        match (target.locked, target.unlocked) {
-            (true, true) => organize.push(submenu("Protection", vec![lock, unlock])),
-            (true, false) => organize.push(unlock),
-            _ => organize.push(lock),
-        }
         let mut submenus = Vec::new();
         if target.cards && !target.objects {
             submenus.push(self.add_menu());
         }
-        submenus.push(self.arrange_menu(true));
-        if target.objects {
-            submenus.push(layers_menu());
-        }
-        submenus.extend([self.zones_menu(), self.short_select_menu()]);
+        submenus.extend([
+            self.board_options_menu(Some(target)),
+            self.grid_menu(),
+            self.align_menu(true),
+            self.short_select_menu(),
+            self.tools_menu(),
+        ]);
         if target.cards && !target.objects {
             submenus.push(self.ai_menu());
         }
-        submenus.push(self.view_menu());
+        submenus.push(self.view_menu(false));
         let mut clipboard = clipboard();
         clipboard.insert(2, cmd("Copy as draw.io", Cmd::CopyAsDrawio));
         grouped(vec![
             create,
             clipboard,
-            vec![self.format_menu(target)],
-            organize,
+            vec![self.format_menu(target), self.zones_menu()],
             submenus,
             vec![cmd("Command Palette…", Cmd::Palette)],
             vec![canvas("Delete", Action::Delete)],
@@ -420,6 +368,30 @@ impl ThinodaApp {
                     canvas("Summary", Action::AddSummary),
                 ],
             ]),
+        )
+    }
+
+    fn tools_menu(&self) -> CtxEntry {
+        let mut commands: Vec<_> = Self::board_commands()
+            .into_iter()
+            .filter(|(command, _)| matches!(command, Cmd::BoardTool(_) | Cmd::BoardImage))
+            .collect();
+        let image = commands
+            .iter()
+            .position(|(command, _)| *command == Cmd::BoardImage)
+            .expect("board commands contain Image card");
+        let image = commands.remove(image);
+        let text = commands
+            .iter()
+            .position(|(command, _)| *command == Cmd::BoardTool(BoardTool::Text))
+            .expect("board commands contain Text card");
+        commands.insert(text + 1, image);
+        submenu(
+            "Tools",
+            commands
+                .into_iter()
+                .map(|(command, label)| cmd(label, command))
+                .collect(),
         )
     }
 
@@ -458,7 +430,7 @@ impl ThinodaApp {
             last.push(cmd("Save Quick Style…", Cmd::SaveQuickStyle));
         }
         submenu(
-            "Format",
+            "Styles",
             grouped(vec![
                 first,
                 vec![
@@ -470,8 +442,8 @@ impl ThinodaApp {
         )
     }
 
-    /// Floating topics use canvas alignment; board selections also rotate.
-    fn arrange_menu(&self, board: bool) -> CtxEntry {
+    /// Floating topics use canvas alignment; board selections use board alignment.
+    fn align_menu(&self, board: bool) -> CtxEntry {
         let (mut align, mut distribute) = (Vec::new(), Vec::new());
         for (action, label) in Self::arrangement_commands() {
             let Action::AlignFloating(arrangement) = action else {
@@ -491,14 +463,7 @@ impl ThinodaApp {
                 align.push(cmd(label, command));
             }
         }
-        let mut rotate = Vec::new();
-        if board {
-            rotate = vec![
-                cmd("Rotate left", Cmd::BoardAction(BoardAction::Rotate(-15.0))),
-                cmd("Rotate right", Cmd::BoardAction(BoardAction::Rotate(15.0))),
-            ];
-        }
-        submenu("Arrange", grouped(vec![align, distribute, rotate]))
+        submenu("Align", grouped(vec![align, distribute]))
     }
 
     fn select_menu(&self) -> CtxEntry {
@@ -558,60 +523,96 @@ impl ThinodaApp {
         }
     }
 
-    fn view_menu(&self) -> CtxEntry {
-        let (root, grid, snap, minimap) = self.doc().map_or(
-            (SheetRootMode::Central, GridKind::None, false, false),
-            |doc| {
-                let sheet = doc.doc.sheet();
-                (
-                    sheet.root_mode,
-                    sheet.board.grid,
-                    sheet.board.snap,
-                    doc.view.show_minimap,
-                )
-            },
-        );
+    fn board_options_menu(&self, target: Option<Target>) -> CtxEntry {
+        let (root, minimap) = self.doc().map_or((SheetRootMode::Central, false), |doc| {
+            let sheet = doc.doc.sheet();
+            (sheet.root_mode, doc.view.show_minimap)
+        });
         let root = if root == SheetRootMode::Hidden {
             cmd("Show central topic", Cmd::BoardRoot(SheetRootMode::Central))
         } else {
             cmd("Hide central topic", Cmd::BoardRoot(SheetRootMode::Hidden))
         };
+        let mut groups = vec![vec![
+            cmd("Zoom to selection", Cmd::BoardZoomSelection),
+            root,
+            check("Board minimap", Cmd::BoardMinimap, minimap),
+        ]];
+        if let Some(target) = target {
+            let mut organize = vec![
+                cmd(
+                    "Group board selection",
+                    Cmd::BoardAction(BoardAction::Group),
+                ),
+                cmd(
+                    "Ungroup board selection",
+                    Cmd::BoardAction(BoardAction::Ungroup),
+                ),
+            ];
+            let lock = cmd(
+                "Lock board selection",
+                Cmd::BoardAction(BoardAction::Lock(true)),
+            );
+            let unlock = cmd(
+                "Unlock board selection",
+                Cmd::BoardAction(BoardAction::Lock(false)),
+            );
+            match (target.locked, target.unlocked) {
+                (true, true) => organize.push(submenu("Protection", vec![lock, unlock])),
+                (true, false) => organize.push(unlock),
+                _ => organize.push(lock),
+            }
+            groups.push(organize);
+            if target.objects {
+                groups.push(layer_commands());
+            }
+            groups.push(vec![
+                cmd("Rotate left", Cmd::BoardAction(BoardAction::Rotate(-15.0))),
+                cmd("Rotate right", Cmd::BoardAction(BoardAction::Rotate(15.0))),
+            ]);
+        }
+        submenu("Board", grouped(groups))
+    }
+
+    fn grid_menu(&self) -> CtxEntry {
+        let (grid, snap) = self.doc().map_or((GridKind::None, false), |doc| {
+            (doc.doc.sheet().board.grid, doc.doc.sheet().board.snap)
+        });
+        submenu(
+            "Grid",
+            grouped(vec![
+                [
+                    ("No grid", GridKind::None),
+                    ("Dot grid", GridKind::Dots),
+                    ("Line grid", GridKind::Lines),
+                ]
+                .into_iter()
+                .map(|(label, kind)| check(label, Cmd::BoardGrid(kind), grid == kind))
+                .collect(),
+                vec![check("Snap to grid", Cmd::BoardSnap, snap)],
+            ]),
+        )
+    }
+
+    fn view_menu(&self, include_board: bool) -> CtxEntry {
         submenu(
             "View",
             grouped(vec![
-                vec![
-                    cmd("Zoom to selection", Cmd::BoardZoomSelection),
-                    canvas("Fit Map", Action::Fit),
-                ],
+                vec![canvas("Fit Map", Action::Fit)],
                 vec![
                     canvas("Expand All", Action::ExpandAll),
                     canvas("Collapse All", Action::CollapseAll),
                 ],
-                vec![
-                    submenu(
-                        "Canvas settings",
-                        vec![
-                            root,
-                            check("Snap to grid", Cmd::BoardSnap, snap),
-                            check("Board minimap", Cmd::BoardMinimap, minimap),
-                        ],
-                    ),
-                    submenu(
-                        "Grid",
-                        [
-                            ("No grid", GridKind::None),
-                            ("Dot grid", GridKind::Dots),
-                            ("Line grid", GridKind::Lines),
-                        ]
-                        .into_iter()
-                        .map(|(label, kind)| check(label, Cmd::BoardGrid(kind), grid == kind))
-                        .collect(),
-                    ),
-                ],
-                vec![
-                    cmd("Select tool", Cmd::BoardTool(BoardTool::Select)),
-                    cmd("Hand tool", Cmd::BoardTool(BoardTool::Hand)),
-                ],
+                if include_board {
+                    vec![
+                        self.board_options_menu(None),
+                        self.grid_menu(),
+                        cmd("Select tool", Cmd::BoardTool(BoardTool::Select)),
+                        cmd("Hand tool", Cmd::BoardTool(BoardTool::Hand)),
+                    ]
+                } else {
+                    Vec::new()
+                },
             ]),
         )
     }
@@ -630,40 +631,37 @@ fn clipboard() -> Vec<CtxEntry> {
     ]
 }
 
-fn layers_menu() -> CtxEntry {
-    submenu(
-        "Layers",
-        grouped(vec![
-            vec![
-                cmd(
-                    "Bring to front",
-                    Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Front)),
-                ),
-                cmd(
-                    "Bring forward",
-                    Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Forward)),
-                ),
-                cmd(
-                    "Send backward",
-                    Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Backward)),
-                ),
-                cmd(
-                    "Send to back",
-                    Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Back)),
-                ),
-            ],
-            vec![
-                cmd(
-                    "Above map",
-                    Cmd::BoardAction(BoardAction::SetBand(Band::Above)),
-                ),
-                cmd(
-                    "Below map",
-                    Cmd::BoardAction(BoardAction::SetBand(Band::Below)),
-                ),
-            ],
-        ]),
-    )
+fn layer_commands() -> Vec<CtxEntry> {
+    grouped(vec![
+        vec![
+            cmd(
+                "Bring to front",
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Front)),
+            ),
+            cmd(
+                "Bring forward",
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Forward)),
+            ),
+            cmd(
+                "Send backward",
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Backward)),
+            ),
+            cmd(
+                "Send to back",
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Back)),
+            ),
+        ],
+        vec![
+            cmd(
+                "Above map",
+                Cmd::BoardAction(BoardAction::SetBand(Band::Above)),
+            ),
+            cmd(
+                "Below map",
+                Cmd::BoardAction(BoardAction::SetBand(Band::Below)),
+            ),
+        ],
+    ])
 }
 
 fn delete_group(target: Target) -> Vec<CtxEntry> {
@@ -723,8 +721,8 @@ mod tests {
             .count()
     }
 
-    fn check_limits(entries: &[CtxEntry], top: bool) {
-        assert!(rows(entries) <= if top { 20 } else { 12 }, "{entries:#?}");
+    fn check_limits(entries: &[CtxEntry], limit: usize) {
+        assert!(rows(entries) <= limit, "{entries:#?}");
         assert!(!matches!(entries.first(), Some(CtxEntry::Separator)));
         assert!(!matches!(entries.last(), Some(CtxEntry::Separator)));
         assert!(
@@ -733,9 +731,14 @@ mod tests {
                 .any(|pair| matches!(pair, [CtxEntry::Separator, CtxEntry::Separator]))
         );
         for entry in entries {
-            if let CtxEntry::Submenu { entries, .. } = entry {
+            if let CtxEntry::Submenu { label, entries, .. } = entry {
                 assert!(!entries.is_empty());
-                check_limits(entries, false);
+                let limit = match *label {
+                    "Board" => 14,
+                    "Tools" => 13,
+                    _ => 12,
+                };
+                check_limits(entries, limit);
             }
         }
     }
@@ -748,7 +751,6 @@ mod tests {
             single: true,
             cards: true,
             objects: false,
-            floating: true,
             branch: true,
             link: true,
             summary: true,
@@ -767,7 +769,7 @@ mod tests {
             app.annotation_menu(),
         ] {
             assert!(depth(&entries) <= 2, "{entries:#?}");
-            check_limits(&entries, true);
+            check_limits(&entries, 23);
             let mut seen = Vec::new();
             for_each_command(&entries, &mut |command| {
                 assert!(!seen.contains(command), "duplicate {command:?}");
@@ -778,12 +780,116 @@ mod tests {
     }
 
     #[test]
+    fn context_groups_keep_image_grid_and_alignment_in_the_requested_menus() {
+        let app = ThinodaApp::headless();
+        let target = Target {
+            topics: true,
+            single: true,
+            cards: true,
+            objects: true,
+            unlocked: true,
+            ..Target::default()
+        };
+        let blank = app.blank_menu();
+        let topic = app.topic_menu(target);
+        let board = app.board_menu(target);
+        for entries in [&blank, &topic, &board] {
+            let labels: Vec<_> = entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    CtxEntry::Submenu { label, .. } => Some(*label),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                labels
+                    .windows(3)
+                    .any(|group| group == ["Board", "Grid", "Align"])
+            );
+            let submenu_entries = |name| {
+                entries
+                    .iter()
+                    .find_map(|entry| match entry {
+                        CtxEntry::Submenu { label, entries, .. } if *label == name => {
+                            Some(entries.as_slice())
+                        }
+                        _ => None,
+                    })
+                    .unwrap()
+            };
+            let tools = submenu_entries("Tools");
+            let tool_labels: Vec<_> = tools
+                .iter()
+                .filter_map(|entry| match entry {
+                    CtxEntry::Command { label, .. } => Some(*label),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                tool_labels
+                    .windows(3)
+                    .any(|group| group == ["Sticky note", "Text card", "Image card"])
+            );
+            assert!(tools.iter().any(|entry| matches!(
+                entry,
+                CtxEntry::Command {
+                    command: Cmd::BoardImage,
+                    ..
+                }
+            )));
+            let board_commands = submenu_entries("Board");
+            assert!(!board_commands.iter().any(|entry| matches!(
+                entry,
+                CtxEntry::Command {
+                    command: Cmd::BoardImage
+                        | Cmd::BoardGrid(_)
+                        | Cmd::BoardSnap
+                        | Cmd::BoardAction(BoardAction::Arrange(_)),
+                    ..
+                }
+            )));
+            let grid = submenu_entries("Grid");
+            assert_eq!(
+                grid.iter()
+                    .filter(|entry| matches!(entry, CtxEntry::Command { .. }))
+                    .count(),
+                4
+            );
+            assert!(grid.iter().any(|entry| matches!(
+                entry,
+                CtxEntry::Command {
+                    command: Cmd::BoardSnap,
+                    ..
+                }
+            )));
+            assert_eq!(
+                submenu_entries("Align")
+                    .iter()
+                    .filter(|entry| matches!(entry, CtxEntry::Command { .. }))
+                    .count(),
+                8
+            );
+        }
+        for entries in [&topic, &board] {
+            assert!(entries.windows(2).any(|pair| matches!(
+                pair,
+                [
+                    CtxEntry::Submenu {
+                        label: "Styles",
+                        ..
+                    },
+                    CtxEntry::Submenu { label: "Zones", .. }
+                ]
+            )));
+        }
+    }
+
+    #[test]
     fn retired_context_groups_stay_reachable_from_menus() {
         let app = ThinodaApp::headless();
         let target = Target {
             topics: true,
             single: true,
-            floating: true,
             branch: true,
             ..Target::default()
         };
@@ -869,7 +975,6 @@ mod tests {
         let target = Target {
             topics: true,
             single: true,
-            floating: true,
             locked: true,
             unlocked: true,
             objects: true,
