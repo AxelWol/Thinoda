@@ -512,6 +512,12 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.quick_hint =
         t("Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.").into();
     labels.label_editor = t("Board object label").into();
+    labels.label_editing = t("Editing label").into();
+    labels.label_edit_hint =
+        t("Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel").into();
+    labels.label_edit_armed_hint =
+        t("Clicking or tapping empty canvas also adds the armed shape.").into();
+    labels.label_placeholder = t("Type a label").into();
     view.minimap_labels.accessible_name = t(
         "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
     )
@@ -1419,6 +1425,8 @@ impl ThinodaApp {
     pub(crate) fn armed_shape_hint(&mut self, ctx: &Context, canvas: Rect) -> Option<Rect> {
         let doc = self.doc()?;
         if !matches!(doc.view.board_tool, BoardTool::Shape(_))
+            || doc.view.editing_board_object().is_some()
+            || doc.view.editing_topic().is_some()
             || canvas.width() < ARMED_SHAPE_HINT_MIN_WIDTH
             || canvas.height() < 160.0
             || ctx.data(|data| data.get_temp::<bool>(armed_shape_hint_dismissed_id())) == Some(true)
@@ -3054,6 +3062,556 @@ mod tests {
         harness.run_steps(2);
         arm(&mut harness);
         assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+    }
+
+    #[test]
+    fn armed_shape_hint_yields_to_label_editing_guidance() {
+        let mut harness = harness();
+        let shape = {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            let shape = doc
+                .doc
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::RoundedRectangle,
+                    BoardRect::from_center_size(Vec2::ZERO, Vec2::new(240.0, 150.0)),
+                ))
+                .unwrap();
+            doc.view
+                .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle));
+            shape
+        };
+        harness.run_steps(3);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_some());
+
+        {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            assert!(doc.view.begin_board_label(&doc.doc, shape));
+        }
+        harness.run_steps(3);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+        assert!(harness.query_by_label("Editing label").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Editing label").is_none());
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_some());
+    }
+
+    fn label_focus_harness() -> (
+        Harness<'static, ThinodaApp>,
+        thinoda_core::CanvasObjectId,
+        egui::Pos2,
+    ) {
+        let mut sheet = thinoda_core::Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let shape = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_center_size(Vec2::new(50.0, 40.0), Vec2::new(120.0, 80.0)),
+            ))
+            .unwrap();
+        let mut app = ThinodaApp::headless();
+        app.settings.show_format_panel = false;
+        app.new_doc(thinoda_core::Workbook::new(sheet));
+        app.doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle));
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(6);
+        let view = &harness.state().doc().unwrap().view;
+        let position = view.canvas_rect().center() + view.offset + vec2(50.0, 40.0) * view.zoom;
+        (harness, shape, position)
+    }
+
+    fn double_click_without_followup_frame(
+        harness: &mut Harness<'_, ThinodaApp>,
+        position: egui::Pos2,
+    ) {
+        click_point(harness, position);
+        harness.event(egui::Event::PointerMoved(position));
+        harness.run_steps(1);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(1);
+        }
+    }
+
+    #[test]
+    fn double_clicked_shape_label_receives_keyboard_focus_in_the_app() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().doc().unwrap().view.editing_board_object(),
+            Some(shape)
+        );
+        let focused = harness.ctx.memory(|memory| memory.focused());
+        assert_eq!(
+            focused,
+            Some(thinoda_canvas::MapCanvas::board_label_editor_id()),
+            "double-clicking must focus the label editor; canvas id: {:?}",
+            thinoda_canvas::MapCanvas::id()
+        );
+    }
+
+    #[test]
+    fn text_queued_for_the_focus_retry_is_committed() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        assert_eq!(
+            harness.state().doc().unwrap().view.editing_board_object(),
+            Some(shape)
+        );
+        assert_eq!(
+            harness.ctx.memory(|memory| memory.focused()),
+            None,
+            "this test must exercise the lost opening-click focus"
+        );
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("First".into()));
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(shape)
+                .unwrap()
+                .label(),
+            "First"
+        );
+    }
+
+    #[test]
+    fn focus_retry_does_not_override_a_new_canvas_click() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        assert_eq!(
+            harness.state().doc().unwrap().view.editing_board_object(),
+            Some(shape)
+        );
+        assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+        let empty = harness
+            .state()
+            .doc()
+            .unwrap()
+            .view
+            .canvas_rect()
+            .right_bottom()
+            - vec2(20.0, 20.0);
+        harness.event(egui::Event::PointerMoved(empty));
+        harness.event(egui::Event::PointerButton {
+            pos: empty,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(1);
+        harness.event(egui::Event::PointerButton {
+            pos: empty,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(3);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(doc.view.editing_board_object(), None);
+        assert_eq!(doc.doc.sheet().canvas.objects.len(), 2);
+    }
+
+    #[test]
+    fn focus_retry_does_not_override_another_control_or_the_minimap() {
+        for minimap in [false, true] {
+            let (mut harness, shape, position) = label_focus_harness();
+            if minimap {
+                harness
+                    .state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .view
+                    .set_minimap_visible(true);
+                harness.run_steps(3);
+            }
+            double_click_without_followup_frame(&mut harness, position);
+            assert_eq!(
+                harness.state().doc().unwrap().view.editing_board_object(),
+                Some(shape)
+            );
+            assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+            let name = if minimap {
+                harness
+                    .state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .minimap_labels
+                    .accessible_name
+                    .clone()
+            } else {
+                "Shape library".to_owned()
+            };
+            harness.get_by_label(&name).focus();
+            harness.run_steps(3);
+            assert!(
+                harness.get_by_label(&name).is_focused(),
+                "focus was stolen from {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn pending_label_text_precedes_a_batched_toolbox_click() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        harness.run_steps(3);
+        assert_eq!(
+            harness.ctx.memory(|memory| memory.focused()),
+            Some(thinoda_canvas::MapCanvas::board_label_editor_id())
+        );
+        let target = harness.get_by_label("Select tool").rect().center();
+        harness.input_mut().events.extend([
+            egui::Event::Text("Pending".into()),
+            egui::Event::PointerMoved(target),
+            egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.run_steps(4);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(
+            doc.doc.sheet().canvas.object(shape).unwrap().label(),
+            "Pending"
+        );
+        assert_eq!(doc.view.board_tool, BoardTool::Select);
+    }
+
+    #[test]
+    fn pending_label_text_precedes_a_batched_topbar_click() {
+        for wait_for_focus in [false, true] {
+            for queued_text in [false, true] {
+                let (mut harness, shape, position) = label_focus_harness();
+                double_click_without_followup_frame(&mut harness, position);
+                if wait_for_focus {
+                    harness.run_steps(3);
+                } else {
+                    assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+                }
+                let target = harness.get_by_label("Main Menu").rect().center();
+                if wait_for_focus {
+                    harness.event(egui::Event::PointerMoved(target));
+                    harness.run_steps(1);
+                }
+                if queued_text {
+                    harness
+                        .input_mut()
+                        .events
+                        .push(egui::Event::Text("Pending".into()));
+                }
+                harness.input_mut().events.extend([
+                    egui::Event::PointerMoved(target),
+                    egui::Event::PointerButton {
+                        pos: target,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+                harness.run_steps(1);
+                harness.event(egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run_steps(4);
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(
+                    doc.doc.sheet().canvas.object(shape).unwrap().label(),
+                    if queued_text { "Pending" } else { "" },
+                    "wait for focus: {wait_for_focus}"
+                );
+                assert_eq!(doc.view.editing_board_object(), None);
+                if wait_for_focus {
+                    assert!(
+                        egui::Popup::is_any_open(&harness.ctx),
+                        "wait for focus: {wait_for_focus}, queued text: {queued_text}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pending_label_text_is_saved_before_switching_documents() {
+        let (mut harness, shape, position) = label_focus_harness();
+        let key = harness.state().doc().unwrap().key.clone();
+        double_click_without_followup_frame(&mut harness, position);
+        harness.run_steps(3);
+        let target = harness.get_by_label("Central Topic").rect().center();
+        harness.event(egui::Event::PointerMoved(target));
+        harness.run_steps(1);
+        harness.input_mut().events.extend([
+            egui::Event::Text("Pending".into()),
+            egui::Event::PointerMoved(target),
+            egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.run_steps(1);
+        harness.event(egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(4);
+        assert_ne!(harness.state().doc().unwrap().key, key);
+        let previous = harness
+            .state()
+            .docs
+            .iter()
+            .find(|document| document.key == key)
+            .unwrap();
+        assert_eq!(
+            previous.doc.sheet().canvas.object(shape).unwrap().label(),
+            "Pending"
+        );
+        assert_eq!(previous.view.editing_board_object(), None);
+    }
+
+    #[test]
+    fn topbar_pointer_harness_can_open_the_main_menu() {
+        let (mut harness, _, _) = label_focus_harness();
+        let target = harness.get_by_label("Main Menu").rect().center();
+        click_point(&mut harness, target);
+        assert!(egui::Popup::is_any_open(&harness.ctx));
+    }
+
+    #[test]
+    fn pending_label_text_precedes_a_batched_minimap_click() {
+        for overlap_editor in [false, true] {
+            for batched_release in [false, true] {
+                let (mut harness, shape, position) = label_focus_harness();
+                harness
+                    .state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .view
+                    .set_minimap_visible(true);
+                harness.run_steps(3);
+                double_click_without_followup_frame(&mut harness, position);
+                harness.run_steps(3);
+                let name = harness
+                    .state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .minimap_labels
+                    .accessible_name
+                    .clone();
+                let target = harness.get_by_label(&name).rect().left_top() + vec2(12.0, 12.0);
+                if overlap_editor {
+                    harness.state_mut().doc_mut().unwrap().view.offset += target - position;
+                    harness.run_steps(3);
+                    let label = &harness
+                        .state()
+                        .doc()
+                        .unwrap()
+                        .view
+                        .board_labels
+                        .label_editor;
+                    assert!(harness.get_by_label(label).rect().contains(target));
+                }
+                let offset_before = harness.state().doc().unwrap().view.offset;
+                let button = |pressed| egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                harness.input_mut().events.extend([
+                    egui::Event::Text("Pending".into()),
+                    egui::Event::PointerMoved(target),
+                    button(true),
+                ]);
+                if !batched_release {
+                    harness.run_steps(1);
+                    assert!(harness.get_by_label(&name).is_focused());
+                }
+                harness.event(button(false));
+                harness.run_steps(4);
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(
+                    doc.doc.sheet().canvas.object(shape).unwrap().label(),
+                    "Pending",
+                    "overlap={overlap_editor}, batched release={batched_release}"
+                );
+                assert_ne!(doc.view.offset, offset_before);
+            }
+        }
+    }
+
+    #[test]
+    fn compact_label_edit_status_preserves_the_canvas_and_armed_warning() {
+        for zen in [false, true] {
+            for armed in [false, true] {
+                let mut sheet = thinoda_core::Sheet::new("Board", "");
+                sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+                let shape = sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::RoundedRectangle,
+                        BoardRect::from_center_size(Vec2::ZERO, Vec2::new(240.0, 150.0)),
+                    ))
+                    .unwrap();
+                let mut app = ThinodaApp::headless();
+                app.settings.show_format_panel = false;
+                app.zen = zen;
+                app.new_doc(thinoda_core::Workbook::new(sheet));
+                if armed {
+                    app.doc_mut()
+                        .unwrap()
+                        .view
+                        .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle));
+                }
+                let mut harness = Harness::builder()
+                    .with_size(vec2(360.0, 240.0))
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                harness.run_steps(4);
+                let view = &harness.state().doc().unwrap().view;
+                let original_center = view.canvas_rect().center() + view.offset;
+                {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    assert!(doc.view.begin_board_label(&doc.doc, shape));
+                }
+                harness.run_steps(4);
+                let hint = if armed {
+                    "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel\nClicking or tapping empty canvas also adds the armed shape."
+                } else {
+                    "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel"
+                };
+                let summary = if armed {
+                    "Empty click/tap adds a shape"
+                } else {
+                    "Enter: finish · Esc: cancel"
+                };
+                let status = format!("Editing label · {summary}");
+                let status_node = harness.get_by_label(&status);
+                assert_eq!(
+                    status_node.accesskit_node().label(),
+                    Some(format!("Editing label: {hint}"))
+                );
+                let status_rect = status_node.rect();
+                let view = &harness.state().doc().unwrap().view;
+                assert!(status_rect.top() >= view.canvas_rect().bottom());
+                assert_eq!(
+                    view.canvas_rect().center() + view.offset,
+                    original_center,
+                    "entering label edit moved the canvas in zen={zen}, armed={armed}"
+                );
+                harness
+                    .get_by_label("Board object label")
+                    .type_text("Label");
+                harness.key_press(egui::Key::Enter);
+                harness.run_steps(4);
+                assert!(harness.query_by_label(&status).is_none());
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(
+                    doc.doc.sheet().canvas.object(shape).unwrap().label(),
+                    "Label"
+                );
+                assert_eq!(
+                    doc.view.canvas_rect().center() + doc.view.offset,
+                    original_center,
+                    "finishing label edit moved the canvas in zen={zen}, armed={armed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn insert_toolbar_yields_only_when_it_would_cover_a_board_label_editor() {
+        for size in [vec2(360.0, 240.0), vec2(1200.0, 700.0)] {
+            for connector in [false, true] {
+                let mut sheet = thinoda_core::Sheet::new("Board", "");
+                sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+                let object = if connector {
+                    CanvasObject::connector(CanvasConnector::new(
+                        Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                        Endpoint::Point(Vec2::new(100.0, 0.0)),
+                    ))
+                } else {
+                    CanvasObject::shape(
+                        ShapeKind::RoundedRectangle,
+                        BoardRect::from_center_size(Vec2::ZERO, Vec2::new(240.0, 150.0)),
+                    )
+                };
+                let id = sheet.add_canvas_object(object).unwrap();
+                let mut app = ThinodaApp::headless();
+                app.settings.show_format_panel = false;
+                app.new_doc(thinoda_core::Workbook::new(sheet));
+                let mut harness = Harness::builder()
+                    .with_size(size)
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                harness.run_steps(4);
+                {
+                    let view = &mut harness.state_mut().doc_mut().unwrap().view;
+                    view.zoom = 1.0;
+                    view.offset = egui::Vec2::ZERO;
+                }
+                harness.run_steps(3);
+                let toolbar_id = egui::Id::unique("thinoda_editing_toolbar");
+                let toolbar = harness
+                    .ctx
+                    .memory(|memory| memory.area_rect(toolbar_id))
+                    .unwrap();
+                {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    assert!(doc.view.begin_board_label(&doc.doc, id));
+                }
+                harness.run_steps(4);
+                let editor = harness.get_by_label("Board object label").rect();
+                let visible = harness.ctx.memory(|memory| {
+                    memory
+                        .areas()
+                        .visible_layer_ids()
+                        .iter()
+                        .any(|layer| layer.id == toolbar_id)
+                });
+                let clearance = 2.0 / harness.ctx.pixels_per_point() + 1.0;
+                assert_eq!(
+                    visible,
+                    !toolbar.expand(clearance).intersects(editor),
+                    "{size:?}, connector={connector}, toolbar={toolbar:?}, editor={editor:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -3911,6 +3911,57 @@ fn pending_text_is_applied_before_finishing_board_labels() {
 }
 
 #[test]
+fn shift_enter_inserts_a_newline_in_shape_and_connector_labels() {
+    for connector in [false, true] {
+        let mut sheet = board();
+        let id = if connector {
+            let mut line = CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            line.label = "Original".into();
+            sheet
+                .add_canvas_object(CanvasObject::connector(line))
+                .unwrap()
+        } else {
+            shape(&mut sheet, 0.0, 0.0, "Original")
+        };
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        h.input_mut().events.push(egui::Event::Text("First".into()));
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Enter);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft(),
+            Some((id, "Original", "First\n")),
+            "connector={connector}"
+        );
+        h.input_mut()
+            .events
+            .push(egui::Event::Text("Second".into()));
+        h.run_steps(2);
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().label(),
+            "First\nSecond",
+            "connector={connector}"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().label(),
+            "Original"
+        );
+    }
+}
+
+#[test]
 fn ime_candidate_keys_do_not_finish_board_label_editing() {
     for key in [Key::Enter, Key::Tab, Key::Escape] {
         let mut sheet = board();
@@ -3999,7 +4050,7 @@ fn failed_same_frame_board_label_commit_keeps_text_and_focus() {
     );
     assert_eq!(
         h.ctx.memory(|memory| memory.focused()),
-        Some(MapCanvas::id().with("board-label-edit"))
+        Some(MapCanvas::board_label_editor_id())
     );
     assert!(!h.state().errors.is_empty());
 }

@@ -277,6 +277,7 @@ pub(super) struct LabelEdit {
     sheet: usize,
     sheet_identity: SheetIdentity,
     focus_requested: bool,
+    focus_retry_after: Option<(egui::ViewportId, u64)>,
     /// Started by typing: the draft holds the typed text and the caret must follow it.
     seeded: bool,
     ime_composing: bool,
@@ -457,6 +458,7 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
         sheet: doc.active_index(),
         sheet_identity: sheet_identity(doc),
         focus_requested: false,
+        focus_retry_after: None,
         seeded: false,
         ime_composing: false,
     });
@@ -4157,23 +4159,78 @@ pub(super) fn paint(
     }
 }
 
-pub(super) fn show_label_editor(
-    ui: &mut Ui,
-    doc: &mut Document,
-    view: &mut MapView,
-    scene: &Scene,
-    out: &mut CanvasOutput,
-) {
-    let Some(edit) = view.board_input.label.as_ref() else {
+fn show_label_edit_hint(ui: &Ui, view: &MapView, object_bounds: egui::Rect, hint: &str) {
+    let canvas = view.canvas_rect();
+    let max_width = (canvas.width() - 24.0).max(0.0);
+    if max_width < 1.0 {
+        return;
+    }
+    let text_width = (max_width - 16.0).max(1.0);
+    let title = ui.painter().layout_no_wrap(
+        view.board_labels.label_editing.clone(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        ui.visuals().text_color(),
+    );
+    let detail = ui.painter().layout(
+        hint.to_owned(),
+        egui::TextStyle::Small.resolve(ui.style()),
+        ui.visuals().text_color(),
+        text_width,
+    );
+    let height = title.size().y + detail.size().y + ui.spacing().item_spacing.y + 48.0;
+    let bounds = object_bounds.expand(8.0);
+    let below = canvas.bottom() - bounds.bottom();
+    let above = bounds.top() - canvas.top();
+    let (pivot, y) = if below >= height + 12.0 && below >= above {
+        (egui::Align2::CENTER_BOTTOM, canvas.bottom() - 12.0)
+    } else if above >= height + 64.0 {
+        (egui::Align2::CENTER_TOP, canvas.top() + 64.0)
+    } else if below >= height + 12.0 {
+        (egui::Align2::CENTER_BOTTOM, canvas.bottom() - 12.0)
+    } else {
         return;
     };
-    let Some(object) = doc.sheet().canvas.object(edit.id) else {
-        // Keep the draft for recovery rather than silently discarding it.
-        return;
-    };
-    let Some(item) = scene.item(SceneId::Object(edit.id)) else {
-        return;
-    };
+    egui::Area::new(MapCanvas::id().with("board-label-edit-hint"))
+        .order(egui::Order::Foreground)
+        .pivot(pivot)
+        .fixed_pos(egui::pos2(canvas.center().x, y))
+        .constrain_to(canvas)
+        .movable(false)
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width((max_width - 16.0).max(1.0));
+                ui.strong(&view.board_labels.label_editing);
+                ui.add(egui::Label::new(egui::RichText::new(hint).small()).wrap());
+            });
+        });
+}
+
+fn label_text_halo(
+    position: Pos2,
+    galley: std::sync::Arc<egui::Galley>,
+    color: Color32,
+) -> egui::Shape {
+    let [r, g, b, _] = color.to_srgba_unmultiplied();
+    let outline = crate::render::color32(thinoda_core::Color::highest_contrast_on(
+        thinoda_core::Color::rgb(r, g, b),
+    ));
+    egui::Shape::Vec(
+        [
+            vec2(-1.0, 0.0),
+            vec2(1.0, 0.0),
+            vec2(0.0, -1.0),
+            vec2(0.0, 1.0),
+        ]
+        .into_iter()
+        .map(|offset| {
+            egui::Shape::galley_with_override_text_color(position + offset, galley.clone(), outline)
+        })
+        .collect(),
+    )
+}
+
+fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
     let rect = match &object.kind {
         CanvasObjectKind::Shape { shape, .. } => {
             let label_rect = thinoda_core::board::shape_label_rect(*shape, object.rect);
@@ -4191,22 +4248,234 @@ pub(super) fn show_label_editor(
             };
             thinoda_core::Rect::from_center_size(point, Vec2::new(140.0, 40.0))
         }
-        CanvasObjectKind::Ink(_) => return,
+        CanvasObjectKind::Ink(_) => return None,
     };
-    let rect = view.xf().rect(rect).expand(2.0);
-    let edit_id = MapCanvas::id().with("board-label-edit");
-    if !out.minimap_blocks_keyboard
+    Some(view.xf().rect(rect).expand(2.0))
+}
+
+pub(super) fn label_keyboard_event(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::Text(_)
+            | egui::Event::Paste(_)
+            | egui::Event::Cut
+            | egui::Event::Copy
+            | egui::Event::Ime(_)
+            | egui::Event::Key { .. }
+    )
+}
+
+fn plain_key_press(event: &egui::Event, expected: Key) -> bool {
+    matches!(
+        event,
+        egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } if *key == expected && modifiers.matches_exact(Modifiers::NONE)
+    )
+}
+
+/// Finish a draft after applying input that preceded an outside pointer press.
+pub(super) fn finish_label_before_pointer_press(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    edit_error: &mut Option<thinoda_core::EditError>,
+    overlay_rect: Option<Rect>,
+) {
+    let edit_id = MapCanvas::board_label_editor_id();
+    let (editor_focused, editor_lost_focus) = ui.memory(|memory| {
+        (
+            memory.has_focus(edit_id),
+            memory.focused().is_none() && memory.had_focus_last_frame(edit_id),
+        )
+    });
+    let Some(edit) = &view.board_input.label else {
+        return;
+    };
+    let retry_pending = edit.focus_retry_after.is_some_and(|(viewport, frame)| {
+        viewport == ui.ctx().viewport_id()
+            && frame < ui.ctx().cumulative_frame_nr()
+            && ui.memory(|memory| memory.focused().is_none())
+    });
+    if !editor_focused && !editor_lost_focus && !retry_pending {
+        return;
+    }
+    let Some(object) = doc.sheet().canvas.object(edit.id) else {
+        return;
+    };
+    let Some(item) = scene.item(SceneId::Object(edit.id)) else {
+        return;
+    };
+    let Some(rect) = label_editor_rect(object, item, view) else {
+        return;
+    };
+    let split = ui.input(|input| {
+        if !input.focused {
+            return None;
+        }
+        let (index, position) =
+            input
+                .events
+                .iter()
+                .enumerate()
+                .find_map(|(index, event)| match event {
+                    egui::Event::PointerButton {
+                        pos, pressed: true, ..
+                    } => Some((index, *pos)),
+                    _ => None,
+                })?;
+        if view.canvas_rect().contains(position)
+            && rect.contains(position)
+            && !overlay_rect.is_some_and(|r| r.contains(position))
+        {
+            return None;
+        }
+        let prefix = &input.events[..index];
+        #[allow(deprecated)]
+        let ime_frame = edit.ime_composing
+            || prefix.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Ime(
+                        egui::ImeEvent::Preedit { .. }
+                            | egui::ImeEvent::Commit(_)
+                            | egui::ImeEvent::Disabled
+                    )
+                )
+            });
+        let input_end = if ime_frame {
+            index
+        } else {
+            prefix
+                .iter()
+                .position(|event| {
+                    [Key::Enter, Key::Tab, Key::Escape]
+                        .into_iter()
+                        .any(|key| plain_key_press(event, key))
+                })
+                .map_or(index, |finish| finish + 1)
+        };
+        Some(input_end)
+    });
+    let Some(input_end) = split else {
+        return;
+    };
+    if ui.input(|input| input.events[..input_end].iter().any(label_keyboard_event)) {
+        // Keep the pointer and later input for their actual owners.
+        let (events, pointer) = ui.input_mut(|input| {
+            let events = std::mem::take(&mut input.events);
+            input.events = events[..input_end].to_vec();
+            (events, std::mem::take(&mut input.pointer))
+        });
+        if !editor_focused && !retry_pending {
+            ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
+        // A separate Ui keeps the host's auto-generated widget IDs unchanged.
+        let mut child = Ui::new(
+            ui.ctx().clone(),
+            edit_id.with("input-only"),
+            egui::UiBuilder::new()
+                .layer_id(ui.layer_id())
+                .max_rect(ui.max_rect())
+                .layout(*ui.layout())
+                .style(ui.style().clone()),
+        );
+        child.set_clip_rect(Rect::NOTHING);
+        show_label_editor(&mut child, doc, view, scene, false, edit_error, true);
+        ui.input_mut(|input| {
+            input.pointer = pointer;
+            input.events = events
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, event)| {
+                    (index >= input_end || !label_keyboard_event(&event)).then_some(event)
+                })
+                .collect();
+        });
+    }
+    if view.board_input.label.is_some() {
+        match view.try_commit_board_label(doc) {
+            Ok(_) => ui.memory_mut(|memory| memory.surrender_focus(edit_id)),
+            Err(error) => *edit_error = Some(error),
+        }
+    }
+}
+
+pub(super) fn show_label_editor(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    minimap_blocks_keyboard: bool,
+    edit_error: &mut Option<thinoda_core::EditError>,
+    input_only: bool,
+) {
+    let Some(edit) = view.board_input.label.as_ref() else {
+        return;
+    };
+    let Some(object) = doc.sheet().canvas.object(edit.id) else {
+        // Keep the draft for recovery rather than silently discarding it.
+        return;
+    };
+    let Some(item) = scene.item(SceneId::Object(edit.id)) else {
+        return;
+    };
+    let Some(rect) = label_editor_rect(object, item, view) else {
+        return;
+    };
+    let edit_id = MapCanvas::board_label_editor_id();
+    if let Some(edit) = &mut view.board_input.label
+        && let Some((viewport, frame)) = edit.focus_retry_after
+        && (viewport != ui.ctx().viewport_id() || frame < ui.ctx().cumulative_frame_nr())
+    {
+        edit.focus_retry_after = None;
+        if viewport == ui.ctx().viewport_id()
+            && !minimap_blocks_keyboard
+            && ui.memory(|memory| memory.focused().is_none())
+            && ui.input(|input| {
+                input.focused && !input.pointer.any_pressed() && !input.pointer.any_released()
+            })
+        {
+            ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
+    }
+    let editor_focused = ui.memory(|memory| memory.has_focus(edit_id));
+    // On the first focused frame egui can surrender focus to an Escape key
+    // before TextEdit has installed its focus filter.
+    let escape_released_editor = !editor_focused
+        && ui.memory(|memory| memory.focused().is_none() && memory.had_focus_last_frame(edit_id))
+        && ui.input(|input| {
+            input.focused
+                && !input.pointer.any_pressed()
+                && !input.pointer.any_released()
+                && input
+                    .events
+                    .iter()
+                    .any(|event| plain_key_press(event, Key::Escape))
+        });
+    let editor_owns_keyboard = editor_focused || escape_released_editor;
+    if !minimap_blocks_keyboard
+        && editor_owns_keyboard
         && let Some(edit) = &mut view.board_input.label
     {
         protect_ime_candidate_keys(ui.ctx(), edit_id, &mut edit.ime_composing);
     }
-    let (commit, cancel) = if out.minimap_blocks_keyboard {
+    let (commit, cancel) = if minimap_blocks_keyboard || !editor_owns_keyboard {
         (false, false)
     } else {
         ui.input_mut(|input| {
+            let mut enter = false;
+            input.events.retain(|event| {
+                let plain_enter = plain_key_press(event, Key::Enter);
+                enter |= plain_enter;
+                !plain_enter
+            });
             (
-                input.consume_key(Modifiers::NONE, Key::Enter)
-                    || input.consume_key(Modifiers::NONE, Key::Tab),
+                enter || input.consume_key(Modifiers::NONE, Key::Tab),
                 input.consume_key(Modifiers::NONE, Key::Escape),
             )
         })
@@ -4216,15 +4485,31 @@ pub(super) fn show_label_editor(
         ui.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
         return;
     }
-    // Match the rendered label: same contrast colour, backdrop, size and centring.
+    let hint = if matches!(view.board_tool, BoardTool::Shape(_)) {
+        format!(
+            "{}\n{}",
+            view.board_labels.label_edit_hint, view.board_labels.label_edit_armed_hint
+        )
+    } else {
+        view.board_labels.label_edit_hint.clone()
+    };
+    if !input_only {
+        show_label_edit_hint(ui, view, view.xf().rect(item.bounds).union(rect), &hint);
+    }
+    // Keep the shape outline visible; connector labels retain their line backdrop.
     let (text_color, background) =
         crate::render::board_label_colors(doc.sheet(), &object.style, view.dark);
-    ui.painter().rect_filled(rect, 2.0, background);
+    if !input_only && matches!(object.kind, CanvasObjectKind::Connector(_)) {
+        ui.painter().rect_filled(rect, 2.0, background);
+    }
     let font_size = crate::render::shape_label_font_size(view.zoom).max(10.0);
+    let font = FontId::proportional(font_size);
+    let is_shape = matches!(object.kind, CanvasObjectKind::Shape { .. });
     let edit = view.board_input.label.as_mut().unwrap();
+    let empty = edit.text.is_empty();
     let text_edit = TextEdit::multiline(&mut edit.text)
         .id(edit_id)
-        .font(FontId::proportional(font_size))
+        .font(font.clone())
         .text_color(text_color)
         .frame(egui::Frame::NONE)
         .align(egui::Align2::CENTER_CENTER)
@@ -4235,27 +4520,65 @@ pub(super) fn show_label_editor(
             Modifiers::SHIFT,
             Key::Enter,
         )))
-        .lock_focus(true);
+        .event_filter(EventFilter {
+            tab: true,
+            horizontal_arrows: true,
+            vertical_arrows: true,
+            escape: true,
+        });
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    if !input_only && empty {
+        let painter = child
+            .painter()
+            .with_clip_rect(rect.intersect(ui.clip_rect()));
+        let color = text_color.gamma_multiply(0.7);
+        let galley =
+            painter.layout_no_wrap(view.board_labels.label_placeholder.clone(), font, color);
+        let position = rect.center() - galley.size() / 2.0;
+        if is_shape {
+            painter.add(label_text_halo(position, galley.clone(), color));
+        }
+        painter.galley(position, galley, color);
+    }
+    // Contrast around the glyphs avoids masking a transparent shape or its outline.
+    let halo = (!input_only && is_shape && !empty).then(|| child.painter().add(egui::Shape::Noop));
     // Text queued with a finish key must reach the editor before the commit.
     let output = text_edit.show(&mut child);
-    output.response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::Role::MultilineTextInput,
-            true,
-            &view.board_labels.label_editor,
-        )
-    });
+    if let Some(index) = halo {
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
+        let position = output.galley_pos - vec2(galley.rect.left(), 0.0);
+        child
+            .painter()
+            .with_clip_rect(output.text_clip_rect)
+            .set(index, label_text_halo(position, galley, text_color));
+    }
+    if !input_only {
+        output.response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::Role::MultilineTextInput,
+                true,
+                &view.board_labels.label_editor,
+            )
+        });
+        ui.ctx().accesskit_node_builder(output.response.id, |node| {
+            node.set_description(hint.as_str());
+        });
+    }
     if commit {
         match view.try_commit_board_label(doc) {
             Ok(_) => ui.memory_mut(|memory| memory.request_focus(MapCanvas::id())),
             Err(error) => {
-                out.error = Some(error);
+                *edit_error = Some(error);
                 ui.memory_mut(|memory| memory.request_focus(edit_id));
             }
         }
-    } else if !edit.focus_requested && !out.minimap_blocks_keyboard {
+    } else if !edit.focus_requested && !minimap_blocks_keyboard {
         edit.focus_requested = true;
+        if ui.input(|input| input.pointer.any_pressed() || input.pointer.any_released()) {
+            // egui may clear focus at the end of the opening click's pass.
+            edit.focus_retry_after = Some((ui.ctx().viewport_id(), ui.ctx().cumulative_frame_nr()));
+            ui.ctx().request_repaint();
+        }
         ui.memory_mut(|memory| memory.request_focus(edit_id));
         let end = egui::text::CCursor::new(edit.text.chars().count());
         // Select an existing label for replacement, but never the character just typed.
@@ -4272,8 +4595,8 @@ pub(super) fn show_label_editor(
     } else if output.response.lost_focus()
         && let Err(error) = view.try_commit_board_label(doc)
     {
-        out.error = Some(error);
-        if !out.minimap_blocks_keyboard {
+        *edit_error = Some(error);
+        if !minimap_blocks_keyboard {
             ui.memory_mut(|memory| memory.request_focus(edit_id));
         }
     }

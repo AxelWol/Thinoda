@@ -146,3 +146,61 @@ test("the selected-shape toolbar changes and restores label text color", async (
     await frames(page);
     expect((await shape("shape-color-reset.thinoda")).style.text_color).toBeUndefined();
 });
+
+test("double-click label editing handles multiline, cancel and outside click", async ({ page }, testInfo) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    await canvas.focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Hide central topic");
+    await page.keyboard.press("Escape");
+    await frames(page);
+    await command(page, "Format Panel");
+    await command(page, "Shape tool");
+    await canvas.click({ position: { x: 450, y: 350 } });
+    await frames(page);
+
+    const edit = async (delay = 0) => {
+        await canvas.dblclick({ position: { x: 450, y: 350 }, delay });
+        await frames(page);
+        const input = page.locator("input[type='text']");
+        await expect(input).toBeFocused();
+        return input;
+    };
+    const savedShapes = async (name: string) => {
+        const workbook: {
+            active_sheet: number;
+            sheets: { canvas: { objects: { kind: { shape?: { label?: string } } }[] } }[];
+        } = JSON.parse(zipEntry(await saveAs(page, name), "content.json").toString("utf8"));
+        return workbook.sheets[workbook.active_sheet].canvas.objects
+            .filter((object) => object.kind.shape);
+    };
+
+    const first = await edit(100);
+    await page.screenshot({ path: testInfo.outputPath("shape-label-mode.png") });
+    await first.pressSequentially("First");
+    await page.keyboard.press("Shift+Enter");
+    await first.pressSequentially("Second");
+    await page.keyboard.press("Enter");
+    await frames(page);
+    expect((await savedShapes("multiline-label.thinoda"))[0].kind.shape?.label)
+        .toBe("First\nSecond");
+
+    const canceled = await edit();
+    await canceled.pressSequentially("Discarded");
+    await page.keyboard.press("Escape");
+    await frames(page);
+    expect((await savedShapes("canceled-label.thinoda"))[0].kind.shape?.label)
+        .toBe("First\nSecond");
+
+    const outside = await edit(100);
+    await outside.pressSequentially("Outside");
+    await canvas.click({ position: { x: 700, y: 500 } });
+    await frames(page);
+    const shapes = await savedShapes("outside-label.thinoda");
+    expect(shapes).toHaveLength(2);
+    expect(shapes[0].kind.shape?.label).toBe("Outside");
+    expect(shapes[1].kind.shape?.label ?? "").toBe("");
+});

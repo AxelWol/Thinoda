@@ -111,7 +111,7 @@ fn editor_contains_start(ctx: &egui::Context, view: &MapView, position: Pos2) ->
     let editor_id = if view.editing.is_some() {
         MapCanvas::title_editor_id()
     } else if view.editing_board_object().is_some() {
-        MapCanvas::id().with("board-label-edit")
+        MapCanvas::board_label_editor_id()
     } else {
         return false;
     };

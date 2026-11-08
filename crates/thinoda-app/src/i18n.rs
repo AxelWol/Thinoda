@@ -669,6 +669,24 @@ const DE: &[(&str, &str)] = &[
         "Einen Pfeil gedrückt halten oder auf einem fokussierten Pfeil Umschalt+F10 drücken, um die Form zu wählen.",
     ),
     ("Board object label", "Beschriftung des Board-Objekts"),
+    ("Editing label", "Beschriftung bearbeiten"),
+    (
+        "Enter: finish · Esc: cancel",
+        "Eingabe: Fertig · Esc: Abbrechen",
+    ),
+    (
+        "Empty click/tap adds a shape",
+        "Klick/Tipp ins Leere setzt Form",
+    ),
+    (
+        "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel",
+        "Eingabe oder außerhalb klicken/tippen zum Abschließen · Umschalt+Eingabe: neue Zeile · Esc: Abbrechen",
+    ),
+    (
+        "Clicking or tapping empty canvas also adds the armed shape.",
+        "Ein Klick/Tipp auf eine freie Stelle fügt außerdem die aktive Form hinzu.",
+    ),
+    ("Type a label", "Beschriftung eingeben"),
     (
         "Select one board object to edit its properties.",
         "Wählen Sie ein Board-Objekt aus, um seine Eigenschaften zu bearbeiten.",
@@ -4695,6 +4713,12 @@ mod tests {
             "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.",
             "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.",
             "Board object label",
+            "Editing label",
+            "Enter: finish · Esc: cancel",
+            "Empty click/tap adds a shape",
+            "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel",
+            "Clicking or tapping empty canvas also adds the armed shape.",
+            "Type a label",
             "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
             "Click or drag to pan. Arrow keys move the view; Shift makes larger steps.",
             "The current view is outside the minimap.",

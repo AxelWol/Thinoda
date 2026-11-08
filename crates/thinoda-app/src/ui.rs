@@ -1072,6 +1072,31 @@ fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(
     scroll_row_offset(ui, salt, width, ui.spacing().interact_size.y, None, content);
 }
 
+fn board_label_edit_status(ui: &mut Ui, view: &MapView, width: f32) {
+    let labels = &view.board_labels;
+    let armed = matches!(view.board_tool, BoardTool::Shape(_));
+    let hint = if armed {
+        format!(
+            "{}\n{}",
+            labels.label_edit_hint, labels.label_edit_armed_hint
+        )
+    } else {
+        labels.label_edit_hint.clone()
+    };
+    let summary = if armed {
+        t("Empty click/tap adds a shape")
+    } else {
+        t("Enter: finish · Esc: cancel")
+    };
+    ui.add_sized(
+        vec2(width.max(0.0), ui.spacing().interact_size.y),
+        egui::Label::new(RichText::new(format!("{} · {summary}", labels.label_editing)).small())
+            .truncate(),
+    )
+    .accessible_name(format!("{}: {hint}", labels.label_editing))
+    .on_hover_text(hint);
+}
+
 fn status_menu_button(
     ui: &mut Ui,
     label: impl Into<egui::WidgetText>,
@@ -1868,6 +1893,25 @@ impl ThinodaApp {
         let previous_viewport = self.current_viewport;
         self.current_viewport = viewport;
         self.activate_document_window(viewport);
+        if self.mode == CenterMode::Map
+            && !self.task_table_visible()
+            && self
+                .visible_document_indices(viewport)
+                .contains(&self.active)
+            && let Some(error) = self.doc_mut().and_then(|document| {
+                MapCanvas::finish_board_label_before_pointer_press(
+                    ui,
+                    &mut document.doc,
+                    &mut document.view,
+                )
+            })
+        {
+            self.toasts.warning(format!(
+                "{}: {}",
+                t("Not possible here"),
+                i18n::localize_model_error(&error.to_string())
+            ));
+        }
         self.mark_card_text_input_scope(&ctx, viewport);
         let frame = ctx.cumulative_frame_nr();
         ctx.data_mut(|data| {
@@ -1958,6 +2002,13 @@ impl ThinodaApp {
 
         let visible_documents = self.visible_document_indices(viewport);
         let show_doc = visible_documents.contains(&self.active);
+        let show_zen_label_status = self.zen
+            && show_doc
+            && self.mode == CenterMode::Map
+            && !self.task_table_visible()
+            && self
+                .doc()
+                .is_some_and(|doc| doc.view.editing_board_object().is_some());
         if !self.zen {
             egui::Panel::top("thinoda_topbar")
                 .exact_size(if self.ribbon_active() {
@@ -2056,6 +2107,19 @@ impl ThinodaApp {
                         });
                 }
             }
+        } else if show_zen_label_status {
+            egui::Panel::bottom("thinoda_label_edit_status")
+                .exact_size(30.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(Palette::of(&ctx).surface)
+                        .inner_margin(Margin::symmetric(8, 3)),
+                )
+                .show(ui, |ui| {
+                    if let Some(doc) = self.doc() {
+                        board_label_edit_status(ui, &doc.view, ui.available_width());
+                    }
+                });
         }
 
         if popup_was_open && !egui::Popup::is_any_open(&ctx) {
@@ -2156,6 +2220,7 @@ impl ThinodaApp {
                     {
                         self.tree_table.map_preview = false;
                     }
+                    self.preserve_zen_label_status_center(ui, show_zen_label_status);
                     self.map(ui);
                 }
             });
@@ -2686,6 +2751,21 @@ impl ThinodaApp {
 
     // ----- center -------------------------------------------------------------------------------
 
+    fn preserve_zen_label_status_center(&mut self, ui: &Ui, visible: bool) {
+        let slot = egui::Id::unique(("thinoda_zen_label_status_camera", self.current_viewport));
+        let previous = ui.data(|data| data.get_temp::<(String, bool)>(slot));
+        let Some(doc) = self.doc_mut() else { return };
+        if previous
+            .as_ref()
+            .is_some_and(|(key, shown)| *key == doc.key && *shown != visible)
+            && doc.view.canvas_rect().is_positive()
+        {
+            doc.view.offset +=
+                doc.view.canvas_rect().center() - ui.available_rect_before_wrap().center();
+        }
+        ui.data_mut(|data| data.insert_temp(slot, (doc.key.clone(), visible)));
+    }
+
     fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) -> Option<egui::Rect> {
         let d = self.doc()?;
         let has_selection = !d.view.selection.is_empty();
@@ -2696,8 +2776,15 @@ impl ThinodaApp {
             .and_then(|id| d.doc.sheet().topic(id))
             .and_then(|topic| topic.card)
             .is_some_and(|card| matches!(card.kind, CardKind::Sticky | CardKind::Text));
-        if editing_card {
-            let editor = ctx.read_response(MapCanvas::title_editor_id())?.rect;
+        let editor_id = if editing_card {
+            Some(MapCanvas::title_editor_id())
+        } else {
+            d.view
+                .editing_board_object()
+                .map(|_| MapCanvas::board_label_editor_id())
+        };
+        if let Some(editor_id) = editor_id {
+            let editor = ctx.read_response(editor_id)?.rect;
             let size = ctx.memory(|memory| memory.area_rect(toolbar_id))?.size();
             if size.x > canvas.width() || size.y > canvas.height() {
                 return None;
@@ -5341,6 +5428,10 @@ impl ThinodaApp {
             return;
         };
         ui.horizontal_centered(|ui| {
+            if d.view.editing_board_object().is_some() {
+                let width = (ui.available_width() * 0.65).min(550.0);
+                board_label_edit_status(ui, &d.view, width);
+            }
             let add_width = ui.spacing().interact_size.x;
             let height = ui.spacing().interact_size.y;
             let show_badge = ui.available_width() >= crate::brand::GITHUB_BADGE_MIN_BAR_WIDTH;

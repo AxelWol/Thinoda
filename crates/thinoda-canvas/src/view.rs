@@ -31,8 +31,8 @@ use crate::{
         bottom_right_rect, show_minimap,
     },
     render::{
-        PaintOptions, Xf, brace_path, color32, paint_map, paint_map_scene, sheet_background,
-        topic_badge_center,
+        PaintOptions, PaintSceneExtras, Xf, brace_path, color32, paint_map, paint_map_scene,
+        sheet_background, topic_badge_center,
     },
 };
 
@@ -135,6 +135,10 @@ pub struct BoardLabels {
     /// Shape-picker footer line explaining how to open it.
     pub quick_hint: String,
     pub label_editor: String,
+    pub label_editing: String,
+    pub label_edit_hint: String,
+    pub label_edit_armed_hint: String,
+    pub label_placeholder: String,
 }
 
 impl Default for BoardLabels {
@@ -176,6 +180,10 @@ impl Default for BoardLabels {
             connect_hint: "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.".into(),
             quick_hint: "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.".into(),
             label_editor: "Board object label".into(),
+            label_editing: "Editing label".into(),
+            label_edit_hint: "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel".into(),
+            label_edit_armed_hint: "Clicking or tapping empty canvas also adds the armed shape.".into(),
+            label_placeholder: "Type a label".into(),
         }
     }
 }
@@ -1480,6 +1488,11 @@ impl MapCanvas {
         Self::id().with("edit")
     }
 
+    /// Focusable shape or connector label editor.
+    pub fn board_label_editor_id() -> Id {
+        Self::id().with("board-label-edit")
+    }
+
     /// Paints the current camera without interaction, selection, search dimming or editing chrome.
     pub fn show_snapshot(ui: &mut Ui, doc: &Document, view: &mut MapView) -> Rect {
         view.drag = Drag::None;
@@ -1514,6 +1527,39 @@ impl MapCanvas {
 
     pub fn show(ui: &mut Ui, doc: &mut Document, view: &mut MapView) -> CanvasOutput {
         Self::show_with_shortcuts(ui, doc, view, &shortcut_bindings())
+    }
+
+    /// Finish an outside label edit before the host handles a pointer press.
+    ///
+    /// Hosts should call this for the visible canvas before processing their own
+    /// controls, so an outside click cannot commit a stale label draft.
+    pub fn finish_board_label_before_pointer_press(
+        ui: &mut Ui,
+        doc: &mut Document,
+        view: &mut MapView,
+    ) -> Option<thinoda_core::EditError> {
+        if view.board_input.label.is_none()
+            || !ui.input(|input| input.focused && input.pointer.any_pressed())
+        {
+            return None;
+        }
+        let layout = view.layout_with(ui.ctx(), doc);
+        let scene = build_scene(doc.sheet(), &layout);
+        let overlay_rect = if ui.is_enabled() && !egui::Popup::is_any_open(ui.ctx()) {
+            view.minimap_rect(view.canvas_rect(), ui.clip_rect())
+        } else {
+            None
+        };
+        let mut error = None;
+        board_input::finish_label_before_pointer_press(
+            ui,
+            doc,
+            view,
+            &scene,
+            &mut error,
+            overlay_rect,
+        );
+        error
     }
 
     /// The host may supply an explicitly selected keyboard profile.
@@ -1585,6 +1631,21 @@ impl MapCanvas {
         }
 
         let minimap_rect = view.minimap_rect(rect, ui.clip_rect());
+        if ctx.input(|input| input.pointer.any_pressed()) {
+            let overlay_rect = if ui.is_enabled() && !egui::Popup::is_any_open(&ctx) {
+                minimap_rect
+            } else {
+                None
+            };
+            board_input::finish_label_before_pointer_press(
+                ui,
+                doc,
+                view,
+                &scene,
+                &mut out.error,
+                overlay_rect,
+            );
+        }
         let (minimap_blocks_pointer, mut minimap_blocks_keyboard) =
             if let Some(minimap_rect) = minimap_rect {
                 if view
@@ -1651,6 +1712,13 @@ impl MapCanvas {
             && ctx.memory(|m| m.focused()).is_none()
             && view.editing.is_none()
             && view.editing_board_object().is_none()
+            && !ctx.input(|input| {
+                (input.pointer.any_pressed() || input.pointer.any_released())
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|position| !rect.contains(position))
+            })
         {
             ctx.memory_mut(|m| m.request_focus(id));
         }
@@ -2418,7 +2486,18 @@ impl MapCanvas {
             show_grid: true,
         };
         let paint_scene = build_scene(sheet, &layout);
-        paint_map_scene(&painter, sheet, &layout, xf, &opts, &paint_scene, None);
+        paint_map_scene(
+            &painter,
+            sheet,
+            &layout,
+            xf,
+            &opts,
+            &paint_scene,
+            PaintSceneExtras {
+                editing_board_object: view.editing_board_object(),
+                ..Default::default()
+            },
+        );
         board_input::paint(&painter, view, sheet, &layout, &paint_scene, pointer);
         if view.ink_controller.pending_preview_sheet() == Some(doc.active_index()) {
             view.ink_controller.paint_preview(&painter, xf, view.accent);
@@ -2555,7 +2634,15 @@ impl MapCanvas {
 
         // ---- inline editor ---------------------------------------------------------------
         show_editor(ui, doc, view, &layout, &mut out);
-        board_input::show_label_editor(ui, doc, view, &paint_scene, &mut out);
+        board_input::show_label_editor(
+            ui,
+            doc,
+            view,
+            &paint_scene,
+            out.minimap_blocks_keyboard,
+            &mut out.error,
+            false,
+        );
 
         if response.hovered() && !minimap_blocks_pointer {
             let sheet = doc.sheet();

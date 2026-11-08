@@ -588,12 +588,46 @@ localization, and native, clipboard, draw.io and SVG output. Rich-text span
 colours are not introduced, and physical-device and screen-reader acceptance
 remain open.
 
-**Shape label edit-mode clarity — planned:** double-clicking starts inline
-label editing, but the opaque editor backdrop can obscure a shape's outline
-and an empty editor gives no indication of the active mode. Preserve the
-visible shape geometry and provide localized, accessible guidance for entering
-text, finishing and canceling, without regressing contrast, alignment, IME
-composition or existing label-edit behavior.
+**Shape label edit-mode clarity — critique:** double-clicking starts inline
+label editing. The editor no longer paints an opaque rectangle over a shape,
+which had hidden parts of rounded and rotated outlines. Only the active
+object's original label is suppressed while editing; its geometry and other
+objects remain visible. A contrasting edge around editable glyphs helps over
+transparent fills without covering the content underneath. An empty label has
+a non-persistent prompt, and localized visual and accessible guidance explains
+Enter, outside click/tap, Shift+Enter and Escape. The editor stays upright for
+rotated shapes. Connector labels retain their existing backdrop.
+
+The editing hint replaces the competing armed-shape hint and explicitly says
+that clicking empty canvas also places the armed shape. Label editing and
+placement remain separate undo steps. Exact plain-Enter matching fixes a prior
+case where Shift+Enter committed instead of inserting a line. A double-click
+could also leave the editor visible but unfocused when egui cleared focus at
+the end of the opening click. A single later-frame retry is restricted to the
+same focused viewport, with no competing focus; a newer click is still delivered
+to its intended target. Finish keys and IME candidate keys belong to the editor
+only while it owns keyboard input. Before an outside press, queued editor input
+is applied and the draft is finished before canvas, minimap, toolbar, menu or
+document-tab actions can change focus or the active document. Input after a
+finish key remains available to the next owner, and rejected commits retain the
+draft and report an error. The input-only pass uses a separate UI scope so it
+does not change host widget IDs or invalidate the pending click. The floating
+guidance yields when there is insufficient space outside the edited object and
+its editor; a compact status-bar summary remains, with the full instructions
+on hover and in the editor's accessible description. Zen mode temporarily
+shows the status bar while preserving the canvas position. The insert toolbar
+also yields when it would overlap a label editor. Regression tests cover empty
+labels, guidance, focus, IME candidate keys, pending input, undo, compact
+canvases, and visible outlines and contrast in both themes. Validation included
+1,342 app/canvas library tests (four ignored), 18 label-editor integration
+tests, three GPU visual tests, native and WebAssembly Clippy with warnings
+denied, a production web build, and all nine toolbar/editing journeys across
+Chromium, Firefox and WebKit. The floating
+guidance may still cover other board content; narrow status text can truncate
+and hover instructions are not a complete touch-device solution. The glyph
+edge is an editing-only readability aid, not part of exported text. Complex
+multi-pointer ordering, physical IMEs, multiple viewports, simultaneous resize,
+physical input devices and real screen-reader acceptance remain open.
 
 **Pen/touch slice — critique:** a confirmed pen-owned browser stroke retains its
 samples when later verified touch contacts arrive, including a pen-first start

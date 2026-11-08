@@ -83,6 +83,12 @@ pub(crate) struct GhostClip {
     pub moving_zone: Option<ZoneId>,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PaintSceneExtras {
+    pub ghost_clip: Option<GhostClip>,
+    pub editing_board_object: Option<CanvasObjectId>,
+}
+
 /// Background color of the sheet.
 pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
     color32(Theme::for_settings(&sheet.theme).background(&sheet.theme, dark))
@@ -135,7 +141,7 @@ pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: 
             ..Default::default()
         },
         &scene,
-        None,
+        PaintSceneExtras::default(),
     );
 }
 
@@ -148,7 +154,15 @@ pub fn paint_map(
     opts: &PaintOptions<'_>,
 ) {
     let scene = build_scene(sheet, layout);
-    paint_map_scene(painter, sheet, layout, xf, opts, &scene, None);
+    paint_map_scene(
+        painter,
+        sheet,
+        layout,
+        xf,
+        opts,
+        &scene,
+        PaintSceneExtras::default(),
+    );
 }
 
 pub(crate) fn paint_map_scene(
@@ -158,7 +172,7 @@ pub(crate) fn paint_map_scene(
     xf: Xf,
     opts: &PaintOptions<'_>,
     scene: &Scene,
-    ghost_clip: Option<GhostClip>,
+    extras: PaintSceneExtras,
 ) {
     let z = xf.zoom;
     let bg = sheet_background(sheet, opts.dark);
@@ -168,7 +182,7 @@ pub(crate) fn paint_map_scene(
     };
     // Ghost geometry already uses a translated transform; stationary clips cancel it.
     let topic_clip = |id| {
-        topic_clip_zone(sheet, id).map(|(zone, frame)| match ghost_clip {
+        topic_clip_zone(sheet, id).map(|(zone, frame)| match extras.ghost_clip {
             Some(ghost) if ghost.moving_zone != Some(zone) => frame.translate(ghost.delta * -1.0),
             _ => frame,
         })
@@ -256,6 +270,7 @@ pub(crate) fn paint_map_scene(
         SceneBand::BelowMap,
         xf,
         opts,
+        extras.editing_board_object,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -479,6 +494,7 @@ pub(crate) fn paint_map_scene(
         SceneBand::AboveMap,
         xf,
         opts,
+        extras.editing_board_object,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -625,6 +641,7 @@ fn paint_objects_in_band(
     band: SceneBand,
     xf: Xf,
     opts: &PaintOptions<'_>,
+    editing_board_object: Option<CanvasObjectId>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
 ) {
@@ -647,6 +664,7 @@ fn paint_objects_in_band(
             item,
             xf,
             opts,
+            editing_board_object,
             ink_cache,
             ink_tessellation,
         );
@@ -1134,6 +1152,7 @@ fn paint_canvas_object(
     item: &thinoda_core::SceneItem,
     xf: Xf,
     opts: &PaintOptions<'_>,
+    editing_board_object: Option<CanvasObjectId>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
 ) {
@@ -1189,7 +1208,7 @@ fn paint_canvas_object(
                     stroke,
                 ));
             }
-            if !label.is_empty() {
+            if !label.is_empty() && editing_board_object != Some(object.id) {
                 let text_rect = shape_label_rect(*shape, object.rect);
                 let font = FontId::proportional(shape_label_font_size(z));
                 let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
@@ -1297,7 +1316,7 @@ fn paint_canvas_object(
                         );
                     }
                 }
-                if !connector.label.is_empty() {
+                if !connector.label.is_empty() && editing_board_object != Some(object.id) {
                     let mid = xf.pos(label_center.expect("a connector path has points"));
                     let font = FontId::proportional((12.0 * z).max(7.0));
                     let galley = painter.layout_no_wrap(connector.label.clone(), font, color);
@@ -2291,6 +2310,89 @@ mod tests {
         let expected = opacity_color(color32(Color::highest_contrast_on(under)), 0.5);
         assert_eq!(label_color(&fallback_output), expected);
         fallback_output.textures_delta.clear();
+    }
+
+    #[test]
+    fn interactive_edit_hides_only_the_active_board_label() {
+        use thinoda_core::{
+            SheetRootMode,
+            board::{CanvasConnector, Endpoint},
+        };
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let add_shape = |sheet: &mut Sheet, x, text: &str| {
+            let mut shape = CanvasObject::shape(
+                ShapeKind::RoundedRectangle,
+                thinoda_core::Rect::from_center_size(Vec2::new(x, 0.0), Vec2::new(120.0, 80.0)),
+            );
+            if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+                *label = text.into();
+            }
+            sheet.add_canvas_object(shape).unwrap()
+        };
+        let first = add_shape(&mut sheet, -140.0, "First shape");
+        add_shape(&mut sheet, 140.0, "Second shape");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-80.0, 80.0)),
+            Endpoint::Point(Vec2::new(80.0, 80.0)),
+        );
+        connector.label = "Connector label".into();
+        let connector = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let ctx = egui::Context::default();
+        let rendered_labels = |editing_board_object| {
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map_scene(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &sheet,
+                        &layout,
+                        Xf {
+                            origin: pos2(400.0, 300.0),
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                        &scene,
+                        PaintSceneExtras {
+                            editing_board_object,
+                            ..Default::default()
+                        },
+                    );
+                },
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect();
+            output.textures_delta.clear();
+            labels
+        };
+        let all = rendered_labels(None);
+        assert!(all.contains(&"First shape".into()));
+        assert!(all.contains(&"Second shape".into()));
+        assert!(all.contains(&"Connector label".into()));
+
+        let shape_edit = rendered_labels(Some(first));
+        assert!(!shape_edit.contains(&"First shape".into()));
+        assert!(shape_edit.contains(&"Second shape".into()));
+        assert!(shape_edit.contains(&"Connector label".into()));
+
+        let connector_edit = rendered_labels(Some(connector));
+        assert!(connector_edit.contains(&"First shape".into()));
+        assert!(connector_edit.contains(&"Second shape".into()));
+        assert!(!connector_edit.contains(&"Connector label".into()));
     }
 
     #[test]

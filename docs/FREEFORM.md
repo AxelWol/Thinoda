@@ -587,6 +587,18 @@ semantics and require native v6.
   These controls remain usable in either toolbar presentation.
   Colour swatches and graphical width presets complement the exact controls;
   swatches preserve colour alpha and do not change the independent opacity.
+- Double-click an unlocked shape or connector, use its **Edit label** action,
+  or press F2 to edit its label. An empty label shows a non-persistent prompt
+  and editing guidance. The status bar shows a compact editing summary; hover
+  for the complete instructions. When there is room, the instructions also
+  appear beside the shape without covering its outline or editor. Enter, Tab,
+  or an outside click/tap finishes editing; Shift+Enter inserts a line and
+  Escape cancels the draft. The upright editor uses the label colour, with a
+  contrasting edge for transparent shapes rather than an opaque rectangle
+  that hides their outline or items underneath.
+  The placement hint yields to these editing instructions while a shape tool is
+  armed and reappears after editing ends. In that mode, clicking empty canvas
+  finishes the label and also places the armed shape.
 - Inspector sections for card colour, shape fill/stroke, ink width/colour/
   opacity, rotation, lock, alt text.
 - Keep the working custom Fill-Color Picker and also reuse the existing quick
