@@ -1285,6 +1285,168 @@ fn selected_sticky_and_text_controls_edit_whole_card_and_round_trip() {
 }
 
 #[test]
+fn whole_card_alignment_controls_move_the_visible_single_line() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let (app, id) = app_with_card(kind);
+        let mut h = harness(app, vec2(1200.0, 700.0));
+        open_toolbar(&mut h);
+        let card = {
+            let doc = h.state().doc().unwrap();
+            doc.view.selected_topic_rect(&doc.doc).unwrap()
+        };
+        let mut positions = Vec::new();
+        for (align, label) in [
+            (TextAlign::Left, "Align Left"),
+            (TextAlign::Center, "Align Center"),
+            (TextAlign::Right, "Align Right"),
+        ] {
+            h.get_by_role_and_label(Role::Button, label).click();
+            h.run_steps(4);
+            assert_eq!(style(&h, id).align, Some(align));
+            let text = h
+                .output()
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+                .expect("card title should be painted");
+            assert!(
+                card.contains_rect(text),
+                "{kind:?} {align:?}: {text:?} {card:?}"
+            );
+            positions.push(text.center().x);
+        }
+        assert!(
+            positions[0] + 10.0 < positions[1] && positions[1] + 10.0 < positions[2],
+            "{kind:?}: card text did not move between alignments: {positions:?}"
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        h.run_steps(3);
+        assert_eq!(style(&h, id).align, Some(TextAlign::Center));
+        assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+        h.run_steps(3);
+        assert_eq!(style(&h, id).align, Some(TextAlign::Right));
+    }
+}
+
+#[test]
+fn rotated_card_alignment_moves_the_visible_title_along_the_card() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        for dark in [false, true] {
+            let (mut app, id) = app_with_card(kind);
+            app.settings.theme = if dark {
+                thinoda_platform::settings::ThemeMode::Dark
+            } else {
+                thinoda_platform::settings::ThemeMode::Light
+            };
+            let mut card = app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(id)
+                .unwrap()
+                .card
+                .unwrap();
+            card.rotation = 90.0;
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .set_topic_card(id, Some(card))
+                .unwrap();
+            let mut h = harness(app, vec2(1200.0, 700.0));
+            open_toolbar(&mut h);
+            let mut positions = Vec::new();
+            for label in ["Align Left", "Align Center", "Align Right"] {
+                h.get_by_role_and_label(Role::Button, label).click();
+                h.run_steps(4);
+                let text = h
+                    .output()
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                            Some(text.visual_bounding_rect())
+                        }
+                        _ => None,
+                    })
+                    .expect("rotated card title should be painted");
+                positions.push(text.center().y);
+            }
+            assert!(
+                positions[0] + 10.0 < positions[1] && positions[1] + 10.0 < positions[2],
+                "{kind:?} dark={dark}: {positions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn active_card_title_alignment_matches_the_saved_title() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let (app, id) = app_with_card(kind);
+        let mut h = harness(app, vec2(1200.0, 700.0));
+        open_toolbar(&mut h);
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(5);
+        let mut editing_positions = Vec::new();
+        for (align, label) in [
+            (TextAlign::Left, "Align Left"),
+            (TextAlign::Center, "Align Center"),
+            (TextAlign::Right, "Align Right"),
+        ] {
+            h.get_by_role_and_label(Role::Button, label).click();
+            h.run_steps(4);
+            assert_eq!(style(&h, id).align, Some(align));
+            let doc = h.state().doc().unwrap();
+            assert_eq!(doc.view.editing_text(), Some("Card title"));
+            assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title");
+            let text = h
+                .output()
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+                .expect("editing title should be painted");
+            editing_positions.push(text.center().x);
+        }
+        assert!(
+            editing_positions[0] + 10.0 < editing_positions[1]
+                && editing_positions[1] + 10.0 < editing_positions[2],
+            "{kind:?}: {editing_positions:?}"
+        );
+        h.state_mut().doc_mut().unwrap().view.cancel_edit();
+        h.run_steps(4);
+        let saved = h
+            .output()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                    Some(text.visual_bounding_rect())
+                }
+                _ => None,
+            })
+            .expect("saved title should be painted");
+        assert!(
+            (saved.center().x - editing_positions[2]).abs() < 3.0,
+            "{kind:?}: editing={editing_positions:?}, saved={saved:?}"
+        );
+    }
+}
+
+#[test]
 fn keyboard_controls_use_theme_state_and_close_without_changing_selection() {
     let (mut app, id) = app_with_card(CardKind::Sticky);
     app.doc_mut()

@@ -225,6 +225,43 @@ mod tests {
     }
 
     #[test]
+    fn card_alignment_survives_drawio_clipboard_text() {
+        use thinoda_core::{Card, CardKind, TextAlign};
+
+        for kind in [CardKind::Sticky, CardKind::Text] {
+            for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+                let mut sheet = Sheet::new("Board", "");
+                sheet.root_mode = SheetRootMode::Hidden;
+                let id = sheet
+                    .add_card(
+                        "Clipboard card",
+                        Vec2::ZERO,
+                        Card::new(kind, Vec2::new(240.0, 140.0)),
+                    )
+                    .unwrap();
+                sheet.topic_mut(id).unwrap().style.align = Some(align);
+                let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                let payload = copy_board_selection(&sheet, &layout, &[id], &[])
+                    .unwrap()
+                    .unwrap();
+                let text = encode(&payload).unwrap();
+                let decoded = decode(&text).unwrap();
+                assert!(!decoded.warnings.contains(&ImportWarning::Formatting));
+                let mut restored = Sheet::new("Restored", "");
+                restored.root_mode = SheetRootMode::Hidden;
+                paste_board_selection(&mut restored, &decoded.payload, Vec2::ZERO).unwrap();
+                let topic = restored
+                    .topics
+                    .values()
+                    .find(|topic| topic.title == "Clipboard card")
+                    .unwrap();
+                assert_eq!(topic.card.unwrap().kind, kind);
+                assert_eq!(topic.style.align, Some(align));
+            }
+        }
+    }
+
+    #[test]
     fn encoded_waypoint_connector_attachments_are_reported() {
         use thinoda_core::{CanvasConnector, CanvasObject, Endpoint};
 

@@ -707,6 +707,71 @@ fn expanding_custom_connector_color_reveals_its_editor_in_a_compact_window() {
     );
 }
 
+#[test]
+fn expanded_connector_color_mixer_fits_when_roomy_and_scrolls_when_short() {
+    for size in [vec2(1200.0, 900.0), vec2(320.0, 240.0)] {
+        let (app, id) = app_with_connector();
+        let mut h = harness(app, size);
+        let before = connector(h.state(), id);
+        let revision = h.state().doc().unwrap().doc.state_id();
+        click(&mut h, Role::Button, "Connector color");
+        let popup_id = h
+            .ctx
+            .data(|data| {
+                data.get_temp::<ConnectorPopups>(connector_popup_slot(egui::ViewportId::ROOT))
+            })
+            .unwrap()
+            .ids[1];
+        h.get_by_label("Custom color").scroll_to_me();
+        h.run_steps(5);
+        h.get_by_label("Custom color").click();
+        h.run_steps(20);
+        let popup = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+        let alpha = h
+            .query_all_by_role(Role::SpinButton)
+            .find(|control| control.value().is_some_and(|value| value.starts_with("A ")))
+            .expect("custom color alpha channel");
+        if size.y >= 900.0 {
+            let first = h
+                .get_by_role_and_label(Role::Button, "Connector color · Auto")
+                .rect();
+            let header = h.get_by_label("Custom color").rect();
+            assert!(
+                popup.contains_rect(first),
+                "{size:?}: {first:?} in {popup:?}"
+            );
+            assert!(
+                popup.contains_rect(header),
+                "{size:?}: {header:?} in {popup:?}"
+            );
+            assert!(
+                popup.contains_rect(alpha.rect()),
+                "{size:?}: {:?} in {popup:?}",
+                alpha.rect()
+            );
+        } else {
+            alpha.focus();
+            h.run_steps(8);
+            let popup = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+            let alpha = h
+                .query_all_by_role(Role::SpinButton)
+                .find(|control| control.is_focused())
+                .expect("focused alpha channel");
+            assert!(
+                popup.contains_rect(alpha.rect()),
+                "{size:?}: {:?} in {popup:?}",
+                alpha.rect()
+            );
+        }
+        assert!(
+            h.ctx.content_rect().contains_rect(popup),
+            "{size:?}: {popup:?}"
+        );
+        assert_eq!(connector(h.state(), id), before);
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+}
+
 #[cfg(feature = "gpu-tests")]
 #[test]
 fn connector_context_visual_previews() {

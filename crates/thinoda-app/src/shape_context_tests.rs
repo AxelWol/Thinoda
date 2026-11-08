@@ -267,6 +267,170 @@ fn text_color_menu_initially_exposes_its_custom_picker() {
 }
 
 #[test]
+fn expanded_shape_color_mixers_fit_roomy_viewports_without_scrolling() {
+    for (size, (label, none, popup_index)) in [vec2(1200.0, 900.0), vec2(320.0, 900.0)]
+        .into_iter()
+        .flat_map(|size| {
+            [
+                ("Fill color", "Fill color · No fill", 1),
+                ("Outline color", "Outline color · Auto", 2),
+                ("Text Color", "Text Color · Auto", 4),
+            ]
+            .map(move |choice| (size, choice))
+        })
+    {
+        let (app, id) = app_with_shape();
+        let mut h = harness_with_size(app, size);
+        let before = object(h.state(), id);
+        let revision = h.state().doc().unwrap().doc.state_id();
+        click(&mut h, Role::Button, label);
+        assert_eq!(object(h.state(), id), before, "{label}: opening menu");
+        let popup_id = h
+            .ctx
+            .data(|data| {
+                data.get_temp::<ConnectorPopups>(connector_popup_slot(egui::ViewportId::ROOT))
+            })
+            .unwrap()
+            .ids[popup_index];
+        let collapsed = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+        h.get_by_label("Custom color").click();
+        h.run_steps(20);
+        let popup = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+        let header = h.get_by_label("Custom color").rect();
+        let first = h.get_by_role_and_label(Role::Button, none).rect();
+        let channels: Vec<_> = h
+            .query_all_by_role(Role::SpinButton)
+            .filter_map(|control| {
+                control
+                    .value()
+                    .filter(|value| {
+                        ["R ", "G ", "B ", "A "]
+                            .iter()
+                            .any(|p| value.starts_with(p))
+                    })
+                    .map(|value| (value.to_owned(), control.rect()))
+            })
+            .collect();
+        assert_eq!(channels.len(), 4, "{label}: {channels:?}");
+        assert!(
+            popup.height() > collapsed.height(),
+            "{label}: {collapsed:?} {popup:?}"
+        );
+        assert!(
+            popup.contains_rect(first),
+            "{label}: first={first:?}, popup={popup:?}"
+        );
+        assert!(
+            popup.contains_rect(header),
+            "{label}: header={header:?}, popup={popup:?}"
+        );
+        for (channel, rect) in channels {
+            assert!(
+                popup.contains_rect(rect),
+                "{label}: {channel}={rect:?}, popup={popup:?}"
+            );
+        }
+        assert!(
+            h.ctx.content_rect().contains_rect(popup),
+            "{label}: {popup:?}"
+        );
+        assert_eq!(object(h.state(), id), before, "{label}: expanding mixer");
+
+        h.get_by_label("Custom color").click();
+        h.run_steps(20);
+        let recollapsed = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+        assert!(
+            recollapsed.height() < popup.height(),
+            "{label}: {recollapsed:?}"
+        );
+        close_popup(&mut h);
+        click(&mut h, Role::Button, label);
+        assert!(
+            !h.query_all_by_role(Role::SpinButton)
+                .any(|control| { control.value().is_some_and(|value| value.starts_with("A ")) }),
+            "{label}: collapsed mixer unexpectedly reopened"
+        );
+        h.get_by_label("Custom color").click();
+        h.run_steps(20);
+        let reopened = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+        let alpha = h
+            .query_all_by_role(Role::SpinButton)
+            .find(|control| control.value().is_some_and(|value| value.starts_with("A ")))
+            .unwrap();
+        assert!(
+            reopened.contains_rect(alpha.rect()),
+            "{label}: {reopened:?}"
+        );
+        assert_eq!(object(h.state(), id), before, "{label}: reopening mixer");
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+}
+
+#[test]
+fn expanded_shape_color_mixer_fits_in_every_supported_language() {
+    const CHILD: &str = "THINODA_TEST_COLOR_MIXER_LOCALES";
+    if std::env::var_os(CHILD).is_none() {
+        // The application's active locale is process-wide.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("expanded_shape_color_mixer_fits_in_every_supported_language")
+            .arg("--test-threads=1")
+            .env(CHILD, "1")
+            .output()
+            .expect("run locale test in a separate process");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated locale test failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    struct RestoreLanguage(i18n::Lang);
+    impl Drop for RestoreLanguage {
+        fn drop(&mut self) {
+            i18n::set_lang(self.0);
+        }
+    }
+
+    let _restore = RestoreLanguage(i18n::lang());
+    for language in i18n::Lang::ALL {
+        for size in [vec2(1200.0, 700.0), vec2(320.0, 900.0)] {
+            let (app, _) = app_with_shape();
+            i18n::set_lang(language);
+            let mut h = harness_with_size(app, size);
+            let label = i18n::t_in(language, "Fill color");
+            let first_label = format!("{label} · {}", i18n::t_in(language, "No fill"));
+            click(&mut h, Role::Button, label);
+            let popup_id = h
+                .ctx
+                .data(|data| {
+                    data.get_temp::<ConnectorPopups>(connector_popup_slot(egui::ViewportId::ROOT))
+                })
+                .unwrap()
+                .ids[1];
+            h.get_by_label(i18n::t_in(language, "Custom color")).click();
+            h.run_steps(20);
+            let popup = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+            let first = h.get_by_role_and_label(Role::Button, &first_label).rect();
+            let header = h.get_by_label(i18n::t_in(language, "Custom color")).rect();
+            let alpha = h
+                .query_all_by_role(Role::SpinButton)
+                .find(|control| control.value().is_some_and(|value| value.starts_with("A ")))
+                .expect("custom color alpha channel");
+            assert!(
+                h.ctx.content_rect().contains_rect(popup)
+                    && popup.contains_rect(first)
+                    && popup.contains_rect(header)
+                    && popup.contains_rect(alpha.rect()),
+                "{language:?} {size:?}: first={first:?}, header={header:?}, alpha={:?}, popup={popup:?}",
+                alpha.rect()
+            );
+        }
+    }
+}
+
+#[test]
 fn shape_options_and_text_color_are_translated_in_every_supported_language() {
     for language in i18n::Lang::ALL {
         for key in ["Shape options", "Text Color"] {
@@ -447,6 +611,45 @@ fn custom_shape_text_color_keyboard_edit_is_atomic_and_escape_cancels() {
         assert_eq!(object(h.state(), id).style.text_color, Some(original));
         assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
     }
+}
+
+#[test]
+fn custom_shape_color_can_explicitly_choose_the_automatic_value() {
+    let (app, id) = app_with_shape();
+    let mut h = harness(app);
+    click(&mut h, Role::Button, "Outline color");
+    h.get_by_label("Custom color").click();
+    h.run_steps(5);
+    let channels: [u8; 4] = ["R ", "G ", "B ", "A "].map(|prefix| {
+        h.query_all_by_role(Role::SpinButton)
+            .find_map(|control| {
+                control.value().and_then(|value| {
+                    value
+                        .strip_prefix(prefix)
+                        .and_then(|value| value.parse().ok())
+                })
+            })
+            .expect("custom color channel")
+    });
+    let original = Color::rgba(channels[0], channels[1], channels[2], channels[3]);
+    assert_eq!(object(h.state(), id).style.stroke, None);
+
+    h.query_all_by_role(Role::SpinButton)
+        .find(|control| control.value().is_some_and(|value| value.starts_with("R ")))
+        .unwrap()
+        .click();
+    h.run_steps(2);
+    for value in [original.r.wrapping_add(1), original.r] {
+        h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+        h.event(egui::Event::Text(value.to_string()));
+        h.run_steps(3);
+    }
+    assert_eq!(object(h.state(), id).style.stroke, None);
+    h.key_press(Key::Enter);
+    h.run_steps(5);
+    assert_eq!(object(h.state(), id).style.stroke, Some(original));
+    undo(&mut h);
+    assert_eq!(object(h.state(), id).style.stroke, None);
 }
 
 #[test]

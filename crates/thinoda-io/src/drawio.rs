@@ -16,7 +16,7 @@ use quick_xml::events::{BytesStart, Event};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use thinoda_core::{
     ApproxMeasure, Color, MAX_PRESENTATION_NAME_BYTES, MAX_ZONES, MIN_ZONE_SIZE, Rect, Sheet,
-    TopicId, TopicShape, Vec2, Workbook, ZoneId,
+    TextAlign, TopicId, TopicShape, Vec2, Workbook, ZoneId,
     board::{
         Band, BoardMember, CanvasConnector, CanvasGroupId, CanvasObject, CanvasObjectId,
         CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind, ConnectorRoute,
@@ -545,6 +545,15 @@ impl Style {
             .filter(|v| v.is_finite())
     }
 
+    fn text_align(&self) -> Option<TextAlign> {
+        match self.get("align")? {
+            "left" => Some(TextAlign::Left),
+            "center" => Some(TextAlign::Center),
+            "right" => Some(TextAlign::Right),
+            _ => None,
+        }
+    }
+
     fn has(&self, token: &str) -> bool {
         self.tokens.iter().any(|t| t == token)
     }
@@ -665,7 +674,7 @@ impl Style {
     }
 
     /// Visual details without a Thinoda equivalent.
-    fn formatting_loss(&self, edge: bool) -> bool {
+    fn formatting_loss(&self, edge: bool, card_text_alignment: bool) -> bool {
         const FLAGS: [&str; 7] = [
             "dashed", "shadow", "glass", "sketch", "flipH", "flipV", "comic",
         ];
@@ -700,7 +709,13 @@ impl Style {
             || self.get("fontFamily").is_some()
             || self.num("fontSize").is_some_and(|v| v != 11.0 && v != 12.0)
             || self.num("fontStyle").is_some_and(|v| v != 0.0)
-            || self.get("align").is_some_and(|v| v != "center")
+            || self.get("align").is_some_and(|v| {
+                if card_text_alignment {
+                    self.text_align().is_none()
+                } else {
+                    v != "center"
+                }
+            })
             || self.get("verticalAlign").is_some_and(|v| {
                 // Thinoda image cards caption beneath the picture.
                 v != "middle" && !(v == "bottom" && self.get("thinodaCard") == Some("image"))
@@ -1490,7 +1505,8 @@ impl<'a> PageImport<'a> {
             .iter()
             .any(|&c| cells[c].visible && (cells[c].vertex || cells[c].edge));
         let kind = classify(&cell.style);
-        if cell.style.formatting_loss(false) {
+        let card_text_alignment = matches!(kind, Kind::Card(CardKind::Sticky | CardKind::Text));
+        if cell.style.formatting_loss(false, card_text_alignment) {
             self.warn(ImportWarning::Formatting);
         }
         match kind {
@@ -1769,6 +1785,9 @@ impl<'a> PageImport<'a> {
                 if let Some(topic) = self.sheet.topic_mut(id) {
                     topic.style.fill = card.color;
                     topic.style.text_color = style.color("fontColor", "textOpacity");
+                    if matches!(kind, CardKind::Sticky | CardKind::Text) {
+                        topic.style.align = style.text_align();
+                    }
                     topic.hyperlink = cell.link.clone();
                 }
                 if let Some(image) = image
@@ -1817,7 +1836,7 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         let origin = context.origin;
         if let Some(tool) = style.get("thinodaInk") {
-            if style.formatting_loss(true) || style.start_arrow() || style.end_arrow() {
+            if style.formatting_loss(true, false) || style.start_arrow() || style.end_arrow() {
                 self.warn(ImportWarning::Formatting);
             }
             let g = &cell.geometry;
@@ -1874,7 +1893,7 @@ impl<'a> PageImport<'a> {
             && style
                 .get("edgeStyle")
                 .is_some_and(|value| !value.is_empty() && value != "none");
-        if style.formatting_loss(true) || routed_hints {
+        if style.formatting_loss(true, false) || routed_hints {
             self.warn(ImportWarning::Formatting);
         }
         if cell.link.is_some() {
@@ -2835,6 +2854,14 @@ impl<'a> PageWriter<'a> {
                 "shape=image;thinodaCard=image;imageAspect=1;verticalAlign=bottom;"
             }
         });
+        if matches!(card.kind, CardKind::Sticky | CardKind::Text) {
+            let align = thinoda_core::theme::resolve_style(self.sheet, id, false).align;
+            style.push_str(match align {
+                TextAlign::Left => "align=left;",
+                TextAlign::Center => "align=center;",
+                TextAlign::Right => "align=right;",
+            });
+        }
         if let Some(resource) = image {
             // draw.io's style syntax reserves `;`, so inline images omit `;base64`.
             style.push_str(&format!(

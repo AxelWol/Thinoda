@@ -48,6 +48,57 @@ The following are outstanding priorities, not claims of release acceptance:
    large-board limits and real OS clipboard behavior remain open; see
    [CLOUD-STORAGE.md](CLOUD-STORAGE.md) and [WEB-STARTUP.md](WEB-STARTUP.md).
 
+## Latest task and release continuation
+
+The latest status screenshots mix complete implementation slices with partially
+accepted work. The [draw.io phase table](DRAWIO.md#4-phase-plan) tracks each
+parent phase separately; a completed slice does not close its parent. Retain the
+following work until its stated tests, written critique and acceptance gates are
+complete:
+
+| Screenshot task or follow-up | Status | Evidence or remaining work |
+|---|---|---|
+| Context-menu organization, FIM visibility, icon colors, separate pen options, stationary canvas and reserved toolbar space | Complete locally | Committed slices and critiques in [DRAWIO.md](DRAWIO.md#4-phase-plan); physical-device and assistive-technology acceptance remains a separate gate |
+| Bar-marker geometry, persistence, controls and validation | Complete locally | The bar-marker checkpoint in [DRAWIO.md](DRAWIO.md#41-implementation-progress) records compatibility, tests and critique; other marker and connector work remains |
+| Adjustable mockup rectangle radii | Complete locally | The absolute-radius checkpoint records persistence gates, tests, critique and limitations; generic stencils remain open |
+| Windows pen ink | Partial | Pen-first browser interruption mitigation is implemented; native Windows pen identity, ambiguous or touch-first streams and physical-device acceptance remain |
+| SVG sheet clipboard | Partial | Windows and supported browsers publish SVG with editable sheet text; real system clipboard, recipient and cross-platform acceptance remain |
+| Ink input and performance | Partial | Define budgets and verify representative native, browser, GPU, touch and stylus workloads |
+| Presentation scenes and exports | Partial | Finish browser, PDF viewer and current Office acceptance; clipping is not redaction |
+| Board accessibility and rich editing | Partial | Complete browser/assistive-technology and IME acceptance, plus rich-aware range/list editing and its persistence and exports |
+| Storage and clipboard safeguards | Partial | Keep cloud providers gated; finish revision, cancellation, recovery, real-host and provider acceptance |
+| Preserve Ink and Slides artifacts | Blocked | A consistent backup of the separate worktree and session artifacts needs a suitable destination and a quiescent snapshot; do not delete or archive the source as a substitute |
+| Bounded draw.io PDF import | Research in progress | Metadata and attachments require strict aggregate decoding limits; the evaluated parser limits are per stream and do not yet meet that requirement |
+| Whole-card text alignment | Complete locally | Sticky and text card rows now align on canvas and in the editor and supported exports; tests and remaining limits are recorded in [FREEFORM.md](FREEFORM.md#card-alignment-and-color-mixer-checkpoint-and-rubber-duck-critique) |
+| Expanded custom-color mixer | Complete locally | Shape and connector pickers expand to fit when possible, retain constrained-window scrolling, and preserve automatic-color transactions; validation and critique are recorded in [FREEFORM.md](FREEFORM.md#card-alignment-and-color-mixer-checkpoint-and-rubber-duck-critique) |
+| Windows Vulkan overlay references | Complete locally | The user removed the stale Epic Games and Steam registrations; fresh app and `vulkaninfo` startups no longer report those missing manifests |
+| Generic Windows Vulkan layer warning | Investigated; warning remains | The loader trace reports no explicit-layer registry files and continues successfully. This is separate from the removed overlay references; retain GPU diagnostics and the Vulkan fallback |
+
+The [Vulkan loader's Windows discovery](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderLayerInterface.md#windows-layer-discovery)
+reads enabled implicit-layer manifests from system registry values. The user
+removed the previously observed stale Epic and Steam entries from this review
+machine; neither appears in either machine registry view on recheck. A fresh
+isolated app startup and `vulkaninfo --summary` no longer reported the missing
+manifests, though both still emitted a generic registry lookup warning. A
+temporary layer-debug trace attributed that warning to explicit-layer
+enumeration with no registry files found. The installed 1.4.341 loader's
+[source](https://github.com/KhronosGroup/Vulkan-Loader/blob/vulkan-sdk-1.4.341.0/loader/loader_windows.c#L765-L785)
+reports this as noncritical for layers and continues; `vulkaninfo` enumerated
+both GPUs and the app remained responsive. This does not rule out unrelated
+driver problems. Thinoda did not change the registry, and no layers were added
+merely to silence the warning.
+
+**User-directed release goal:** finish the remaining tasks in this plan and the
+draw.io plan, including their tests and rubber-duck critiques, before declaring
+them complete. Then integrate the completed work into `develop`, stage and
+commit only owned files, push the reviewed result, and open the requested
+`develop` → `main` pull request for a new release. Monitor the required actions
+and approval gates, address failures, and verify the resulting release
+artifacts. Respect branch protection and required human approvals; missing
+access, hosts, credentials, backup capacity or failed gates are blockers, not
+passes. Do not force-push, move an existing release tag, or claim a release
+before its artifacts have been verified.
+
 ## Current Freeform and web-startup status
 
 **2026-11-03 contextual board editing request (in progress):** use the supplied

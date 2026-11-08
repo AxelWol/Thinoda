@@ -48,6 +48,76 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
     Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h))
 }
 
+#[test]
+fn sticky_and_text_card_alignment_survives_drawio_interchange() {
+    use thinoda_core::TextAlign;
+
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        for (align, value) in [
+            (TextAlign::Left, "left"),
+            (TextAlign::Center, "center"),
+            (TextAlign::Right, "right"),
+        ] {
+            let mut sheet = Sheet::new("Board", "Root");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let id = sheet
+                .add_card(
+                    "Aligned card",
+                    Vec2::ZERO,
+                    Card::new(kind, Vec2::new(240.0, 140.0)),
+                )
+                .unwrap();
+            sheet.topic_mut(id).unwrap().style.align = Some(align);
+            let xml = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+            assert!(xml.contains(&format!("align={value};")), "{kind:?}: {xml}");
+            let imported = load(&xml);
+            assert!(
+                !imported.warnings.contains(&ImportWarning::Formatting),
+                "{kind:?} {align:?}: {:?}",
+                imported.warnings
+            );
+            let card = imported.workbook.sheets[0]
+                .topics
+                .values()
+                .find(|topic| topic.title == "Aligned card")
+                .unwrap();
+            assert_eq!(card.card.unwrap().kind, kind);
+            assert_eq!(card.style.align, Some(align));
+        }
+    }
+}
+
+#[test]
+fn unsupported_drawio_alignment_is_still_reported() {
+    for style in ["shape=note;align=justify;", "shape=rectangle;align=left;"] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="Label" style="{style}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="240" height="140" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn ordinary_drawio_note_alignment_is_imported() {
+    let xml = page(
+        r#"<mxCell id="a" value="External note" style="shape=note;align=right;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="240" height="140" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    let topic = report.workbook.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.title == "External note")
+        .unwrap();
+    assert_eq!(topic.card.unwrap().kind, CardKind::Sticky);
+    assert_eq!(topic.style.align, Some(thinoda_core::TextAlign::Right));
+}
+
 const MOCKUP_RECTANGLES: &[&str] = &[
     "mxgraph.mockup.rrect",
     "mxgraph.mockup.forms.rrect",

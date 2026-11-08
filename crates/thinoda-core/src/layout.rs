@@ -8,7 +8,8 @@
 use crate::board::rotate_around;
 use crate::geometry::{Rect, Vec2};
 use crate::model::{
-    BoundaryId, LineShape, RelationshipId, Sheet, Structure, SummaryId, TopicId, TopicShape,
+    BoundaryId, LineShape, RelationshipId, Sheet, Structure, SummaryId, TextAlign, TopicId,
+    TopicShape,
 };
 use crate::theme::{Level, ResolvedStyle, level_of, resolve_style};
 use std::collections::HashMap;
@@ -48,10 +49,33 @@ fn topic_padding(t: &crate::model::Topic, style: &ResolvedStyle, level: Level) -
     (px.max(stroke_padding), py.max(stroke_padding))
 }
 
+const CONTENT_GAP: f32 = 4.0;
+
+fn badge_size(font_size: f32) -> f32 {
+    (font_size * 1.1).round()
+}
+
+fn icon_size(font_size: f32) -> f32 {
+    (font_size * 0.85).round()
+}
+
 fn title_max_width(t: &crate::model::Topic, style: &ResolvedStyle, level: Level, px: f32) -> f32 {
     match t.card.as_ref().filter(|_| t.parent.is_none()) {
         // Cards have a fixed size; the title wraps inside it.
-        Some(card) => (card.size.x - 2.0 * px).max(style.font_size),
+        Some(card) => {
+            let adornments = if matches!(
+                card.kind,
+                crate::board::CardKind::Sticky | crate::board::CardKind::Text
+            ) {
+                let badges = usize::from(t.todo.is_some()) + t.markers.len();
+                let icons = usize::from(t.hyperlink.is_some()) + usize::from(t.has_notes());
+                badges as f32 * (badge_size(style.font_size) + CONTENT_GAP)
+                    + icons as f32 * (icon_size(style.font_size) + CONTENT_GAP)
+            } else {
+                0.0
+            };
+            (card.size.x - 2.0 * px - adornments).max(style.font_size)
+        }
         None => style.width.unwrap_or(if level == Level::Central {
             420.0
         } else {
@@ -828,8 +852,8 @@ impl Engine<'_> {
         if let Some(w) = style.width.filter(|_| card.is_none()) {
             ts.x = ts.x.max(w);
         }
-        let ms = (fs * 1.1).round();
-        let gap = 4.0;
+        let ms = badge_size(fs);
+        let gap = CONTENT_GAP;
         let mut left = 0.0;
         let number = self.numbering.get(&id).map(|label| {
             let size = self.measure.measure_with_family(
@@ -846,7 +870,7 @@ impl Engine<'_> {
             left += ms + gap;
         }
         left += t.markers.len() as f32 * (ms + gap);
-        let isz = (fs * 0.85).round();
+        let isz = icon_size(fs);
         let n_icons = t.hyperlink.is_some() as usize + t.has_notes() as usize;
         let right = n_icons as f32 * (isz + gap);
         let row_h =
@@ -924,7 +948,20 @@ impl Engine<'_> {
                 y += image_h;
             }
         }
-        let mut x = inner_x + (inner_w - row_w) / 2.0;
+        let mut x = if card.is_some_and(|card| {
+            matches!(
+                card.kind,
+                crate::board::CardKind::Sticky | crate::board::CardKind::Text
+            )
+        }) {
+            match style.align {
+                TextAlign::Left => px,
+                TextAlign::Center => inner_x + (inner_w - row_w) / 2.0,
+                TextAlign::Right => w - px - row_w,
+            }
+        } else {
+            inner_x + (inner_w - row_w) / 2.0
+        };
         let cy = y + row_h / 2.0;
         let sq = |x: f32, s: f32| Rect::from_min_size(Vec2::new(x, cy - s / 2.0), Vec2::new(s, s));
         if let Some((label, size)) = number {
@@ -1491,6 +1528,140 @@ mod tests {
         assert!(lines.x <= 60.0 + 14.0);
         let multi = m.measure("a\nb", 14.0, false, 1000.0);
         assert_eq!(multi.y, 2.0 * 14.0 * ApproxMeasure::LINE_HEIGHT);
+    }
+
+    #[test]
+    fn card_text_alignment_uses_the_padded_card_width() {
+        use crate::{Card, CardKind, TextAlign};
+
+        for kind in [CardKind::Sticky, CardKind::Text] {
+            for title in ["Sticky note", "Longer first line\nShort", ""] {
+                let mut sheet = Sheet::new("Cards", "Root");
+                let id = sheet
+                    .add_card(title, Vec2::ZERO, Card::new(kind, Vec2::new(240.0, 140.0)))
+                    .unwrap();
+                for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+                    sheet.topic_mut(id).unwrap().style.align = Some(align);
+                    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                    let topic = &layout.topics[&id];
+                    let expected = match align {
+                        TextAlign::Left => topic.rect.min.x + topic.padding.x,
+                        TextAlign::Center => topic.rect.center().x,
+                        TextAlign::Right => topic.rect.max().x - topic.padding.x,
+                    };
+                    let actual = match align {
+                        TextAlign::Left => topic.title_rect.min.x,
+                        TextAlign::Center => topic.title_rect.center().x,
+                        TextAlign::Right => topic.title_rect.max().x,
+                    };
+                    assert!(
+                        (actual - expected).abs() < 0.01,
+                        "{kind:?} {title:?} {align:?}: title={:?}, card={:?}, padding={:?}",
+                        topic.title_rect,
+                        topic.rect,
+                        topic.padding
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn card_text_alignment_moves_the_title_and_its_badges_together() {
+        use crate::{Card, CardKind, TextAlign};
+
+        for kind in [CardKind::Sticky, CardKind::Text] {
+            let mut sheet = Sheet::new("Cards", "Root");
+            let id = sheet
+                .add_card(
+                    "Title",
+                    Vec2::ZERO,
+                    Card::new(kind, Vec2::new(280.0, 140.0)),
+                )
+                .unwrap();
+            let topic = sheet.topic_mut(id).unwrap();
+            topic.todo = Some(false);
+            topic.markers.push("priority-1".into());
+            topic.hyperlink = Some("https://example.invalid".into());
+            topic.notes = Some("Note".into());
+
+            for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+                sheet.topic_mut(id).unwrap().style.align = Some(align);
+                let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                let topic = &layout.topics[&id];
+                let todo = topic.todo_rect.unwrap();
+                let marker = topic.markers[0].1;
+                let last_icon = topic.icons.last().unwrap().1;
+                assert!(todo.max().x <= marker.min.x);
+                assert!(marker.max().x <= topic.title_rect.min.x);
+                assert!(topic.title_rect.max().x <= topic.icons[0].1.min.x);
+                match align {
+                    TextAlign::Left => {
+                        assert!((todo.min.x - topic.rect.min.x - topic.padding.x).abs() < 0.01);
+                    }
+                    TextAlign::Right => {
+                        assert!(
+                            (topic.rect.max().x - topic.padding.x - last_icon.max().x).abs() < 0.01
+                        );
+                    }
+                    TextAlign::Center => {
+                        let row_center = (todo.min.x + last_icon.max().x) / 2.0;
+                        assert!((row_center - topic.rect.center().x).abs() < 0.01);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn card_text_wraps_before_adornments_cross_the_padded_frame() {
+        use crate::{Card, CardKind, TextAlign};
+
+        for kind in [CardKind::Sticky, CardKind::Text] {
+            let mut sheet = Sheet::new("Cards", "Root");
+            let id = sheet
+                .add_card(
+                    "A long card title with multiple words and adornments",
+                    Vec2::ZERO,
+                    Card::new(kind, Vec2::new(240.0, 180.0)),
+                )
+                .unwrap();
+            let topic = sheet.topic_mut(id).unwrap();
+            topic.todo = Some(false);
+            topic.markers.push("priority-1".into());
+            topic.hyperlink = Some("https://example.invalid".into());
+            topic.notes = Some("Note".into());
+            for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+                sheet.topic_mut(id).unwrap().style.align = Some(align);
+                let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                let topic = &layout.topics[&id];
+                let first = topic.todo_rect.unwrap();
+                let last = topic.icons.last().unwrap().1;
+                let left = topic.rect.min.x + topic.padding.x;
+                let right = topic.rect.max().x - topic.padding.x;
+                assert!(
+                    first.min.x >= left - 0.01 && last.max().x <= right + 0.01,
+                    "{kind:?} {align:?}: first={first:?}, last={last:?}, card={:?}",
+                    topic.rect
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_topic_alignment_does_not_move_its_content_row() {
+        use crate::TextAlign;
+
+        let mut sheet = Sheet::new("Map", "Root");
+        let id = sheet.root;
+        let centered = layout_sheet(&sheet, &ApproxMeasure, false).topics[&id].title_rect;
+        for align in [TextAlign::Left, TextAlign::Right] {
+            sheet.topic_mut(id).unwrap().style.align = Some(align);
+            assert_eq!(
+                layout_sheet(&sheet, &ApproxMeasure, false).topics[&id].title_rect,
+                centered
+            );
+        }
     }
 
     #[test]

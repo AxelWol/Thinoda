@@ -2064,47 +2064,37 @@ fn color_popup(
         |ui| {
             ui.set_width((canvas.width() - 24.0).clamp(1.0, 275.0));
             reserve_popup_scrollbar_space(ui);
-            let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
-            egui::ScrollArea::vertical()
-                .id_salt((control.key, "color_choices"))
-                // Allow the popup to grow beyond its small initial area before scrolling.
-                .min_scrolled_height(max_height)
-                .max_height(max_height)
-                .show(ui, |ui| {
-                    let none = ui
-                        .selectable_label(current.is_none(), t(control.none))
-                        .accessible_name(format!("{} · {}", t(control.label), t(control.none)));
-                    if none.clicked()
-                        && widgets::touch_activation_allowed(ui.ctx())
-                        && current.is_some()
+            crate::ui::scroll_menu(ui, |ui| {
+                let none = ui
+                    .selectable_label(current.is_none(), t(control.none))
+                    .accessible_name(format!("{} · {}", t(control.label), t(control.none)));
+                if none.clicked()
+                    && widgets::touch_activation_allowed(ui.ctx())
+                    && current.is_some()
+                {
+                    change = Some(None);
+                }
+                let selected = current.map(|color| Color32::from_rgb(color.r, color.g, color.b));
+                if let Some(color) = widgets::color_swatches(ui, &crate::ui::SWATCHES, selected) {
+                    let [r, g, b, _] = color.to_srgba_unmultiplied();
+                    let alpha = current.map_or(255, |color| color.a);
+                    let color = Some(Color::rgba(r, g, b, alpha));
+                    if color != current {
+                        change = Some(color);
+                    }
+                }
+                let custom = ui.collapsing(t("Custom color"), |ui| {
+                    ui.spacing_mut().slider_width = ui.available_width().min(260.0);
+                    if let Some(color) = custom_color_picker(ui, control.key, target, picker_start)
+                        && Some(color) != current
                     {
-                        change = Some(None);
+                        change = Some(Some(color));
                     }
-                    let selected =
-                        current.map(|color| Color32::from_rgb(color.r, color.g, color.b));
-                    if let Some(color) = widgets::color_swatches(ui, &crate::ui::SWATCHES, selected)
-                    {
-                        let [r, g, b, _] = color.to_srgba_unmultiplied();
-                        let alpha = current.map_or(255, |color| color.a);
-                        let color = Some(Color::rgba(r, g, b, alpha));
-                        if color != current {
-                            change = Some(color);
-                        }
-                    }
-                    let custom = ui.collapsing(t("Custom color"), |ui| {
-                        ui.spacing_mut().slider_width = ui.available_width().min(260.0);
-                        if let Some(color) =
-                            custom_color_picker(ui, control.key, target, picker_start)
-                            && Some(color) != current
-                        {
-                            change = Some(Some(color));
-                        }
-                    });
-                    if custom.header_response.clicked() && custom.body_response.is_some() {
-                        custom.header_response.scroll_to_me(Some(egui::Align::Min));
-                    }
-                    crate::ui::reveal_changed_focus(ui);
                 });
+                if custom.header_response.clicked() && custom.body_response.is_some() {
+                    custom.header_response.scroll_to_me(Some(egui::Align::Min));
+                }
+            });
         },
     );
     let rect = Rect::from_min_size(
@@ -2364,7 +2354,8 @@ fn custom_color_picker(
     if changed || pending.is_some() {
         ui.data_mut(|data| data.remove::<ColorDraft>(id));
         let [r, g, b, a] = value.to_srgba_unmultiplied();
-        return Some(Color::rgba(r, g, b, a));
+        let color = Color::rgba(r, g, b, a);
+        return (pending.is_some() || color != start).then_some(color);
     }
     None
 }

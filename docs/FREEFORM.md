@@ -1808,6 +1808,39 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   `open_path`/`request_open` calls do not participate in the UI event-ordering
   wrapper.
 
+### Card alignment and color mixer checkpoint and rubber-duck critique
+
+- Sticky-note and text-card titles now align their complete row within the
+  padded card frame. The setting is reflected in the canvas, title editor,
+  SVG-derived exports, editable PowerPoint, and scoped draw.io import/export
+  and clipboard round trips. It remains a whole-card style, not rich-text
+  paragraph formatting.
+- Duck check: aligning only the text would leave TODOs, markers and link/note
+  icons behind or wrap over them. Their widths are included in row positioning
+  and available wrap width. Ordinary topics and image cards retain their
+  previous layout; floating card roots do not receive sibling-number labels.
+  Oversized adornments or very narrow cards can still overflow, and rotated
+  card editors remain upright at the rotated title position.
+- Shape and connector color mixers now size to their contents when the
+  application viewport permits and scroll only when space is constrained.
+  Opening or closing a mixer does not create a color override or undo entry.
+  An intentional edit that chooses the current automatic color still creates
+  an explicit override; cancellation, focus reveal, stale owners and undo
+  remain covered.
+- Duck check: running the multilingual sizing test in the main test process
+  could change the process-wide locale underneath other tests. The language
+  loop runs in an isolated child process, including when tests are parallel.
+  Native regressions cover roomy, narrow and short viewports, repeated
+  expansion, shape and connector transactions, alignment, rotation and
+  persistence. Light/dark GPU previews were inspected at wide and compact
+  sizes; physical touch and screen-reader acceptance remain open.
+- The affected library suites passed 1,851 tests with four ignored, and export,
+  corpus and fuzz-seed integrations passed 61 with three ignored. After the
+  final picker change, the complete app library suite passed 868 tests with two
+  ignored and 27 focused color tests passed with eight test threads. Native and
+  WebAssembly Clippy passed with warnings denied, and the final production web
+  build passed nine Chromium card and toolbar journeys.
+
 ### Selected-range text and lists: bounded model foundation; controls disabled
 
 The title remains a `String`, with a separate bounded `InlineText` value for

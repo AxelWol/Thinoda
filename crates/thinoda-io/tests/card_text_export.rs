@@ -118,6 +118,76 @@ fn whole_card_text_formatting_is_rendered_in_visual_and_editable_exports() {
 }
 
 #[test]
+fn single_line_card_alignment_moves_in_svg_and_editable_slides() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        for rotation in [0.0, 35.0] {
+            let mut sheet = Sheet::new("Board", "Anchor");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut card = Card::new(kind, Vec2::new(240.0, 140.0));
+            card.rotation = rotation;
+            let id = sheet.add_card("Aligned", Vec2::ZERO, card).unwrap();
+            sheet
+                .add_presentation_slide(
+                    "Card",
+                    PresentationSource::Branch(id),
+                    Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+                )
+                .unwrap();
+            for dark in [false, true] {
+                let options = ExportOptions {
+                    dark,
+                    ..Default::default()
+                };
+                let mut svg_positions = Vec::new();
+                let mut pptx_positions = Vec::new();
+                for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+                    sheet.topic_mut(id).unwrap().style.align = Some(align);
+                    let book = Workbook::new(sheet.clone());
+                    let svg = String::from_utf8(
+                        export_bytes_with_consent(&book, Format::Svg, &options, true).unwrap(),
+                    )
+                    .unwrap();
+                    let text = text_element(&svg, "Aligned");
+                    let x = text
+                        .split(" x=\"")
+                        .nth(1)
+                        .unwrap()
+                        .split('"')
+                        .next()
+                        .unwrap()
+                        .parse::<f32>()
+                        .unwrap();
+                    svg_positions.push(x);
+
+                    let xml = slide_xml(&export_presentation_pptx(&sheet, &options).unwrap());
+                    let end = xml.find("<a:t>Aligned</a:t>").unwrap();
+                    let start = xml[..end].rfind("<p:sp>").unwrap();
+                    let x = xml[start..end]
+                        .split("<a:off x=\"")
+                        .nth(1)
+                        .unwrap()
+                        .split('"')
+                        .next()
+                        .unwrap()
+                        .parse::<i64>()
+                        .unwrap();
+                    pptx_positions.push(x);
+                }
+                assert!(
+                    svg_positions[0] + 10.0 < svg_positions[1]
+                        && svg_positions[1] + 10.0 < svg_positions[2],
+                    "{kind:?} rotation={rotation} dark={dark}: {svg_positions:?}"
+                );
+                assert!(
+                    pptx_positions[0] < pptx_positions[1] && pptx_positions[1] < pptx_positions[2],
+                    "{kind:?} rotation={rotation} dark={dark}: {pptx_positions:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn each_card_text_decoration_changes_raster_and_pdf_output() {
     for kind in [CardKind::Sticky, CardKind::Text] {
         let mut sheet = Sheet::new("Board", "Anchor");

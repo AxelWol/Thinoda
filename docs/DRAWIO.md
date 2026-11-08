@@ -497,23 +497,35 @@ Each phase: implement → tests → CI gates (fmt, clippy native+wasm32 `-D warn
 importer mutation tests, fuzz smoke, browser tests when UI touched) → written critique →
 commit with explicit pathspecs (never `git add -A`).
 
-| # | Phase | Depends on | Outcome |
-|---|---|---|---|
-| 0 | Foundations | — | ADR/issue, corpus, provenance, consumer inventory, benchmarks, docs |
-| 1 | Shape placement, quick actions & perimeters | 0 | draw.io-style pick / hover-edit / click-to-create, direction arrows, quick-shape popover, floating toolbars, true-outline connectors |
-| 2 | Codec, AST & security | 0 | Bounded read/write of every container to typed AST |
-| 3 | Core scene model & round-trip contract | 0 | Hierarchy, version-gated fields, ownership/passthrough, marker migration |
-| 4 | Renderer-neutral primitives & parity | 3 | One scene description for canvas + all exports |
-| 5 | Stencil engine & generic baseline | 3, 4 | Stencil parser, core JS shapes, constraints → ports, bundled generic libs |
-| 6 | Import MVP | 2, 3, 4, 5 | Open `.drawio` → board sheets, diagnostics, page links |
-| 7 | Editable document contract & save-back | 6 | Save `.drawio` in place, preflight, round-trip guarantee |
-| 8 | Connector editing UX | 1, 7 | Waypoints, ports, markers, routes, jumps |
-| 9 | Style, text, data UX + library sections | 1, 5, 7 | Inspector, rich labels, links/properties, picker sections |
-| 10 | Layers, containers, swimlanes, tables | 7 | Structure editing |
-| 11 | Embedded containers & clipboard | 7 | `.drawio.svg/png` read+write, html/pdf/`#R`, clipboard interop |
-| 12 | Vendor library download | 5, 9 | Optional libraries manager |
-| 13 | Advanced fidelity | 7 | Sketch, math, placeholders, adaptive colors, page view, tooltips |
-| 14 | Hardening & release | all | Perf budgets, fuzz, a11y, i18n, docs |
+Status describes the entire phase, not an individual checkpoint. A phase is
+complete only after its acceptance criteria, tests and written critique are
+complete. The import MVP is complete for the board model available at Milestone
+A; it is not completion of the broader Phase 6 requirements below.
+
+| # | Phase | Status | Depends on | Outcome |
+|---|---|---|---|---|
+| 0 | Foundations | Partial | — | ADR/issue, complete corpus, provenance, consumer and interaction inventories, benchmarks, docs |
+| 1 | Shape placement, quick actions & perimeters | Partial | 0 | draw.io-style pick / hover-edit / click-to-create, direction arrows, quick-shape popover, floating toolbars, true-outline connectors |
+| 2 | Codec, AST & security | Partial | 0 | Bounded read/write of every container to typed AST |
+| 3 | Core scene model & round-trip contract | Partial | 0 | Hierarchy, version-gated fields, ownership/passthrough, marker migration |
+| 4 | Renderer-neutral primitives & parity | Partial | 3 | One scene description for canvas + all exports |
+| 5 | Stencil engine & generic baseline | Partial | 3, 4 | Stencil parser, core JS shapes, constraints → ports, bundled generic libs |
+| 6 | Import MVP | MVP complete; phase partial | 2, 3, 4, 5 | Open `.drawio` → board sheets, diagnostics, hierarchy, layers and page links |
+| 7 | Editable document contract & save-back | Partial | 6 | Save `.drawio` in place, preflight, round-trip guarantee |
+| 8 | Connector editing UX | Partial | 1, 7 | Waypoints, ports, markers, routes, jumps |
+| 9 | Style, text, data UX + library sections | Partial | 1, 5, 7 | Inspector, rich labels, links/properties, picker sections |
+| 10 | Layers, containers, swimlanes, tables | Partial | 7 | Structure editing beyond current frame approximations |
+| 11 | Embedded containers & clipboard | Partial | 7 | `.drawio.svg/png` read+write, html/pdf/`#R`, clipboard interop |
+| 12 | Vendor library download | Open | 5, 9 | Optional libraries manager |
+| 13 | Advanced fidelity | Open | 7 | Sketch, math, placeholders, adaptive colors, page view, tooltips |
+| 14 | Hardening & release | Partial | all | Perf budgets, fuzz, a11y, i18n, docs |
+
+The completed marker, contextual-toolbar and adjustable-radius slices below do
+not close their parent phases. Fixed ports, advanced routing, generic stencils,
+source-preserving save-back, bounded PDF import, the full fuzz campaign and
+real-device/accessibility acceptance remain open. The combined Freeform,
+ink, clipboard, presentation and release gates are tracked in
+[PLAN.md](PLAN.md#latest-task-and-release-continuation).
 
 **User-directed continuation:** update the target-specific canvas context menus so
 Image card is in Tools, Zones immediately follows Styles, and Board is followed
@@ -543,6 +555,35 @@ Keep the board rail permanently low enough to leave room for these strips,
 including in compact windows; opening a strip must not move the rail. Verify
 tool values and dispatch, focus and input ownership, accessibility,
 localization, and window/sheet transitions.
+
+**Reported follow-ups — completed locally:** left, center and right alignment
+now visibly position the complete title row inside sticky notes and text cards,
+including the editor and supported exports. Expanded shape and connector color
+mixers grow to their contents when the viewport allows and scroll when it does
+not. Tests and the critique below cover the requested slices; they do not close
+the broader rendering, accessibility or device-acceptance phases.
+
+**Card alignment and color mixer — critique:** the title row includes TODO,
+marker, link and note adornments, so their widths must also be reserved before
+wrapping. Ordinary topics and image cards retain their previous layout.
+Oversized adornments or very narrow cards can still overflow, and rotated card
+editors remain upright at the rotated title position. draw.io alignment
+interchange covers sticky and text cards, not general shape labels or
+source-preserving save-back.
+
+Opening a mixer must not pin an automatic color or create an undo step, but a
+deliberate edit can still choose that same color as an explicit override.
+Native regressions cover selection ownership, cancellation, undo/redo,
+persistence, compact windows and both themes. The all-language sizing check
+runs in a child process to avoid races from the process-wide locale. The
+affected library suites passed 1,851 tests with four ignored, and export,
+corpus and fuzz-seed integrations passed 61 with three ignored. After the final
+picker change, the complete app library suite passed 868 tests with two ignored,
+and 27 focused color tests passed with eight test threads. Native and
+WebAssembly Clippy passed with warnings denied; a final production web build
+passed nine Chromium card and toolbar journeys. Light/dark GPU previews were
+inspected in wide and compact windows. Physical touch, screen readers and
+external Office acceptance remain open.
 
 **FIM tab slice — critique:** visibility follows FIM data on the active sheet,
 not the current topic selection, so the document-level inspector remains
@@ -788,6 +829,18 @@ connections arrive in Phase 8 without changing the gestures).
   admission stops. Its [cross-reference traversal](https://github.com/Xero-Team/zpdf/blob/8779a86/crates/zpdf-parser/src/xref.rs)
   does not expose a caller-controlled aggregate decoding budget. These controls
   alone do not satisfy the importer's strict, aggregate-bounded requirement.
+- `lopdf` 0.46.0 offers strict parsing and a
+  [load-time decompression limit](https://docs.rs/lopdf/0.46.0/lopdf/struct.LoadOptions.html)
+  for each object or cross-reference stream, but that limit defaults to
+  unbounded and is not an aggregate budget across the document. Multiple
+  streams can therefore exceed the intended total before the caller extracts
+  an attachment. Do not add it as-is; evaluate a parser or controlled fork with
+  an enforceable aggregate budget, including WebAssembly compatibility.
+- `oxpdf` advertises bounded parsing, but its
+  [1.5.0 registry release](https://crates.io/api/v1/crates/oxpdf/1.5.0) is
+  yanked as of this review. Its published claims are not evidence of an
+  aggregate budget or WebAssembly suitability; do not adopt it without a fresh
+  registry and source review.
 
 ### Phase 12 — Vendor library download (`p12-vendor-libraries`)
 - Libraries manager; pinned manifest (URL, version, SHA-256, license URL); cache dir /
