@@ -1047,7 +1047,7 @@ fn ink_tessellated_mesh(
 }
 
 /// Resolve a board label's text colour and the opaque backdrop it is judged against.
-pub(crate) fn board_label_colors(
+pub fn board_label_colors(
     sheet: &Sheet,
     style: &thinoda_core::board::ObjectStyle,
     dark: bool,

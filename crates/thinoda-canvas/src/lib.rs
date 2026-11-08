@@ -54,8 +54,8 @@ pub use actions::{Action, BoardAction, FloatingArrangement, apply_action, apply_
 pub use measure::EguiMeasure;
 pub use minimap::MinimapLabels;
 pub use render::{
-    PaintOptions, Xf, automatic_board_stroke, color32, paint_map, paint_marker_colored,
-    paint_thumbnail, resource_preview_texture,
+    PaintOptions, Xf, automatic_board_stroke, board_label_colors, color32, paint_map,
+    paint_marker_colored, paint_thumbnail, resource_preview_texture,
 };
 pub use view::{
     AddControlLabels, BoardLabels, BoardTool, CanvasOutput, MapCanvas, MapView, NewTopicTitles,

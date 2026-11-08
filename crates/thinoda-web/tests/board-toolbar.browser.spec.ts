@@ -82,3 +82,67 @@ test("selected-topic actions leave the Affinity starter notes visible", async ({
     );
     expect(heading?.todo).toBe(false);
 });
+
+test("the selected-shape toolbar changes and restores label text color", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    await canvas.focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Hide central topic");
+    await page.keyboard.press("Escape");
+    await frames(page);
+    await command(page, "Format Panel");
+    await command(page, "Shape tool");
+    await canvas.click({ position: { x: 450, y: 350 } });
+    await frames(page);
+    await canvas.focus();
+    await page.keyboard.press("F2");
+    await frames(page);
+    const input = page.locator("input[type='text']");
+    await expect(input).toBeFocused();
+    await input.pressSequentially("Colored browser shape");
+    await page.keyboard.press("Enter");
+    await frames(page);
+
+    const shape = async (name: string) => {
+        const workbook: {
+            active_sheet: number;
+            sheets: { canvas: { objects: {
+                kind: { shape?: { label?: string } };
+                style: { text_color?: string };
+            }[] } }[];
+        } = JSON.parse(zipEntry(await saveAs(page, name), "content.json").toString("utf8"));
+        const found = workbook.sheets[workbook.active_sheet].canvas.objects.find(
+            (object) => object.kind.shape?.label === "Colored browser shape",
+        );
+        if (!found) throw new Error("The labeled shape was not saved");
+        return found;
+    };
+
+    expect((await shape("shape-color-auto.thinoda")).style.text_color).toBeUndefined();
+    // The egui toolbar is drawn inside the canvas rather than exposed as DOM buttons.
+    await canvas.click({ position: { x: 277, y: 76 } });
+    await frames(page);
+    await canvas.click({ position: { x: 277, y: 145 } });
+    await frames(page);
+    await page.keyboard.press("Escape");
+    await frames(page);
+    expect((await shape("shape-color-blue.thinoda")).style.text_color).toBe("#2E7CF6");
+
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    expect((await shape("shape-color-undo.thinoda")).style.text_color).toBeUndefined();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    expect((await shape("shape-color-redo.thinoda")).style.text_color).toBe("#2E7CF6");
+
+    await canvas.click({ position: { x: 277, y: 76 } });
+    await frames(page);
+    await canvas.click({ position: { x: 290, y: 112 } });
+    await frames(page);
+    await page.keyboard.press("Escape");
+    await frames(page);
+    expect((await shape("shape-color-reset.thinoda")).style.text_color).toBeUndefined();
+});

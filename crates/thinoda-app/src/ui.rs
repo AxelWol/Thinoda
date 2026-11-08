@@ -2101,7 +2101,7 @@ impl ThinodaApp {
             && self
                 .doc()
                 .is_some_and(|doc| crate::board_ui::has_ink_options(doc.view.board_tool));
-        let show_connector_options = show_board_controls && self.has_connector_options();
+        let show_object_options = show_board_controls && self.has_board_object_options();
         let card_text_open = if show_doc
             && self.mode == CenterMode::Map
             && !self.task_table_visible()
@@ -2111,7 +2111,7 @@ impl ThinodaApp {
             && !self.dialogs.settings
             && !self.dialogs.about
         {
-            self.card_text_toolbar(ui, show_ink_options || show_connector_options)
+            self.card_text_toolbar(ui, show_ink_options || show_object_options)
         } else {
             ctx.data_mut(|data| {
                 data.remove::<CardTextTarget>(card_text_slot(self.current_viewport));
@@ -2169,15 +2169,16 @@ impl ThinodaApp {
                 Self::close_ink_option_popups(&ctx, self.current_viewport);
                 None
             };
-            let connector_toolbar = if show_connector_options {
-                self.connector_options_toolbar(&ctx, center.response.rect, card_text_open)
+            let object_toolbar = if show_object_options {
+                self.board_object_options_toolbar(&ctx, center.response.rect, card_text_open)
             } else {
+                Self::close_connector_popups(&ctx, self.current_viewport);
                 None
             };
-            if show_connector_options != self.has_connector_options() {
+            if show_object_options != self.has_board_object_options() {
                 ctx.request_repaint();
             }
-            let options_toolbar = ink_toolbar.or(connector_toolbar);
+            let options_toolbar = ink_toolbar.or(object_toolbar);
             let editing_toolbar = if card_text_open || options_toolbar.is_some() {
                 None
             } else {
@@ -2186,9 +2187,6 @@ impl ThinodaApp {
             let board_toolbar = if (card_text_open || options_toolbar.is_some())
                 && !crate::board_ui::board_toolbar_fits_below_context(center.response.rect)
             {
-                if connector_toolbar.is_none() {
-                    Self::close_connector_popups(&ctx, self.current_viewport);
-                }
                 None
             } else {
                 self.board_toolbar(&ctx, center.response.rect, editing_toolbar)

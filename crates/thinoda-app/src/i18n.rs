@@ -677,6 +677,7 @@ const DE: &[(&str, &str)] = &[
     ("Opacity", "Deckkraft"),
     ("Stroke", "Strich"),
     ("Connector options", "Verbindungsoptionen"),
+    ("Shape options", "Formoptionen"),
     ("Connector route", "Verlauf der Verbindungslinie"),
     ("Connector color", "Farbe der Verbindungslinie"),
     ("Connector width", "Breite der Verbindungslinie"),

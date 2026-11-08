@@ -23,6 +23,7 @@ Bar|Barra
 Diagonal bar|Barra diagonal
 Legacy arrowheads approximated in draw.io|Pontas de seta anteriores aproximadas no draw.io
 Ink settings|Configurações da entrada à mão livre
+Shape options|Opções da forma
 Input source|Origem de entrada detectada
 Copied sheet and SVG to clipboard|Folha e SVG copiados para a área de transferência
 Copied sheet as text only; SVG was not copied|Folha copiada apenas como texto; o SVG não foi copiado

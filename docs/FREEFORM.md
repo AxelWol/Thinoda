@@ -572,8 +572,15 @@ semantics and require native v6.
   canvas, above the lowered board toolbox. For ink, expose colour, width,
   opacity, and the supported pen/highlighter stroke types; erasers expose their
   radius. A selected connector gets a separate strip for its route, arrows,
-  colour, width, label editing, and formatting shortcut. The canvas remains
-  stationary and the strips scroll in compact windows.
+  colour, width, label editing, and formatting shortcut. A selected shape gets
+  the same style of strip for changing its shape, fill, outline, outline width,
+  label text colour, label editing, and further formatting. Text colour applies
+  to the whole label; Auto restores the canvas's contrast-based colour. The
+  canvas remains stationary and the strips scroll in compact windows.
+  The selected shape or connector remains editable while a shape tool is armed;
+  clicking an empty part of the canvas still places the armed shape.
+  An open picker consumes the first outside click to dismiss itself, so click
+  the canvas again to place a shape.
   When Whole-card text is also open, the strips share the row without overlap.
   On canvases too short for both the strip and toolbox, the toolbox is hidden
   until the strip closes; the existing menus remain available.

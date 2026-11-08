@@ -529,6 +529,12 @@ Whole-card text strip must overlay the canvas without changing its bounds.
 Move the selected connector's properties and quick actions from the board rail
 into their own top contextual strip, preserving their behavior, ownership and
 accessibility while allowing it to coexist with the other strips.
+Move the selected shape's Change shape, Fill color, Outline color, Outline width,
+Edit label and formatting actions from the board rail into a matching top
+contextual strip. Add a Text color control for every shape label, including an
+automatic-color option and the existing palette/custom picker. Preserve undo,
+selection and popup ownership, compact layouts, localization, and the label's
+appearance in editing, persistence and supported exports.
 Keep the board rail permanently low enough to leave room for these strips,
 including in compact windows; opening a strip must not move the rail. Verify
 tool values and dispatch, focus and input ownership, accessibility,
@@ -557,10 +563,37 @@ remain open.
 its route, start/end arrows, colour, width, label editor and format shortcut in
 a horizontally scrollable top overlay instead of the board rail. The selection,
 undo steps, guarded popup ownership and disabled-state behavior are unchanged;
-selected shape controls remain in the rail. The overlay leaves the canvas and
-rail stationary, and remains usable when a very short canvas hides the rail.
+shape controls were still in the rail at this point, superseded by the
+shape-toolbar slice below. The overlay leaves the canvas and rail stationary,
+and remains usable when a very short canvas hides the rail.
 Keyboard, compact layouts, localization and canceled/multitouch actions are
 covered. Physical stylus and assistive-technology acceptance remain open.
+
+**Shape-toolbar slice — critique:** a single selected shape now shows its
+shape, fill, outline, outline width, text colour, label editor and format
+shortcut in the same kind of top overlay. The left rail is again only for
+board tools. Text colour uses the existing whole-label style; Auto uses the
+same contrast calculation as the canvas and inline editor. Selection and
+revision guards, popup ownership, disabled states, palette alpha, undo and
+redo remain in force. Shape and connector options remain available while a
+shape tool is armed, without preventing another placement; switching tools
+invalidates open colour drafts. Keyboard undo and redo also work while the
+contextual strip retains focus, following the active shortcut profile without
+intercepting text edits or open popups. An open picker consumes the first outside
+click to dismiss itself, following the existing popup behavior. The strip
+scrolls in compact windows; very short canvases hide the rail rather than
+shifting it. Regression coverage includes
+all shape kinds, empty labels, stale colour drafts, keyboard use, themes,
+localization, and native, clipboard, draw.io and SVG output. Rich-text span
+colours are not introduced, and physical-device and screen-reader acceptance
+remain open.
+
+**Shape label edit-mode clarity — planned:** double-clicking starts inline
+label editing, but the opaque editor backdrop can obscure a shape's outline
+and an empty editor gives no indication of the active mode. Preserve the
+visible shape geometry and provide localized, accessible guidance for entering
+text, finishing and canceling, without regressing contrast, alignment, IME
+composition or existing label-edit behavior.
 
 **Pen/touch slice — critique:** a confirmed pen-owned browser stroke retains its
 samples when later verified touch contacts arrive, including a pen-first start
@@ -854,12 +887,9 @@ flips and stored `Perimeter` overrides arrive with the Phase 3 model. Tests:
 `connectors_end_on_shape_perimeters` (every `ShapeKind`, rotated) and
 `polygon_clip_takes_the_outermost_crossing` in `scene/tests.rs`.
 
-**Phase 1d — contextual edge and shape controls.** Selecting a single connector or
-shape fills the contextual section of the left board toolbar. draw.io shows these on
-a floating toolbar near the selection. Thinoda already shows connector controls in the
-left toolbar, so shapes use the same place rather than a second floating bar. This
-keeps one visual language and one keyboard path, and nothing covers the drawing. A
-floating variant can follow if users miss it.
+**Phase 1d — contextual edge and shape controls.** This slice originally placed
+selected-object actions in the left board toolbar. The later connector- and
+shape-toolbar slices supersede that placement with stationary top overlays.
 - **Shapes**: "Change shape" opens the shape library with the current shape selected;
   "Fill color" (with "No fill"), "Outline color" (with "Auto") and "Outline width".
   The size, label, description and opacity stay unchanged. Choosing a width while the

@@ -75,6 +75,25 @@ fn close_popup(h: &mut Harness<'_, ThinodaApp>) {
 }
 
 #[test]
+fn keyboard_undo_redo_works_from_connector_options() {
+    let (app, id) = app_with_connector();
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    click(&mut h, Role::Button, "Arrow at start");
+    h.get_by_role_and_label(Role::Button, "Arrow at start")
+        .focus();
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_start);
+
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(3);
+    assert!(!connector(h.state(), id).arrow_start);
+
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_start);
+}
+
+#[test]
 fn selected_connector_properties_overlay_above_stationary_toolbox() {
     for size in [vec2(320.0, 240.0), vec2(1000.0, 700.0)] {
         let (mut app, id) = app_with_connector();
@@ -131,6 +150,20 @@ fn selected_connector_properties_overlay_above_stationary_toolbox() {
         assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
         assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
     }
+}
+
+#[test]
+fn armed_shape_tool_can_edit_a_selected_connector() {
+    let (mut app, id) = app_with_connector();
+    let tool = BoardTool::Shape(ShapeKind::Rectangle);
+    app.doc_mut().unwrap().view.set_board_tool(tool);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+
+    click(&mut h, Role::Button, "Arrow at start");
+    assert!(connector(h.state(), id).arrow_start);
+    assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
+    assert_eq!(h.state().doc().unwrap().view.board_tool, tool);
+    assert_eq!(h.state().doc().unwrap().doc.sheet().canvas.objects.len(), 1);
 }
 
 #[test]
@@ -513,7 +546,14 @@ fn escape_cancels_the_width_editor_without_changing_the_connector() {
 
 #[test]
 fn closing_a_stale_width_editor_releases_its_focus_and_draft() {
-    for reason in ["selection", "revision", "mode", "modal"] {
+    for reason in [
+        "selection",
+        "revision",
+        "mode",
+        "shape-tool",
+        "connector-tool",
+        "modal",
+    ] {
         let (mut app, first) = app_with_connector();
         let second = app
             .doc_mut()
@@ -557,6 +597,18 @@ fn closing_a_stale_width_editor_releases_its_focus_and_draft() {
                 })
                 .unwrap(),
             "mode" => h.state_mut().mode = CenterMode::Outliner,
+            "shape-tool" => h
+                .state_mut()
+                .doc_mut()
+                .unwrap()
+                .view
+                .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle)),
+            "connector-tool" => h
+                .state_mut()
+                .doc_mut()
+                .unwrap()
+                .view
+                .set_board_tool(BoardTool::Connector),
             "modal" => h.state_mut().dialogs.settings = true,
             _ => unreachable!(),
         }
@@ -568,6 +620,12 @@ fn closing_a_stale_width_editor_releases_its_focus_and_draft() {
             "{reason}"
         );
         assert!(!h.ctx.text_edit_focused(), "{reason}");
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), before, "{reason}");
+        if reason == "connector-tool" {
+            // Enter creates a connector in this tool; disarm it before retrying the draft key.
+            h.key_press(Key::Escape);
+            h.run_steps(3);
+        }
         h.key_press(Key::Enter);
         h.run_steps(3);
         assert_eq!(h.state().doc().unwrap().doc.state_id(), before, "{reason}");

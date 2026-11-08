@@ -64,7 +64,7 @@ mod minimap_view_tests;
 /// Active freeform tool. Hosts may change it with [`MapView::set_board_tool`].
 ///
 /// The default, `Select`, preserves the normal mind-map interaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BoardTool {
     #[default]
     Select,
