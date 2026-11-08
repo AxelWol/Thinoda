@@ -142,7 +142,8 @@ persistent warning reports possible omissions and counts omitted first-page
 container frames and additional pages; children of those frames become free
 board items. It also reports connector attachments that may have been
 detached. Malformed connector points are discarded rather than replaced with
-invented coordinates. If the first page has no pasteable items, the paste is
+invented coordinates; a shape with malformed geometry and its children are
+omitted with a warning. If the first page has no pasteable items, the paste is
 rejected and later pages are not pasted.
 
 ## Durable browser documents (C1 platform integration)

@@ -1192,11 +1192,47 @@ build passed synthetic malformed and detached connector paste/undo journeys in
 Chromium, Firefox and WebKit; screenshots showed the notice, while app tests
 assert its wording and lifetime. A 22-second AddressSanitizer smoke completed
 11,529 executions without a reported failure; this does not meet the separate
-30-minute acceptance campaign gate. The separate `mxGeometry`
-x/y/width/height parser can still silently fall back to zero for malformed
-attributes or clamp negative dimensions; it needs its own validation. This
-safeguard does not preserve malformed source data, establish complete geometry
-fidelity, or replace real system-clipboard and assistive-technology acceptance.
+30-minute acceptance campaign gate. At that checkpoint, the separate
+`mxGeometry` x/y/width/height parser still needed validation; the following
+checkpoint addresses it. These safeguards do not preserve malformed source
+data, establish complete geometry fidelity, or replace real system-clipboard
+and assistive-technology acceptance.
+
+**Malformed vertex geometry safeguards and rubber-duck review.** An explicitly
+empty, invalid or non-finite `mxGeometry` x, y, width or height, or a negative
+width or height, now reports unsupported data instead of silently substituting
+or clamping a coordinate. A vertex with such a frame and its descendants are
+omitted rather than placed using a fabricated parent geometry. Missing
+attributes still default to zero, negative positions and zero dimensions
+remain valid, and unrelated vertices survive. Importing a file or published
+link retains the conversion-consent flow; paste reports possible omissions and
+remains one undoable edit. The original source is not overwritten.
+
+The review checked both orders of deferred edge resolution: an edge to an
+omitted vertex is retained as a reported detached connector only when an
+explicit usable fallback exists; otherwise it is omitted with a warning.
+Malformed edge or edge-label frame attributes also warn, but do not discard an
+otherwise usable connector or its label because those frame fields are not
+currently used for their placement. Offsets and waypoint validation remain
+independent. If the first clipboard page contains no pasteable items, the
+paste is rejected without changing the document. Warnings are aggregated, can
+include later unpasted pages and do not identify individual cells.
+
+The draw.io importer, corpus, deterministic fuzz seeds, app clipboard and link
+tests passed, as did strict native, WebAssembly and fuzz Clippy. An independent
+inspection of the 88 supplied XML/diagram files found no rejected attributes
+among 8,099 vertex geometries; this checks these four frame attributes, not all
+conversion fidelity. A debug web build passed the synthetic paste/undo journey
+in Chromium, Firefox and WebKit; screenshots showed the notice, while app tests
+assert its wording and lifetime. A 21-second AddressSanitizer smoke completed
+10,148 executions without a reported failure; it is not the separate 30-minute
+acceptance campaign.
+
+This is a loss safeguard, not malformed-data recovery or lossless save-back.
+Other style and metadata values may still be approximated or defaulted, valid
+numeric attributes can still produce unsupported composite geometry, and
+warning details are not cell-specific. Connector attachment preservation, real
+system clipboard, accessibility and device acceptance remain open.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

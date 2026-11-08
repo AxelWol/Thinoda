@@ -2742,6 +2742,41 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_reports_malformed_shape_geometry_and_preserves_undo() {
+        use crate::app::Cmd;
+
+        let bad = r#"<mxCell id="bad" value="Bad" vertex="1" parent="1"><mxGeometry x="invalid" width="40" height="50" as="geometry"/></mxCell>"#;
+        let safe = r#"<mxCell id="safe" value="Safe" vertex="1" parent="1"><mxGeometry x="100" width="40" height="50" as="geometry"/></mxCell>"#;
+        for include_safe in [false, true] {
+            let text = format!(
+                r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>{bad}{}</root></mxGraphModel>"#,
+                if include_safe { safe } else { "" }
+            );
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let items = board_item_count(&app);
+            clipboard.borrow_mut().text = text;
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            if include_safe {
+                assert_eq!(board_item_count(&app), items + 1);
+                app.toasts.tick(60.0);
+                assert!(app.toasts.texts().any(|text| text
+                    == crate::i18n::t(
+                        "Pasted from draw.io; some content may have been omitted or simplified"
+                    )));
+                app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            } else {
+                assert!(app.toasts.texts().any(|text| {
+                    text.contains(crate::i18n::t("The draw.io page has no pasteable items."))
+                }));
+            }
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_explains_when_the_first_page_has_no_pasteable_items() {
         use crate::app::Cmd;
 

@@ -947,6 +947,7 @@ struct Geometry {
     y: f32,
     width: f32,
     height: f32,
+    invalid_frame: bool,
     relative: bool,
     source: Option<Vec2>,
     target: Option<Vec2>,
@@ -970,24 +971,19 @@ struct Cell {
     tooltip: Option<String>,
 }
 
-fn number(element: &Element, key: &str) -> f32 {
-    element
-        .attr(key)
-        .and_then(|v| v.trim().parse::<f32>().ok())
-        .filter(|v| v.is_finite())
-        .unwrap_or(0.0)
-}
-
-fn point(element: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Option<Vec2> {
-    let coordinate = |key| match element.attr(key) {
+fn number(element: &Element, key: &str) -> Option<f32> {
+    match element.attr(key) {
         None => Some(0.0),
         Some(value) => value
             .trim()
             .parse::<f32>()
             .ok()
             .filter(|value| value.is_finite()),
-    };
-    match (coordinate("x"), coordinate("y")) {
+    }
+}
+
+fn point(element: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Option<Vec2> {
+    match (number(element, "x"), number(element, "y")) {
         (Some(x), Some(y)) => Some(Vec2::new(x, y)),
         _ => {
             warnings.insert(ImportWarning::Other);
@@ -1000,11 +996,26 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
     let Some(element) = element else {
         return Geometry::default();
     };
+    let (x, y, width, height, invalid_frame) = match (
+        number(element, "x"),
+        number(element, "y"),
+        number(element, "width"),
+        number(element, "height"),
+    ) {
+        (Some(x), Some(y), Some(width), Some(height)) if width >= 0.0 && height >= 0.0 => {
+            (x, y, width, height, false)
+        }
+        _ => {
+            warnings.insert(ImportWarning::Other);
+            (0.0, 0.0, 0.0, 0.0, true)
+        }
+    };
     let mut geometry = Geometry {
-        x: number(element, "x"),
-        y: number(element, "y"),
-        width: number(element, "width").max(0.0),
-        height: number(element, "height").max(0.0),
+        x,
+        y,
+        width,
+        height,
+        invalid_frame,
         relative: element.attr("relative") == Some("1"),
         ..Geometry::default()
     };
@@ -1632,6 +1643,11 @@ impl<'a> PageImport<'a> {
             for child in self.children[index].clone() {
                 self.visit(child, context, depth + 1);
             }
+            return;
+        }
+        if cell.geometry.invalid_frame {
+            log::warn!("draw.io cell {} skipped: malformed geometry", cell.id);
+            self.warn(ImportWarning::Other);
             return;
         }
         let rect = self.vertex_rect(cell, context);

@@ -2602,6 +2602,127 @@ fn malformed_offsets_and_ink_points_do_not_keep_partial_coordinates() {
 }
 
 #[test]
+fn malformed_vertex_geometry_is_reported_without_fabricating_a_shape() {
+    for (index, field) in ["x", "y", "width", "height"].into_iter().enumerate() {
+        for value in ["", "  ", "invalid", "NaN", "inf", "1e1000"] {
+            let mut numbers = ["10", "20", "40", "50"];
+            numbers[index] = value;
+            let [x, y, width, height] = numbers;
+            let xml = page(&format!(
+                r#"<mxCell id="bad" value="Bad" vertex="1" parent="1"><mxGeometry x="{x}" y="{y}" width="{width}" height="{height}" as="geometry"/></mxCell>
+                <mxCell id="safe" value="Safe" vertex="1" parent="1"><mxGeometry x="100" y="50" width="40" height="50" as="geometry"/></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings,
+                vec![ImportWarning::Other],
+                "{field}={value}"
+            );
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings == vec![ImportWarning::Other]
+            ));
+            let sheet = &report.workbook.sheets[0];
+            assert_eq!(shapes(sheet).len(), 1, "{field}={value}");
+            assert_eq!(shapes(sheet)[0].label(), "Safe");
+            sheet.validate().unwrap();
+        }
+    }
+}
+
+#[test]
+fn malformed_vertex_geometry_is_reported_by_links_and_clipboard() {
+    let xml = page(
+        r#"<mxCell id="bad" value="Bad" vertex="1" parent="1"><mxGeometry x="invalid" width="40" height="50" as="geometry"/></mxCell>
+        <mxCell id="safe" value="Safe" vertex="1" parent="1"><mxGeometry x="100" width="40" height="50" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.warnings, report.warnings);
+    assert_eq!(linked.workbook, report.workbook);
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert_eq!(pasted.warnings, report.warnings);
+}
+
+#[test]
+fn negative_dimensions_are_rejected_but_zero_sizes_and_negative_positions_remain_valid() {
+    for (width, height) in [("-2", "20"), ("20", "-0.5")] {
+        let xml = page(&format!(
+            r#"<mxCell id="bad" vertex="1" parent="1"><mxGeometry x="-10" y="-20" width="{width}" height="{height}" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Other]);
+        assert!(shapes(&report.workbook.sheets[0]).is_empty());
+    }
+    let sheet = clean(&page(
+        r#"<mxCell id="zero" vertex="1" parent="1"><mxGeometry x="-10" y="-20" width="0" height="0" as="geometry"/></mxCell>"#,
+    ));
+    assert_eq!(shapes(&sheet)[0].rect, rect(-10.0, -20.0, 0.0, 0.0));
+}
+
+#[test]
+fn invalid_parent_geometry_omits_its_subtree_and_resolves_connectors_conservatively() {
+    let cells = r#"<mxCell id="group" style="group" vertex="1" parent="1"><mxGeometry x="invalid" y="200" width="200" height="120" as="geometry"/></mxCell>
+        <mxCell id="child" value="Child" vertex="1" parent="group"><mxGeometry x="10" y="20" width="30" height="40" as="geometry"/></mxCell>
+        <mxCell id="safe" value="Safe" vertex="1" parent="1"><mxGeometry x="500" y="50" width="40" height="50" as="geometry"/></mxCell>"#;
+    for edge_first in [true, false] {
+        for fallback in [true, false] {
+            let point = if fallback {
+                r#"<mxPoint x="7" y="8" as="sourcePoint"/>"#
+            } else {
+                ""
+            };
+            let edge = format!(
+                r#"<mxCell id="edge" edge="1" source="child" target="safe" parent="1" style="endArrow=none;"><mxGeometry relative="1" as="geometry">{point}</mxGeometry></mxCell>"#
+            );
+            let xml = if edge_first {
+                page(&format!("{edge}{cells}"))
+            } else {
+                page(&format!("{cells}{edge}"))
+            };
+            let report = load(&xml);
+            assert!(report.warnings.contains(&ImportWarning::Other));
+            assert_eq!(
+                report.warnings.contains(&ImportWarning::DetachedConnectors),
+                fallback
+            );
+            let sheet = &report.workbook.sheets[0];
+            assert_eq!(shapes(sheet).len(), 1);
+            assert_eq!(shapes(sheet)[0].label(), "Safe");
+            let edges = connectors(sheet);
+            assert_eq!(edges.len(), usize::from(fallback));
+            if fallback {
+                assert_eq!(edges[0].from, Endpoint::Point(Vec2::new(7.0, 8.0)));
+                assert_eq!(edges[0].to, Endpoint::Object(shapes(sheet)[0].id));
+            }
+            sheet.validate().unwrap();
+        }
+    }
+}
+
+#[test]
+fn invalid_unused_edge_geometry_warns_without_omitting_attached_connectors_or_labels() {
+    let xml = page(
+        r#"<mxCell id="a" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>
+        <mxCell id="b" vertex="1" parent="1"><mxGeometry x="100" width="40" height="40" as="geometry"/></mxCell>
+        <mxCell id="e" edge="1" source="a" target="b" parent="1" style="endArrow=none;fontColor=#000000;"><mxGeometry x="NaN" relative="1" as="geometry"/></mxCell>
+        <mxCell id="label" value="Label" vertex="1" parent="e"><mxGeometry x="invalid" relative="1" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    let sheet = &report.workbook.sheets[0];
+    let shapes = shapes(sheet);
+    let edge = connectors(sheet)[0];
+    assert_eq!(edge.from, Endpoint::Object(shapes[0].id));
+    assert_eq!(edge.to, Endpoint::Object(shapes[1].id));
+    assert_eq!(edge.label, "Label");
+    sheet.validate().unwrap();
+}
+
+#[test]
 fn curved_waypoints_round_trip_and_orthogonal_hints_report_approximation() {
     let cell = |style: &str| {
         format!(

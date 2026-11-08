@@ -758,8 +758,9 @@ those system-owned controls. WinGet publishing remains paused.
   frames and additional pages; pasted container children become free items.
   Connector attachments that cannot be retained are also reported. Malformed
   connector points are discarded instead of being replaced with invented
-  coordinates. If the first page has no pasteable items, the paste is rejected
-  and later pages are not pasted.
+  coordinates; a shape with malformed geometry and its children are omitted
+  with a warning. If the first page has no pasteable items, the paste is
+  rejected and later pages are not pasted.
   See [draw.io support and limitations](docs/DRAWIO.md).
 - Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
