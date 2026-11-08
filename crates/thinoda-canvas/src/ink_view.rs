@@ -22,14 +22,16 @@ fn attempted_start(
     pen: &PenFrameData,
     controller: &InkController,
     canvas: Rect,
-) -> Option<(Pos2, Option<f32>)> {
+) -> Option<(usize, Pos2, Option<f32>)> {
     let frame_has_touch = events
         .iter()
         .any(|event| matches!(event, Event::Touch { .. }));
     events
         .iter()
         .enumerate()
-        .filter(|(_, event)| controller.accepts_start_event(event, frame_has_touch))
+        .filter(|(index, event)| {
+            controller.accepts_start_event(event, frame_has_touch, pen.sample(*index).is_some())
+        })
         .find_map(|(index, event)| {
             if pen.touch_pointer(index) && pen.touch_issue.is_none() {
                 return None;
@@ -49,8 +51,56 @@ fn attempted_start(
                 } => (*pos, pen.sample(index).map(|sample| sample.pressure)),
                 _ => return None,
             };
-            start_in_rect(canvas, pos).then_some((pos, pressure))
+            start_in_rect(canvas, pos).then_some((index, pos, pressure))
         })
+}
+
+pub(super) fn starts_confirmed_pen(
+    ui: &Ui,
+    view: &MapView,
+    response: &Response,
+    space: bool,
+) -> bool {
+    let ctx = ui.ctx();
+    if view.board_tool.ink_mode().is_none()
+        || view.ink_controller.has_pending_gesture()
+        || view.touch_navigation.is_some()
+        || !ui.is_enabled()
+        || egui::Popup::is_any_open(ctx)
+        || space
+        || !matches!(view.drag, Drag::None)
+        || view.board_input.is_active()
+        || view.relationship_drag.is_some()
+        || view.image_resize.is_some()
+    {
+        return false;
+    }
+    let (focused, events) = ctx.input(|input| (input.focused, input.events.clone()));
+    if !focused {
+        return false;
+    }
+    let viewport = ctx.viewport_id();
+    let mut pen = pen_input::peek(ctx, viewport, &events);
+    let touch = crate::touch_input::peek_pointer_frame(ctx, viewport, &events);
+    if pen.issue.is_some() || pen.canceled.is_some() || touch.issue.is_some() {
+        return false;
+    }
+    pen.touch_pointers = touch.pointers;
+    let canvas = view.canvas_rect.intersect(ui.clip_rect());
+    let Some((index, position, _)) = attempted_start(&events, &pen, &view.ink_controller, canvas)
+    else {
+        return false;
+    };
+    pen.sample(index).is_some()
+        && canvas.contains(position)
+        && !editor_contains_start(ctx, view, position)
+        && !ctx
+            .layer_id_at(position)
+            .is_some_and(|layer| layer != ui.layer_id())
+        && (response.contains_pointer()
+            || events
+                .iter()
+                .any(|event| matches!(event, Event::Touch { .. })))
 }
 
 fn start_in_rect(rect: Rect, position: Pos2) -> bool {
@@ -245,8 +295,8 @@ fn interact_events(
         && !view.board_input.is_active()
         && view.relationship_drag.is_none()
         && view.image_resize.is_none()
-        && !start.is_some_and(|(position, _)| editor_contains_start(ctx, view, position))
-        && !start.is_some_and(|(position, _)| {
+        && !start.is_some_and(|(_, position, _)| editor_contains_start(ctx, view, position))
+        && !start.is_some_and(|(_, position, _)| {
             ctx.layer_id_at(position)
                 .is_some_and(|layer| layer != ui.layer_id())
         })
@@ -256,7 +306,7 @@ fn interact_events(
         && pen.issue.is_none()
         && pen.touch_issue.is_none()
         && !view.ink_controller.has_pending_gesture()
-        && let Some((position, pressure)) = start
+        && let Some((_, position, pressure)) = start
         && let Err(error) = view
             .try_commit_edit(doc)
             .and_then(|_| view.try_commit_board_label(doc))

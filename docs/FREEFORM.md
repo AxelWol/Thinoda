@@ -540,6 +540,11 @@ harness replaces device or assistive-technology testing.
   conservatively correlates browser pen Pointer Events with egui pointer input;
   unmatched input is rejected or interrupted rather than attributed to a mouse.
   Pressure is persisted, but does not yet affect the rendered stroke.
+- When a confirmed browser pen starts first, subsequent verified touch contacts
+  do not interrupt its stroke or navigate the canvas; those contacts remain
+  suppressed until they end. The copied ink diagnostic identifies the input
+  source recognized by the host separately from the selected ink tool. A touch
+  that starts first is not reclassified or discarded as a palm.
 - Native Windows Ink, macOS tablet and Linux libinput pen identity and pressure
   still need platform investigation. Tilt, eraser end, hover, palm rejection
   and "draw with pen only" remain unsupported; physical devices and browser

@@ -356,9 +356,14 @@ impl PenBridge {
                 std::mem::take(&mut pending.overflowed),
             )
         };
-        let frame = self
-            .matcher
-            .match_frame(&input.events, &records, canceled, overflowed);
+        let touch = touch_input::peek_pointer_frame(ctx, input.viewport_id, &input.events);
+        let frame = self.matcher.match_frame_with_touch(
+            &input.events,
+            &records,
+            canceled,
+            overflowed,
+            &touch,
+        );
         if let Some(issue) = frame.issue {
             log::warn!("Browser pen input could not be correlated safely: {issue:?}");
         }

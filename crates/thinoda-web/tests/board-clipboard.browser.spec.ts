@@ -18,10 +18,14 @@ type TestClipboard = {
     writes: number;
     writeAttempts: number;
     plainWrites: number;
+    plainAttempts: number;
     reads: number;
     textReads: number;
     oversizedBlobReads: number;
     rejectWrites: boolean;
+    rejectSvgWrites: boolean;
+    rejectPlainWrites: boolean;
+    svgSupported: boolean;
     readMode: "normal" | "wrapped" | "missing-html" | "sanitized" | "changed-rich" |
         "changed-text" | "malformed" | "denied" | "missing-read" | "oversized-text" |
         "oversized-html";
@@ -187,10 +191,15 @@ async function paste(page: Page) {
 test.beforeEach(async ({ page, context }) => {
     await context.addInitScript(() => {
         const state: TestClipboard = {
-            items: [], writes: 0, writeAttempts: 0, plainWrites: 0, reads: 0, textReads: 0,
-            oversizedBlobReads: 0, rejectWrites: false, readMode: "normal",
+            items: [], writes: 0, writeAttempts: 0, plainWrites: 0, plainAttempts: 0,
+            reads: 0, textReads: 0, oversizedBlobReads: 0, rejectWrites: false,
+            rejectSvgWrites: false, rejectPlainWrites: false, svgSupported: true, readMode: "normal",
             holdWrite: false, releaseWrite: null, holdRead: false, releaseRead: null,
         };
+        Object.defineProperty(ClipboardItem, "supports", {
+            configurable: true,
+            value: (type: string) => type === "image/svg+xml" && state.svgSupported,
+        });
         Object.defineProperty(navigator, "clipboard", {
             configurable: true,
             value: {
@@ -200,11 +209,15 @@ test.beforeEach(async ({ page, context }) => {
                         await new Promise<void>((resolve) => { state.releaseWrite = resolve; });
                         state.releaseWrite = null;
                     }
-                    if (state.rejectWrites) throw new DOMException("Clipboard denied", "NotAllowedError");
+                    if (state.rejectWrites || (state.rejectSvgWrites && items[0].types.includes("image/svg+xml"))) {
+                        throw new DOMException("Clipboard denied", "NotAllowedError");
+                    }
                     state.items = items;
                     state.writes++;
                 },
                 async writeText(text: string) {
+                    state.plainAttempts++;
+                    if (state.rejectPlainWrites) throw new DOMException("Text clipboard denied", "NotAllowedError");
                     state.items = [new ClipboardItem({ "text/plain": new Blob([text], { type: "text/plain" }) })];
                     state.plainWrites++;
                 },
@@ -270,6 +283,100 @@ test.beforeEach(async ({ page, context }) => {
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     await openBoard(page);
+});
+
+test("sheet copy provides matching editable and SVG formats and remains pasteable", async ({ page }) => {
+    await createShape(page, "Sheet SVG copy");
+    const before = archive(await saveAs(page, "sheet-copy-before.thinoda"));
+    await command(page, "Copy Sheet");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.writes)).toBe(1);
+    const clipboard = await page.evaluate(async () => {
+        const item = window.__thinodaTestClipboard.items[0];
+        return {
+            types: item.types,
+            text: await (await item.getType("text/plain")).text(),
+            svg: await (await item.getType("image/svg+xml")).text(),
+        };
+    });
+    expect(clipboard.types).toEqual(expect.arrayContaining(["text/plain", "image/svg+xml"]));
+    expect(clipboard.text).toMatch(/^THINODA-SHEET-\d+\n/);
+    expect(JSON.parse(clipboard.text.slice(clipboard.text.indexOf("\n") + 1)))
+        .toEqual(before.content.sheets[before.content.active_sheet]);
+    expect(clipboard.svg).toContain("<svg");
+    expect(clipboard.svg).toContain("Sheet SVG copy");
+
+    await page.evaluate((text) => {
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data });
+        Object.defineProperty(event, "clipboardData", { value: data });
+        document.dispatchEvent(event);
+    }, clipboard.text);
+    await frames(page);
+    const after = archive(await saveAs(page, "sheet-copy-pasted.thinoda"));
+    expect(after.content.sheets).toHaveLength(before.content.sheets.length + 1);
+    expect(after.content.sheets[after.content.active_sheet])
+        .toEqual(before.content.sheets[before.content.active_sheet]);
+});
+
+for (const mode of ["unsupported", "rejected"] as const) {
+    test(`sheet copy falls back to text when SVG is ${mode}`, async ({ page }) => {
+        await createShape(page, "Text fallback");
+        await page.evaluate((mode) => {
+            const state = window.__thinodaTestClipboard;
+            state.svgSupported = mode !== "unsupported";
+            state.rejectSvgWrites = mode === "rejected";
+        }, mode);
+        await command(page, "Copy Sheet");
+        await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites)).toBe(1);
+        const clipboard = await page.evaluate(async () => {
+            const item = window.__thinodaTestClipboard.items[0];
+            return { types: item.types, text: await (await item.getType("text/plain")).text() };
+        });
+        expect(clipboard.types).toEqual(["text/plain"]);
+        expect(clipboard.text).toMatch(/^THINODA-SHEET-\d+\n/);
+    });
+}
+
+test("sheet copy keeps the previous clipboard when both writes are denied", async ({ page }) => {
+    await page.evaluate(() => {
+        const state = window.__thinodaTestClipboard;
+        state.items = [new ClipboardItem({
+            "text/plain": new Blob(["existing clipboard"], { type: "text/plain" }),
+        })];
+        state.rejectSvgWrites = true;
+        state.rejectPlainWrites = true;
+    });
+    await command(page, "Copy Sheet");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainAttempts)).toBe(1);
+    const text = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    expect(text).toBe("existing clipboard");
+});
+
+test("an older failed sheet copy cannot overwrite a newer board copy", async ({ page }) => {
+    await createShape(page, "Newer board copy");
+    await page.evaluate(() => {
+        const state = window.__thinodaTestClipboard;
+        state.holdWrite = true;
+        state.rejectSvgWrites = true;
+    });
+    await command(page, "Copy Sheet");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.releaseWrite !== null))
+        .toBe(true);
+    await page.evaluate(() => { window.__thinodaTestClipboard.holdWrite = false; });
+    await copyOrCut(page, "copy");
+    await page.evaluate(() => { window.__thinodaTestClipboard.releaseWrite?.(); });
+    await frames(page);
+    await page.waitForTimeout(300);
+    const state = await page.evaluate(async () => ({
+        plainAttempts: window.__thinodaTestClipboard.plainAttempts,
+        types: window.__thinodaTestClipboard.items[0].types,
+        text: await (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text(),
+    }));
+    expect(state.plainAttempts).toBe(0);
+    expect(state.types).toEqual(expect.arrayContaining(["text/plain", "text/html"]));
+    expect(state.text).toContain("Newer board copy");
 });
 
 test("rich mixed-board clipboard remaps connections and carries images across documents", async ({ page }) => {

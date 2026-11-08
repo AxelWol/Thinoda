@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use egui::{Context, Event, Id, PointerButton, Pos2, ViewportId};
 
+use crate::touch_input::TouchPointerFrame;
+
 /// Maximum number of browser pointer records retained between egui frames.
 pub const MAX_POINTER_RECORDS: usize = 4_096;
 const MAX_FRAME_EVENTS: usize = 8_192;
@@ -57,7 +59,13 @@ impl Quarantine {
         }
     }
 
-    fn ended(self, events: &[Event], records: &[PointerRecord], canceled: Option<i32>) -> bool {
+    fn ended(
+        self,
+        events: &[Event],
+        records: &[PointerRecord],
+        canceled: Option<i32>,
+        touch: &TouchPointerFrame,
+    ) -> bool {
         canceled.is_some_and(|id| self.id().is_none_or(|active| active == id))
             || records.iter().any(|record| {
                 matches!(record.phase, PointerPhase::Release(PointerButton::Primary))
@@ -65,9 +73,12 @@ impl Quarantine {
                         .pen
                         .is_some_and(|pen| self.id().is_none_or(|active| active == pen.id))
             })
-            || events
-                .iter()
-                .any(|event| matches!(event, Event::PointerGone | Event::WindowFocused(false)))
+            || events.iter().enumerate().any(|(index, event)| {
+                matches!(event, Event::WindowFocused(false))
+                    || (matches!(event, Event::PointerGone)
+                        && touch.issue.is_none()
+                        && !touch.pointers.get(index).copied().unwrap_or(false))
+            })
     }
 }
 
@@ -86,11 +97,28 @@ impl PenInputMatcher {
         canceled: Option<i32>,
         overflowed: bool,
     ) -> MatchedPenFrame {
+        self.match_frame_with_touch(
+            events,
+            records,
+            canceled,
+            overflowed,
+            &TouchPointerFrame::default(),
+        )
+    }
+
+    pub fn match_frame_with_touch(
+        &mut self,
+        events: &[Event],
+        records: &[PointerRecord],
+        canceled: Option<i32>,
+        overflowed: bool,
+        touch: &TouchPointerFrame,
+    ) -> MatchedPenFrame {
         if let Some(quarantine) = self.quarantine {
             if events.is_empty() && records.is_empty() && canceled.is_none() && !overflowed {
                 return MatchedPenFrame::empty();
             }
-            if quarantine.ended(events, records, canceled) {
+            if quarantine.ended(events, records, canceled, touch) {
                 self.quarantine = None;
             }
             return MatchedPenFrame {
@@ -114,24 +142,71 @@ impl PenInputMatcher {
             return MatchedPenFrame::empty();
         }
 
+        let mut matched = vec![None; events.len().min(MAX_FRAME_EVENTS)];
         let issue = if overflowed || records.len() > MAX_POINTER_RECORDS {
             Some(PenInputIssue::QueueOverflow)
         } else if events.len() > MAX_FRAME_EVENTS {
             Some(PenInputIssue::FrameTooLarge)
+        } else if touch.issue.is_some() {
+            Some(PenInputIssue::PointerMismatch)
         } else {
-            let mut raw = events.iter().filter_map(pointer_signature);
-            let matches = records.iter().all(|record| {
-                raw.next()
-                    .is_some_and(|signature| signature == (record.phase, record.position))
-            }) && raw.next().is_none();
-            (!matches).then_some(PenInputIssue::PointerMismatch)
+            let mut records = records.iter();
+            let mut capturing = previous_pen;
+            let mut mismatch = false;
+            for (index, event) in events.iter().enumerate() {
+                let Some(signature) = pointer_signature(event) else {
+                    continue;
+                };
+                if touch
+                    .synthetic_pointers
+                    .get(index)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                if touch.pointers.get(index).copied().unwrap_or(false) {
+                    if capturing.is_some()
+                        && !records.next().is_some_and(|record| {
+                            (record.phase, record.position) == signature && record.pen.is_none()
+                        })
+                    {
+                        mismatch = true;
+                        break;
+                    }
+                    continue;
+                }
+                let Some(record) = records.next() else {
+                    mismatch = true;
+                    break;
+                };
+                if (record.phase, record.position) != signature {
+                    mismatch = true;
+                    break;
+                }
+                matched[index] = Some(*record);
+                match (record.phase, record.pen) {
+                    (PointerPhase::Press(PointerButton::Primary), Some(pen))
+                        if capturing.is_none() =>
+                    {
+                        capturing = Some(pen.id);
+                    }
+                    (PointerPhase::Release(PointerButton::Primary), Some(pen))
+                        if capturing == Some(pen.id) =>
+                    {
+                        capturing = None;
+                    }
+                    _ => {}
+                }
+            }
+            (mismatch || records.next().is_some()).then_some(PenInputIssue::PointerMismatch)
         };
         if let Some(issue) = issue {
             self.active_pen = None;
             let quarantine = previous_pen
                 .or(first_pen)
                 .map_or(Quarantine::Unknown, Quarantine::Pen);
-            if !quarantine.ended(events, records, canceled) {
+            if !quarantine.ended(events, records, canceled, touch) {
                 self.quarantine = Some(quarantine);
             }
             return MatchedPenFrame {
@@ -145,6 +220,7 @@ impl PenInputMatcher {
         if events
             .iter()
             .any(|event| matches!(event, Event::Touch { .. }))
+            && !touch.touches_verified
         {
             self.active_pen = None;
             return MatchedPenFrame {
@@ -156,11 +232,10 @@ impl PenInputMatcher {
         }
 
         let mut samples = vec![None; events.len()];
-        let mut records = records.iter();
         let mut interrupted = None;
         for (index, event) in events.iter().enumerate() {
-            if let Some((phase, _)) = pointer_signature(event) {
-                let record = records.next().expect("pointer records were matched above");
+            if let Some(record) = matched[index] {
+                let phase = record.phase;
                 samples[index] = record.pen;
                 let relevant = matches!(
                     phase,
@@ -188,7 +263,10 @@ impl PenInputMatcher {
                     }
                     _ => {}
                 }
-            } else if matches!(event, Event::PointerGone | Event::WindowFocused(false)) {
+            } else if matches!(event, Event::WindowFocused(false))
+                || (matches!(event, Event::PointerGone)
+                    && !touch.pointers.get(index).copied().unwrap_or(false))
+            {
                 self.active_pen = None;
             }
         }
@@ -379,6 +457,7 @@ fn read_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::touch_input::{TouchForceRecord, TouchPointerRecord, publish_pointer_frame};
     use egui::{Modifiers, pos2};
 
     fn button(position: Pos2, pressed: bool) -> Event {
@@ -602,6 +681,368 @@ mod tests {
         let overflow = matcher.match_frame(&[], &[], None, true);
         assert_eq!(overflow.issue, Some(PenInputIssue::QueueOverflow));
         assert_eq!(overflow.canceled, Some(9));
+    }
+
+    #[test]
+    fn proven_touch_packets_do_not_steal_a_correlated_pen() {
+        let ctx = Context::default();
+        let mut matcher = PenInputMatcher::default();
+        let pen_pos = pos2(20.0, 30.0);
+        let touch_pos = pos2(90.0, 100.0);
+        let down = [button(pen_pos, true)];
+        let pen_down = [record(
+            PointerPhase::Press(PointerButton::Primary),
+            pen_pos,
+            Some((7, 0.2)),
+        )];
+        matcher.match_frame(&down, &pen_down, None, false);
+
+        let touch_down = [button(touch_pos, true)];
+        let touch_record = [TouchPointerRecord {
+            phase: PointerPhase::Press(PointerButton::Primary),
+            position: touch_pos,
+            is_touch: true,
+        }];
+        assert_eq!(
+            publish_pointer_frame(
+                &ctx,
+                ViewportId::ROOT,
+                &touch_down,
+                &touch_record,
+                false,
+                &[],
+                false,
+            ),
+            None
+        );
+        let touch = crate::touch_input::peek_pointer_frame(&ctx, ViewportId::ROOT, &touch_down);
+        let frame = matcher.match_frame_with_touch(
+            &touch_down,
+            &[record(
+                PointerPhase::Press(PointerButton::Primary),
+                touch_pos,
+                None,
+            )],
+            None,
+            false,
+            &touch,
+        );
+        assert_eq!(frame.issue, None);
+        assert_eq!(frame.canceled, None);
+        assert_eq!(frame.samples, [None]);
+
+        let event = |phase, pos| Event::Touch {
+            device_id: egui::TouchDeviceId(0),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: Some(0.5),
+        };
+        let captured = |phase, position| TouchForceRecord {
+            device: egui::TouchDeviceId(0),
+            id: egui::TouchId(1),
+            phase,
+            position,
+            force_missing: false,
+        };
+        let start = [
+            button(touch_pos, true),
+            event(egui::TouchPhase::Start, touch_pos),
+        ];
+        assert_eq!(
+            publish_pointer_frame(
+                &ctx,
+                ViewportId::ROOT,
+                &start,
+                &[],
+                false,
+                &[captured(egui::TouchPhase::Start, touch_pos)],
+                false,
+            ),
+            None
+        );
+        let touch = crate::touch_input::peek_pointer_frame(&ctx, ViewportId::ROOT, &start);
+        let frame = matcher.match_frame_with_touch(&start, &[], None, false, &touch);
+        assert_eq!(frame.issue, None);
+        assert_eq!(frame.canceled, None);
+
+        let moved_pen = pen_pos + egui::vec2(20.0, 10.0);
+        let moved_touch = touch_pos + egui::vec2(3.0, 2.0);
+        let mixed = [
+            Event::PointerMoved(moved_pen),
+            Event::PointerMoved(moved_touch),
+            event(egui::TouchPhase::Move, moved_touch),
+        ];
+        assert_eq!(
+            publish_pointer_frame(
+                &ctx,
+                ViewportId::ROOT,
+                &mixed,
+                &[],
+                false,
+                &[captured(egui::TouchPhase::Move, moved_touch)],
+                false,
+            ),
+            None
+        );
+        let touch = crate::touch_input::peek_pointer_frame(&ctx, ViewportId::ROOT, &mixed);
+        assert_eq!(touch.pointers, [false, true, false]);
+        let frame = matcher.match_frame_with_touch(
+            &mixed,
+            &[record(PointerPhase::Move, moved_pen, Some((7, 0.7)))],
+            None,
+            false,
+            &touch,
+        );
+        assert_eq!(frame.issue, None);
+        assert_eq!(frame.canceled, None);
+        assert_eq!(
+            frame.samples,
+            [
+                Some(PenSample {
+                    id: 7,
+                    pressure: 0.7
+                }),
+                None,
+                None
+            ]
+        );
+
+        let touch_up = [button(moved_touch, false)];
+        let touch_record = [TouchPointerRecord {
+            phase: PointerPhase::Release(PointerButton::Primary),
+            position: moved_touch,
+            is_touch: true,
+        }];
+        assert_eq!(
+            publish_pointer_frame(
+                &ctx,
+                ViewportId::ROOT,
+                &touch_up,
+                &touch_record,
+                false,
+                &[],
+                false,
+            ),
+            None
+        );
+        let touch = crate::touch_input::peek_pointer_frame(&ctx, ViewportId::ROOT, &touch_up);
+        let frame = matcher.match_frame_with_touch(
+            &touch_up,
+            &[record(
+                PointerPhase::Release(PointerButton::Primary),
+                moved_touch,
+                None,
+            )],
+            None,
+            false,
+            &touch,
+        );
+        assert_eq!(frame.issue, None);
+        assert_eq!(frame.canceled, None);
+
+        let end = [
+            button(moved_touch, false),
+            Event::PointerGone,
+            event(egui::TouchPhase::End, moved_touch),
+        ];
+        assert_eq!(
+            publish_pointer_frame(
+                &ctx,
+                ViewportId::ROOT,
+                &end,
+                &[],
+                false,
+                &[captured(egui::TouchPhase::End, moved_touch)],
+                false,
+            ),
+            None
+        );
+        let touch = crate::touch_input::peek_pointer_frame(&ctx, ViewportId::ROOT, &end);
+        let frame = matcher.match_frame_with_touch(&end, &[], None, false, &touch);
+        assert_eq!(frame.issue, None);
+        assert_eq!(frame.canceled, None);
+
+        let up = [button(moved_pen, false)];
+        let pen_up = [record(
+            PointerPhase::Release(PointerButton::Primary),
+            moved_pen,
+            Some((7, 0.0)),
+        )];
+        let frame = matcher.match_frame(&up, &pen_up, None, false);
+        assert_eq!(frame.issue, None);
+        assert_eq!(frame.canceled, None);
+        assert_eq!(
+            frame.samples,
+            [Some(PenSample {
+                id: 7,
+                pressure: 0.0
+            })]
+        );
+    }
+
+    #[test]
+    fn pen_move_precedes_nonprimary_touch_move_with_different_positions() {
+        let ctx = Context::default();
+        let mut matcher = PenInputMatcher::default();
+        let pen_start = pos2(20.0, 30.0);
+        matcher.match_frame(
+            &[button(pen_start, true)],
+            &[record(
+                PointerPhase::Press(PointerButton::Primary),
+                pen_start,
+                Some((7, 0.2)),
+            )],
+            None,
+            false,
+        );
+
+        let pen_move = pos2(25.0, 35.0);
+        let primary_touch = pos2(90.0, 100.0);
+        let changed_touch = pos2(120.0, 130.0);
+        let events = [
+            Event::PointerMoved(pen_move),
+            Event::PointerMoved(primary_touch),
+            Event::Touch {
+                device_id: egui::TouchDeviceId(0),
+                id: egui::TouchId(2),
+                phase: egui::TouchPhase::Move,
+                pos: changed_touch,
+                force: Some(0.5),
+            },
+        ];
+        let touches = [TouchForceRecord {
+            device: egui::TouchDeviceId(0),
+            id: egui::TouchId(2),
+            phase: egui::TouchPhase::Move,
+            position: changed_touch,
+            force_missing: false,
+        }];
+        assert_eq!(
+            publish_pointer_frame(&ctx, ViewportId::ROOT, &events, &[], false, &touches, false),
+            None
+        );
+        let touch = crate::touch_input::peek_pointer_frame(&ctx, ViewportId::ROOT, &events);
+        assert_eq!(touch.synthetic_pointers, [false, true, false]);
+        let frame = matcher.match_frame_with_touch(
+            &events,
+            &[record(PointerPhase::Move, pen_move, Some((7, 0.7)))],
+            None,
+            false,
+            &touch,
+        );
+        assert_eq!(frame.issue, None);
+        assert_eq!(frame.canceled, None);
+        assert_eq!(
+            frame.samples,
+            [
+                Some(PenSample {
+                    id: 7,
+                    pressure: 0.7
+                }),
+                None,
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn ambiguous_touch_move_without_eframe_pointer_fails_closed() {
+        let ctx = Context::default();
+        let mut matcher = PenInputMatcher::default();
+        let pen_start = pos2(20.0, 30.0);
+        matcher.match_frame(
+            &[button(pen_start, true)],
+            &[record(
+                PointerPhase::Press(PointerButton::Primary),
+                pen_start,
+                Some((7, 0.2)),
+            )],
+            None,
+            false,
+        );
+
+        let pen_move = pos2(25.0, 35.0);
+        let touch_move = pos2(90.0, 100.0);
+        let events = [
+            Event::PointerMoved(pen_move),
+            Event::Touch {
+                device_id: egui::TouchDeviceId(0),
+                id: egui::TouchId(1),
+                phase: egui::TouchPhase::Move,
+                pos: touch_move,
+                force: Some(0.5),
+            },
+        ];
+        let touches = [TouchForceRecord {
+            device: egui::TouchDeviceId(0),
+            id: egui::TouchId(1),
+            phase: egui::TouchPhase::Move,
+            position: touch_move,
+            force_missing: false,
+        }];
+        assert_eq!(
+            publish_pointer_frame(&ctx, ViewportId::ROOT, &events, &[], false, &touches, false),
+            None
+        );
+        let touch = crate::touch_input::peek_pointer_frame(&ctx, ViewportId::ROOT, &events);
+        let frame = matcher.match_frame_with_touch(
+            &events,
+            &[record(PointerPhase::Move, pen_move, Some((7, 0.7)))],
+            None,
+            false,
+            &touch,
+        );
+        assert_eq!(frame.issue, Some(PenInputIssue::PointerMismatch));
+        assert_eq!(frame.canceled, Some(7));
+        assert!(frame.samples.is_empty());
+    }
+
+    #[test]
+    fn ambiguous_touch_proof_still_quarantines_the_pen() {
+        let p = pos2(20.0, 30.0);
+        let down = [button(p, true)];
+        let pen_down = [record(
+            PointerPhase::Press(PointerButton::Primary),
+            p,
+            Some((7, 0.2)),
+        )];
+        let mut matcher = PenInputMatcher::default();
+        matcher.match_frame(&down, &pen_down, None, false);
+        let touch = TouchPointerFrame {
+            issue: Some(crate::touch_input::TouchPointerIssue::EventMismatch),
+            ..TouchPointerFrame::default()
+        };
+        let frame = matcher.match_frame_with_touch(&[Event::PointerGone], &[], None, false, &touch);
+        assert_eq!(frame.issue, Some(PenInputIssue::PointerMismatch));
+        assert_eq!(frame.canceled, Some(7));
+
+        let moved = [Event::PointerMoved(p + egui::vec2(10.0, 0.0))];
+        let records = [record(
+            PointerPhase::Move,
+            p + egui::vec2(10.0, 0.0),
+            Some((7, 0.6)),
+        )];
+        assert_eq!(
+            matcher.match_frame(&moved, &records, None, false).issue,
+            Some(PenInputIssue::PointerMismatch)
+        );
+        let release = [button(p, false)];
+        let release_record = [record(
+            PointerPhase::Release(PointerButton::Primary),
+            p,
+            Some((7, 0.0)),
+        )];
+        assert!(
+            matcher
+                .match_frame(&release, &release_record, None, false)
+                .issue
+                .is_some()
+        );
+        assert_eq!(
+            matcher.match_frame(&down, &pen_down, None, false).issue,
+            None
+        );
     }
 
     #[test]

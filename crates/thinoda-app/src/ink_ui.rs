@@ -354,9 +354,11 @@ impl OpenDoc {
 
     fn ink_samples_text(&self) -> String {
         let mut text = format!(
-            "{}: {:?}\n{}: {:?}\n{}\n",
+            "{}: {:?}\n{}: {:?}\n{}: {:?}\n{}\n",
             t("Pending ink gesture"),
             self.view.pending_ink_mode(),
+            t("Input source"),
+            self.view.pending_ink_pointer(),
             t("Ink settings"),
             self.view.pending_ink_settings(),
             t("Accepted samples")

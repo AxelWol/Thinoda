@@ -5056,6 +5056,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "chrono",
+ "clipboard-win",
  "eframe",
  "egui",
  "egui_kittest",

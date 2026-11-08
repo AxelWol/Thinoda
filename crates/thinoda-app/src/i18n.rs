@@ -419,6 +419,7 @@ const DE: &[(&str, &str)] = &[
         "Die Freihandgeste wurde unterbrochen. Versuchen Sie es erneut oder verwerfen Sie sie.",
     ),
     ("Ink input details", "Details zur Freihandeingabe"),
+    ("Input source", "Erkannte Eingabequelle"),
     ("Ink settings", "Einstellungen der Freihandeingabe"),
     ("Retry ink", "Freihandgeste erneut versuchen"),
     ("Discard ink", "Freihandgeste verwerfen"),
@@ -2043,6 +2044,14 @@ const DE: &[(&str, &str)] = &[
     (
         "Copied sheet to clipboard",
         "Blatt in die Zwischenablage kopiert",
+    ),
+    (
+        "Copied sheet and SVG to clipboard",
+        "Blatt und SVG in die Zwischenablage kopiert",
+    ),
+    (
+        "Copied sheet as text only; SVG was not copied",
+        "Blatt nur als Text kopiert; SVG wurde nicht kopiert",
     ),
     ("Could not copy sheet", "Blatt konnte nicht kopiert werden"),
     (

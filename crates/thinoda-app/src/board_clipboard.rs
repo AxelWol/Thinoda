@@ -15,7 +15,10 @@ use thinoda_core::{
 };
 use web_time::Instant;
 
-use crate::doc::OpenDoc;
+use crate::{
+    doc::OpenDoc,
+    sheet_clipboard::{PreparedSheet, SheetWrite},
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
@@ -124,6 +127,10 @@ pub(crate) enum Completion {
         fallback: Option<String>,
         result: Result<Snapshot, String>,
     },
+    SheetWrite {
+        generation: u64,
+        result: Result<SheetWrite, String>,
+    },
 }
 
 fn localize_error(error: thinoda_core::EditError) -> String {
@@ -134,6 +141,8 @@ fn localize_error(error: thinoda_core::EditError) -> String {
 #[derive(Default)]
 pub(crate) struct ClipboardBridge {
     generation: u64,
+    #[cfg(target_os = "windows")]
+    pending_sheet: Option<(u64, PreparedSheet)>,
     #[cfg(not(target_arch = "wasm32"))]
     transport: native::Transport,
     #[cfg(target_arch = "wasm32")]
@@ -141,9 +150,19 @@ pub(crate) struct ClipboardBridge {
 }
 
 impl ClipboardBridge {
-    fn write(&mut self, ctx: &egui::Context, prepared: PreparedCopy) -> Option<Completion> {
+    fn next_generation(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
-        let generation = self.generation;
+        #[cfg(target_arch = "wasm32")]
+        self.transport.set_generation(self.generation);
+        #[cfg(target_os = "windows")]
+        {
+            self.pending_sheet = None;
+        }
+        self.generation
+    }
+
+    fn write(&mut self, ctx: &egui::Context, prepared: PreparedCopy) -> Option<Completion> {
+        let generation = self.next_generation();
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = ctx;
@@ -162,7 +181,7 @@ impl ClipboardBridge {
 
     /// Writes plain text, cancelling any pending cut from an earlier write.
     fn write_text(&mut self, ctx: &egui::Context, text: String) -> Result<(), String> {
-        self.generation = self.generation.wrapping_add(1);
+        self.next_generation();
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = ctx;
@@ -172,6 +191,26 @@ impl ClipboardBridge {
         {
             ctx.copy_text(text);
             Ok(())
+        }
+    }
+
+    fn write_sheet(&mut self, ctx: &egui::Context, prepared: PreparedSheet) -> Option<Completion> {
+        let generation = self.next_generation();
+        #[cfg(target_os = "windows")]
+        if !self.transport.uses_fake() {
+            self.pending_sheet = Some((generation, prepared));
+            let _ = ctx;
+            return None;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = ctx;
+            let result = self.transport.write_sheet(&prepared, None);
+            Some(Completion::SheetWrite { generation, result })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.transport.write_sheet(ctx, generation, prepared)
         }
     }
 
@@ -407,6 +446,56 @@ pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<bool, String
 }
 
 impl crate::app::ThinodaApp {
+    pub(crate) fn copy_sheet(&mut self, ctx: &egui::Context) {
+        let Some(doc) = self.doc_mut() else { return };
+        if let Err(error) = doc.view.try_commit_edit(&mut doc.doc) {
+            self.toasts.error(format!(
+                "{}: {}",
+                crate::i18n::t("Could not copy sheet"),
+                localize_error(error)
+            ));
+            return;
+        }
+        let prepared = match crate::sheet_clipboard::prepare(doc) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.toasts.error(format!(
+                    "{}: {}",
+                    crate::i18n::t("Could not copy sheet"),
+                    crate::i18n::localize_model_error(&error)
+                ));
+                return;
+            }
+        };
+        for doc in &mut self.docs {
+            doc.view.invalidate_clipboard();
+        }
+        if let Some(completion) = self.clipboard_bridge.write_sheet(ctx, prepared) {
+            self.finish_clipboard(ctx, completion, false);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(crate) fn run_native_sheet_copy(&mut self, frame: &eframe::Frame, ctx: &egui::Context) {
+        use raw_window_handle::HasWindowHandle;
+
+        let Some((generation, prepared)) = self.clipboard_bridge.pending_sheet.take() else {
+            return;
+        };
+        let result = match frame.window_handle() {
+            Ok(owner) => self
+                .clipboard_bridge
+                .transport
+                .write_sheet(&prepared, Some(owner)),
+            Err(error) => self
+                .clipboard_bridge
+                .transport
+                .write_text(&prepared.text)
+                .map(|()| SheetWrite::TextOnly(format!("application window unavailable: {error}"))),
+        };
+        self.finish_clipboard(ctx, Completion::SheetWrite { generation, result }, false);
+    }
+
     /// Copies the selection so it can be pasted into draw.io (diagrams.net).
     pub(crate) fn copy_as_drawio(&mut self, ctx: &egui::Context) {
         let Some(doc) = self.docs.get_mut(self.active) else {
@@ -519,6 +608,30 @@ impl crate::app::ThinodaApp {
 
     fn finish_clipboard(&mut self, ctx: &egui::Context, completion: Completion, delayed: bool) {
         match completion {
+            Completion::SheetWrite { generation, result } => {
+                if generation != self.clipboard_bridge.generation {
+                    return;
+                }
+                match result {
+                    Ok(SheetWrite::TextAndSvg) => {
+                        self.toasts
+                            .info(crate::i18n::t("Copied sheet and SVG to clipboard"));
+                    }
+                    Ok(SheetWrite::TextOnly(reason)) => {
+                        self.toasts.warning(format!(
+                            "{}: {reason}",
+                            crate::i18n::t("Copied sheet as text only; SVG was not copied")
+                        ));
+                    }
+                    Err(error) => {
+                        self.toasts.error(format!(
+                            "{}: {}",
+                            crate::i18n::t("Could not copy sheet"),
+                            crate::i18n::localize_model_error(&error)
+                        ));
+                    }
+                }
+            }
             Completion::Write {
                 generation,
                 prepared,
@@ -1625,6 +1738,129 @@ mod tests {
         app.active = 0;
         app.clipboard_bridge = ClipboardBridge::with_fake(fake.clone());
         (app, fake)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn sheet_copy_writes_editable_and_svg_representations_together() {
+        use crate::app::Cmd;
+
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        let original = app.doc().unwrap().doc.sheet().clone();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::CopySheet);
+
+        let text = {
+            let clipboard = clipboard.borrow();
+            assert_eq!(
+                thinoda_core::clipboard::decode_sheet(&clipboard.text).unwrap(),
+                original
+            );
+            assert!(clipboard.svg.as_deref().unwrap().contains("Same text"));
+            assert!(clipboard.html.is_none());
+            clipboard.text.clone()
+        };
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| { text.contains(crate::i18n::t("Copied sheet and SVG to clipboard")) })
+        );
+        app.exec(&ctx, Cmd::PasteSheet);
+        let input = egui::RawInput {
+            events: vec![egui::Event::Paste(text)],
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| app.handle_sheet_paste(ui.ctx()))
+            .drop_without_applying_deltas();
+        assert_eq!(app.doc().unwrap().doc.workbook().sheets.len(), 2);
+        assert_eq!(app.doc().unwrap().doc.sheet(), &original);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn sheet_copy_reports_partial_and_complete_clipboard_failures() {
+        use crate::app::Cmd;
+
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        clipboard.borrow_mut().fail_svg_write = true;
+        app.exec(&egui::Context::default(), Cmd::CopySheet);
+        assert!(thinoda_core::clipboard::decode_sheet(&clipboard.borrow().text).is_ok());
+        assert!(clipboard.borrow().svg.is_none());
+        assert!(app.toasts.texts().any(|text| {
+            text.contains(crate::i18n::t(
+                "Copied sheet as text only; SVG was not copied",
+            ))
+        }));
+
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        {
+            let mut clipboard = clipboard.borrow_mut();
+            clipboard.text = "existing".into();
+            clipboard.fail_write = true;
+        }
+        app.exec(&egui::Context::default(), Cmd::CopySheet);
+        assert_eq!(clipboard.borrow().text, "existing");
+        assert!(app.toasts.texts().any(|text| {
+            text.contains(crate::i18n::t("Could not copy sheet"))
+                && text.contains("clipboard write denied")
+        }));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn sheet_svg_generation_failure_retains_the_editable_clipboard_data() {
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        let prepared = PreparedSheet {
+            text: "editable sheet".into(),
+            svg: Err("SVG generation failed".into()),
+        };
+        let ctx = egui::Context::default();
+        let completion = app.clipboard_bridge.write_sheet(&ctx, prepared).unwrap();
+        app.finish_clipboard(&ctx, completion, false);
+        assert_eq!(clipboard.borrow().text, "editable sheet");
+        assert!(clipboard.borrow().svg.is_none());
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains("SVG generation failed"))
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn subsequent_board_copy_removes_the_sheet_svg_representation() {
+        use crate::app::Cmd;
+
+        let (mut app, clipboard) = app_with_fake_clipboard();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::CopySheet);
+        assert!(clipboard.borrow().svg.is_some());
+        app.exec(&ctx, Cmd::Canvas(Action::Copy));
+        assert!(clipboard.borrow().svg.is_none());
+        assert!(clipboard.borrow().html.is_some());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn sheet_copy_supersedes_a_pending_cut_without_deleting_content() {
+        use crate::app::Cmd;
+
+        let (mut app, _) = app_with_fake_clipboard();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let pending_cut = prepare_copy(app.doc_mut().unwrap(), true).unwrap().unwrap();
+        app.clipboard_bridge.generation = 1;
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::CopySheet);
+        app.finish_clipboard(
+            &ctx,
+            Completion::Write {
+                generation: 1,
+                prepared: pending_cut,
+                result: Ok(()),
+            },
+            true,
+        );
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

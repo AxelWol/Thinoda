@@ -562,6 +562,38 @@ rail stationary, and remains usable when a very short canvas hides the rail.
 Keyboard, compact layouts, localization and canceled/multitouch actions are
 covered. Physical stylus and assistive-technology acceptance remain open.
 
+**Pen/touch slice — critique:** a confirmed pen-owned browser stroke retains its
+samples when later verified touch contacts arrive, including a pen-first start
+batched with touch in the same frame. Suppressed contacts remain locked out
+until released, and cancellation and focus changes still preserve recoverable
+input. The diagnostic distinguishes the host-recognized input source from the
+selected ink tool. Eframe emits the primary pointer move immediately before the
+changed touches in the same handler; regression coverage includes a different
+non-primary contact and quarantines an inconsistent event sequence. Browser
+emulation and controller regressions do not establish which events the user's
+physical Windows pen generates. Touch-first gestures,
+unmatched or ambiguous input, and native Windows pen identity remain unresolved;
+do not treat this as hardware palm rejection or a verified device fix.
+
+**Copy Sheet slice — critique:** the existing versioned sheet text and SVG are
+prepared from the same active-sheet snapshot, including validated drafts, image
+resources and the current visual theme. Windows publishes both formats within
+one owned clipboard transaction; supported browsers write one multi-format
+clipboard item. An unavailable or rejected SVG produces an explicit text-only
+warning where the text write succeeds. Newer copy operations invalidate pending
+cut completion and skip a stale browser fallback if superseded before it starts;
+browser writes already in flight cannot be recalled.
+macOS and Linux still copy only the editable text, with a warning; native
+recipient compatibility, real system clipboard behavior, and browser-specific
+SVG handling remain to be verified on each host. The browser regressions use an
+in-page clipboard and the native transaction tests use a fake; neither changes
+the system clipboard. Windows follows
+[Chromium's registered SVG format](https://chromium.googlesource.com/chromium/src/+/main/ui/base/clipboard/clipboard_format_type_win.cc)
+and [UTF-8/NUL-terminated clipboard data](https://chromium.googlesource.com/chromium/src/+/main/ui/base/clipboard/clipboard_win.cc);
+SVG is offered first, following [Windows format-order guidance](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats),
+while Thinoda reads the sheet text explicitly. Browser SVG availability is checked through
+[`ClipboardItem.supports`](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem/supports_static).
+
 **Context-menu slice — critique:** Tools now includes Image card alongside the
 other drawing and card tools; applicable target menus place Zones after Styles
 and Grid and Align after Board. The existing commands, icons and target-specific

@@ -45,6 +45,7 @@ mod quick_styles;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 mod ribbon;
 mod save_all;
+mod sheet_clipboard;
 mod shortcut_browser;
 pub mod shortcut_conflicts;
 pub mod startup;
@@ -102,6 +103,8 @@ impl eframe::App for ThinodaApp {
         if root_native_menu_focused {
             self.sync_native_menus(ui.ctx());
         }
+        #[cfg(target_os = "windows")]
+        self.run_native_sheet_copy(frame, ui.ctx());
         self.run_native_print(frame, ui.ctx());
         for url in ThinodaApp::take_open_urls(ui.ctx()) {
             self.open_link(&url);

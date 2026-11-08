@@ -1256,6 +1256,126 @@ test.describe("touch gestures", () => {
         expect(strokes[0].kind.ink?.pressure?.every(Number.isFinite) ?? true).toBe(true);
     });
 
+    test("a trusted touchscreen drag preserves its complete ink path", async ({ page, browserName }) => {
+        test.skip(browserName !== "chromium", "Trusted touch drag synthesis requires the Chromium DevTools protocol");
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await canvas.focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+        await command(page, "Pen");
+
+        const cdp = await page.context().newCDPSession(page);
+        for (const [type, x, y] of [
+            ["touchStart", 300, 700],
+            ["touchMove", 400, 730],
+            ["touchMove", 500, 780],
+            ["touchMove", 600, 800],
+        ] as const) {
+            await cdp.send("Input.dispatchTouchEvent", {
+                type,
+                touchPoints: [{ x, y, id: 1, force: 0.6 }],
+            });
+            await frames(page);
+        }
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await cdp.detach();
+        await frames(page);
+
+        const sheet = sheetFrom(await saveAs(page, "trusted-touch-drag.thinoda"));
+        const strokes = sheet.canvas.objects.filter(object => object.kind.ink);
+        expect(strokes).toHaveLength(1);
+        const points = strokes[0].kind.ink!.points;
+        expect(points.length).toBeGreaterThan(1);
+        expect(points.at(-1)!.x - points[0].x).toBeGreaterThan(250);
+        expect(points.at(-1)!.y - points[0].y).toBeGreaterThan(80);
+    });
+
+    for (const releaseFirst of ["touch", "pen"] as const) {
+    test(`a held pen keeps drawing with a touch contact; ${releaseFirst} releases first`, async ({ page, browserName }) => {
+        test.skip(browserName !== "chromium", "Pen and touch synthesis requires the Chromium DevTools protocol");
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await canvas.focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+        await command(page, "Pen");
+
+        await canvas.evaluate(element => {
+            const pointers: { type: string; trusted: boolean }[] = [];
+            element.addEventListener("pointerdown", event => {
+                pointers.push({ type: event.pointerType, trusted: event.isTrusted });
+                element.setAttribute("data-test-pen-touch", JSON.stringify(pointers));
+            });
+        });
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send("Input.dispatchMouseEvent", {
+            type: "mousePressed", x: 300, y: 700, button: "left", buttons: 1,
+            clickCount: 1, pointerType: "pen", force: 0.2,
+        });
+        await frames(page);
+        await cdp.send("Input.dispatchMouseEvent", {
+            type: "mouseMoved", x: 400, y: 730, button: "left", buttons: 1,
+            pointerType: "pen", force: 0.4,
+        });
+        await frames(page);
+        await cdp.send("Input.dispatchTouchEvent", {
+            type: "touchStart", touchPoints: [{ x: 850, y: 850, id: 1, force: 0.4 }],
+        });
+        await frames(page);
+        await cdp.send("Input.dispatchMouseEvent", {
+            type: "mouseMoved", x: 500, y: 780, button: "left", buttons: 1,
+            pointerType: "pen", force: 0.6,
+        });
+        await frames(page);
+        const releasePen = () => cdp.send("Input.dispatchMouseEvent", {
+            type: "mouseReleased", x: 600, y: 800, button: "left", buttons: 0,
+            clickCount: 1, pointerType: "pen", force: 0,
+        });
+        const releaseTouch = () => cdp.send("Input.dispatchTouchEvent", {
+            type: "touchEnd", touchPoints: [],
+        });
+        if (releaseFirst === "touch") {
+            await releaseTouch();
+            await frames(page);
+            await releasePen();
+        } else {
+            await releasePen();
+            await frames(page);
+            await cdp.send("Input.dispatchTouchEvent", {
+                type: "touchMove", touchPoints: [{ x: 870, y: 860, id: 1, force: 0.4 }],
+            });
+            await frames(page);
+            await releaseTouch();
+        }
+        await cdp.detach();
+        await frames(page);
+
+        const pointers = JSON.parse(await canvas.getAttribute("data-test-pen-touch") ?? "[]") as {
+            type: string; trusted: boolean;
+        }[];
+        expect(pointers).toEqual([
+            { type: "pen", trusted: true },
+            { type: "touch", trusted: true },
+        ]);
+        const sheet = sheetFrom(await saveAs(page, "pen-with-touch.thinoda"));
+        const strokes = sheet.canvas.objects.filter(object => object.kind.ink);
+        expect(strokes).toHaveLength(1);
+        const ink = strokes[0].kind.ink!;
+        expect(ink.points.length).toBeGreaterThan(2);
+        expect(ink.points.at(-1)!.x - ink.points[0].x).toBeGreaterThan(250);
+        expect(ink.pressure).toHaveLength(ink.points.length);
+    });
+    }
+
     test("touch releases and fully batched touch drags preserve their geometry", async ({ page }) => {
         await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
         await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });

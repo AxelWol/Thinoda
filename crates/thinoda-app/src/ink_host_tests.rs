@@ -783,6 +783,7 @@ fn rejected_touch_samples_stay_visible_and_copyable_until_explicit_discard() {
         })
         .unwrap();
     assert!(copied.contains("InvalidSample"));
+    assert!(copied.contains("Input source: Some(Touch"));
     assert!(copied.contains("1.5"));
     assert!(copied.contains("0.2"));
     assert!(copied.contains("0.8"));

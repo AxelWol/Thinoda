@@ -47,19 +47,23 @@ struct StoredPointerFrame {
     number: u64,
     events: Vec<PointerFrameSignature>,
     buttons: Vec<(bool, bool)>,
+    touches_verified: bool,
     issue: Option<TouchPointerIssue>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum PointerFrameSignature {
     Button(PointerPhase, Pos2),
+    TouchMove(Pos2),
     Touch(TouchDeviceId, TouchId, TouchPhase, Pos2),
     Gone,
 }
 
 #[derive(Default)]
-pub(crate) struct TouchPointerFrame {
+pub struct TouchPointerFrame {
     pub pointers: Vec<bool>,
+    pub synthetic_pointers: Vec<bool>,
+    pub touches_verified: bool,
     pub issue: Option<TouchPointerIssue>,
 }
 
@@ -86,9 +90,14 @@ fn pointer_button(event: &Event) -> Option<(PointerPhase, Pos2)> {
     }
 }
 
-fn pointer_frame_signature(event: &Event) -> Option<PointerFrameSignature> {
+fn pointer_frame_signature(events: &[Event], index: usize) -> Option<PointerFrameSignature> {
+    let event = &events[index];
     if let Some((phase, position)) = pointer_button(event) {
         Some(PointerFrameSignature::Button(phase, position))
+    } else if let Event::PointerMoved(position) = event
+        && synthetic_touch_move(events, index)
+    {
+        Some(PointerFrameSignature::TouchMove(*position))
     } else if let Some((device, id, phase, position)) = touch_signature(event) {
         Some(PointerFrameSignature::Touch(device, id, phase, position))
     } else if matches!(event, Event::PointerGone) {
@@ -132,6 +141,27 @@ fn synthetic_touch_button(events: &[Event], index: usize) -> bool {
     )
 }
 
+// Eframe emits the primary pointer move immediately before the changed touches.
+// The primary contact can differ from the first changed contact.
+fn synthetic_touch_move(events: &[Event], index: usize) -> bool {
+    matches!(
+        (events.get(index), events.get(index + 1)),
+        (
+            Some(Event::PointerMoved(_)),
+            Some(Event::Touch {
+                phase: TouchPhase::Move,
+                ..
+            })
+        )
+    )
+}
+
+fn synthetic_touch_gone(events: &[Event], index: usize) -> bool {
+    matches!(events.get(index), Some(Event::PointerGone))
+        && index > 0
+        && synthetic_touch_button(events, index - 1)
+}
+
 fn touch_records_match(events: &[Event], records: &[TouchForceRecord]) -> bool {
     events.iter().filter_map(touch_signature).eq(records
         .iter()
@@ -154,7 +184,14 @@ pub fn publish_pointer_frame(
         .iter()
         .enumerate()
         .any(|(index, _)| synthetic_touch_button(events, index));
-    let relevant = synthetic || records.iter().any(|record| record.is_touch);
+    let has_touch = events
+        .iter()
+        .any(|event| matches!(event, Event::Touch { .. }));
+    let touches_verified = has_touch
+        && !touches_overflowed
+        && touches.len() <= MAX_TOUCH_RECORDS
+        && touch_records_match(events, touches);
+    let relevant = synthetic || has_touch || records.iter().any(|record| record.is_touch);
     let mut buttons = Vec::new();
     let issue = if overflowed || records.len() > MAX_TOUCH_RECORDS {
         Some(TouchPointerIssue::QueueOverflow)
@@ -164,7 +201,7 @@ pub fn publish_pointer_frame(
         Some(TouchPointerIssue::QueueOverflow)
     } else if events.len() > MAX_FRAME_EVENTS {
         Some(TouchPointerIssue::FrameTooLarge)
-    } else if synthetic && !touch_records_match(events, touches) {
+    } else if synthetic && !touches_verified {
         Some(TouchPointerIssue::EventMismatch)
     } else {
         let mut records = records.iter().peekable();
@@ -197,7 +234,11 @@ pub fn publish_pointer_frame(
             return;
         }
         let events = if events.len() <= MAX_FRAME_EVENTS {
-            events.iter().filter_map(pointer_frame_signature).collect()
+            events
+                .iter()
+                .enumerate()
+                .filter_map(|(index, _)| pointer_frame_signature(events, index))
+                .collect()
         } else {
             Vec::new()
         };
@@ -207,6 +248,7 @@ pub fn publish_pointer_frame(
                 number,
                 events,
                 buttons,
+                touches_verified,
                 issue,
             }),
         );
@@ -222,7 +264,7 @@ pub(crate) fn take_pointer_frame(
     read_pointer_frame(ctx, viewport, events, true)
 }
 
-pub(crate) fn peek_pointer_frame(
+pub fn peek_pointer_frame(
     ctx: &Context,
     viewport: ViewportId,
     events: &[Event],
@@ -261,7 +303,8 @@ fn read_pointer_frame(
     } else if stored.number != ctx.cumulative_frame_nr_for(viewport)
         || !events
             .iter()
-            .filter_map(pointer_frame_signature)
+            .enumerate()
+            .filter_map(|(index, _)| pointer_frame_signature(events, index))
             .eq(stored.events.iter().copied())
         || !proofs_match
     {
@@ -274,14 +317,39 @@ fn read_pointer_frame(
             let mut buttons = stored.buttons.iter();
             events
                 .iter()
-                .map(|event| {
-                    pointer_button(event)
-                        .is_some_and(|_| buttons.next().expect("button signatures were matched").0)
+                .enumerate()
+                .map(|(index, event)| {
+                    if pointer_button(event).is_some() {
+                        buttons.next().expect("button signatures were matched").0
+                    } else {
+                        stored.touches_verified
+                            && (synthetic_touch_move(events, index)
+                                || synthetic_touch_gone(events, index))
+                    }
                 })
                 .collect()
         } else {
             Vec::new()
         },
+        synthetic_pointers: if issue.is_none() {
+            let mut buttons = stored.buttons.iter();
+            events
+                .iter()
+                .enumerate()
+                .map(|(index, event)| {
+                    if pointer_button(event).is_some() {
+                        buttons.next().expect("button signatures were matched").1
+                    } else {
+                        stored.touches_verified
+                            && (synthetic_touch_move(events, index)
+                                || synthetic_touch_gone(events, index))
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        touches_verified: issue.is_none() && stored.touches_verified,
         issue,
     }
 }
@@ -687,7 +755,7 @@ mod tests {
             None
         );
         let frame = take_pointer_frame(&ctx, ViewportId::ROOT, &end);
-        assert_eq!(frame.pointers, [true, false, false]);
+        assert_eq!(frame.pointers, [true, true, false]);
         assert_eq!(frame.issue, None);
     }
 
@@ -836,7 +904,7 @@ mod tests {
         ];
         assert_eq!(
             take_pointer_frame(&ctx, ViewportId::ROOT, &force_changed).pointers,
-            [true, false, false]
+            [true, true, false]
         );
 
         publish();
@@ -849,7 +917,7 @@ mod tests {
         ];
         assert_eq!(
             take_pointer_frame(&ctx, ViewportId::ROOT, &unrelated_input).pointers,
-            [false, true, false, false, false]
+            [false, true, true, false, false]
         );
 
         publish();

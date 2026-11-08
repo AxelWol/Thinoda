@@ -1420,21 +1420,7 @@ impl ThinodaApp {
             Cmd::ApplyCustomTheme(theme) => {
                 self.apply_custom_theme(*theme);
             }
-            Cmd::CopySheet => {
-                if let Some(d) = self.doc_mut() {
-                    d.view.commit_edit(&mut d.doc);
-                    match thinoda_core::clipboard::encode_sheet(d.doc.sheet()) {
-                        Ok(text) => {
-                            ctx.copy_text(text);
-                            self.toasts.info(t("Copied sheet to clipboard"));
-                        }
-                        Err(e) => {
-                            self.toasts
-                                .error(format!("{}: {e}", t("Could not copy sheet")));
-                        }
-                    }
-                }
-            }
+            Cmd::CopySheet => self.copy_sheet(ctx),
             Cmd::PasteSheet => {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);

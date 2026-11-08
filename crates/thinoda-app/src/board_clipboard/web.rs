@@ -1,7 +1,11 @@
 //! Browser clipboard transport. Menu operations use the asynchronous
 //! Clipboard API and retain their document guard until completion.
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    rc::Rc,
+};
 
 use js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
@@ -9,7 +13,7 @@ use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 use super::{
     Completion, DocumentGuard, MAX_BOARD_CLIPBOARD_BYTES, MAX_HTML_BYTES, MAX_PENDING_CUT,
-    PreparedCopy, Snapshot, verify_cut_snapshot,
+    PreparedCopy, PreparedSheet, SheetWrite, Snapshot, verify_cut_snapshot,
 };
 
 thread_local! {
@@ -65,9 +69,14 @@ fn write_active_event(prepared: &PreparedCopy) -> Option<Result<(), String>> {
 #[derive(Default)]
 pub(super) struct Transport {
     completed: Rc<RefCell<VecDeque<Completion>>>,
+    generation: Rc<Cell<u64>>,
 }
 
 impl Transport {
+    pub(super) fn set_generation(&mut self, generation: u64) {
+        self.generation.set(generation);
+    }
+
     pub(super) fn write(
         &mut self,
         ctx: &egui::Context,
@@ -134,6 +143,60 @@ impl Transport {
                 prepared,
                 result,
             });
+            ctx.request_repaint();
+        });
+        None
+    }
+
+    pub(super) fn write_sheet(
+        &mut self,
+        ctx: &egui::Context,
+        generation: u64,
+        prepared: PreparedSheet,
+    ) -> Option<Completion> {
+        let started = clipboard().and_then(|clipboard| {
+            start_sheet_write(&clipboard, &prepared)
+                .map(|(promise, outcome)| (clipboard, promise, outcome))
+        });
+        let (clipboard, promise, outcome) = match started {
+            Ok(started) => started,
+            Err(error) => {
+                return Some(Completion::SheetWrite {
+                    generation,
+                    result: Err(error),
+                });
+            }
+        };
+        let current_generation = self.generation.clone();
+        let completed = self.completed.clone();
+        let ctx = ctx.clone();
+        spawn_local(async move {
+            let result = match (JsFuture::from(promise).await, outcome) {
+                (Ok(_), outcome) => Ok(outcome),
+                (Err(error), SheetWrite::TextOnly(reason)) => Err(format!(
+                    "{reason}; text clipboard write failed: {}",
+                    js_error(error)
+                )),
+                (Err(error), SheetWrite::TextAndSvg) => {
+                    let reason = format!("SVG clipboard write failed: {}", js_error(error));
+                    if current_generation.get() != generation {
+                        Err(reason)
+                    } else {
+                        match write_text(&clipboard, &prepared.text) {
+                            Ok(promise) => JsFuture::from(promise)
+                                .await
+                                .map(|_| SheetWrite::TextOnly(reason.clone()))
+                                .map_err(|error| {
+                                    format!("{reason}; text fallback failed: {}", js_error(error))
+                                }),
+                            Err(error) => Err(format!("{reason}; text fallback failed: {error}")),
+                        }
+                    }
+                }
+            };
+            completed
+                .borrow_mut()
+                .push_back(Completion::SheetWrite { generation, result });
             ctx.request_repaint();
         });
         None
@@ -307,15 +370,61 @@ fn make_blob(mime: &str, value: &str) -> Result<web_sys::Blob, String> {
 }
 
 fn make_item(prepared: &PreparedCopy) -> Result<web_sys::ClipboardItem, String> {
+    make_item_from_parts(&[
+        ("text/plain", &prepared.text),
+        ("text/html", &prepared.html),
+    ])
+}
+
+fn make_item_from_parts(parts: &[(&str, &str)]) -> Result<web_sys::ClipboardItem, String> {
     let properties = Object::new();
-    for (mime, value) in [
-        ("text/plain", prepared.text.as_str()),
-        ("text/html", prepared.html.as_str()),
-    ] {
+    for &(mime, value) in parts {
         let blob = make_blob(mime, value)?;
         Reflect::set(&properties, &JsValue::from_str(mime), &blob).map_err(js_error)?;
     }
     web_sys::ClipboardItem::new_with_record_from_str_to_blob_promise(&properties).map_err(js_error)
+}
+
+fn svg_clipboard_supported() -> Result<bool, String> {
+    let constructor =
+        Reflect::get(&js_sys::global(), &JsValue::from_str("ClipboardItem")).map_err(js_error)?;
+    if constructor.is_null() || constructor.is_undefined() {
+        return Ok(false);
+    }
+    let supports = Reflect::get(&constructor, &JsValue::from_str("supports")).map_err(js_error)?;
+    if supports.is_null() || supports.is_undefined() {
+        return Ok(false);
+    }
+    supports
+        .dyn_into::<Function>()
+        .map_err(|_| "browser ClipboardItem.supports is invalid".to_owned())?
+        .call1(&constructor, &JsValue::from_str("image/svg+xml"))
+        .map_err(js_error)?
+        .as_bool()
+        .ok_or_else(|| "browser returned invalid SVG clipboard support".into())
+}
+
+fn write_text(clipboard: &JsValue, text: &str) -> Result<Promise, String> {
+    call_promise(clipboard, "writeText", Some(&JsValue::from_str(text)))
+}
+
+fn start_sheet_write(
+    clipboard: &JsValue,
+    prepared: &PreparedSheet,
+) -> Result<(Promise, SheetWrite), String> {
+    let svg_write = prepared.svg.as_ref().map_err(Clone::clone).and_then(|svg| {
+        if !svg_clipboard_supported()? {
+            return Err("browser does not support SVG clipboard data".into());
+        }
+        let item = make_item_from_parts(&[("image/svg+xml", svg), ("text/plain", &prepared.text)])?;
+        call_promise(clipboard, "write", Some(&Array::of1(&item)))
+    });
+    match svg_write {
+        Ok(promise) => Ok((promise, SheetWrite::TextAndSvg)),
+        Err(reason) => write_text(clipboard, &prepared.text)
+            .map(|promise| (promise, SheetWrite::TextOnly(reason.clone())))
+            .map_err(|error| format!("{reason}; text fallback failed: {error}")),
+    }
 }
 
 async fn read_items(

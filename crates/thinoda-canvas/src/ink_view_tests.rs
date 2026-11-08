@@ -546,6 +546,130 @@ fn touch_pointer_metadata_stays_aligned_when_cancel_splits_the_frame() {
 }
 
 #[test]
+fn confirmed_pen_start_precedes_batched_touch_navigation() {
+    use crate::pen_input::{PenInputMatcher, PenSample, PointerPhase, PointerRecord};
+    use crate::touch_input::{TouchForceRecord, TouchPointerRecord};
+    let mut h = harness(board());
+    tool(&mut h, BoardTool::Pen);
+    let start = point(&h, Vec2::new(-100.0, -100.0));
+    h.hover_at(start);
+    h.run_steps(1);
+    let touch_positions = [start + vec2(200.0, 100.0), start + vec2(250.0, 100.0)];
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let events = vec![
+        button(start, true),
+        button(touch_positions[0], true),
+        egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase: egui::TouchPhase::Start,
+            pos: touch_positions[0],
+            force: Some(0.4),
+        },
+        button(touch_positions[1], true),
+        egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(2),
+            phase: egui::TouchPhase::Start,
+            pos: touch_positions[1],
+            force: Some(0.4),
+        },
+    ];
+    let touches: Vec<_> = touch_positions
+        .iter()
+        .enumerate()
+        .map(|(index, position)| TouchForceRecord {
+            device: egui::TouchDeviceId(1),
+            id: egui::TouchId(index as u64 + 1),
+            phase: egui::TouchPhase::Start,
+            position: *position,
+            force_missing: false,
+        })
+        .collect();
+    assert_eq!(
+        crate::touch_input::publish_pointer_frame(
+            &h.ctx,
+            egui::ViewportId::ROOT,
+            &events,
+            &[TouchPointerRecord {
+                phase: PointerPhase::Press(PointerButton::Primary),
+                position: start,
+                is_touch: false,
+            }],
+            false,
+            &touches,
+            false,
+        ),
+        None
+    );
+    let touch_frame =
+        crate::touch_input::peek_pointer_frame(&h.ctx, egui::ViewportId::ROOT, &events);
+    let pen = PenSample {
+        id: 7,
+        pressure: 0.5,
+    };
+    let mut matcher = PenInputMatcher::default();
+    let matched = matcher.match_frame_with_touch(
+        &events,
+        &[PointerRecord {
+            phase: PointerPhase::Press(PointerButton::Primary),
+            position: start,
+            pen: Some(pen),
+        }],
+        None,
+        false,
+        &touch_frame,
+    );
+    assert_eq!(matched.issue, None);
+    crate::pen_input::publish(&h.ctx, egui::ViewportId::ROOT, &events, matched);
+    h.input_mut().events.extend(events);
+    h.run_steps(1);
+    assert!(h.ctx.input(|input| input.multi_touch().is_some()));
+    assert!(h.state().view.has_pending_ink_gesture());
+    assert!(h.state().view.touch_navigation.is_none());
+    assert!(
+        h.state().ink_errors.is_empty(),
+        "{:?}",
+        h.state().ink_errors
+    );
+
+    let end = start + vec2(100.0, 40.0);
+    let events = vec![egui::Event::PointerMoved(end), button(end, false)];
+    let records = [
+        PointerRecord {
+            phase: PointerPhase::Move,
+            position: end,
+            pen: Some(pen),
+        },
+        PointerRecord {
+            phase: PointerPhase::Release(PointerButton::Primary),
+            position: end,
+            pen: Some(pen),
+        },
+    ];
+    let matched = matcher.match_frame(&events, &records, None, false);
+    assert_eq!(matched.issue, None);
+    crate::pen_input::publish(&h.ctx, egui::ViewportId::ROOT, &events, matched);
+    h.input_mut().events.extend(events);
+    h.run_steps(1);
+    assert!(
+        h.state().ink_errors.is_empty(),
+        "{:?}",
+        h.state().ink_errors
+    );
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+    let CanvasObjectKind::Ink(ink) = &h.state().doc.sheet().canvas.objects[0].kind else {
+        panic!("expected pen ink");
+    };
+    assert_eq!(ink.points.len(), 2);
+}
+
+#[test]
 fn second_touch_retains_stroke_and_yields_to_pinch_navigation() {
     let mut h = harness(board());
     tool(&mut h, BoardTool::Pen);

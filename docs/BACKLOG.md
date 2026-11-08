@@ -1367,7 +1367,9 @@ dependencies before improving existing offline workflows.
   rejects unrelated/invalid data. Payloads are validated and capped at 16 MiB;
   late responses, document switches and empty clipboard responses are handled.
   Pasting adds a sheet in one undo step. This is Thinoda clipboard interoperability,
-  not compatibility with XMind's private clipboard format.
+  not compatibility with XMind's private clipboard format. On Windows and in
+  browsers that support it, Copy Sheet also places SVG alongside the editable
+  text; unsupported platforms or rejected SVG writes report a text-only fallback.
 - Save Sheet As writes only the active sheet to `.thinoda` or `.xmind`, retaining
   workbook metadata without retargeting or marking the source document saved.
   The source path and its canonical aliases are protected from accidental overwrite.

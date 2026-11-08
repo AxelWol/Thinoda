@@ -21,6 +21,9 @@ Oval|Oval
 Half circle|Semicírculo
 Legacy arrowheads approximated in draw.io|Pontas de seta anteriores aproximadas no draw.io
 Ink settings|Configurações da entrada à mão livre
+Input source|Origem de entrada detectada
+Copied sheet and SVG to clipboard|Folha e SVG copiados para a área de transferência
+Copied sheet as text only; SVG was not copied|Folha copiada apenas como texto; o SVG não foi copiado
 Pending ink is not in the saved file. Crash recovery may miss recent samples.|A entrada à mão livre pendente não está no arquivo salvo. A recuperação após falha pode não incluir as amostras recentes.
 Recovered ink may be incomplete. Review it before retrying.|A entrada à mão livre recuperada pode estar incompleta. Revise-a antes de tentar novamente.
 Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.|A entrada recuperada da borracha ou do laço não pode ser tentada novamente. Copie as amostras ou descarte-a.

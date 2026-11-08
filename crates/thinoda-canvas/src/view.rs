@@ -22,7 +22,7 @@ use crate::{
     actions::{Action, apply_action},
     ink_controller::{
         InkController, InkControllerError, InkMode, InkOutcome, InkRecoveryBlock, InkSettings,
-        RecoveredInkGesture,
+        RecoveredInkGesture, RecoveredPointer,
     },
     ink_input::{InkSample, StrokeFinishOptions},
     measure::EguiMeasure,
@@ -534,6 +534,11 @@ impl MapView {
     /// The tool that started the retained gesture, even if the active tool changed.
     pub fn pending_ink_mode(&self) -> Option<InkMode> {
         self.ink_controller.pending_mode()
+    }
+
+    /// Pointer identity recognized for the retained gesture, not the selected tool.
+    pub fn pending_ink_pointer(&self) -> Option<RecoveredPointer> {
+        self.ink_controller.pending_pointer()
     }
 
     /// Settings captured for the retained gesture.
@@ -1676,6 +1681,8 @@ impl MapCanvas {
             });
 
         let previous_touch_navigation = view.touch_navigation.is_some();
+        let space =
+            ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
         let (multi_touch, any_touches, touch_canceled, restart_after_cancel) = ctx.input(|input| {
             let canceled = input.events.iter().any(|event| {
                 matches!(
@@ -1698,7 +1705,16 @@ impl MapCanvas {
                     .flatten(),
             )
         });
-        let restart_after_cancel = restart_after_cancel.filter(|_| multi_touch.is_none());
+        let pen_blocks_touch_navigation = view.ink_controller.blocks_touch_navigation()
+            || (!minimap_blocks_pointer
+                && (multi_touch.is_some() || touch_canceled)
+                && ink_view::starts_confirmed_pen(ui, view, &response, space));
+        let multi_touch = (!pen_blocks_touch_navigation)
+            .then_some(multi_touch)
+            .flatten();
+        let touch_canceled = touch_canceled && !pen_blocks_touch_navigation;
+        let restart_after_cancel =
+            restart_after_cancel.filter(|_| !pen_blocks_touch_navigation && multi_touch.is_none());
         if touch_canceled {
             view.board_input
                 .touch_canceled(restart_after_cancel.is_some());
@@ -1721,12 +1737,16 @@ impl MapCanvas {
             view.board_input.resume_after_touch_cancel(&ctx);
         }
         let touch_navigation = view.touch_navigation.is_some();
-        out.context_menu_allowed = !touch_navigation && !minimap_blocks_pointer && ui.is_enabled();
+        out.context_menu_allowed = !touch_navigation
+            && !pen_blocks_touch_navigation
+            && !minimap_blocks_pointer
+            && ui.is_enabled();
         if touch_navigation || minimap_blocks_pointer {
             view.drag = Drag::None;
             view.relationship_drag = None;
         }
         if !touch_navigation
+            && !pen_blocks_touch_navigation
             && !minimap_blocks_pointer
             && ui.is_enabled()
             && response.hovered()
@@ -1746,8 +1766,6 @@ impl MapCanvas {
             }
         }
 
-        let space =
-            ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
         let ink_captured = ink_view::interact(
             ui,
             doc,
