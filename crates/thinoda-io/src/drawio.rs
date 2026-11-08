@@ -731,6 +731,22 @@ impl Style {
         self.marker(arrow_key).is_some() && self.num(fill_key) == Some(0.0)
     }
 
+    fn color_appearance_loss(&self, key: &str, opacity_key: &str) -> bool {
+        let unresolved_color = self.get(key).is_some_and(|value| {
+            value != "none"
+                && !value
+                    .strip_prefix('#')
+                    .is_some_and(|hex| !hex.starts_with('#') && Color::from_hex(hex).is_some())
+        });
+        let unresolved_opacity = self.get(opacity_key).is_some_and(|_| {
+            self.num(opacity_key).is_none_or(|opacity| {
+                !(0.0..=100.0).contains(&opacity)
+                    || (opacity != 100.0 && self.color(key, opacity_key).is_none())
+            })
+        });
+        unresolved_color || unresolved_opacity
+    }
+
     /// Visual details without a Thinoda equivalent.
     fn formatting_loss(&self, edge: bool, card_text_alignment: bool) -> bool {
         const FLAGS: [&str; 7] = [
@@ -760,19 +776,22 @@ impl Style {
             self.get(key)
                 .is_some_and(|_| self.num(key).is_none_or(|value| value != default))
         };
-        let unresolved_text_opacity = self.get("textOpacity").is_some_and(|_| {
-            self.num("textOpacity").is_none_or(|opacity| {
-                opacity != 100.0 && self.color("fontColor", "textOpacity").is_none()
-            })
-        });
-        let unresolved_font_color = self.get("fontColor").is_some_and(|color| {
-            !matches!(color, "" | "default" | "none")
-                && self.color("fontColor", "textOpacity").is_none()
-        });
         FLAGS.iter().any(|key| self.flag(key))
             || self.get("fontColor") == Some("none")
-            || unresolved_text_opacity
-            || unresolved_font_color
+            || self.color_appearance_loss("fillColor", "fillOpacity")
+            || self.color_appearance_loss("strokeColor", "strokeOpacity")
+            || self.color_appearance_loss("fontColor", "textOpacity")
+            || (self.shape() == "swimlane"
+                && self.get("swimlaneFillColor").is_some()
+                && self.color_appearance_loss("swimlaneFillColor", "fillOpacity"))
+            || self.get("opacity").is_some_and(|_| {
+                self.num("opacity")
+                    .is_none_or(|opacity| !(0.0..=100.0).contains(&opacity))
+            })
+            || self.get("strokeWidth").is_some_and(|_| {
+                self.num("strokeWidth")
+                    .is_none_or(|width| !(MIN_STROKE_WIDTH..=MAX_STROKE_WIDTH).contains(&width))
+            })
             || colored("gradientColor")
             || colored("labelBackgroundColor")
             || colored("labelBorderColor")

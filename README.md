@@ -741,6 +741,10 @@ those system-owned controls. WinGet publishing remains paused.
   warning. Existing Thinoda triangle arrows retain
   their appearance in native files; exporting them for draw.io warns that their
   appearance is approximated.
+  Import also warns about explicit unresolved or theme-dependent colors and
+  invalid or out-of-range opacity and stroke-width values. Adaptive colors can
+  be flattened and inherited colors can fall back to Thinoda defaults; the
+  warning does not imply that all unsupported appearance is detected.
   Unsupported content can prevent export. Editable image export is not Save As
   or lossless save-back.
   Import also recognizes legacy URI- or base64-encoded SVG diagrams and older
@@ -760,7 +764,9 @@ those system-owned controls. WinGet publishing remains paused.
   or out-of-range connector and ink points are discarded instead of being
   replaced with invented coordinates; a shape with malformed geometry and its
   children are omitted with a warning. If the first page has no pasteable
-  items, the paste is rejected and later pages are not pasted.
+  items, the paste is rejected and later pages are not pasted. Formatting-only
+  paste warnings are temporary; omission and detachment warnings remain visible
+  until dismissed, subject to the normal notification queue limit.
   See [draw.io support and limitations](docs/DRAWIO.md).
 - Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`

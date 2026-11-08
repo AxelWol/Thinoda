@@ -181,6 +181,154 @@ fn unresolved_or_invalid_default_text_opacity_is_reported() {
 }
 
 #[test]
+fn appearance_colors_that_cannot_be_preserved_are_reported() {
+    for key in ["fillColor", "strokeColor", "fontColor"] {
+        for value in [
+            "",
+            "inherit",
+            "swimlane",
+            "indicated",
+            "default",
+            "red",
+            "fff",
+            "##fff",
+            "light-dark(#aabbcc,#ddeeff)",
+        ] {
+            let xml = page(&format!(
+                r##"<mxCell id="a" value="Label" style="shape=rectangle;fillColor=#fff;strokeColor=#000;fontColor=#000;{key}={value};" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+            ));
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings,
+                vec![ImportWarning::Formatting],
+                "{key}={value}"
+            );
+            assert_eq!(shapes(&report.workbook.sheets[0]).len(), 1);
+        }
+    }
+}
+
+#[test]
+fn appearance_opacity_and_stroke_width_losses_are_reported() {
+    for (element, style) in [
+        ("vertex", "shape=rectangle;fillOpacity=40;"),
+        ("vertex", "shape=rectangle;strokeOpacity=40;"),
+        (
+            "vertex",
+            "shape=rectangle;fillColor=#fff;fillOpacity=invalid;",
+        ),
+        (
+            "vertex",
+            "shape=rectangle;strokeColor=#000;strokeOpacity=NaN;",
+        ),
+        ("vertex", "shape=rectangle;opacity=invalid;"),
+        ("vertex", "shape=rectangle;opacity=NaN;"),
+        ("vertex", "shape=rectangle;opacity=-1;"),
+        ("vertex", "shape=rectangle;opacity=101;"),
+        ("vertex", "shape=rectangle;textOpacity=101;"),
+        ("vertex", "shape=rectangle;strokeWidth=0;"),
+        ("vertex", "shape=rectangle;strokeWidth=201;"),
+        ("vertex", "shape=rectangle;strokeWidth=inf;"),
+        ("edge", "strokeColor=inherit;endArrow=none;"),
+        ("edge", "strokeOpacity=40;endArrow=none;"),
+        ("edge", "strokeColor=#000;strokeWidth=0;endArrow=none;"),
+        ("edge", "thinodaInk=1;strokeColor=inherit;endArrow=none;"),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="{style}" {element}="1" parent="1"><mxGeometry width="100" height="60" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings,
+            vec![ImportWarning::Formatting],
+            "{element} {style}"
+        );
+        assert_eq!(report.workbook.sheets[0].canvas.objects.len(), 1);
+    }
+}
+
+#[test]
+fn appearance_swimlane_body_colors_that_cannot_be_preserved_are_reported() {
+    for value in [
+        "",
+        "inherit",
+        "default",
+        "red",
+        "light-dark(#aabbcc,#ddeeff)",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings,
+            vec![ImportWarning::Formatting],
+            "swimlaneFillColor={value}"
+        );
+        assert_eq!(report.workbook.sheets[0].zones.len(), 1);
+    }
+
+    for value in ["#abcdef", "none"] {
+        let xml = page(&format!(
+            r#"<mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{value}: {:?}", report.warnings);
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn appearance_supported_explicit_colors_and_opacities_stay_unwarned() {
+    for style in [
+        "fillColor=#ff0000;fillOpacity=40;strokeColor=#00ff00;strokeOpacity=60;fontColor=#000000;textOpacity=100;",
+        "fillColor=none;fillOpacity=40;strokeColor=none;strokeOpacity=60;",
+        "strokeColor=#000;strokeWidth=0.1;opacity=100;",
+        "strokeColor=#000;strokeWidth=200;opacity=0;",
+        "fillOpacity=100;strokeOpacity=100;",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="shape=rectangle;{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn appearance_warning_reaches_strict_import_links_and_clipboard() {
+    let xml = page(
+        r##"<mxCell id="a" value="Theme" style="shape=rectangle;fillColor=light-dark(#ffffff,#111111);strokeColor=inherit;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert_eq!(
+        shapes(&report.workbook.sheets[0])[0].style.fill,
+        Some(Color::WHITE)
+    );
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings))
+            if warnings == vec![ImportWarning::Formatting]
+    ));
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.warnings, report.warnings);
+    assert_eq!(linked.workbook, report.workbook);
+    assert_eq!(
+        crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+        report.warnings
+    );
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
 fn drawio_independent_label_opacity_and_default_connector_color_are_reported() {
     for (element, style, value, warning) in [
         ("vertex", "shape=rectangle;opacity=40;", "Shape", true),

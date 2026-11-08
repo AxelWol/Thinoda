@@ -789,9 +789,16 @@ connections arrive in Phase 8 without changing the gestures).
 - Prioritize `folder` and `mxgraph.floorplan.office_chair`, which recur in the
   supplied examples: a source scan of all 88 files found 73 folders, including
   14 containers, and 596 office chairs. A folder needs its absolute tab size and
-  left/right position, open tab and closed body subpaths, rounded corners and
+  left/right position, separate tab and body subpaths, rounded corners and
   optional symbol retained; bounded header labels and nested container behavior
-  also require attention.
+  also require attention. In draw.io's
+  [folder renderer](https://github.com/jgraph/drawio/blob/dev/src/main/webapp/js/grapheditor/Shapes.js),
+  the tab path remains open when stroked but is closed implicitly when filled,
+  while the body path is closed. Tab dimensions default to 60 by 20; bounded
+  label margins use separate defaults of 15 when those properties are absent.
+  Thinoda's single filled polygon plus open detail strokes and shape-keyed fill
+  cache cannot express this faithfully without compound-path, hit-testing,
+  export, label and persistence design.
   Until those features are represented, rectangle and container approximations
   must report the loss rather than claim folder fidelity.
 
@@ -1269,6 +1276,45 @@ the result is an approximation, not recovery of the original path. Connectors
 whose remaining extent or waypoint count exceeds board limits can still be
 omitted. Other composite geometry, accurate fixed ports, source-preserving
 save-back and real system clipboard and accessibility acceptance remain open.
+
+**Explicit appearance diagnostics and rubber-duck review.** Import now reports
+the existing Formatting warning for explicitly unresolved or theme-dependent
+fill, stroke and font colors, as well as swimlane body colors. It also reports
+invalid or out-of-range opacity and stroke-width values that are defaulted or
+clamped. A `light-dark(...)` color may still become its light alternative;
+inherited and other unresolved values can still fall back to Thinoda defaults.
+Supported explicit colors and transparent fill/stroke values remain accepted;
+removed font colors retain the existing default-text handling and warning.
+Files, self-contained links and clipboard text use the same conversion
+diagnostic and existing consent paths. Formatting-only clipboard paste uses a
+temporary simplification toast, not the persistent omission/detachment warning.
+
+The review found that explicitly written `default`, inherited and adaptive
+colors could previously pass without a warning; malformed nonfinite opacity
+and clamped stroke widths had similar gaps. A follow-up regression exposed the
+separate `swimlaneFillColor` path and is now covered too. Tests distinguish
+transparent `none`, valid numeric limits and supported explicit colors from
+invalid or unresolved values, and exercise shapes, connectors, ink, strict
+import, links, clipboard, native round trips and undo. A scan of 88 supplied
+diagram files also found explicit default, inherited and adaptive colors in
+real styles; occurrence counts are not a visual-fidelity measurement.
+
+Validation passed 130 draw.io I/O library tests, five supplied-corpus tests,
+five deterministic fuzz-seed tests and 14 app clipboard tests. Native,
+WebAssembly and fuzz Clippy passed with warnings denied. A debug web build
+passed the synthetic shape-paste and undo journey in Chromium, Firefox and
+WebKit; screenshots show the temporary notice and the app test asserts its
+wording. A 22-second AddressSanitizer smoke completed 10,337 executions
+without a reported failure; it is not the 30-minute acceptance campaign.
+
+This is conservative disclosure, not color resolution or comprehensive
+appearance preservation. Missing color keys, named styles and other fields
+can still be approximated without a specific warning; some explicit but
+visually unused values may warn. Swimlane frames are themselves visual
+approximations, and neither dark-theme alternatives nor the original source
+styles are retained. The generic warning is not cell-specific. Renderer parity,
+source-preserving save-back and real clipboard and accessibility acceptance
+remain open.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

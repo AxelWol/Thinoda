@@ -51,8 +51,10 @@ an unusable connector endpoint is reported instead of becoming a fabricated
 point. A malformed-geometry seed checks that an invalid vertex and its subtree
 are omitted with a warning while an unrelated shape survives. An out-of-range
 point seed checks that usable connector and ink points survive alongside a
-warning. Its PNG seed is the original editor-exported fixture already used by
-the importer tests. On successful imports, including reports with conversion
+warning. An appearance-colors seed exercises adaptive and inherited colors and
+an out-of-range stroke width through document and clipboard imports. Its PNG
+seed is the original editor-exported fixture already used by the importer tests.
+On successful imports, including reports with conversion
 warnings, each target checks validation and an exact round-trip through
 Thinoda's native format. This in-memory check does not bypass the application's
 conversion-consent flow. Fuzzer crashes and assertion failures are intentionally

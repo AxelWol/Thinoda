@@ -121,6 +121,12 @@ unsupported fill values, and fixed-port hints trigger a formatting warning.
 Existing Thinoda triangle arrows retain their native appearance; draw.io export
 warns that they will be approximated. Keep the original diagram.
 
+Import also warns when explicit fill, stroke, text or swimlane body colors
+cannot be resolved or depend on a theme, or when opacity or stroke width is
+invalid or outside the supported range. Adaptive colors can be flattened and
+inherited colors can fall back to Thinoda defaults. Other appearance losses may
+still go unreported.
+
 Opening editable images also accepts older URI- or base64-encoded SVG diagrams
 and older PNG diagram metadata. Ordinary PNG drops still add an image; a
 `.drawio.png` drop opens the embedded diagram instead.
@@ -144,7 +150,9 @@ board items. It also reports connector attachments that may have been
 detached. Malformed or out-of-range connector and ink points are discarded
 rather than replaced with invented coordinates; a shape with malformed geometry
 and its children are omitted with a warning. If the first page has no pasteable
-items, the paste is rejected and later pages are not pasted.
+items, the paste is rejected and later pages are not pasted. A formatting-only
+paste warning is temporary; omission and detachment warnings remain visible
+until dismissed, subject to the normal notification queue limit.
 
 ## Durable browser documents (C1 platform integration)
 
