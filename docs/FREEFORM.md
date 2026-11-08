@@ -58,6 +58,18 @@ clones retain the radius; changing the shape kind removes it, and undo restores
 it. Native files containing this property require format v19; legacy shapes
 and documents keep their previous behavior and format version.
 
+### Rectangle outline sides
+
+Select an ordinary rectangle and use **Outline sides** in its inspector to
+show or hide each edge. The fill and the selection/connector perimeter remain
+the whole rectangle; the sides rotate with the shape. Changes are undoable.
+Imported draw.io partial rectangles retain these choices, as do same-kind quick
+clones. Changing the shape kind removes the side metadata; undo restores it.
+Native files containing side choices require format v20, while legacy
+rectangles without them keep their previous behavior and format version.
+Draw.io color adaptation is not yet preserved; see [DRAWIO.md](DRAWIO.md) for
+conversion warnings and remaining fidelity limits.
+
 ## 1. Goal
 
 Thinoda should also work as a **whiteboard**, not only as a tree-shaped mind map,

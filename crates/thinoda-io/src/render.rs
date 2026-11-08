@@ -1157,6 +1157,26 @@ fn board_object_svg(
                 };
                 out.push_str(&format!("<path d=\"{d}\" fill=\"{fill}\" {stroke}{caps}/>"));
             }
+            board::Prim::RectangleSides {
+                paths,
+                stroke,
+                width,
+            } => {
+                let mut d = String::new();
+                for path in paths {
+                    let Some(first) = path.points.first() else {
+                        continue;
+                    };
+                    d.push_str(&format!(" M {}", xy(*first)));
+                    for point in &path.points[1..] {
+                        d.push_str(&format!(" L {}", xy(*point)));
+                    }
+                }
+                out.push_str(&format!(
+                    "<path d=\"{d}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{width:.2}\" stroke-linecap=\"square\" stroke-linejoin=\"miter\"/>",
+                    col(stroke)
+                ));
+            }
             board::Prim::Circle {
                 center,
                 radius,
@@ -1590,6 +1610,129 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use thinoda_core::{Rect, Sheet};
+
+    #[test]
+    fn partial_rectangle_svg_pixels_match_the_published_open_path() {
+        use thinoda_core::{
+            ApproxMeasure, CanvasObject, RectangleSides, SceneId, ShapeKind, SheetRootMode,
+            board::rotated_corners, scene::build_scene,
+        };
+
+        for (width, height) in [
+            (40.0, 30.0),
+            (2.0, 3.0),
+            (8.0, 8.0),
+            (8.0, 2.0),
+            (2.0, 8.0),
+            (8.0, 30.0),
+            (40.0, 8.0),
+            (0.0, 40.0),
+            (40.0, 0.0),
+            (0.0, 0.0),
+        ] {
+            for rotation in [0.0, 37.0, 90.0] {
+                for mask in 0..16 {
+                    for color in [Color::rgb(18, 100, 210), Color::rgba(18, 100, 210, 128)] {
+                        let sides = RectangleSides {
+                            top: mask & 1 != 0,
+                            right: mask & 2 != 0,
+                            bottom: mask & 4 != 0,
+                            left: mask & 8 != 0,
+                        };
+                        let frame =
+                            Rect::from_min_size(Vec2::new(40.0, 40.0), Vec2::new(width, height));
+                        let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+                        object.rectangle_sides = Some(sides);
+                        object.style.stroke = Some(color);
+                        object.style.stroke_width = 8.0;
+                        object.rotation = rotation;
+                        let mut sheet = Sheet::new("Board", "");
+                        sheet.root_mode = SheetRootMode::Hidden;
+                        let id = sheet.add_canvas_object(object).unwrap();
+                        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                        let scene = build_scene(&sheet, &layout);
+                        let item = scene
+                            .items
+                            .iter()
+                            .find(|item| item.id == SceneId::Object(id))
+                            .unwrap();
+                        let actual = board_object_svg(
+                            item,
+                            sheet.canvas.object(id).unwrap(),
+                            Color::WHITE,
+                            false,
+                            VisualExportContext::default(),
+                        );
+
+                        let corners = rotated_corners(frame, rotation);
+                        let visible = [sides.top, sides.right, sides.bottom, sides.left];
+                        let mut path = format!("M {}", xy(corners[0]));
+                        for (index, side) in visible.into_iter().enumerate() {
+                            if index < 3 || side {
+                                path.push_str(&format!(
+                                    " {} {}",
+                                    if side { "L" } else { "M" },
+                                    xy(corners[(index + 1) % 4])
+                                ));
+                            }
+                        }
+                        let expected = format!(
+                            "<path d=\"{path}\" fill=\"none\" stroke=\"{}\" stroke-width=\"8\" stroke-linecap=\"square\" stroke-linejoin=\"miter\"/>",
+                            col(color)
+                        );
+                        let wrap = |body: &str| {
+                            format!(
+                                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\">{body}</svg>"
+                            )
+                        };
+                        let pixels = |svg: &str| {
+                            image::load_from_memory(
+                                &raster_svg(svg, 1.0, image::ImageFormat::Png).unwrap(),
+                            )
+                            .unwrap()
+                            .to_rgba8()
+                        };
+                        let actual_pixels = pixels(&wrap(&actual));
+                        let expected_pixels = pixels(&wrap(&expected));
+                        let premultiply = |pixel: image::Rgba<u8>| {
+                            let alpha = u16::from(pixel[3]);
+                            [
+                                (u16::from(pixel[0]) * alpha + 127) / 255,
+                                (u16::from(pixel[1]) * alpha + 127) / 255,
+                                (u16::from(pixel[2]) * alpha + 127) / 255,
+                                alpha,
+                            ]
+                        };
+                        let mut changed = 0usize;
+                        let mut max_delta = 0;
+                        let mut examples = Vec::new();
+                        for (x, y, actual) in actual_pixels.enumerate_pixels() {
+                            let expected = *expected_pixels.get_pixel(x, y);
+                            let delta = premultiply(*actual)
+                                .into_iter()
+                                .zip(premultiply(expected))
+                                .map(|(a, b)| a.abs_diff(b))
+                                .max()
+                                .unwrap();
+                            if delta > 0 {
+                                changed += 1;
+                                max_delta = max_delta.max(delta);
+                                if examples.len() < 8 {
+                                    examples.push((x, y, *actual, expected));
+                                }
+                            }
+                        }
+                        // resvg can vary by up to 16/255 in one antialiased
+                        // pixel when a move-only subpath is omitted.
+                        assert!(
+                            changed <= 1 && max_delta <= 16,
+                            "{width}x{height}, {rotation}, mask {mask:04b}, color {color:?}: {changed} pixels, max delta {max_delta}\nactual: {actual}\nexpected: {expected}\nfirst differences: {examples:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn transparent_png_uses_straight_alpha_for_color_channels() {

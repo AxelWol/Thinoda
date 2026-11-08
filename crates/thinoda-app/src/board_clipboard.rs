@@ -2646,6 +2646,62 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn copy_as_drawio_warns_and_preserves_partial_rectangle_sides() {
+        use crate::app::Cmd;
+        use thinoda_core::{Color, RectangleSides};
+
+        let (mut app, clipboard) = empty_board_app();
+        let doc = app.doc_mut().unwrap();
+        let sides = RectangleSides {
+            top: true,
+            right: false,
+            bottom: true,
+            left: false,
+        };
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        shape.rectangle_sides = Some(sides);
+        shape.style.fill = Some(Color::rgb(40, 100, 160));
+        let id = doc.doc.add_canvas_object(shape).unwrap();
+        doc.view.board_selection = vec![id];
+        let before = doc.doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::CopyAsDrawio);
+        let text = clipboard.borrow().text.clone();
+        assert!(text.starts_with("%3CmxGraphModel"));
+        let pasted = thinoda_io::drawio_clipboard::decode(&text).unwrap();
+        let mut restored = Sheet::new("Restored", "");
+        restored.root_mode = SheetRootMode::Hidden;
+        clipboard::paste_board_selection(&mut restored, &pasted.payload, Vec2::ZERO).unwrap();
+        assert_eq!(restored.canvas.objects[0].rectangle_sides, Some(sides));
+
+        let expected: Vec<_> = crate::i18n::Lang::ALL
+            .into_iter()
+            .map(|language| {
+                format!(
+                    "1 — {}",
+                    crate::i18n::t_in(
+                        language,
+                        "Rectangle colors or automatic outlines may differ in draw.io"
+                    )
+                )
+            })
+            .collect();
+        let has_warning = |app: &crate::app::ThinodaApp| {
+            app.toasts
+                .texts()
+                .any(|text| expected.iter().any(|line| text.contains(line)))
+        };
+        assert!(has_warning(&app));
+        app.toasts.tick(10.0);
+        assert!(has_warning(&app));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn copy_as_drawio_warns_when_waypoint_connector_attachments_detach() {
         use crate::app::Cmd;
         use thinoda_core::{CanvasConnector, Endpoint, SheetRootMode};

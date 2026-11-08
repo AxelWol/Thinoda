@@ -5427,24 +5427,44 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
+        let status_id = egui::Id::unique(("thinoda_label_status", self.current_viewport));
+        let editing_label = d.view.editing_board_object().is_some();
+        let pointer_active = ctx.input(|input| {
+            input.pointer.any_down() || input.pointer.any_released() || input.any_touches()
+        });
+        let was_visible = ctx.data(|data| {
+            data.get_temp::<(String, bool)>(status_id)
+                .is_some_and(|(key, visible)| key == d.key && visible)
+        });
+        // Do not move controls during a press that starts or finishes editing.
+        let defer_status = editing_label && !was_visible && pointer_active;
+        let hold_status = !editing_label && was_visible && pointer_active;
+        let show_label_status = (editing_label && !defer_status) || hold_status;
+        ctx.data_mut(|data| data.insert_temp(status_id, (d.key.clone(), show_label_status)));
+        if (defer_status || hold_status) && ctx.input(|input| input.pointer.any_released()) {
+            ctx.request_repaint();
+        }
         ui.horizontal_centered(|ui| {
-            if d.view.editing_board_object().is_some() {
-                let width = (ui.available_width() * 0.65).min(550.0);
-                board_label_edit_status(ui, &d.view, width);
-            }
             let add_width = ui.spacing().interact_size.x;
             let height = ui.spacing().interact_size.y;
             let show_badge = ui.available_width() >= crate::brand::GITHUB_BADGE_MIN_BAR_WIDTH;
             let badge_width = if show_badge { height } else { 0.0 };
+            let label_width = if show_label_status {
+                (ui.available_width() * 0.65).min(550.0)
+            } else {
+                0.0
+            };
             let gaps =
                 1.0 + if self.settings.show_status_bar {
                     1.0
                 } else {
                     0.0
-                } + if show_badge { 1.0 } else { 0.0 };
+                } + if show_badge { 1.0 } else { 0.0 }
+                    + if show_label_status { 1.0 } else { 0.0 };
             let width = (ui.available_width()
                 - add_width
                 - badge_width
+                - label_width
                 - gaps * ui.spacing().item_spacing.x)
                 .max(0.0);
             let tabs_width = if self.settings.show_status_bar {
@@ -5782,6 +5802,9 @@ impl ThinodaApp {
                         },
                     );
                 });
+            }
+            if show_label_status {
+                board_label_edit_status(ui, &d.view, label_width);
             }
             if show_badge {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

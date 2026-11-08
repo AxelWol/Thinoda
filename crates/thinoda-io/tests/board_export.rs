@@ -551,6 +551,59 @@ fn shape_rounding_requires_v19_and_aware_xmind_snapshots() {
 }
 
 #[test]
+fn rectangle_sides_require_v20_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rectangle_sides = Some(thinoda_core::RectangleSides {
+        top: true,
+        right: false,
+        bottom: true,
+        left: false,
+    });
+    book.active_mut().add_canvas_object(shape).unwrap();
+    let mut rounded = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::new(110.0, 0.0), Vec2::new(100.0, 60.0)),
+    );
+    rounded.rounding = Some(ShapeRounding {
+        radius: 17.0,
+        stencil: DrawioRectangleStencil::Containers,
+    });
+    book.active_mut().add_canvas_object(rounded).unwrap();
+    assert_eq!(required_native_version(&book), 20);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 20);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 1..20 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+        if version == 19 {
+            assert!(
+                error
+                    .to_string()
+                    .contains("rectangle outline sides require native format version 20")
+            );
+        }
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-RECTANGLE-SIDES-1")
+    );
+}
+
+#[test]
 fn shape_rounding_renders_in_svg_raster_pdf_and_powerpoint() {
     let mut sheet = Sheet::new("Rounded", "");
     sheet.root_mode = SheetRootMode::Hidden;

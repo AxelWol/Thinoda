@@ -282,6 +282,13 @@ impl CanvasLayer {
     pub fn has_shape_rounding(&self) -> bool {
         self.objects.iter().any(|object| object.rounding.is_some())
     }
+
+    /// Whether this layer needs partial-rectangle-aware persistence.
+    pub fn has_rectangle_sides(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.rectangle_sides.is_some())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -356,6 +363,62 @@ pub struct ShapeRounding {
     pub stencil: DrawioRectangleStencil,
 }
 
+/// Visible outline sides of a draw.io partial rectangle, before rotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RectangleSides {
+    pub top: bool,
+    pub right: bool,
+    pub bottom: bool,
+    pub left: bool,
+}
+
+impl Default for RectangleSides {
+    fn default() -> Self {
+        Self {
+            top: true,
+            right: true,
+            bottom: true,
+            left: true,
+        }
+    }
+}
+
+/// One connected sequence of visible rectangle sides.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RectangleSidePath {
+    pub points: Vec<Vec2>,
+}
+
+/// Visible outline paths in sheet coordinates, in draw.io's paint order.
+/// Its outline returns to the start without closing the path, which matters
+/// when a rectangle has a zero-width or zero-height frame.
+pub fn rectangle_side_paths(
+    rect: Rect,
+    rotation: f32,
+    sides: RectangleSides,
+) -> Vec<RectangleSidePath> {
+    let corners = rotated_corners(rect, rotation);
+    let visible = [sides.top, sides.right, sides.bottom, sides.left];
+    let mut paths = Vec::new();
+    let mut points = Vec::new();
+    for (side, is_visible) in visible.into_iter().enumerate() {
+        if is_visible {
+            if points.is_empty() {
+                points.push(corners[side]);
+            }
+            points.push(corners[(side + 1) % 4]);
+        } else if !points.is_empty() {
+            paths.push(RectangleSidePath {
+                points: std::mem::take(&mut points),
+            });
+        }
+    }
+    if !points.is_empty() {
+        paths.push(RectangleSidePath { points });
+    }
+    paths
+}
+
 /// A free object on the board.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanvasObject {
@@ -380,6 +443,9 @@ pub struct CanvasObject {
     /// Optional absolute corner radius for an imported draw.io rectangle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rounding: Option<ShapeRounding>,
+    /// Optional per-side outline for an imported draw.io partial rectangle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rectangle_sides: Option<RectangleSides>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -400,6 +466,7 @@ impl CanvasObject {
             alt_text: String::new(),
             style: ObjectStyle::default(),
             rounding: None,
+            rectangle_sides: None,
         }
     }
 
@@ -1380,6 +1447,19 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             || rounding.radius.fract() != 0.0)
     {
         return Err(format!("canvas object {id} has invalid shape rounding"));
+    }
+    if object.rectangle_sides.is_some()
+        && (!matches!(
+            object.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Rectangle,
+                ..
+            }
+        ) || object.rounding.is_some())
+    {
+        return Err(format!(
+            "canvas object {id} has invalid rectangle outline sides"
+        ));
     }
     match &object.kind {
         CanvasObjectKind::Shape { label, .. } => valid_text(label, "shape label")?,

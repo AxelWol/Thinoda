@@ -804,6 +804,120 @@ fn adjustable_rectangle_rounding_is_absolute_and_validated() {
     assert!(validate_object(&object).is_err());
 }
 
+#[test]
+fn rectangle_sides_are_optional_and_restricted_to_square_rectangles() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    assert!(
+        !serde_json::to_string(&object)
+            .unwrap()
+            .contains("rectangle_sides")
+    );
+    let sides = RectangleSides {
+        top: true,
+        right: false,
+        bottom: true,
+        left: false,
+    };
+    object.rectangle_sides = Some(sides);
+    validate_object(&object).unwrap();
+    assert_eq!(
+        serde_json::from_str::<CanvasObject>(&serde_json::to_string(&object).unwrap()).unwrap(),
+        object
+    );
+
+    let mut malformed = serde_json::to_value(&object).unwrap();
+    malformed["rectangle_sides"]["top"] = serde_json::json!("true");
+    assert!(serde_json::from_value::<CanvasObject>(malformed).is_err());
+    let mut missing = serde_json::to_value(&object).unwrap();
+    missing["rectangle_sides"]
+        .as_object_mut()
+        .unwrap()
+        .remove("top");
+    assert!(serde_json::from_value::<CanvasObject>(missing).is_err());
+
+    object.rounding = Some(ShapeRounding {
+        radius: 0.0,
+        stencil: DrawioRectangleStencil::Mockup,
+    });
+    assert!(validate_object(&object).is_err());
+    object.rounding = None;
+    object.kind = CanvasObjectKind::Shape {
+        shape: ShapeKind::Ellipse,
+        label: String::new(),
+    };
+    assert!(validate_object(&object).is_err());
+}
+
+#[test]
+fn rectangle_side_paths_cover_each_visible_edge_once_at_any_rotation() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    for rotation in [0.0, 90.0, 37.0] {
+        let corners = rotated_corners(frame, rotation);
+        for mask in 0..16 {
+            let sides = RectangleSides {
+                top: mask & 1 != 0,
+                right: mask & 2 != 0,
+                bottom: mask & 4 != 0,
+                left: mask & 8 != 0,
+            };
+            let paths = rectangle_side_paths(frame, rotation, sides);
+            let mut observed = [0; 4];
+            for path in &paths {
+                assert!(path.points.len() >= 2);
+                for segment in path.points.windows(2) {
+                    let index = (0..4)
+                        .find(|&index| {
+                            segment[0] == corners[index] && segment[1] == corners[(index + 1) % 4]
+                        })
+                        .unwrap();
+                    observed[index] += 1;
+                }
+            }
+            assert_eq!(
+                observed,
+                [sides.top, sides.right, sides.bottom, sides.left].map(u32::from),
+                "mask {mask:04b}, rotation {rotation}"
+            );
+            if mask == 15 {
+                assert_eq!(
+                    paths[0].points,
+                    vec![corners[0], corners[1], corners[2], corners[3], corners[0]]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn rectangle_side_paths_keep_drawio_start_and_end_separate_on_collapsed_frames() {
+    for frame in [
+        rect(10.0, 20.0, 0.0, 60.0),
+        rect(10.0, 20.0, 100.0, 0.0),
+        rect(10.0, 20.0, 0.0, 0.0),
+    ] {
+        let corners = rotated_corners(frame, 0.0);
+        let paths = rectangle_side_paths(frame, 0.0, RectangleSides::default());
+        assert_eq!(
+            paths[0].points,
+            vec![corners[0], corners[1], corners[2], corners[3], corners[0]]
+        );
+        let paths = rectangle_side_paths(
+            frame,
+            0.0,
+            RectangleSides {
+                top: true,
+                right: false,
+                bottom: false,
+                left: true,
+            },
+        );
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0].points, vec![corners[0], corners[1]]);
+        assert_eq!(paths[1].points, vec![corners[3], corners[0]]);
+    }
+}
+
 // ---- ids --------------------------------------------------------------------------------
 
 #[test]

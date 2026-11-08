@@ -261,6 +261,39 @@ impl Drawing {
             fill(color)));
     }
 
+    fn rectangle_sides(
+        &mut self,
+        name: &str,
+        paths: &[thinoda_core::board::RectangleSidePath],
+        color: Color,
+        width: f32,
+    ) {
+        let mut path = String::new();
+        for side_path in paths {
+            let Some(first) = side_path.points.first() else {
+                continue;
+            };
+            path.push_str(&format!("<a:moveTo>{}</a:moveTo>", self.point(*first)));
+            for point in &side_path.points[1..] {
+                path.push_str(&format!("<a:lnTo>{}</a:lnTo>", self.point(*point)));
+            }
+        }
+        if path.is_empty() {
+            return;
+        }
+        let id = self.id();
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{}" h="{}" fill="none">{path}</a:path></a:pathLst></a:custGeom><a:noFill/><a:ln w="{}" cap="sq">{}<a:miter/></a:ln></p:spPr></p:sp>"#,
+            esc(name),
+            self.width,
+            self.height,
+            self.width,
+            self.height,
+            self.emu(width).clamp(0, 20_116_800),
+            fill(Some(color)),
+        ));
+    }
+
     fn board_object(
         &mut self,
         item: &thinoda_core::SceneItem,
@@ -283,6 +316,16 @@ impl Drawing {
                     closed,
                     fill,
                     stroke,
+                ),
+                super::board::Prim::RectangleSides {
+                    paths,
+                    stroke,
+                    width,
+                } => self.rectangle_sides(
+                    &format!("Canvas object {}", object.id),
+                    &paths,
+                    stroke,
+                    width,
                 ),
                 super::board::Prim::Circle {
                     center,

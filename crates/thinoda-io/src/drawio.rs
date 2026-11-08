@@ -22,8 +22,9 @@ use thinoda_core::{
         CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind, ConnectorRoute,
         DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil, Endpoint, GridKind, InkStroke,
         InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH,
-        MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, ShapeKind, ShapeRounding,
-        SheetRootMode, normalize_rotation, rotate_around, valid_connector_marker_size,
+        MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, RectangleSides, ShapeKind,
+        ShapeRounding, SheetRootMode, normalize_rotation, rotate_around,
+        valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -504,6 +505,7 @@ struct Style {
     tokens: Vec<String>,
     map: HashMap<String, String>,
     suppress_defaults: bool,
+    partial_sides: [Option<String>; 4],
 }
 
 impl Style {
@@ -512,7 +514,16 @@ impl Style {
             suppress_defaults: text.starts_with(';'),
             ..Self::default()
         };
-        for part in text.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+        for raw in text.split(';') {
+            if let Some((key, value)) = raw.split_once('=')
+                && let Some(index) = PARTIAL_SIDES.iter().position(|side| *side == key)
+            {
+                style.partial_sides[index] = (value != "none").then(|| value.to_owned());
+            }
+            let part = raw.trim();
+            if part.is_empty() {
+                continue;
+            }
             match part.split_once('=') {
                 Some((key, value)) => {
                     style
@@ -543,6 +554,26 @@ impl Style {
         self.get(key)
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite())
+    }
+
+    fn rectangle_sides(&self) -> RectangleSides {
+        // The published stylesheet converts decimal numbers before its renderer
+        // compares each value with "1"; a literal "none" removes the key.
+        let visible = |value: &Option<String>| {
+            value.as_deref().is_none_or(|value| {
+                let value = value.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+                !value.to_ascii_lowercase().contains("0x")
+                    && value
+                        .parse::<f64>()
+                        .is_ok_and(|number| number.is_finite() && number == 1.0)
+            })
+        };
+        RectangleSides {
+            top: visible(&self.partial_sides[0]),
+            right: visible(&self.partial_sides[1]),
+            bottom: visible(&self.partial_sides[2]),
+            left: visible(&self.partial_sides[3]),
+        }
     }
 
     fn text_align(&self) -> Option<TextAlign> {
@@ -1296,16 +1327,8 @@ fn classify(style: &Style) -> Kind {
         | "mxgraph.flowchart.start_1"
         | "mxgraph.flowchart.start_2"
         | "mxgraph.flowchart.on-page_reference" => symmetric(S::Ellipse),
-        "partialRectangle"
-            if PARTIAL_SIDES
-                .iter()
-                .any(|side| style.get(side) == Some("0")) =>
-        {
-            Kind::Approx(S::Rectangle, 0.0, true)
-        }
-        "partialRectangle" | "mxgraph.basic.rect" | "mxgraph.bootstrap.rect" => {
-            symmetric(S::Rectangle)
-        }
+        "partialRectangle" => shape(S::Rectangle, 0.0),
+        "mxgraph.basic.rect" | "mxgraph.bootstrap.rect" => symmetric(S::Rectangle),
         "mxgraph.bootstrap.rrect" => symmetric(S::RoundedRectangle),
         "waypoint" => Kind::Waypoint,
         "folder" | "cube" | "message" | "umlFrame" => Kind::Approx(S::Rectangle, 0.0, true),
@@ -1345,7 +1368,7 @@ fn classify(style: &Style) -> Kind {
     }
 }
 
-/// draw.io `partialRectangle` side flags; any `0` hides that side's outline.
+/// draw.io `partialRectangle` side flags, in clockwise path order.
 const PARTIAL_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 
 /// draw.io draws waypoints as fixed-size dots regardless of the cell geometry.
@@ -1368,6 +1391,66 @@ fn object_style(style: &Style) -> ObjectStyle {
         stroke_width: style.stroke_width(),
         opacity: style.opacity(),
     }
+}
+
+/// Resolves visible light-theme fallbacks while reporting lost adaptive styling.
+fn partial_rectangle_colors(
+    style: &Style,
+    object: &mut CanvasObject,
+    has_label: bool,
+    adaptive_fixed_colors: bool,
+) -> bool {
+    let mut approximate = !style.tokens.is_empty()
+        || has_label && matches!(style.get("fontColor"), None | Some("" | "default"));
+    for (key, opacity_key, fallback, target) in [
+        (
+            "fillColor",
+            "fillOpacity",
+            Color::WHITE,
+            &mut object.style.fill,
+        ),
+        (
+            "strokeColor",
+            "strokeOpacity",
+            Color::BLACK,
+            &mut object.style.stroke,
+        ),
+    ] {
+        let value = style.get(key);
+        *target = match value {
+            None if style.suppress_defaults => Some(Color::TRANSPARENT),
+            None | Some("" | "default") => {
+                approximate = true;
+                Some(style.color_with_opacity(fallback, opacity_key))
+            }
+            Some("none") => Some(Color::TRANSPARENT),
+            Some(value) => {
+                let explicit = value
+                    .strip_prefix('#')
+                    .is_some_and(|hex| Color::from_hex(hex).is_some());
+                if !explicit {
+                    approximate = true;
+                }
+                style.color(key, opacity_key).or_else(|| {
+                    approximate = true;
+                    Some(style.color_with_opacity(fallback, opacity_key))
+                })
+            }
+        };
+        if style.get(opacity_key).is_some() && style.num(opacity_key).is_none() {
+            approximate = true;
+        }
+    }
+    if adaptive_fixed_colors && object.style.opacity > 0.0 {
+        let visible_outline = object
+            .rectangle_sides
+            .is_some_and(|sides| sides.top || sides.right || sides.bottom || sides.left)
+            && object.style.stroke.is_some_and(|color| color.a > 0);
+        approximate |= object.style.fill.is_some_and(|color| color.a > 0)
+            || visible_outline
+            || has_label && object.style.text_color.is_some_and(|color| color.a > 0);
+    }
+    approximate
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1406,6 +1489,7 @@ struct PageImport<'a> {
     buckets: Vec<(Vec<BoardMember>, bool)>,
     locked: Vec<BoardMember>,
     deferred: Vec<(usize, Context)>,
+    adaptive_fixed_colors: bool,
 }
 
 impl<'a> PageImport<'a> {
@@ -1631,7 +1715,10 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Formatting);
         }
         let id = self.sheet.create_board_frame(&name, rect).ok()?;
-        let swimlane = cell.style.shape() == "swimlane" || cell.style.has("swimlane");
+        let swimlane = cell.style.shape() == "swimlane";
+        if !swimlane {
+            self.warn(ImportWarning::Formatting);
+        }
         if let Some(zone) = self.sheet.zones.iter_mut().find(|z| z.id == id) {
             zone.color = cell
                 .style
@@ -1696,15 +1783,25 @@ impl<'a> PageImport<'a> {
                 } else {
                     rect
                 };
-                let mut object = shape_object(shape, frame, total + style.rotation(), label);
+                let rotation = total + style.rotation();
+                let mut object = shape_object(shape, frame, rotation, label);
                 if let Some(stencil) = mockup_rectangle_stencil(style) {
                     object.rounding = Some(ShapeRounding {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
                         stencil,
                     });
                 }
-                if style.shape() == "partialRectangle" && matches!(kind, Kind::Approx(..)) {
-                    object.style.stroke = Some(Color::TRANSPARENT);
+                if style.shape() == "partialRectangle" {
+                    object.rectangle_sides = Some(style.rectangle_sides());
+                    let has_label = !object.label().is_empty();
+                    if partial_rectangle_colors(
+                        style,
+                        &mut object,
+                        has_label,
+                        self.adaptive_fixed_colors,
+                    ) {
+                        self.warn(ImportWarning::Formatting);
+                    }
                 }
                 object
             }
@@ -2229,6 +2326,7 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
         buckets: Vec::new(),
         locked: Vec::new(),
         deferred: Vec::new(),
+        adaptive_fixed_colors: !matches!(model.attr("adaptiveColors"), Some("simple" | "none")),
     };
     import.run();
     import.finish()
@@ -2319,6 +2417,25 @@ fn color_keys(out: &mut String, key: &str, opacity_key: &str, color: Option<Colo
             "{opacity_key}={};",
             num(f32::from(color.a) / 255.0 * 100.0)
         ));
+    }
+}
+
+fn partial_rectangle_color_keys(
+    out: &mut String,
+    key: &str,
+    opacity_key: &str,
+    color: Option<Color>,
+) {
+    if let Some(color) = color
+        && color.a == 0
+        && (color.r != 0 || color.g != 0 || color.b != 0)
+    {
+        out.push_str(&format!(
+            "{key}=#{:02X}{:02X}{:02X};{opacity_key}=0;",
+            color.r, color.g, color.b
+        ));
+    } else {
+        color_keys(out, key, opacity_key, color);
     }
 }
 
@@ -2732,7 +2849,15 @@ impl<'a> PageWriter<'a> {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();
                 let style_ref = &object.style;
-                if let Some(rounding) = object.rounding {
+                if let Some(sides) = object.rectangle_sides {
+                    style.push_str(&format!(
+                        "shape=partialRectangle;top={};right={};bottom={};left={};",
+                        u8::from(sides.top),
+                        u8::from(sides.right),
+                        u8::from(sides.bottom),
+                        u8::from(sides.left),
+                    ));
+                } else if let Some(rounding) = object.rounding {
                     style.push_str(&format!(
                         "shape={};rSize={};",
                         rounded_stencil_name(rounding.stencil),
@@ -2747,10 +2872,41 @@ impl<'a> PageWriter<'a> {
                     style.push_str(shape_style(*shape));
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
-                color_keys(&mut style, "fillColor", "fillOpacity", style_ref.fill);
-                color_keys(&mut style, "strokeColor", "strokeOpacity", style_ref.stroke);
+                let fill = if object.rectangle_sides.is_some() {
+                    Some(style_ref.fill.unwrap_or(Color::TRANSPARENT))
+                } else {
+                    style_ref.fill
+                };
+                let stroke = if object.rectangle_sides.is_some()
+                    && style_ref.stroke.is_none()
+                    && style_ref.fill.is_some()
+                {
+                    Some(Color::TRANSPARENT)
+                } else {
+                    style_ref.stroke
+                };
+                if object.rectangle_sides.is_some() {
+                    partial_rectangle_color_keys(&mut style, "fillColor", "fillOpacity", fill);
+                    partial_rectangle_color_keys(
+                        &mut style,
+                        "strokeColor",
+                        "strokeOpacity",
+                        stroke,
+                    );
+                } else {
+                    color_keys(&mut style, "fillColor", "fillOpacity", fill);
+                    color_keys(&mut style, "strokeColor", "strokeOpacity", stroke);
+                }
                 color_keys(&mut style, "fontColor", "textOpacity", style_ref.text_color);
-                style.push_str(&format!("strokeWidth={};", num(style_ref.stroke_width)));
+                let width = if object.rectangle_sides.is_some()
+                    && style_ref.fill.is_none()
+                    && style_ref.stroke.is_none()
+                {
+                    2.0
+                } else {
+                    style_ref.stroke_width
+                };
+                style.push_str(&format!("strokeWidth={};", num(width)));
                 common_keys(
                     &mut style,
                     style_ref,

@@ -25,6 +25,7 @@ const OVAL_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-6";
 const HALF_CIRCLE_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-7";
 const BAR_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-8";
 const ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-ROUNDING-1";
+const RECTANGLE_SIDES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RECTANGLE-SIDES-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -714,7 +715,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_shape_rounding() {
+    if book.has_rectangle_sides() {
+        Ok(serde_json::to_string(&(
+            RECTANGLE_SIDES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_shape_rounding() {
         Ok(serde_json::to_string(&(ROUNDING_SNAPSHOT_VERSION, book))?)
     } else if book.has_bar_connector_markers() {
         Ok(serde_json::to_string(&(BAR_MARKER_SNAPSHOT_VERSION, book))?)
@@ -774,6 +780,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
                 || version == BAR_MARKER_SNAPSHOT_VERSION
                 || version == ROUNDING_SNAPSHOT_VERSION
+                || version == RECTANGLE_SIDES_SNAPSHOT_VERSION
         })
 }
 
@@ -794,6 +801,7 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .flatten()
         .any(|object| {
             object.get("rounding").is_some()
+                || object.get("rectangle_sides").is_some()
                 || object
                     .get("kind")
                     .and_then(|kind| kind.get("connector"))
@@ -822,10 +830,23 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
             && version != ROUNDING_SNAPSHOT_VERSION
+            && version != RECTANGLE_SIDES_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != RECTANGLE_SIDES_SNAPSHOT_VERSION && workbook.has_rectangle_sides() {
+            return Err(IoError::NewerVersion(
+                "rectangle outline sides require a partial-rectangle-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        // The rectangle-side envelope supports all earlier rounding-era features.
+        let version = if version == RECTANGLE_SIDES_SNAPSHOT_VERSION {
+            ROUNDING_SNAPSHOT_VERSION
+        } else {
+            version.as_str()
+        };
         if version != MARKER_SNAPSHOT_VERSION
             && version != EXTENDED_MARKER_SNAPSHOT_VERSION
             && version != SIZED_MARKER_SNAPSHOT_VERSION
@@ -928,6 +949,12 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_rectangle_sides() {
+            return Err(IoError::NewerVersion(
+                "rectangle outline sides require a partial-rectangle-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
         if workbook.has_shape_rounding() {
             return Err(IoError::NewerVersion(
                 "shape rounding requires a rounding-aware private XMind snapshot".into(),
@@ -2320,6 +2347,59 @@ mod tests {
         for version in [ROUNDING_SNAPSHOT_VERSION, BAR_MARKER_SNAPSHOT_VERSION] {
             let mut malformed = serde_json::to_value(&book).unwrap();
             malformed["sheets"][0]["canvas"]["objects"][0]["rounding"]["radius"] = json!("invalid");
+            let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(import(&make_archive(&entries)).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn rectangle_sides_reject_old_and_malformed_private_snapshots() {
+        use thinoda_core::{CanvasObject, Rect, RectangleSides, ShapeKind, Vec2};
+
+        let mut book = Workbook::default();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rectangle_sides = Some(RectangleSides {
+            top: true,
+            right: false,
+            bottom: false,
+            left: true,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(ROUNDING_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for version in [RECTANGLE_SIDES_SNAPSHOT_VERSION, ROUNDING_SNAPSHOT_VERSION] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][0]["rectangle_sides"]["top"] =
+                json!("invalid");
             let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
             let mut entries = original.clone();
             let (_, bytes) = entries

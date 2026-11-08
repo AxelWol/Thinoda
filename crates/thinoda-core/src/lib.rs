@@ -43,7 +43,7 @@ pub use board::{
     Band, BoardSettings, CanvasConnector, CanvasGroup, CanvasGroupId, CanvasLayer, CanvasObject,
     CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
     ConnectorRoute, DrawioRectangleStencil, Endpoint, GridKind, InkStroke, InkTool, ObjectStyle,
-    RootProjection, ShapeKind, ShapeRounding, SheetRootMode, ZOrder,
+    RectangleSides, RootProjection, ShapeKind, ShapeRounding, SheetRootMode, ZOrder,
 };
 pub use document::Document;
 pub use edit::{EditError, EditResult};

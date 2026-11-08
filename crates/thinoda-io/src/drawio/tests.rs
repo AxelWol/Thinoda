@@ -3252,6 +3252,46 @@ fn nested_geometry_groups_containers_and_edge_labels() {
 }
 
 #[test]
+fn shaped_containers_report_their_frame_approximation() {
+    for style in [
+        "shape=partialRectangle;container=1;left=0;",
+        "shape=folder;container=1;tabWidth=80;tabHeight=20;",
+        "shape=ellipse;container=1;",
+        "swimlane;shape=folder;container=1;",
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="parent" value="Parent" style="{style}fillColor=#123456;swimlaneFillColor=#abcdef;" vertex="1" parent="1"><mxGeometry x="100" y="200" width="300" height="200" as="geometry"/></mxCell>
+            <mxCell id="child" value="Child" style="shape=rectangle;" vertex="1" parent="parent"><mxGeometry x="10" y="20" width="50" height="40" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+        let sheet = &report.workbook.sheets[0];
+        assert_eq!(sheet.zones.len(), 1, "{style}");
+        assert_eq!(
+            sheet.zones[0].background_color,
+            Some(Color::rgb(0x12, 0x34, 0x56)),
+            "{style}"
+        );
+        let child = shapes(sheet)[0];
+        assert_eq!(child.rect, rect(110.0, 220.0, 50.0, 40.0));
+        assert_eq!(sheet.zones[0].objects, vec![child.id]);
+        sheet.validate().unwrap();
+
+        let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+        let linked = crate::import_drawio_link(&link).unwrap();
+        assert_eq!(linked.warnings, report.warnings);
+        assert_eq!(linked.workbook, report.workbook);
+    }
+
+    let native_lane = page(
+        r#"<mxCell id="parent" value="Parent" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&native_lane);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(report.workbook.sheets[0].zones.len(), 1);
+}
+
+#[test]
 fn notes_text_lines_directions_and_user_objects() {
     let xml = page(
         r#"
@@ -3343,7 +3383,10 @@ fn built_in_shape_aliases_map_to_their_thinoda_equivalents() {
         )
     };
     let exact = [
-        ("pr", "shape=partialRectangle;"),
+        (
+            "pr",
+            "shape=partialRectangle;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;",
+        ),
         ("br", "shape=mxgraph.basic.rect;"),
         ("bs", "shape=mxgraph.bootstrap.rect;"),
         ("bt", "shape=mxgraph.bootstrap.rrect;"),
@@ -3354,7 +3397,12 @@ fn built_in_shape_aliases_map_to_their_thinoda_equivalents() {
         .enumerate()
         .map(|(n, (id, style))| cell(id, style, n as u32 * 30))
         .collect();
-    let sheet = clean(&page(&cells));
+    let fixed_colors = page(&cells).replacen(
+        "<mxGraphModel>",
+        "<mxGraphModel adaptiveColors=\"simple\">",
+        1,
+    );
+    let sheet = clean(&fixed_colors);
     use ShapeKind as S;
     assert_eq!(
         kinds_by_label(&sheet),
@@ -3403,11 +3451,270 @@ fn built_in_shape_aliases_map_to_their_thinoda_equivalents() {
         ]
     );
     let partial = shapes(sheet).last().copied().unwrap();
+    assert_eq!(partial.style.stroke, Some(Color::BLACK));
     assert_eq!(
-        partial.style.stroke,
-        Some(Color::TRANSPARENT),
-        "a rectangle with hidden sides drops its outline rather than inventing lines"
+        partial.rectangle_sides,
+        Some(RectangleSides {
+            top: false,
+            right: true,
+            bottom: true,
+            left: false,
+        })
     );
+}
+
+#[test]
+fn partial_rectangle_side_values_follow_published_stylesheet_resolution() {
+    for (value, visible) in [
+        ("1", true),
+        ("1.0", true),
+        ("01", true),
+        (" 1 ", true),
+        ("1e0", true),
+        ("+1", true),
+        ("none", true),
+        ("0", false),
+        ("2", false),
+        ("-1", false),
+        ("true", false),
+        ("false", false),
+        ("0x1", false),
+        ("", false),
+        (" none ", false),
+        ("unknown", false),
+    ] {
+        let style = Style::parse(&format!("shape=partialRectangle;top={value};"));
+        assert_eq!(style.rectangle_sides().top, visible, "{value:?}");
+    }
+    let style = Style::parse("shape=partialRectangle;top=0;top=none;right=0;right=1.0;");
+    assert_eq!(style.rectangle_sides(), RectangleSides::default());
+}
+
+#[test]
+fn partial_rectangle_masks_directions_and_opacity_survive_drawio_roundtrip() {
+    for mask in 0..16 {
+        for (direction, degrees) in [
+            ("east", 0.0),
+            ("south", 90.0),
+            ("west", 180.0),
+            ("north", 270.0),
+        ] {
+            let sides = RectangleSides {
+                top: mask & 1 != 0,
+                right: mask & 2 != 0,
+                bottom: mask & 4 != 0,
+                left: mask & 8 != 0,
+            };
+            let xml = page(&format!(
+                r##"<mxCell id="p" style="shape=partialRectangle;direction={direction};rotation=30;top={};right={};bottom={};left={};fillColor=#224466;fillOpacity=40;strokeColor=#AA5500;strokeOpacity=60;strokeWidth=4;" vertex="1" parent="1"><mxGeometry x="20" y="30" width="100" height="60" as="geometry"/></mxCell>"##,
+                u8::from(sides.top),
+                u8::from(sides.right),
+                u8::from(sides.bottom),
+                u8::from(sides.left),
+            ));
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings,
+                vec![ImportWarning::Formatting],
+                "{mask:04b} {direction}"
+            );
+            let original = shapes(&report.workbook.sheets[0])[0];
+            assert_eq!(original.rectangle_sides, Some(sides));
+            let expected_frame = if degrees == 90.0 || degrees == 270.0 {
+                rect(40.0, 10.0, 60.0, 100.0)
+            } else {
+                rect(20.0, 30.0, 100.0, 60.0)
+            };
+            assert_eq!(original.rect, expected_frame);
+            assert_eq!(original.rotation, (degrees + 30.0) % 360.0);
+            assert_eq!(
+                original.style.fill,
+                Some(Color::rgba(0x22, 0x44, 0x66, 102))
+            );
+            assert_eq!(original.style.stroke, Some(Color::rgba(0xAA, 0x55, 0, 153)));
+            let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+            assert!(exported.contains("shape=partialRectangle;"), "{exported}");
+            let roundtrip = load(&exported);
+            assert_eq!(roundtrip.warnings, vec![ImportWarning::Formatting]);
+            let restored = shapes(&roundtrip.workbook.sheets[0])[0];
+            assert_eq!(restored.rectangle_sides, original.rectangle_sides);
+            assert_eq!(restored.rect, original.rect);
+            assert_eq!(restored.rotation, original.rotation);
+            assert_eq!(restored.style, original.style);
+        }
+    }
+}
+
+#[test]
+fn ordinary_and_partial_rectangles_normalize_imported_rotations() {
+    for (rotation, expected) in [("450", 90.0), ("-90", 270.0), ("720", 0.0), ("-450", 270.0)] {
+        for shape in ["rectangle", "partialRectangle"] {
+            let xml = page(&format!(
+                r#"<mxCell id="p" style="shape={shape};rotation={rotation};" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+            ));
+            let report = load(&xml);
+            let original = shapes(&report.workbook.sheets[0])[0];
+            assert_eq!(original.rotation, expected, "{shape}, {rotation}");
+            let exported = export(&report.workbook).unwrap();
+            let restored = load(std::str::from_utf8(&exported).unwrap());
+            assert_eq!(
+                shapes(&restored.workbook.sheets[0])[0].rotation,
+                expected,
+                "{shape}, {rotation}"
+            );
+        }
+    }
+}
+
+#[test]
+fn partial_rectangle_adaptive_color_warnings_respect_page_mode_and_visibility() {
+    let cases = [
+        ("fillColor=#224466;strokeColor=none;", "", true),
+        ("fillColor=none;strokeColor=#AA5500;", "", true),
+        (
+            "fillColor=none;strokeColor=#AA5500;top=0;right=0;bottom=0;left=0;",
+            "",
+            false,
+        ),
+        (
+            "fillColor=none;strokeColor=none;fontColor=#AA5500;",
+            "Label",
+            true,
+        ),
+        ("fillColor=none;strokeColor=none;", "", false),
+    ];
+    for (attribute, adaptive) in [
+        ("", true),
+        (r#" adaptiveColors="auto""#, true),
+        (r#" adaptiveColors="simple""#, false),
+        (r#" adaptiveColors="none""#, false),
+        (r#" adaptiveColors="future""#, true),
+    ] {
+        for (style, label, visible) in cases {
+            let xml = page(&format!(
+                r#"<mxCell id="p" value="{label}" style="shape=partialRectangle;{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+            ))
+            .replacen("<mxGraphModel>", &format!("<mxGraphModel{attribute}>"), 1);
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings.contains(&ImportWarning::Formatting),
+                adaptive && visible,
+                "{attribute}, {style}, {label}: {:?}",
+                report.warnings
+            );
+        }
+    }
+}
+
+#[test]
+fn partial_rectangle_hidden_nonblack_colors_survive_drawio_roundtrip() {
+    let xml = page(
+        r##"<mxCell id="p" style="shape=partialRectangle;fillColor=#123456;fillOpacity=0;strokeColor=#ABCDEF;strokeOpacity=0;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let original = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(original.style.fill, Some(Color::rgba(0x12, 0x34, 0x56, 0)));
+    assert_eq!(
+        original.style.stroke,
+        Some(Color::rgba(0xAB, 0xCD, 0xEF, 0))
+    );
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(exported.contains("fillColor=#123456;fillOpacity=0;"));
+    assert!(exported.contains("strokeColor=#ABCDEF;strokeOpacity=0;"));
+    let restored = load(&exported);
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    assert_eq!(
+        shapes(&restored.workbook.sheets[0])[0].style,
+        original.style
+    );
+}
+
+#[test]
+fn partial_rectangle_appearance_losses_cover_visible_fill_outline_and_label() {
+    let mut sheet = Sheet::new("Rectangles", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let frame = rect(0.0, 0.0, 100.0, 60.0);
+    let hidden_sides = RectangleSides {
+        top: false,
+        right: false,
+        bottom: false,
+        left: false,
+    };
+    let mut automatic = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    automatic.rectangle_sides = Some(RectangleSides::default());
+    automatic.style.stroke_width = 17.0;
+    sheet.add_canvas_object(automatic).unwrap();
+    let mut fill = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    fill.rectangle_sides = Some(hidden_sides);
+    fill.style.fill = Some(Color::rgb(20, 40, 60));
+    sheet.add_canvas_object(fill).unwrap();
+    let mut outline = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    outline.rectangle_sides = Some(RectangleSides::default());
+    outline.style.fill = Some(Color::TRANSPARENT);
+    outline.style.stroke = Some(Color::BLACK);
+    sheet.add_canvas_object(outline).unwrap();
+    let mut label = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    label.rectangle_sides = Some(hidden_sides);
+    label.style.fill = Some(Color::TRANSPARENT);
+    label.style.stroke = Some(Color::TRANSPARENT);
+    if let CanvasObjectKind::Shape { label, .. } = &mut label.kind {
+        *label = "Visible label".into();
+    }
+    sheet.add_canvas_object(label).unwrap();
+    let mut invisible = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    invisible.rectangle_sides = Some(hidden_sides);
+    invisible.style.fill = Some(Color::TRANSPARENT);
+    invisible.style.stroke = Some(Color::TRANSPARENT);
+    sheet.add_canvas_object(invisible).unwrap();
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioRectangleAppearanceApproximated(4)],
+            "{format:?}"
+        );
+    }
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(exported.contains("strokeWidth=2;"), "{exported}");
+    assert!(export_losses(&book, Format::Thinoda, &ExportOptions::default()).is_empty());
+}
+
+#[test]
+fn partial_rectangle_default_colors_are_resolved_or_reported() {
+    for (style, fill, stroke, warn) in [
+        ("shape=partialRectangle;", Color::WHITE, Color::BLACK, true),
+        (
+            ";shape=partialRectangle;",
+            Color::TRANSPARENT,
+            Color::TRANSPARENT,
+            false,
+        ),
+        (
+            "shape=partialRectangle;fillColor=none;strokeColor=none;",
+            Color::TRANSPARENT,
+            Color::TRANSPARENT,
+            false,
+        ),
+        (
+            "shape=partialRectangle;fillColor=default;strokeColor=default;fillOpacity=40;strokeOpacity=60;",
+            Color::rgba(255, 255, 255, 102),
+            Color::rgba(0, 0, 0, 153),
+            true,
+        ),
+    ] {
+        let report = load(&page(&format!(
+            r#"<mxCell id="p" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        )));
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.style.fill, Some(fill), "{style}");
+        assert_eq!(object.style.stroke, Some(stroke), "{style}");
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warn,
+            "{style}"
+        );
+    }
 }
 
 #[test]

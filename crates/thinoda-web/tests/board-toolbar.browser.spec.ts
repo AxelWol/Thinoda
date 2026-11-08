@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { join } from "node:path";
-import { command, frames, saveAs, zipEntry } from "./board-browser-helpers";
+import { colorBounds, command, frames, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 800, height: 600 },
@@ -203,4 +203,51 @@ test("double-click label editing handles multiline, cancel and outside click", a
     expect(shapes).toHaveLength(2);
     expect(shapes[0].kind.shape?.label).toBe("Outside");
     expect(shapes[1].kind.shape?.label ?? "").toBe("");
+});
+
+test("clicking another sheet finishes a shape label without losing the click", async ({ page }) => {
+    await page.setViewportSize({ width: 1252, height: 900 });
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    const xml = `<mxfile><diagram name="Board"><mxGraphModel adaptiveColors="simple"><root>
+        <mxCell id="0"/><mxCell id="1" parent="0"/>
+        <mxCell id="shape" vertex="1" parent="1"
+          style="rounded=0;fillColor=#17C987;strokeColor=#000000;">
+          <mxGeometry x="250" y="200" width="160" height="100" as="geometry"/>
+        </mxCell>
+        </root></mxGraphModel></diagram>
+        <diagram name="Other sheet"><mxGraphModel><root>
+        <mxCell id="0"/><mxCell id="1" parent="0"/>
+        </root></mxGraphModel></diagram></mxfile>`;
+    await canvas.drop({
+        files: { name: "label-sheets.drawio", mimeType: "application/xml", buffer: Buffer.from(xml) },
+    });
+    await expect.poll(async () => (
+        await colorBounds(page, await page.screenshot(), [[23, 201, 135]], 5)
+    )[0].count, { timeout: 30_000 }).toBeGreaterThan(200);
+    const bounds = (await colorBounds(page, await page.screenshot(), [[23, 201, 135]], 5))[0];
+    const canvasBox = await canvas.boundingBox();
+    if (!canvasBox) throw new Error("The board canvas is unavailable");
+    await canvas.dblclick({
+        position: {
+            x: Math.round((bounds.minX + bounds.maxX) / 2 - canvasBox.x),
+            y: Math.round((bounds.minY + bounds.maxY) / 2 - canvasBox.y),
+        },
+        delay: 100,
+    });
+    await frames(page);
+    const input = page.locator("input[type='text']");
+    await expect(input).toBeFocused();
+    await input.pressSequentially("Saved before switching");
+    // The sheet tabs are painted into the egui canvas.
+    await page.mouse.click(188, 879);
+    await frames(page);
+    const workbook: {
+        active_sheet: number;
+        sheets: { canvas: { objects: { kind: { shape?: { label?: string } } }[] } }[];
+    } = JSON.parse(zipEntry(await saveAs(page, "label-sheet-switch.thinoda"), "content.json")
+        .toString("utf8"));
+    expect(workbook.active_sheet).toBe(1);
+    expect(workbook.sheets[0].canvas.objects[0].kind.shape?.label).toBe("Saved before switching");
 });

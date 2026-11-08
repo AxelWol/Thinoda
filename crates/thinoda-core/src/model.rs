@@ -795,6 +795,11 @@ impl Sheet {
         self.canvas.has_shape_rounding()
     }
 
+    /// Whether the sheet needs partial-rectangle-aware persistence.
+    pub fn has_rectangle_sides(&self) -> bool {
+        self.canvas.has_rectangle_sides()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2322,6 +2327,11 @@ impl Workbook {
     /// Whether any sheet needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.sheets.iter().any(Sheet::has_shape_rounding)
+    }
+
+    /// Whether any sheet needs partial-rectangle-aware persistence.
+    pub fn has_rectangle_sides(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_rectangle_sides)
     }
 
     pub fn active(&self) -> &Sheet {

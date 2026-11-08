@@ -1072,6 +1072,51 @@ fn shape_rounding_board_clipboard_requires_version_twelve() {
 }
 
 #[test]
+fn rectangle_sides_board_clipboard_requires_version_thirteen() {
+    use crate::{Rect, RectangleSides};
+
+    let mut source = Sheet::new("Source", "Root");
+    let sides = RectangleSides {
+        top: false,
+        right: false,
+        bottom: true,
+        left: true,
+    };
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rectangle_sides = Some(sides);
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(RECTANGLE_SIDES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..13 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-13",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(decode_board_payload(&forged).is_err(), "version {version}");
+    }
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    assert_eq!(
+        destination
+            .canvas
+            .object(pasted.objects[0])
+            .unwrap()
+            .rectangle_sides,
+        Some(sides)
+    );
+}
+
+#[test]
 fn connectors_keep_selected_targets_and_detach_external_targets_at_rendered_points() {
     let mut source = Sheet::new("Source", "Root");
     let external_topic = source.add_child(source.root, None, "External");

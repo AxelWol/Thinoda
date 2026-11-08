@@ -12,9 +12,12 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use thinoda_core::{
-    CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, SceneBand, SceneId,
-    ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
-    board::{polyline_midpoint, rotate_around, rotated_bounds, rotated_corners, shape_label_rect},
+    CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, RectangleSides,
+    SceneBand, SceneId, ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
+    board::{
+        polyline_midpoint, rectangle_side_paths, rotate_around, rotated_bounds, rotated_corners,
+        shape_label_rect,
+    },
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
     scene::{Scene, SceneGeometry, build_scene, connector_stroke_path, topic_clip_zone},
@@ -1156,6 +1159,174 @@ fn shape_fill(kind: ShapeKind) -> &'static ShapeFill {
         .expect("every shape has a fill")
 }
 
+/// Tessellates the union of square-capped sides when thick strokes overlap.
+fn rectangle_side_union_mesh(
+    object: &CanvasObject,
+    sides: RectangleSides,
+    xf: Xf,
+    stroke: Stroke,
+    pixels_per_point: f32,
+) -> egui::Mesh {
+    let half = stroke.width / 2.0;
+    let width = object.rect.size.x * xf.zoom;
+    let height = object.rect.size.y * xf.zoom;
+    // A collapsed draw.io path can reverse at its far end without a cap.
+    let right = if height == 0.0 && width > 0.0 && sides.top && sides.right && sides.bottom {
+        width
+    } else {
+        width + half
+    };
+    let bottom = if width == 0.0 && height > 0.0 && sides.right && sides.bottom && sides.left {
+        height
+    } else {
+        height + half
+    };
+    let mut xs = vec![-half, half, width - half, right];
+    let mut ys = vec![-half, half, height - half, bottom];
+    xs.retain(|x| *x <= right);
+    ys.retain(|y| *y <= bottom);
+    xs.sort_by(f32::total_cmp);
+    ys.sort_by(f32::total_cmp);
+    xs.dedup();
+    ys.dedup();
+    let cols = xs.len() - 1;
+    let rows = ys.len() - 1;
+    let occupied = |x: f32, y: f32| {
+        sides.top && y <= half
+            || sides.right && x >= width - half
+            || sides.bottom && y >= height - half
+            || sides.left && x <= half
+    };
+    let mut cells = vec![false; cols * rows];
+    for row in 0..rows {
+        for col in 0..cols {
+            cells[row * cols + col] =
+                occupied((xs[col] + xs[col + 1]) / 2.0, (ys[row] + ys[row + 1]) / 2.0);
+        }
+    }
+    let angle = object.rotation.to_radians();
+    let (sin, cos) = angle.sin_cos();
+    let origin = xf.pos(rotate_around(
+        object.rect.min,
+        object.rect.center(),
+        object.rotation,
+    ));
+    let point =
+        |col: usize, row: usize| origin + vec2(cos, sin) * xs[col] + vec2(-sin, cos) * ys[row];
+    let mut mesh = egui::Mesh::default();
+    let mut edges = Vec::new();
+    let vertex = |col: usize, row: usize| row * xs.len() + col;
+    for row in 0..rows {
+        for col in 0..cols {
+            if !cells[row * cols + col] {
+                continue;
+            }
+            let base = mesh.vertices.len() as u32;
+            for position in [
+                point(col, row),
+                point(col + 1, row),
+                point(col + 1, row + 1),
+                point(col, row + 1),
+            ] {
+                mesh.colored_vertex(position, stroke.color);
+            }
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+            if row == 0 || !cells[(row - 1) * cols + col] {
+                edges.push((vertex(col, row), vertex(col + 1, row)));
+            }
+            if col + 1 == cols || !cells[row * cols + col + 1] {
+                edges.push((vertex(col + 1, row), vertex(col + 1, row + 1)));
+            }
+            if row + 1 == rows || !cells[(row + 1) * cols + col] {
+                edges.push((vertex(col + 1, row + 1), vertex(col, row + 1)));
+            }
+            if col == 0 || !cells[row * cols + col - 1] {
+                edges.push((vertex(col, row + 1), vertex(col, row)));
+            }
+        }
+    }
+
+    let feather = 1.0 / pixels_per_point;
+    while let Some((start, mut end)) = edges.pop() {
+        let mut boundary = vec![start];
+        while end != start {
+            boundary.push(end);
+            let next = edges
+                .iter()
+                .position(|(from, _)| *from == end)
+                .expect("rectangle stroke union has a closed boundary");
+            end = edges.swap_remove(next).1;
+        }
+        let positions: Vec<_> = boundary
+            .iter()
+            .map(|&index| point(index % xs.len(), index / xs.len()))
+            .collect();
+        let normals: Vec<_> = (0..positions.len())
+            .map(|index| {
+                let prev =
+                    positions[index] - positions[(index + positions.len() - 1) % positions.len()];
+                let next = positions[(index + 1) % positions.len()] - positions[index];
+                let prev = prev.normalized();
+                let next = next.normalized();
+                let a = vec2(prev.y, -prev.x);
+                let b = vec2(next.y, -next.x);
+                (a + b) / (1.0 + a.dot(b))
+            })
+            .collect();
+        for index in 0..positions.len() {
+            let next = (index + 1) % positions.len();
+            let base = mesh.vertices.len() as u32;
+            mesh.colored_vertex(positions[index], stroke.color);
+            mesh.colored_vertex(positions[next], stroke.color);
+            mesh.colored_vertex(
+                positions[next] + normals[next] * feather,
+                Color32::TRANSPARENT,
+            );
+            mesh.colored_vertex(
+                positions[index] + normals[index] * feather,
+                Color32::TRANSPARENT,
+            );
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+        }
+    }
+    mesh
+}
+
+fn paint_rectangle_sides(
+    painter: &Painter,
+    object: &CanvasObject,
+    sides: RectangleSides,
+    xf: Xf,
+    stroke: Stroke,
+) {
+    if stroke == Stroke::NONE {
+        return;
+    }
+    if sides.top && sides.left
+        || stroke.width >= object.rect.size.x.min(object.rect.size.y) * xf.zoom
+    {
+        painter.add(Shape::mesh(rectangle_side_union_mesh(
+            object,
+            sides,
+            xf,
+            stroke,
+            painter.ctx().pixels_per_point(),
+        )));
+        return;
+    }
+    for path in rectangle_side_paths(object.rect, object.rotation, sides) {
+        let mut points: Vec<_> = path.points.into_iter().map(|point| xf.pos(point)).collect();
+        let last = points.len() - 1;
+        let start_direction = (points[1] - points[0]).normalized();
+        let end_direction = (points[last] - points[last - 1]).normalized();
+        points[0] -= start_direction * (stroke.width / 2.0);
+        points[last] += end_direction * (stroke.width / 2.0);
+        painter.add(Shape::line(points, stroke));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_canvas_object(
     painter: &Painter,
@@ -1197,7 +1368,10 @@ fn paint_canvas_object(
             };
             let points: Vec<_> = outline.iter().copied().map(|p| xf.pos(p)).collect();
             let triangulation = shape_fill(*shape);
-            if triangulation.convex {
+            if let Some(sides) = object.rectangle_sides {
+                painter.add(Shape::convex_polygon(points, fill, Stroke::NONE));
+                paint_rectangle_sides(painter, object, sides, xf, stroke);
+            } else if triangulation.convex {
                 painter.add(Shape::convex_polygon(points, fill, stroke));
             } else {
                 if fill != Color32::TRANSPARENT {
@@ -2150,6 +2324,139 @@ fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rectangle_side_mesh_has_finite_nonoverlapping_coverage_for_all_masks() {
+        let stroke = Stroke::new(8.0, Color32::from_rgba_unmultiplied(30, 60, 120, 128));
+        let cross = |a: Pos2, b: Pos2, p: Pos2| {
+            let ab = b - a;
+            let ap = p - a;
+            ab.x * ap.y - ab.y * ap.x
+        };
+        for zoom in [0.1, 0.75, 1.0, 1.25, 4.0] {
+            let xf = Xf {
+                origin: pos2(20.0, 30.0),
+                zoom,
+            };
+            for (width, height) in [
+                (40, 30),
+                (2, 3),
+                (8, 8),
+                (8, 2),
+                (2, 8),
+                (8, 30),
+                (40, 8),
+                (0, 40),
+                (40, 0),
+                (0, 0),
+            ] {
+                for rotation in [0.0, 37.0, 90.0] {
+                    for mask in 0..16 {
+                        let sides = RectangleSides {
+                            top: mask & 1 != 0,
+                            right: mask & 2 != 0,
+                            bottom: mask & 4 != 0,
+                            left: mask & 8 != 0,
+                        };
+                        let mut object = CanvasObject::shape(
+                            ShapeKind::Rectangle,
+                            thinoda_core::Rect::from_min_size(
+                                Vec2::new(100.0, 100.0),
+                                Vec2::new(width as f32 / zoom, height as f32 / zoom),
+                            ),
+                        );
+                        object.rotation = rotation;
+                        let mesh = rectangle_side_union_mesh(&object, sides, xf, stroke, 1.5);
+                        assert!(
+                            mesh.vertices
+                                .iter()
+                                .all(|v| v.pos.x.is_finite() && v.pos.y.is_finite()),
+                            "{width}x{height}, zoom {zoom}, {rotation}, mask {mask:04b}"
+                        );
+                        assert!(
+                            mesh.indices
+                                .iter()
+                                .all(|index| (*index as usize) < mesh.vertices.len())
+                        );
+                        let (triangles, remainder) = mesh.indices.as_chunks::<3>();
+                        assert!(remainder.is_empty());
+                        let opaque: Vec<_> = triangles
+                            .iter()
+                            .filter_map(|indices| {
+                                let vertices = [
+                                    mesh.vertices[indices[0] as usize],
+                                    mesh.vertices[indices[1] as usize],
+                                    mesh.vertices[indices[2] as usize],
+                                ];
+                                vertices
+                                    .iter()
+                                    .all(|vertex| vertex.color == stroke.color)
+                                    .then_some(vertices.map(|vertex| vertex.pos))
+                            })
+                            .collect();
+                        let half = stroke.width / 2.0;
+                        for y in -4..height + 4 {
+                            for x in -4..width + 4 {
+                                let local = Vec2::new(x as f32 + 0.371, y as f32 + 0.613);
+                                let mut expected = sides.top && local.y < half
+                                    || sides.right && local.x >= width as f32 - half
+                                    || sides.bottom && local.y >= height as f32 - half
+                                    || sides.left && local.x < half;
+                                if width == 0
+                                    && height > 0
+                                    && sides.right
+                                    && sides.bottom
+                                    && sides.left
+                                    && local.y >= height as f32
+                                {
+                                    expected = false;
+                                }
+                                if height == 0
+                                    && width > 0
+                                    && sides.top
+                                    && sides.right
+                                    && sides.bottom
+                                    && local.x >= width as f32
+                                {
+                                    expected = false;
+                                }
+                                let position = xf.pos(rotate_around(
+                                    object.rect.min + local * (1.0 / zoom),
+                                    object.rect.center(),
+                                    rotation,
+                                ));
+                                let mut coverage = 0;
+                                let mut on_edge = false;
+                                for triangle in &opaque {
+                                    let signs = [
+                                        cross(triangle[0], triangle[1], position),
+                                        cross(triangle[1], triangle[2], position),
+                                        cross(triangle[2], triangle[0], position),
+                                    ];
+                                    if signs.iter().all(|value| *value >= -0.001)
+                                        || signs.iter().all(|value| *value <= 0.001)
+                                    {
+                                        if signs.iter().any(|value| value.abs() <= 0.001) {
+                                            on_edge = true;
+                                        } else {
+                                            coverage += 1;
+                                        }
+                                    }
+                                }
+                                if !on_edge {
+                                    assert_eq!(
+                                        coverage,
+                                        usize::from(expected),
+                                        "{width}x{height}, zoom {zoom}, {rotation}, mask {mask:04b}, ({x}, {y})"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn object_opacity_preserves_premultiplied_color() {

@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 19;
+pub const NATIVE_FORMAT_VERSION: u64 = 20;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -22,10 +22,13 @@ pub const NATIVE_FORMAT_VERSION: u64 = 19;
 /// 11 open/block connector markers, 12 classic and thin connector markers,
 /// 13 custom connector marker sizes, 14 connector marker fill overrides,
 /// 15 diamond connector markers, 16 oval connector markers, 17 half-circle markers,
-/// 18 bar connector markers, and 19 adjustable rectangle corners.
+/// 18 bar connector markers, 19 adjustable rectangle corners, and
+/// 20 partial rectangle outline sides.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_shape_rounding() {
+    if book.has_rectangle_sides() {
+        20
+    } else if book.has_shape_rounding() {
         19
     } else if book.has_bar_connector_markers() {
         18
@@ -217,6 +220,8 @@ pub enum ExportLoss {
     LegacyConnectorMarkersApproximated(usize),
     /// Label color or opacity can differ in draw.io.
     DrawioLabelAppearanceApproximated(usize),
+    /// Partial-rectangle colors and automatic outlines can differ in draw.io.
+    DrawioRectangleAppearanceApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -417,6 +422,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut connector_attachments = 0;
     let mut legacy_markers = 0;
     let mut label_appearance = 0;
+    let mut rectangle_appearance = 0;
     let mut settings = false;
     for sheet in sheets {
         for (id, topic) in &sheet.topics {
@@ -435,6 +441,20 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         slides += sheet.presentation.slides.len();
         connector_attachments += connector_attachment_counts(sheet).values().sum::<usize>();
         for object in &sheet.canvas.objects {
+            if let Some(sides) = object.rectangle_sides
+                && object.style.opacity > 0.0
+            {
+                let visible_outline = (sides.top || sides.right || sides.bottom || sides.left)
+                    && match object.style.stroke {
+                        Some(color) => color.a > 0,
+                        None => object.style.fill.is_none(),
+                    };
+                let visible_fill = object.style.fill.is_some_and(|color| color.a > 0);
+                let visible_label = !object.label().is_empty()
+                    && object.style.text_color.is_none_or(|color| color.a > 0);
+                rectangle_appearance +=
+                    usize::from(visible_outline || visible_fill || visible_label);
+            }
             let opacity_differs = !object.label().is_empty()
                 && object.style.opacity < 1.0
                 && object.style.text_color.is_none_or(|color| color.a > 0);
@@ -472,6 +492,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         (
             ExportLoss::DrawioLabelAppearanceApproximated,
             label_appearance,
+        ),
+        (
+            ExportLoss::DrawioRectangleAppearanceApproximated,
+            rectangle_appearance,
         ),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),

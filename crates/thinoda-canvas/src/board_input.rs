@@ -1809,6 +1809,7 @@ fn quick_insert(
     if let CanvasObjectKind::Shape { shape: kind, .. } = &mut clone.kind {
         if *kind != shape {
             clone.rounding = None;
+            clone.rectangle_sides = None;
         }
         *kind = shape;
     }

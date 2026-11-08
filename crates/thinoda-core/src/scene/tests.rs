@@ -1608,6 +1608,86 @@ fn adjustable_corners_drive_scene_hits_and_connector_clipping() {
 }
 
 #[test]
+fn partial_rectangle_keeps_its_selection_and_connector_perimeter() {
+    use crate::RectangleSides;
+
+    let mut sheet = Sheet::new("Partial rectangle", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect(0.0, 0.0, 100.0, 60.0));
+    object.rectangle_sides = Some(RectangleSides {
+        top: false,
+        right: false,
+        bottom: false,
+        left: false,
+    });
+    let id = sheet.add_canvas_object(object).unwrap();
+    let (layout, scene) = scene(&sheet);
+    assert_eq!(
+        scene.hit_test(Vec2::new(50.0, 30.0)),
+        Some(SceneHit::Object(id))
+    );
+    let connector = CanvasConnector::new(
+        Endpoint::Object(id),
+        Endpoint::Point(Vec2::new(200.0, 30.0)),
+    );
+    assert_eq!(
+        connector_path(&sheet, &layout, &connector)[0],
+        Vec2::new(100.0, 30.0)
+    );
+}
+
+#[test]
+fn partial_rectangle_scene_bounds_include_wide_rotated_outline_caps() {
+    use crate::{Color, RectangleSides};
+
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    for rotation in [0.0, 37.0, 90.0] {
+        let mut sheet = Sheet::new("Partial rectangle", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+        object.rotation = rotation;
+        object.rectangle_sides = Some(RectangleSides {
+            top: true,
+            right: false,
+            bottom: false,
+            left: false,
+        });
+        object.style.stroke = Some(Color::BLACK);
+        object.style.stroke_width = 80.0;
+        let id = sheet.add_canvas_object(object).unwrap();
+        let (layout, _) = scene(&sheet);
+        let object = sheet.canvas.object(id).unwrap();
+        let bounds = object_bounds(&sheet, &layout, object).unwrap();
+        for point in [
+            Vec2::new(-30.0, -20.0),
+            Vec2::new(150.0, -20.0),
+            Vec2::new(150.0, 60.0),
+            Vec2::new(-30.0, 60.0),
+        ] {
+            let point = rotate_around(point, frame.center(), rotation);
+            assert!(
+                bounds.contains(point),
+                "{rotation} degrees: {point:?} not in {bounds:?}"
+            );
+        }
+
+        let object = sheet.canvas.object_mut(id).unwrap();
+        object.rectangle_sides = Some(RectangleSides {
+            top: false,
+            right: false,
+            bottom: false,
+            left: false,
+        });
+        let (layout, _) = scene(&sheet);
+        let object = sheet.canvas.object(id).unwrap();
+        assert_eq!(
+            object_bounds(&sheet, &layout, object).unwrap(),
+            rotated_bounds(frame, rotation)
+        );
+    }
+}
+
+#[test]
 fn edge_to_edge_ends_meet_a_bent_target_on_its_path() {
     let mut sheet = Sheet::new("Edges", "");
     sheet.root_mode = SheetRootMode::Hidden;

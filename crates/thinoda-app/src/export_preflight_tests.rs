@@ -31,6 +31,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::LegacyConnectorMarkersApproximated(18),
         ExportLoss::DrawioLabelAppearanceApproximated(19),
         ExportLoss::ConnectorLabelCompositingApproximated(20),
+        ExportLoss::DrawioRectangleAppearanceApproximated(21),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -50,6 +51,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     assert!(lines[17].starts_with("18 — "), "{}", lines[17]);
     assert!(lines[18].starts_with("19 — "), "{}", lines[18]);
     assert!(lines[19].starts_with("20 — "), "{}", lines[19]);
+    assert!(lines[20].starts_with("21 — "), "{}", lines[20]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -59,6 +61,10 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         (18, "Legacy arrowheads approximated in draw.io"),
         (19, "Label color or opacity may differ in draw.io"),
         (20, "Translucent connector labels may render differently"),
+        (
+            21,
+            "Rectangle colors or automatic outlines may differ in draw.io",
+        ),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -117,6 +123,24 @@ fn drawio_label_appearance_loss_requires_export_consent() {
     let options = ExportOptions::default();
     let message = require_board_consent(&book, Format::DrawIo, &options, false).unwrap_err();
     assert!(message.contains(t("Label color or opacity may differ in draw.io")));
+    assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn partial_rectangle_appearance_loss_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    let mut object = shape();
+    object.rectangle_sides = Some(thinoda_core::RectangleSides::default());
+    book.active_mut().add_canvas_object(object).unwrap();
+    let options = ExportOptions::default();
+    let message = require_board_consent(&book, Format::DrawIo, &options, false).unwrap_err();
+    assert!(
+        message.contains(t(
+            "Rectangle colors or automatic outlines may differ in draw.io"
+        )),
+        "{message}"
+    );
     assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
     assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
 }

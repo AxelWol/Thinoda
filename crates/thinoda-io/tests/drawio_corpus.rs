@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use thinoda_core::{
-    Sheet, Vec2, Workbook,
+    Rect, RectangleSides, Sheet, Vec2, Workbook,
     board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute},
 };
 use thinoda_io::{ExportOptions, Format};
@@ -131,6 +131,63 @@ fn check_markers(before: &Workbook, after: &Workbook) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct PartialRectangleSnapshot {
+    frame: Rect,
+    rotation: f32,
+    sides: RectangleSides,
+}
+
+fn partial_rectangles(sheet: &Sheet) -> Vec<PartialRectangleSnapshot> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| {
+            object
+                .rectangle_sides
+                .map(|sides| PartialRectangleSnapshot {
+                    frame: object.rect,
+                    rotation: object.rotation,
+                    sides,
+                })
+        })
+        .collect()
+}
+
+fn check_partial_rectangles(before: &Workbook, after: &Workbook) -> Result<(), String> {
+    let close = |a: f32, b: f32| {
+        (a - b).abs() <= 0.001 + 2.0 * f32::EPSILON * a.abs().max(b.abs()).max(1.0)
+    };
+    for (index, (original, restored)) in before.sheets.iter().zip(&after.sheets).enumerate() {
+        let mut remaining = partial_rectangles(restored);
+        for rectangle in partial_rectangles(original) {
+            let Some(found) = remaining.iter().position(|other| {
+                rectangle.sides == other.sides
+                    && close(rectangle.frame.min.x, other.frame.min.x)
+                    && close(rectangle.frame.min.y, other.frame.min.y)
+                    && close(rectangle.frame.size.x, other.frame.size.x)
+                    && close(rectangle.frame.size.y, other.frame.size.y)
+                    && close(rectangle.rotation, other.rotation)
+            }) else {
+                return Err(format!(
+                    "page {} lost partial rectangle {rectangle:?}",
+                    index + 1
+                ));
+            };
+            remaining.swap_remove(found);
+        }
+        if !remaining.is_empty() {
+            return Err(format!(
+                "page {} gained {} partial rectangles",
+                index + 1,
+                remaining.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn check(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let format = thinoda_io::detect_format(path, &bytes);
@@ -175,6 +232,7 @@ fn check(path: &Path) -> Result<String, String> {
     }
     check_waypoints(&book, &again)?;
     check_markers(&book, &again)?;
+    check_partial_rectangles(&book, &again)?;
 
     let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
         .map_err(|e| format!("native export: {e}"))?;
@@ -193,7 +251,7 @@ fn check(path: &Path) -> Result<String, String> {
         thinoda_io::drawio_clipboard::decode(&text).map_err(|e| format!("clipboard: {e}"))?;
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} warning kind(s)",
         book.sheets.len(),
         book.sheets
             .iter()
@@ -209,6 +267,10 @@ fn check(path: &Path) -> Result<String, String> {
             .map(|marker| {
                 usize::from(marker.start_size.is_some()) + usize::from(marker.end_size.is_some())
             })
+            .sum::<usize>(),
+        book.sheets
+            .iter()
+            .map(|sheet| partial_rectangles(sheet).len())
             .sum::<usize>(),
         report.warnings.len()
     ))

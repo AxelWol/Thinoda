@@ -360,6 +360,41 @@ mod tests {
     }
 
     #[test]
+    fn partial_rectangle_appearance_loss_requires_explicit_clipboard_handling() {
+        use thinoda_core::{CanvasObject, RectangleSides, ShapeKind};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rectangle_sides = Some(RectangleSides::default());
+        let id = sheet.add_canvas_object(shape).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let payload = copy_board_selection(&sheet, &layout, &[], &[id])
+            .unwrap()
+            .unwrap();
+        let copy = encode_with_report(&payload).unwrap();
+        assert_eq!(
+            copy.losses,
+            vec![ExportLoss::DrawioRectangleAppearanceApproximated(1)]
+        );
+        assert!(matches!(
+            encode(&payload),
+            Err(IoError::DrawioClipboardLoss(losses)) if losses == copy.losses
+        ));
+        let pasted = decode(&copy.text).unwrap();
+        let mut restored = Sheet::new("Pasted", "");
+        restored.root_mode = SheetRootMode::Hidden;
+        paste_board_selection(&mut restored, &pasted.payload, Vec2::ZERO).unwrap();
+        assert_eq!(
+            restored.canvas.objects[0].rectangle_sides,
+            Some(RectangleSides::default())
+        );
+    }
+
+    #[test]
     fn connector_label_backdrop_approximations_are_reported_in_clipboard() {
         let xml = r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
             <mxCell id="a" value="Translucent" style="fontColor=#000000;textOpacity=50;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell>

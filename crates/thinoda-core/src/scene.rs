@@ -643,7 +643,20 @@ fn object_item(
             }
         }
     };
-    let bounds = geometry_bounds(&geometry)?;
+    let mut bounds = geometry_bounds(&geometry)?;
+    if let Some(sides) = object.rectangle_sides
+        && (sides.top || sides.right || sides.bottom || sides.left)
+        && object.style.opacity > 0.0
+    {
+        let stroke_width = match object.style.stroke {
+            Some(color) if color.a > 0 => Some(object.style.stroke_width),
+            None if object.style.fill.is_none() => Some(2.0),
+            _ => None,
+        };
+        if let Some(width) = stroke_width {
+            bounds = bounds.expand(width * std::f32::consts::FRAC_1_SQRT_2);
+        }
+    }
     let clip = match &object.kind {
         CanvasObjectKind::Connector(_) => object_clip_at(sheet, object.id, bounds.center()),
         _ => object_clip_rect(sheet, object),

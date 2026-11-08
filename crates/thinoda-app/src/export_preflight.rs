@@ -195,6 +195,10 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::DrawioLabelAppearanceApproximated(count) => {
                     (*count, "Label color or opacity may differ in draw.io")
                 }
+                ExportLoss::DrawioRectangleAppearanceApproximated(count) => (
+                    *count,
+                    "Rectangle colors or automatic outlines may differ in draw.io",
+                ),
                 ExportLoss::TopicDetailsDropped(count) => {
                     (*count, "Topic notes, labels, markers or tasks omitted")
                 }

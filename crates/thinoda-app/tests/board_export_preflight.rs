@@ -192,8 +192,40 @@ fn annotated_central_map() -> Workbook {
 fn sheet_tab_switch_commits_a_pending_board_label() {
     let _guard = lock_ui();
     let mut h = harness(app(board_with_other_sheet(), Language::English));
+    let tab_position = h
+        .get_by_role_and_label(Role::Button, "Other sheet")
+        .rect()
+        .center();
     let id = edit_shape_label(&mut h, "Saved before switching");
-    click(&mut h, "Other sheet");
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "Other sheet")
+            .rect()
+            .center(),
+        tab_position,
+        "label guidance must not move sheet tabs"
+    );
+    h.event(egui::Event::PointerMoved(tab_position));
+    h.event(egui::Event::PointerButton {
+        pos: tab_position,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(1);
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "Other sheet")
+            .rect()
+            .center(),
+        tab_position,
+        "finishing the draft on press must not move the pressed tab"
+    );
+    h.event(egui::Event::PointerButton {
+        pos: tab_position,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(3);
 
     let doc = h.state().doc().unwrap();
     assert_eq!(doc.doc.active_index(), 1);
@@ -206,6 +238,166 @@ fn sheet_tab_switch_commits_a_pending_board_label() {
         "Saved before switching"
     );
     assert!(doc.view.board_label_draft().is_none());
+}
+
+#[test]
+fn batched_sheet_click_commits_a_pending_board_label() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board_with_other_sheet(), Language::English));
+    let id = edit_shape_label(&mut h, "Saved before batched click");
+    let position = h
+        .get_by_role_and_label(Role::Button, "Other sheet")
+        .rect()
+        .center();
+    let button = |pressed| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        button(true),
+        button(false),
+    ]);
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.active_index(), 1);
+    assert_eq!(
+        doc.doc.workbook().sheets[0]
+            .canvas
+            .object(id)
+            .unwrap()
+            .label(),
+        "Saved before batched click"
+    );
+}
+
+#[test]
+fn sheet_touch_commits_a_pending_board_label() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board_with_other_sheet(), Language::English));
+    let id = edit_shape_label(&mut h, "Saved before tapping");
+    let position = h
+        .get_by_role_and_label(Role::Button, "Other sheet")
+        .rect()
+        .center();
+    for (phase, pressed) in [
+        (egui::TouchPhase::Start, true),
+        (egui::TouchPhase::End, false),
+    ] {
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(position),
+            egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(1),
+                phase,
+                pos: position,
+                force: None,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(1);
+    }
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.active_index(), 1);
+    assert_eq!(
+        doc.doc.workbook().sheets[0]
+            .canvas
+            .object(id)
+            .unwrap()
+            .label(),
+        "Saved before tapping"
+    );
+}
+
+#[test]
+fn status_control_click_commits_a_pending_board_label() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board(), Language::English));
+    let zoom = h.state().doc().unwrap().view.zoom;
+    let id = edit_shape_label(&mut h, "Saved before zooming");
+    click(&mut h, "Zoom In");
+    let doc = h.state().doc().unwrap();
+    assert!(doc.view.zoom > zoom);
+    assert_eq!(
+        doc.doc.sheet().canvas.object(id).unwrap().label(),
+        "Saved before zooming"
+    );
+}
+
+#[test]
+fn label_guidance_keeps_the_github_badge_in_place() {
+    let _guard = lock_ui();
+    for show_status_bar in [false, true] {
+        let mut app = app(board(), Language::English);
+        app.settings.show_status_bar = show_status_bar;
+        let mut h = harness(app);
+        let badge_before = h
+            .get_by_role_and_label(Role::Button, "Thinoda on GitHub")
+            .rect();
+        edit_shape_label(&mut h, "Label");
+        let badge_after = h
+            .get_by_role_and_label(Role::Button, "Thinoda on GitHub")
+            .rect();
+        let guidance = h.get_by_label("Editing label · Enter: finish · Esc: cancel");
+        assert_eq!(badge_after, badge_before);
+        assert!(guidance.rect().right() <= badge_after.left());
+    }
+}
+
+#[test]
+fn label_guidance_waits_for_an_in_flight_status_click() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board(), Language::English));
+    let position = h
+        .get_by_role_and_label(Role::Button, "Zoom In")
+        .rect()
+        .center();
+    let zoom = h.state().doc().unwrap().view.zoom;
+    h.event(egui::Event::PointerMoved(position));
+    h.event(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(1);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        let id = doc
+            .doc
+            .sheet()
+            .canvas
+            .objects
+            .iter()
+            .find(|object| matches!(object.kind, thinoda_core::CanvasObjectKind::Shape { .. }))
+            .unwrap()
+            .id;
+        doc.view.select_board_object(id);
+        assert!(doc.view.begin_board_label(&doc.doc, id));
+    }
+    h.run_steps(2);
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "Zoom In")
+            .rect()
+            .center(),
+        position
+    );
+    h.event(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(4);
+    assert!(h.state().doc().unwrap().view.zoom > zoom);
 }
 
 #[test]

@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
-        CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, rotate_around, shape_label_rect,
+        CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath,
+        rectangle_side_paths, rotate_around, shape_label_rect,
     },
     scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_path},
 };
@@ -26,6 +27,12 @@ pub(crate) enum Prim {
         stroke: Option<(Color, f32)>,
         /// Round caps and joins (ink).
         round: bool,
+    },
+    /// All visible rectangle sides are stroked as one compound path.
+    RectangleSides {
+        paths: Vec<RectangleSidePath>,
+        stroke: Color,
+        width: f32,
     },
     /// Circular connector marker in sheet coordinates.
     Circle {
@@ -169,20 +176,42 @@ pub(crate) fn object_prims(
                 .stroke
                 .or(object.style.fill.is_none().then_some(automatic_stroke))
                 .map(|c| faded(c, opacity));
-            let width = if visual.automatic_board_stroke.is_some() && object.style.stroke.is_none()
+            let width = if object.style.stroke.is_none()
+                && (visual.automatic_board_stroke.is_some()
+                    || object.rectangle_sides.is_some() && object.style.fill.is_none())
             {
                 2.0
             } else {
                 object.style.stroke_width.max(0.0)
             };
             let stroke = stroke_color.map(|c| (c, width));
-            out.push(Prim::Path {
-                points: outline.clone(),
-                closed: true,
-                fill,
-                stroke,
-                round: false,
-            });
+            if let Some(sides) = object.rectangle_sides {
+                out.push(Prim::Path {
+                    points: outline.clone(),
+                    closed: true,
+                    fill,
+                    stroke: None,
+                    round: false,
+                });
+                if let Some((stroke, width)) = stroke {
+                    let paths = rectangle_side_paths(object.rect, object.rotation, sides);
+                    if !paths.is_empty() {
+                        out.push(Prim::RectangleSides {
+                            paths,
+                            stroke,
+                            width,
+                        });
+                    }
+                }
+            } else {
+                out.push(Prim::Path {
+                    points: outline.clone(),
+                    closed: true,
+                    fill,
+                    stroke,
+                    round: false,
+                });
+            }
             for detail in details {
                 out.push(Prim::Path {
                     points: detail.clone(),

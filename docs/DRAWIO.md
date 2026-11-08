@@ -765,8 +765,9 @@ connections arrive in Phase 8 without changing the gestures).
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
   v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
-  markers, v18 covers bar markers, v19 covers adjustable rectangle corners, and
-  subsequent additions need a higher version.
+  markers, v18 covers bar markers, v19 covers adjustable rectangle corners,
+  v20 covers rectangle outline sides, and subsequent additions need a higher
+  version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -782,9 +783,17 @@ connections arrive in Phase 8 without changing the gestures).
 ### Phase 5 — Stencil engine & generic baseline (`p5-stencils`)
 - Stencil XML path language → primitives; inline `stencil(…)`; `<constraint>` → ports.
 - Rust ports of JS-coded core shapes needed by generic libraries (process, document,
-  card, tape, cube, step, note, callout, flexArrow, umlActor, lifeline, …).
+  card, tape, cube, step, note, callout, folder, flexArrow, umlActor, lifeline, …).
 - Bundled generic libraries (compressed, lazy, size budget in CI); library index.
 - Unknown stencil → placeholder (bounds + label + icon), data preserved.
+- Prioritize `folder` and `mxgraph.floorplan.office_chair`, which recur in the
+  supplied examples: a source scan of all 88 files found 73 folders, including
+  14 containers, and 596 office chairs. A folder needs its absolute tab size and
+  left/right position, open tab and closed body subpaths, rounded corners and
+  optional symbol retained; bounded header labels and nested container behavior
+  also require attention.
+  Until those features are represented, rectangle and container approximations
+  must report the loss rather than claim folder fidelity.
 
 ### Phase 6 — Import MVP (`p6-import`)
 - Formats/sniffing (3.3); pages → hidden-root sheets; AST → model mapping incl.
@@ -1231,7 +1240,7 @@ each under `catch_unwind`. Result: 89/89 pass, no panics. The corpus folder is n
 committed (third-party content, ~3 MB); the test skips when it is absent and honours
 `THINODA_DRAWIO_CORPUS`. Run: `cargo test -p thinoda-io --release --test drawio_corpus -- --nocapture`.
 
-Gap analysis from the corpus (8,180 vertices, 1,876 edges) sets the fidelity order:
+The initial gap analysis from the corpus (8,180 vertices, 1,876 edges) set the fidelity order:
 1. **Images** — 200 image cells in 21 files: 32 inline `data:` URIs (PNG/SVG), the rest
    remote or `img/lib/...` built-in libraries. Inline images are importable; remote URLs
    stay labelled placeholders (never fetched).
@@ -1267,14 +1276,16 @@ the renderer and the editor). Tests: `typing_on_a_selected_shape_keeps_every_cha
 
 **Built-in shape aliases (fidelity slice 2).** Measured on the corpus, the most frequent
 unmapped built-ins now import as the nearest Thinoda shape instead of an "unknown"
-rectangle. Exact: `partialRectangle` (all sides), `mxgraph.basic.rect`,
+rectangle. At that checkpoint, exact aliases included `partialRectangle` (all sides), `mxgraph.basic.rect`,
 `mxgraph.bootstrap.rect`/`rrect`, `delay`. Approximated, reported as a Formatting loss:
 `folder`, `cube`, `message`, `umlFrame` → rectangle; `endState`,
-`mxgraph.basic.partConcEllipse` → ellipse; `mxgraph.arrows2.arrow` → arrow; a
-`partialRectangle` with hidden sides drops its outline rather than drawing invented lines.
+`mxgraph.basic.partConcEllipse` → ellipse; `mxgraph.arrows2.arrow` → arrow. At that
+checkpoint, a `partialRectangle` with hidden sides dropped its outline rather than
+drawing invented lines. The later partial-rectangle checkpoint below replaces
+that fallback with retained, editable sides.
 `waypoint` becomes a 6 px dot in the stroke colour at the cell centre, and edges still
 attach to it. Dedicated outlines (folder tab, cube depth, envelope, UML actor/frame tab,
-partial sides) need new `ShapeKind`s and stay with Phase 4/13. Tests:
+and other stencils) stay with Phase 4/13. Tests:
 `built_in_shape_aliases_map_to_their_thinoda_equivalents`,
 `waypoints_become_small_dots_in_the_stroke_color`; corpus still 89/89.
 
@@ -1610,16 +1621,19 @@ behavior and screen-reader acceptance have not been established.
 coverage-guided target now exercises draw.io XML, compressed pages, embedded
 SVG, PNG, HTML and self-contained links. Successful imports, including reports
 with conversion warnings, must validate and round-trip exactly through the
-native format. Eight deterministic seeds exercise the individual entry points;
+native format. Ten deterministic seeds exercise the individual entry points,
+including an editable partial rectangle and a partial-rectangle container;
 the existing supplied-example corpus also passes. CI runs a short sanitized
 smoke and includes the target in the separate 30-minute acceptance campaign.
 
 Local 20-second AddressSanitizer smokes completed without reported failures:
 20,823 draw.io, 16,369 XMind, 35,485 FreeMind and 33,632 OPML executions.
-Those are limited regression signals, not proof of parser safety or bounds on
-decompression and peak memory. The 30-minute acceptance campaign has not been
-run for this candidate; full interoperability and the other hardening gates
-remain open.
+Those runs preceded the partial-rectangle seed and are limited regression
+signals, not proof of parser safety or bounds on decompression and peak memory.
+A later 21-second AddressSanitizer run starting with both partial-rectangle
+seeds completed 19,498 executions without a reported failure.
+The 30-minute acceptance campaign has not been run for this candidate; full
+interoperability and the other hardening gates remain open.
 
 **Adjustable mockup rectangles (partial Phase 5) — critique.** Seven published
 mockup/iOS `shape=...rrect` identifiers now import as editable native shapes
@@ -1788,7 +1802,96 @@ composition without a compatibility migration. Generic stencils,
 source-preserving save-back, real-device and assistive-technology acceptance,
 and the long fuzz campaign remain separate gates.
 
-**Validation and rubber-duck review.** The review found two additional gaps:
+**Partial-rectangle outline sides (partial Phases 3–6 and 9) — critique.**
+The four draw.io `partialRectangle` sides of standalone shapes now import as
+editable native metadata, including missing, numeric and removed side styles as
+resolved by the published stylesheet. Direction and rotation are retained, and
+the fill remains the whole rectangle. The inspector offers localized, undoable
+side checkboxes; same-kind quick clones retain them and changing shape kind clears them. The
+selection and connector perimeter remain the rectangle's full geometry.
+Legacy shapes with no side metadata keep their existing behavior. Workbooks
+containing sides require native v20, sheet clipboard v16, board clipboard v13,
+and side-aware recovery and private XMind envelopes; older or unversioned
+envelopes reject the new field instead of silently dropping it.
+
+The published [renderer](https://github.com/jgraph/drawio/blob/dev/src/main/webapp/js/grapheditor/Shapes.js)
+paints the fill and then a single square-capped, miter-joined outline in
+top/right/bottom/left order. It returns to the start without closing the path;
+this distinction changes collapsed zero-width or zero-height outlines.
+SVG, PNG, PDF and editable PowerPoint now use open compound paths. The canvas
+uses a union mesh where sides meet or overlap, so translucent strokes are not
+painted repeatedly at a corner or across a narrow frame. The supplied corpus
+contains 152 partial-rectangle cells across eight files, including cells with
+all sides hidden; its round-trip check now compares retained sides, frames and
+rotation.
+
+**Remaining fidelity limits:** draw.io's adaptive light/dark colors are not
+stored. Import reports Formatting for unresolved or potentially adaptive
+visible colors; draw.io export preflight and **Copy as draw.io** report visible
+rectangle colors and automatic outlines that can differ. The app shows a
+localized sticky clipboard warning, while the strict clipboard API refuses a
+lossy conversion. Such import warnings are not source-preserving metadata, so
+keep the original draw.io file. Transparent nonblack RGB values are retained,
+but an explicit transparent black and a disabled color are not always
+distinguishable. Independent text opacity, text formatting and backgrounds,
+generic stencils and source-preserving save-back remain open. The PDF and
+PowerPoint paths also require broader real-viewer and Office acceptance, and
+the inspector still requires physical-device and screen-reader acceptance.
+When a partial rectangle is also a draw.io container, it is still converted to
+a Thinoda frame and its side metadata is not retained. The importer reports a
+formatting warning instead of silently claiming fidelity; preserving both the
+shape and editable container behavior remains open. The parent phases remain partial.
+
+**Partial-rectangle validation and rubber duck.** The review found an inspector
+test accidentally nested inside another test, so the test was not discovered;
+it is now independent and exercises keyboard changes, locking and undo/redo.
+It also found that formally closing the outline or joining its start and end
+changes collapsed frames. The source-order open path and the canvas's
+collapsed-frame caps now have dedicated regressions. A second pre-existing
+alias test assumed fixed colors; its fixture now explicitly selects draw.io's
+`simple` adaptive-color mode, while separate tests cover the `auto` default.
+The final review also challenged the collapsed-path reversals, rotation
+normalization and square-cap bounds. The published open path requires those
+reversals, object insertion normalizes every shape's rotation, and the
+square-cap bound uses the maximum rotated projection. The partial-only
+normalization was redundant and is now shared with ordinary object insertion;
+round-trip tests cover both ordinary and partial rectangles at rotations
+outside one turn. A later check found that shape-based containers bypassed the
+shape warning entirely; their frame approximation now reports formatting loss.
+An explicit shape also takes precedence over a named swimlane when choosing the
+frame fill. The test covers partial rectangles, folders, ellipses and a shape
+overriding a swimlane, with their children and link imports.
+
+The five affected library suites passed 2,052 tests with four ignored. All 88
+supplied diagrams passed the corpus round trip, including 152 partial rectangles
+across eight files. SVG/PNG reference pixels cover all 16 side masks, ten frame
+sizes including collapsed frames, rotations of 0, 37 and 90 degrees, and
+opaque/translucent strokes. resvg can vary by up to 16/255 in one antialiased
+pixel when the equivalent move-only subpaths are omitted; the comparison
+permits no more than that. Separate Chromium, Firefox and WebKit comparisons
+of all 960 source and simplified path combinations produced identical pixels;
+the affected rotated cases are also covered by browser tests. The canvas mesh
+and a GPU regression check coverage, single-alpha overlaps and collapsed caps.
+Editable PowerPoint compound-path structure and flattened
+viewport output were checked, and a PDFium raster test checked visible and
+hidden sides, square caps and opacity. All 46 board-export preflight tests, 56
+board-export tests (including three separately enabled PDFium checks), the
+partial-rectangle GPU test, three label GPU tests, five corpus tests and four
+importer-seed tests passed. The seed checks include deterministic side-style
+and byte mutations through the same importer harness. Native and WebAssembly
+Clippy passed with warnings denied. These checks do not replace current Office,
+additional PDF viewers, real-device or screen-reader acceptance.
+
+Finishing a shape label on pointer-down could previously move the sheet and
+status controls before pointer-up, swallowing the click. Label guidance now
+follows those controls and its appearance or removal waits for the pointer
+gesture to finish. A separate guidance row was rejected because it clipped
+previously visible board outlines. Native tests cover batched and split clicks,
+touch, zoom and GitHub-badge placement; browser tests cover sheet switching in
+Chromium, Firefox and WebKit. Simulated touch does not replace physical-device
+or assistive-technology acceptance.
+
+**Label-appearance validation and rubber-duck review.** The review found two additional gaps:
 ordinary visual exports could silently differ from the canvas's translucent
 connector compositing, and shape-editor contrast used the unfaded fill. Both
 are now covered as described above. The canvas library passed 490 tests with

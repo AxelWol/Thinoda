@@ -1,5 +1,11 @@
 # Regional wording overrides.
 Corner radius|Raio dos cantos
+Outline sides|Lados do contorno
+Top outline|Contorno superior
+Right outline|Contorno direito
+Bottom outline|Contorno inferior
+Left outline|Contorno esquerdo
+Sides rotate with the shape.|Os lados giram com a forma.
 Start arrow style|Estilo da seta inicial
 End arrow style|Estilo da seta final
 Start arrow size|Tamanho da seta inicial
@@ -47,6 +53,7 @@ Inline card text and list formatting omitted|Formatação e listas do texto dos 
 Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa mental convertidos em formas
 Connector-to-connector attachments detached|Conexões entre conectores desfeitas
 Label color or opacity may differ in draw.io|A cor ou opacidade dos rótulos pode ser diferente no draw.io
+Rectangle colors or automatic outlines may differ in draw.io|As cores ou os contornos automáticos dos retângulos podem ser diferentes no draw.io
 Translucent connector labels may render differently|Rótulos translúcidos de conexões podem ser exibidos de forma diferente
 Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
 Presentation slides omitted|Slides de apresentação omitidos

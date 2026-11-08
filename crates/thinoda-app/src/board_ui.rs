@@ -199,6 +199,7 @@ impl ShapeChange {
                 if let CanvasObjectKind::Shape { shape, .. } = &mut object.kind {
                     if *shape != kind {
                         object.rounding = None;
+                        object.rectangle_sides = None;
                     }
                     *shape = kind;
                 }
@@ -1522,6 +1523,7 @@ impl ThinodaApp {
                     });
                     if *shape != previous_shape {
                         edited.rounding = None;
+                        edited.rectangle_sides = None;
                     }
                     if let Some(rounding) = &mut edited.rounding {
                         let response = widgets::property_field(ui, t("Corner radius"), |ui| {
@@ -1535,6 +1537,28 @@ impl ThinodaApp {
                         if response.changed() {
                             rounding.radius = rounding.radius.round();
                         }
+                    }
+                    if *shape == ShapeKind::Rectangle && edited.rounding.is_none() {
+                        let mut sides = edited.rectangle_sides.unwrap_or_default();
+                        ui.label(t("Outline sides"));
+                        let changed = ui
+                            .horizontal_wrapped(|ui| {
+                                let mut changed = false;
+                                changed |= ui.checkbox(&mut sides.top, t("Top outline")).changed();
+                                changed |=
+                                    ui.checkbox(&mut sides.right, t("Right outline")).changed();
+                                changed |= ui
+                                    .checkbox(&mut sides.bottom, t("Bottom outline"))
+                                    .changed();
+                                changed |=
+                                    ui.checkbox(&mut sides.left, t("Left outline")).changed();
+                                changed
+                            })
+                            .inner;
+                        if changed {
+                            edited.rectangle_sides = Some(sides);
+                        }
+                        widgets::caption(ui, t("Sides rotate with the shape."));
                     }
                     optional_color(ui, "Fill", &mut edited.style.fill, Color::WHITE);
                     optional_color(ui, "Stroke", &mut edited.style.stroke, Color::BLACK);
@@ -1640,6 +1664,7 @@ impl ThinodaApp {
                         current.alt_text = edited.alt_text;
                         current.style = edited.style;
                         current.rounding = edited.rounding;
+                        current.rectangle_sides = edited.rectangle_sides;
                         match (&mut current.kind, edited.kind) {
                             (
                                 CanvasObjectKind::Shape { shape, .. },
@@ -6425,9 +6450,7 @@ mod tests {
     }
 
     #[test]
-    fn shape_rounding_inspector_is_accessible_localized_and_undoable() {
-        use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
-
+    fn shape_rounding_inspector_is_localized() {
         assert!(i18n::has_translations("Corner radius"));
         for language in i18n::Lang::ALL {
             let translated = i18n::t_in(language, "Corner radius");
@@ -6436,6 +6459,139 @@ mod tests {
                 assert_ne!(translated, "Corner radius", "{language:?}");
             }
         }
+    }
+
+    #[test]
+    fn rectangle_sides_inspector_is_localized_keyboard_accessible_and_undoable() {
+        use thinoda_core::RectangleSides;
+
+        for key in [
+            "Outline sides",
+            "Top outline",
+            "Right outline",
+            "Bottom outline",
+            "Left outline",
+            "Sides rotate with the shape.",
+        ] {
+            assert!(i18n::has_translations(key), "{key}");
+            for language in i18n::Lang::ALL {
+                let translated = i18n::t_in(language, key);
+                assert!(!translated.is_empty(), "{language:?}: {key}");
+                if language != i18n::Lang::En {
+                    assert_ne!(translated, key, "{language:?}: {key}");
+                }
+            }
+        }
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(current(harness.state()).rectangle_sides, None);
+        for label in [
+            "Top outline",
+            "Right outline",
+            "Bottom outline",
+            "Left outline",
+        ] {
+            assert!(
+                !harness
+                    .get_by_role_and_label(egui::Role::CheckBox, label)
+                    .accesskit_node()
+                    .is_disabled(),
+                "{label}"
+            );
+        }
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Top outline")
+            .click();
+        harness.run_steps(3);
+        let partial = RectangleSides {
+            top: false,
+            ..RectangleSides::default()
+        };
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Top outline")
+            .focus();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Space);
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).rectangle_sides,
+            Some(RectangleSides::default())
+        );
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.redo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+
+        harness.get_by_label("Shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Ellipse").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rectangle_sides, None);
+        assert!(harness.query_by_label("Top outline").is_none());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[id], true)
+            .unwrap();
+        harness.run_steps(3);
+        for label in [
+            "Top outline",
+            "Right outline",
+            "Bottom outline",
+            "Left outline",
+        ] {
+            assert!(
+                harness
+                    .get_by_role_and_label(egui::Role::CheckBox, label)
+                    .accesskit_node()
+                    .is_disabled(),
+                "{label}"
+            );
+        }
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+    }
+
+    #[test]
+    fn shape_rounding_inspector_is_accessible_and_undoable() {
+        use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
 
         let mut app = ThinodaApp::headless();
         let doc = app.doc_mut().unwrap();
