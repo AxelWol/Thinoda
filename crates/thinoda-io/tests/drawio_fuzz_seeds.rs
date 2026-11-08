@@ -23,6 +23,7 @@ const CLIPBOARD_ENCODED: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/clipboard-encoded");
 const DETACHED_CONNECTOR: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/connector-detached");
+const MALFORMED_POINT: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/malformed-point");
 
 #[test]
 fn document_seeds_reach_their_importers_and_native_roundtrip() {
@@ -35,6 +36,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             PARTIAL_RECTANGLE_CONTAINER,
         ),
         ("detached connector", Format::DrawIo, DETACHED_CONNECTOR),
+        ("malformed point", Format::DrawIo, MALFORMED_POINT),
         ("warning", Format::DrawIo, WARNING),
         ("compressed", Format::DrawIo, COMPRESSED),
         ("svg", Format::DrawIo, SVG),
@@ -80,6 +82,24 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
                     .warnings
                     .contains(&thinoda_io::ImportWarning::DetachedConnectors)
             );
+        }
+        if name == "malformed point" {
+            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Other]);
+            assert!(
+                report.workbook.sheets[0]
+                    .canvas
+                    .objects
+                    .iter()
+                    .all(|object| {
+                        !matches!(
+                            object.kind,
+                            thinoda_core::board::CanvasObjectKind::Connector(_)
+                        )
+                    })
+            );
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, vec![thinoda_io::ImportWarning::Other]);
         }
         support::roundtrip_report(report);
         drawio_support::exercise(bytes);

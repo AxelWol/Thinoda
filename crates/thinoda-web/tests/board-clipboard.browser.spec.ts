@@ -658,6 +658,35 @@ test("draw.io paste warns about a detached connector", async ({ page }, testInfo
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io paste omits a connector with a malformed endpoint", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" value="Target" vertex="1" parent="1">',
+        '<mxGeometry x="100" width="100" height="60" as="geometry"/></mxCell>',
+        '<mxCell id="edge" edge="1" parent="1" source="missing" target="shape" style="endArrow=none;">',
+        '<mxGeometry relative="1" as="geometry"><mxPoint x="invalid" y="8" as="sourcePoint"/></mxGeometry></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-malformed-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-malformed-warning.png") });
+    const after = archive(await saveAs(page, "drawio-malformed-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape?.label).toBe("Target");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-malformed-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("plain clipboard rejects excessive depth and still supports paste and undo", async ({ page }) => {
     const before = archive(await saveAs(page, "plain-depth-before.thinoda"));
     const setText = (text: string) => page.evaluate((value) => {

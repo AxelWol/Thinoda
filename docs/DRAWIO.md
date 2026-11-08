@@ -1076,10 +1076,11 @@ or raw XML back. Thinoda now matches both directions:
   data is present. `thinoda_io::drawio_clipboard::decode` runs it through the hardened
   import codec (same 16 MiB cap) and the result lands centred in the visible board area as
   one "Paste from draw.io" undo step, selected. If the importer had to simplify anything, a
-  warning toast says so; omitted container frames and extra pages are counted in a
-  persistent, localized warning. Malformed data shows an error toast and leaves the sheet
-  alone. If the first page has no pasteable items, paste is rejected and the user is told
-  that later pages were not pasted. FIM sheets refuse the paste.
+  warning toast says so; possible omitted content, omitted container frames and extra
+  pages are reported in a persistent, localized warning. Unparseable data shows an error
+  toast and leaves the sheet alone. If the first page has no pasteable items, paste is
+  rejected and the user is told that later pages were not pasted. FIM sheets refuse the
+  paste.
 - **Copy:** *Edit ▸ Copy as draw.io* (also in the board item context menu and the ribbon's
   Clipboard group) exports the selected board items through the export codec and writes the
   `encodeURIComponent` form as plain text, so pasting in diagrams.net yields editable
@@ -1163,6 +1164,39 @@ This is not attachment preservation: moving a group or frame does not move the
 free endpoint, and the fallback does not reproduce draw.io perimeter or fixed
 port routing. The versioned scene model, editing, copy/paste, renderers and
 exports still need real group/frame endpoints before this phase can be closed.
+
+**Malformed point safeguards and rubber-duck review.** The importer now uses
+the same validation for `mxPoint` connector endpoints, offsets and waypoints.
+An explicitly invalid, empty or non-finite coordinate discards the
+whole point and reports unsupported data; a missing coordinate still defaults
+to zero. A connector without a usable terminal is omitted rather than gaining
+an invented endpoint. An attached connector remains attached if only an unused
+fallback point is malformed. Invalid offsets and ink points are also discarded
+as whole points. File and link imports use the existing conversion-consent
+flow; the original diagram is not overwritten.
+
+The review found that the existing clipboard notice said only “simplified”,
+even when a connector had been omitted. It now says content may have been
+omitted or simplified, and stays visible for unsupported-data warnings as well
+as counted frame/page omissions and detached attachments. Formatting-only
+warnings still expire normally. The message is localized in every supported
+language. An unpasteable first page leaves the document unchanged and reports
+that there are no pasteable items. Paste warnings can include issues from
+later, unpasted pages, so the wording says *may*; they do not identify
+individual objects. Persistent notices remain subject to the five-toast cap.
+
+Regression coverage includes invalid and missing coordinates, strict import
+consent, attached endpoints, nested offsets, ink, link and clipboard decoding,
+paste and undo, the supplied examples and deterministic fuzz seeds. A debug web
+build passed synthetic malformed and detached connector paste/undo journeys in
+Chromium, Firefox and WebKit; screenshots showed the notice, while app tests
+assert its wording and lifetime. A 22-second AddressSanitizer smoke completed
+11,529 executions without a reported failure; this does not meet the separate
+30-minute acceptance campaign gate. The separate `mxGeometry`
+x/y/width/height parser can still silently fall back to zero for malformed
+attributes or clamp negative dimensions; it needs its own validation. This
+safeguard does not preserve malformed source data, establish complete geometry
+fidelity, or replace real system-clipboard and assistive-technology acceptance.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

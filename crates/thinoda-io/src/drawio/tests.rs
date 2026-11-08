@@ -2477,6 +2477,131 @@ fn malformed_waypoints_are_reported_and_do_not_create_fabricated_points() {
 }
 
 #[test]
+fn malformed_connector_endpoints_are_reported_without_fabricating_points() {
+    let shape = r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry x="100" width="40" height="40" as="geometry"/></mxCell>"#;
+    for (point, source, target) in [
+        ("sourcePoint", "", r#" target="shape""#),
+        ("sourcePoint", r#" source="missing""#, r#" target="shape""#),
+        ("targetPoint", r#" source="shape""#, ""),
+        ("targetPoint", r#" source="shape""#, r#" target="missing""#),
+    ] {
+        for coordinate in ["x", "y"] {
+            for value in ["", "   ", "invalid", "NaN", "inf", "1e1000"] {
+                let xml = page(&format!(
+                    r#"{shape}<mxCell id="e" style="endArrow=none;" edge="1" parent="1"{source}{target}><mxGeometry relative="1" as="geometry"><mxPoint {coordinate}="{value}" as="{point}"/></mxGeometry></mxCell>"#
+                ));
+                let report = load(&xml);
+                assert_eq!(
+                    report.warnings,
+                    vec![ImportWarning::Other],
+                    "{point} {coordinate}={value} {source} {target}"
+                );
+                assert!(matches!(
+                    crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                    Err(IoError::ImportNeedsConfirmation(warnings))
+                        if warnings == vec![ImportWarning::Other]
+                ));
+                let sheet = &report.workbook.sheets[0];
+                assert!(connectors(sheet).is_empty());
+                assert_eq!(shapes(sheet).len(), 1);
+                sheet.validate().unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn omitted_point_coordinates_still_default_to_zero() {
+    let xml = page(
+        r#"<mxCell id="e" style="endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint y="  -3.5  " as="sourcePoint"/><mxPoint x="10" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let sheet = clean(&xml);
+    let edge = connectors(&sheet)[0];
+    assert_eq!(edge.from, Endpoint::Point(Vec2::new(0.0, -3.5)));
+    assert_eq!(edge.to, Endpoint::Point(Vec2::new(10.0, 0.0)));
+}
+
+#[test]
+fn malformed_points_are_reported_consistently_by_links_and_clipboard() {
+    let xml = page(
+        r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=none;" edge="1" parent="1" target="shape"><mxGeometry relative="1" as="geometry"><mxPoint x="invalid" y="5" as="sourcePoint"/></mxGeometry></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    assert!(connectors(&report.workbook.sheets[0]).is_empty());
+
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.warnings, report.warnings);
+    assert_eq!(linked.workbook, report.workbook);
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert_eq!(pasted.warnings, report.warnings);
+}
+
+#[test]
+fn malformed_unused_endpoint_points_are_reported_but_attached_edges_survive() {
+    for (point, source, target, free_point) in [
+        (
+            "sourcePoint",
+            r#" source="shape""#,
+            "",
+            r#"<mxPoint x="150" y="12" as="targetPoint"/>"#,
+        ),
+        (
+            "targetPoint",
+            "",
+            r#" target="shape""#,
+            r#"<mxPoint x="150" y="12" as="sourcePoint"/>"#,
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;" edge="1" parent="1"{source}{target}><mxGeometry relative="1" as="geometry"><mxPoint x="invalid" y="5" as="{point}"/>{free_point}</mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Other]);
+        let sheet = &report.workbook.sheets[0];
+        let edge = connectors(sheet)[0];
+        let attached = Endpoint::Object(shapes(sheet)[0].id);
+        let free = Endpoint::Point(Vec2::new(150.0, 12.0));
+        if point == "sourcePoint" {
+            assert_eq!((edge.from, edge.to), (attached, free));
+        } else {
+            assert_eq!((edge.from, edge.to), (free, attached));
+        }
+        sheet.validate().unwrap();
+    }
+}
+
+#[test]
+fn malformed_offsets_and_ink_points_do_not_keep_partial_coordinates() {
+    let xml = page(
+        r#"<mxCell id="group" style="group" vertex="1" parent="1"><mxGeometry x="100" y="200" width="120" height="80" as="geometry"/></mxCell>
+        <mxCell id="child" vertex="1" parent="group"><mxGeometry x="0.5" y="0.5" width="20" height="10" relative="1" as="geometry"><mxPoint x="invalid" y="12" as="offset"/></mxGeometry></mxCell>
+        <mxCell id="ink" style="thinodaInk=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="NaN" y="5" as="sourcePoint"/><Array as="points"><mxPoint x="10" y="20"/></Array><mxPoint x="30" y="40" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(shapes(sheet)[0].rect, rect(160.0, 240.0, 20.0, 10.0));
+    let ink = sheet
+        .canvas
+        .objects
+        .iter()
+        .find_map(|object| match &object.kind {
+            CanvasObjectKind::Ink(ink) => Some(ink),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        ink.points.as_ref(),
+        &[Vec2::new(10.0, 20.0), Vec2::new(30.0, 40.0)]
+    );
+    sheet.validate().unwrap();
+}
+
+#[test]
 fn curved_waypoints_round_trip_and_orthogonal_hints_report_approximation() {
     let cell = |style: &str| {
         format!(

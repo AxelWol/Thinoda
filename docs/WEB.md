@@ -138,10 +138,12 @@ unsaved converted copy; review any conversion warning and save or download a
 supported, and ordinary paste does not invoke this import.
 
 Pasting draw.io diagram text inserts the first page as one undoable edit. A
-persistent warning counts omitted first-page container frames and additional
-pages; children of those frames become free board items. If the first page has
-no pasteable items, the paste is rejected and later pages are not pasted. The
-warning also reports connector attachments that may have been detached.
+persistent warning reports possible omissions and counts omitted first-page
+container frames and additional pages; children of those frames become free
+board items. It also reports connector attachments that may have been
+detached. Malformed connector points are discarded rather than replaced with
+invented coordinates. If the first page has no pasteable items, the paste is
+rejected and later pages are not pasted.
 
 ## Durable browser documents (C1 platform integration)
 

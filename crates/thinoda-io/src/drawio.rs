@@ -978,11 +978,7 @@ fn number(element: &Element, key: &str) -> f32 {
         .unwrap_or(0.0)
 }
 
-fn point(element: &Element) -> Vec2 {
-    Vec2::new(number(element, "x"), number(element, "y"))
-}
-
-fn waypoint(element: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Option<Vec2> {
+fn point(element: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Option<Vec2> {
     let coordinate = |key| match element.attr(key) {
         None => Some(0.0),
         Some(value) => value
@@ -1014,15 +1010,15 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
     };
     for child in &element.children {
         match (child.name.as_str(), child.attr("as")) {
-            ("mxPoint", Some("sourcePoint")) => geometry.source = Some(point(child)),
-            ("mxPoint", Some("targetPoint")) => geometry.target = Some(point(child)),
-            ("mxPoint", Some("offset")) => geometry.offset = Some(point(child)),
+            ("mxPoint", Some("sourcePoint")) => geometry.source = point(child, warnings),
+            ("mxPoint", Some("targetPoint")) => geometry.target = point(child, warnings),
+            ("mxPoint", Some("offset")) => geometry.offset = point(child, warnings),
             ("Array", Some("points")) => {
                 geometry.points = child
                     .children
                     .iter()
                     .filter(|p| p.name == "mxPoint")
-                    .filter_map(|p| waypoint(p, warnings))
+                    .filter_map(|p| point(p, warnings))
                     .collect();
             }
             _ => {}

@@ -46,9 +46,10 @@ editable SVG/PNG, embedded HTML, self-contained `#R` links and plain or
 URI-encoded clipboard text without fetching their URLs. Successful clipboard
 decodes must produce a valid board fragment and report known omissions. Its
 connector-detachment seed checks that frame attachments are reported rather
-than silently converted to free endpoints. Its PNG seed is the original
-editor-exported fixture already used by the importer
-tests. On successful imports, including reports with conversion
+than silently converted to free endpoints. A malformed-point seed checks that
+an unusable connector endpoint is reported instead of becoming a fabricated
+point. Its PNG seed is the original editor-exported fixture already used by
+the importer tests. On successful imports, including reports with conversion
 warnings, each target checks validation and an exact round-trip through
 Thinoda's native format. This in-memory check does not bypass the application's
 conversion-consent flow. Fuzzer crashes and assertion failures are intentionally

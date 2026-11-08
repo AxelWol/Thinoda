@@ -428,6 +428,7 @@ pub(crate) fn prepare_drawio_copy(
 
 pub(crate) struct DrawioPasteOutcome {
     simplified: bool,
+    possible_omissions: bool,
     losses: Vec<thinoda_io::drawio_clipboard::DrawioPasteLoss>,
     detached_connectors: bool,
 }
@@ -457,6 +458,7 @@ pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<DrawioPasteO
         .map_err(localize_error)?;
     Ok(DrawioPasteOutcome {
         simplified: !pasted.warnings.is_empty(),
+        possible_omissions: pasted.warnings.contains(&thinoda_io::ImportWarning::Other),
         losses: pasted.losses,
         detached_connectors: pasted
             .warnings
@@ -792,10 +794,13 @@ impl crate::app::ThinodaApp {
                 {
                     match paste_drawio(doc, &snapshot.text) {
                         Ok(outcome)
-                            if !outcome.losses.is_empty() || outcome.detached_connectors =>
+                            if !outcome.losses.is_empty()
+                                || outcome.detached_connectors
+                                || outcome.possible_omissions =>
                         {
-                            let message =
-                                crate::i18n::t("Pasted from draw.io; some content was simplified");
+                            let message = crate::i18n::t(
+                                "Pasted from draw.io; some content may have been omitted or simplified",
+                            );
                             let mut lines = drawio_paste_loss_lines(&outcome.losses);
                             if outcome.detached_connectors {
                                 lines.push(
@@ -803,14 +808,17 @@ impl crate::app::ThinodaApp {
                                         .to_owned(),
                                 );
                             }
-                            self.toasts.sticky(
-                                thinoda_ui::toast::ToastKind::Warning,
-                                format!("{message}\n{}", lines.join("\n")),
-                            );
+                            let message = if lines.is_empty() {
+                                message.to_owned()
+                            } else {
+                                format!("{message}\n{}", lines.join("\n"))
+                            };
+                            self.toasts
+                                .sticky(thinoda_ui::toast::ToastKind::Warning, message);
                         }
                         Ok(outcome) if outcome.simplified => {
                             self.toasts.warning(crate::i18n::t(
-                                "Pasted from draw.io; some content was simplified",
+                                "Pasted from draw.io; some content may have been omitted or simplified",
                             ));
                         }
                         Ok(_) => {}
@@ -2550,6 +2558,9 @@ mod tests {
                 .texts()
                 .find(|text| text.contains(crate::i18n::t("Container frames omitted")))
                 .expect("omitted frame warning should stay visible");
+            assert!(notice.starts_with(crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
             assert!(notice.contains(&format!(
                 "1 — {}",
                 crate::i18n::t("Container frames omitted")
@@ -2678,6 +2689,59 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_warns_when_a_malformed_endpoint_omits_a_connector() {
+        use crate::app::Cmd;
+
+        let text = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry x="100" width="100" height="60" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="edge" edge="1" parent="1" source="missing" target="shape" style="endArrow=none;"><mxGeometry relative="1" as="geometry"><mxPoint x="invalid" y="8" as="sourcePoint"/></mxGeometry></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let items = board_item_count(&app);
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        assert_eq!(board_item_count(&app), items + 1);
+        app.toasts.tick(60.0);
+        assert!(app.toasts.texts().any(|text| text
+            == crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
+        assert!(!app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+            "Connector attachments may have been detached"
+        ))));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_rejects_an_unpasteable_malformed_connector() {
+        use crate::app::Cmd;
+
+        let text = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="edge" edge="1" parent="1" style="endArrow=none;"><mxGeometry relative="1" as="geometry"><mxPoint x="invalid" y="8" as="sourcePoint"/><mxPoint x="100" y="8" as="targetPoint"/></mxGeometry></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = text.into();
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text
+                    .contains(crate::i18n::t("The draw.io page has no pasteable items.")))
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_explains_when_the_first_page_has_no_pasteable_items() {
         use crate::app::Cmd;
 
@@ -2728,10 +2792,14 @@ mod tests {
             assert_eq!(board_item_count(&app), items + 3, "{style}");
             assert!(
                 app.toasts.texts().any(|text| text.contains(crate::i18n::t(
-                    "Pasted from draw.io; some content was simplified"
+                    "Pasted from draw.io; some content may have been omitted or simplified"
                 ))),
                 "{style}"
             );
+            app.toasts.tick(60.0);
+            assert!(!app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            ))));
             app.exec(&ctx, Cmd::Canvas(Action::Undo));
             assert_eq!(app.doc().unwrap().doc.workbook(), &before);
         }
@@ -2848,7 +2916,7 @@ mod tests {
             assert_eq!(connector.start_marker_unfilled, start_unfilled);
             assert_eq!(connector.end_marker_unfilled, end_unfilled);
             assert!(!app.toasts.texts().any(|text| text.contains(crate::i18n::t(
-                "Pasted from draw.io; some content was simplified"
+                "Pasted from draw.io; some content may have been omitted or simplified"
             ))));
             app.exec(&ctx, Cmd::Canvas(Action::Undo));
             assert_eq!(app.doc().unwrap().doc.workbook(), &before);

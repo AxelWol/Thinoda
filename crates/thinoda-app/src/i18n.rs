@@ -4082,8 +4082,8 @@ const DE: &[(&str, &str)] = &[
         "Für draw.io kopiert; in ein Diagramm einfügen",
     ),
     (
-        "Pasted from draw.io; some content was simplified",
-        "Aus draw.io eingefügt; einige Inhalte wurden vereinfacht",
+        "Pasted from draw.io; some content may have been omitted or simplified",
+        "Aus draw.io eingefügt; Inhalte wurden möglicherweise ausgelassen oder vereinfacht",
     ),
     ("Container frames omitted", "Containerrahmen ausgelassen"),
     (
@@ -4842,7 +4842,7 @@ mod tests {
             "Expand board toolbar",
             "Copy as draw.io",
             "Copied for draw.io; paste it into a diagram",
-            "Pasted from draw.io; some content was simplified",
+            "Pasted from draw.io; some content may have been omitted or simplified",
             "Container frames omitted",
             "Additional draw.io pages omitted",
             "Connector attachments were detached",
