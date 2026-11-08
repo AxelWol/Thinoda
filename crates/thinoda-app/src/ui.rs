@@ -5707,17 +5707,19 @@ impl ThinodaApp {
     }
 
     fn format_panel(&mut self, ui: &mut Ui) {
+        let has_fim = self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some());
+        if !has_fim && self.format_tab == FormatTab::Fim {
+            self.format_tab = FormatTab::Style;
+            self.save_settings();
+        }
         let mut tab = self.format_tab;
-        widgets::segmented(
-            ui,
-            &mut tab,
-            &[
-                (FormatTab::Style, t("Style")),
-                (FormatTab::Data, t("Data")),
-                (FormatTab::Map, t("Map")),
-                (FormatTab::Fim, "FIM"),
-            ],
-        );
+        let tabs = [
+            (FormatTab::Style, t("Style")),
+            (FormatTab::Data, t("Data")),
+            (FormatTab::Map, t("Map")),
+            (FormatTab::Fim, "FIM"),
+        ];
+        widgets::segmented(ui, &mut tab, &tabs[..3 + usize::from(has_fim)]);
         if self.format_tab != tab {
             let result = self
                 .doc_mut()

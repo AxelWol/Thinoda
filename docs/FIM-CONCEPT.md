@@ -108,10 +108,10 @@ declared valid under a schema that does not allow them.
    type, requiredness, reused definition or problems does not alter the model.
    Rules and code lists remain discoverable as associated objects, with
    navigation to owners/usages rather than fake required data children.
-3. **FIM inspector:** fourth right-hand tab after Style, Data, Map. Always
-   discoverable; an ordinary map explains how FIM authoring starts instead of
-   pretending it is exportable. Selection in any perspective identifies the
-   same occurrence, definition and owner.
+3. **FIM inspector:** fourth right-hand tab after Style, Data, Map when the
+   active sheet contains FIM data. Ordinary sheets hide the tab; switching away
+   from a FIM sheet while it is selected returns to Style. Selection in any
+   perspective identifies the same occurrence, definition and owner.
 
 ### FIM inspector
 

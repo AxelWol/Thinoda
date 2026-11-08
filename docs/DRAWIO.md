@@ -520,6 +520,24 @@ existing Copy Sheet data where the platform supports it. Rebuild and launch the
 current Windows app for review after these changes; record platform and physical
 device limitations rather than claiming unverified acceptance.
 
+**Additional requested UI slices:** show the FIM format tab only when the
+active sheet has FIM data, and fall back to an available tab when that context
+changes. Use the standard action-icon color for Shape library and Image card,
+leaving Board minimap distinct. Move the pen, highlighter and eraser options
+from the board rail into a separate contextual strip. Both that strip and the
+Whole-card text strip must overlay the canvas without changing its bounds.
+Keep the board rail permanently low enough to leave room for either strip,
+including in compact windows; opening a strip must not move the rail. Verify
+tool values and dispatch, focus and input ownership, accessibility,
+localization, and window/sheet transitions.
+
+**FIM tab slice — critique:** visibility follows FIM data on the active sheet,
+not the current topic selection, so the document-level inspector remains
+reachable even for an unbound selection. A stale FIM selection falls back to
+Style on ordinary sheets; returning to a FIM sheet makes the tab available
+again. The FIM source and draft workflows are unchanged. Physical
+assistive-technology acceptance remains open.
+
 **Context-menu slice — critique:** Tools now includes Image card alongside the
 other drawing and card tools; applicable target menus place Zones after Styles
 and Grid and Align after Board. The existing commands, icons and target-specific
