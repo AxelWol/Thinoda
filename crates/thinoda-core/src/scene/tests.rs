@@ -344,6 +344,111 @@ fn marker_shapes_keep_scene_geometry_compact() {
 }
 
 #[test]
+fn bar_marker_geometry_matches_published_drawio() {
+    let horizontal = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 100.0)];
+    for (kind, at_start, size, expected) in [
+        (
+            ConnectorMarkerKind::BaseDash,
+            true,
+            12.5,
+            [Vec2::new(100.0, 92.25), Vec2::new(100.0, 107.75)],
+        ),
+        (
+            ConnectorMarkerKind::Dash,
+            false,
+            8.0,
+            [Vec2::new(294.5, 105.5), Vec2::new(283.5, 94.5)],
+        ),
+        (
+            ConnectorMarkerKind::BaseDash,
+            false,
+            0.0,
+            [Vec2::new(300.0, 101.5), Vec2::new(300.0, 98.5)],
+        ),
+        (
+            ConnectorMarkerKind::Dash,
+            true,
+            12.5,
+            [Vec2::new(107.75, 92.25), Vec2::new(123.25, 107.75)],
+        ),
+    ] {
+        for fill in [false, true] {
+            let marker =
+                connector_marker_geometry(&horizontal, at_start, kind, 2.0, size, fill).unwrap();
+            assert_eq!(marker.points(), expected, "{kind:?}");
+            assert!(!marker.closed && !marker.filled);
+            assert_eq!(marker.line_inset, 0.0);
+            assert_eq!(
+                connector_stroke_path(&horizontal, &[Some(marker), Some(marker)]),
+                horizontal
+            );
+        }
+    }
+
+    let diagonal = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 200.0)];
+    for (kind, at_start, size, expected) in [
+        (
+            ConnectorMarkerKind::BaseDash,
+            true,
+            12.5,
+            [Vec2::new(103.4659, 93.0682), Vec2::new(96.5341, 106.9318)],
+        ),
+        (
+            ConnectorMarkerKind::Dash,
+            false,
+            8.0,
+            [Vec2::new(292.621, 202.4597), Vec2::new(287.7016, 187.7016)],
+        ),
+    ] {
+        let marker = connector_marker_geometry(&diagonal, at_start, kind, 2.0, size, true).unwrap();
+        for (actual, expected) in marker.points().iter().zip(expected) {
+            assert!(
+                (*actual - expected).length() < 0.001,
+                "{kind:?}: {actual:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn bar_marker_hit_testing_tracks_only_the_visible_stroke() {
+    use crate::board::ConnectorMarker;
+
+    for (kind, on_marker, off_marker) in [
+        (
+            ConnectorMarkerKind::BaseDash,
+            Vec2::new(100.0, 6.0),
+            Vec2::new(98.0, 6.0),
+        ),
+        (
+            ConnectorMarkerKind::Dash,
+            Vec2::new(90.0, 3.6),
+            Vec2::new(100.0, 6.0),
+        ),
+    ] {
+        let mut sheet = Sheet::new("Bar marker", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker { kind });
+        connector.end_marker_size = Some(12.5);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let (_, scene) = scene(&sheet);
+        assert_eq!(
+            scene.hit_test_tolerance(on_marker, 0.1),
+            Some(SceneHit::Object(id)),
+            "{kind:?}"
+        );
+        assert_eq!(scene.hit_test_tolerance(off_marker, 0.0), None, "{kind:?}");
+    }
+}
+
+#[test]
 fn half_circle_marker_geometry_matches_published_drawio() {
     let horizontal = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 100.0)];
     let start = connector_marker_geometry(

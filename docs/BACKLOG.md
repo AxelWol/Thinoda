@@ -350,11 +350,13 @@ projection, export fidelity and rendered equations remain open; see PLAN.
 `.dio`, `.drawio.svg` and `.drawio.png` open as imported copies; File › Export ›
 draw.io and Save As `.drawio` write after the loss preflight (DRAWIO.md §4.1).
 A draw.io-style GitHub corner mark (status bar and home screen, translated tooltip,
-opens the project page) landed with it. Next: Phase 0 fixture corpus,
-ADR/issue, consumer + interaction inventory, benchmark targets; then Phase 1
-draw.io-style shape placement (pick/drag, hover-edit, click-empty create,
-direction arrows, quick-shape popover, floating edge/shape toolbars,
-connectors ending on true shape outlines) for every board.
+opens the project page) landed with it. Shape placement, hover actions,
+quick-shape selection, shape-aware connector perimeters, waypoint editing and
+a subset of draw.io markers are implemented. The bar-marker slice adds the
+`baseDash` and `dash` styles with versioned persistence. Full support remains
+open, including source-preserving save-back, fixed ports, advanced routing,
+remaining markers, stencils, layers and fidelity hardening; see the phase
+progress and critiques in DRAWIO.md.
 
 ### P1 — CLI generation providers (user request, 2026-10-26)
 

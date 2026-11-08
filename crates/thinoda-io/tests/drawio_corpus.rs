@@ -354,3 +354,52 @@ fn supplied_uml_component_keeps_its_half_circle_markers() {
         .workbook;
     check_markers(&book, &reopened).unwrap();
 }
+
+#[test]
+fn supplied_tutorial_with_bar_markers_keeps_them_through_conversion() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let path = dir.join("board-visual-tutorial.drawio");
+    if !path.is_file() {
+        return;
+    }
+    let source = std::fs::read_to_string(path).unwrap();
+    assert!(source.contains("endArrow=open;"));
+    let edited = source.replacen(
+        "endArrow=open;",
+        "startArrow=baseDash;startFill=0;endArrow=dash;endFill=1;",
+        1,
+    );
+    let book = thinoda_io::import_bytes_with_report(Format::DrawIo, edited.as_bytes())
+        .unwrap()
+        .workbook;
+    let expected = MarkerSnapshot {
+        start: Some(ConnectorMarkerKind::BaseDash),
+        end: Some(ConnectorMarkerKind::Dash),
+        start_size: Some(14.0),
+        end_size: Some(14.0),
+        start_unfilled: true,
+        end_unfilled: false,
+    };
+    assert_eq!(
+        book.sheets
+            .iter()
+            .flat_map(markers)
+            .filter(|marker| *marker == expected)
+            .count(),
+        1
+    );
+    let exported =
+        thinoda_io::export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported)
+        .unwrap()
+        .workbook;
+    check_markers(&book, &reopened).unwrap();
+    let native =
+        thinoda_io::export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        thinoda_io::import_bytes(Format::Thinoda, &native).unwrap(),
+        book
+    );
+}

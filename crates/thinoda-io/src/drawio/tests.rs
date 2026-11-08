@@ -1202,10 +1202,10 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         ))
     };
     for style in [
-        "endArrow=baseDash;",
+        "endArrow=cross;",
         "startFill=0;",
         "endArrow=none;endFill=0;",
-        "endArrow=baseDash;endFill=0;",
+        "endArrow=cross;endFill=0;",
         "endFill=invalid;",
         "endFill=2;",
         "startSize=12;",
@@ -1247,6 +1247,7 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         "startArrow=diamond;startFill=0;endArrow=diamondThin;endFill=1;",
         "startArrow=oval;startFill=0;endArrow=oval;endFill=1;",
         "startArrow=halfCircle;startFill=0;endArrow=halfCircle;endFill=1;",
+        "startArrow=baseDash;startFill=0;endArrow=dash;endFill=1;",
         "portConstraintRotation=0;perimeterSpacing=0;sourcePerimeterSpacing=0;targetPerimeterSpacing=0;",
     ] {
         let report = load(&edge(style));
@@ -1274,6 +1275,8 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
         "diamondThin",
         "oval",
         "halfCircle",
+        "baseDash",
+        "dash",
     ];
     for kind in names {
         for start_fill in [0, 1] {
@@ -1294,7 +1297,9 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
                 assert_eq!(connector.end_marker_size, Some(0.0));
                 assert_eq!(
                     crate::required_native_version(&report.workbook),
-                    if kind == "halfCircle" {
+                    if matches!(kind, "baseDash" | "dash") {
+                        18
+                    } else if kind == "halfCircle" {
                         17
                     } else if kind == "oval" {
                         16
@@ -1341,6 +1346,8 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
         "diamondThin",
         "oval",
         "halfCircle",
+        "baseDash",
+        "dash",
     ];
     for kind in names {
         for size in [0.0, 6.0, 12.5, 999.0] {
@@ -1358,7 +1365,9 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
             assert_eq!(connector.end_marker_size, Some(12.5));
             assert_eq!(
                 crate::required_native_version(&report.workbook),
-                if kind == "halfCircle" {
+                if matches!(kind, "baseDash" | "dash") {
+                    18
+                } else if kind == "halfCircle" {
                     17
                 } else if kind == "oval" {
                     16
@@ -1397,6 +1406,8 @@ fn supported_connector_markers_round_trip_with_both_ends() {
         "diamondThin" => Some(ConnectorMarkerKind::DiamondThin),
         "oval" => Some(ConnectorMarkerKind::Oval),
         "halfCircle" => Some(ConnectorMarkerKind::HalfCircle),
+        "baseDash" => Some(ConnectorMarkerKind::BaseDash),
+        "dash" => Some(ConnectorMarkerKind::Dash),
         _ => None,
     };
     let names = [
@@ -1411,6 +1422,8 @@ fn supported_connector_markers_round_trip_with_both_ends() {
         "diamondThin",
         "oval",
         "halfCircle",
+        "baseDash",
+        "dash",
     ];
     for start in names {
         for end in names {
@@ -1435,6 +1448,12 @@ fn supported_connector_markers_round_trip_with_both_ends() {
             assert_eq!(
                 native_version,
                 if [marker(start), marker(end)]
+                    .into_iter()
+                    .flatten()
+                    .any(ConnectorMarkerKind::is_bar)
+                {
+                    18
+                } else if [marker(start), marker(end)]
                     .into_iter()
                     .flatten()
                     .any(|kind| kind == ConnectorMarkerKind::HalfCircle)
@@ -1562,6 +1581,12 @@ fn supported_connector_markers_survive_link_and_clipboard_conversion() {
             ConnectorMarkerKind::HalfCircle,
             ConnectorMarkerKind::Oval,
         ),
+        (
+            "baseDash",
+            "dash",
+            ConnectorMarkerKind::BaseDash,
+            ConnectorMarkerKind::Dash,
+        ),
     ] {
         let xml = page(&format!(
             r#"<mxCell id="e" style="startArrow={start};startSize=12.5;startFill=0;endArrow={end};endSize=0;endFill=0;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
@@ -1639,6 +1664,14 @@ fn editable_drawio_images_preserve_supported_connector_markers() {
             "oval",
             ConnectorMarkerKind::HalfCircle,
             ConnectorMarkerKind::Oval,
+            true,
+            false,
+        ),
+        (
+            "baseDash",
+            "dash",
+            ConnectorMarkerKind::BaseDash,
+            ConnectorMarkerKind::Dash,
             true,
             false,
         ),

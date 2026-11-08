@@ -452,6 +452,56 @@ fn half_circle_markers_require_v17_and_aware_xmind_snapshots() {
 }
 
 #[test]
+fn bar_markers_require_v18_and_aware_xmind_snapshots() {
+    for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+        for bar_at_start in [false, true] {
+            let (mut book, _) = half_circle_marker_book();
+            let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind
+            else {
+                panic!("expected connector");
+            };
+            if bar_at_start {
+                connector.start_marker = Some(ConnectorMarker { kind });
+            } else {
+                connector.end_marker = Some(ConnectorMarker { kind });
+            }
+            connector.start_marker_size = Some(0.0);
+            connector.end_marker_size = Some(12.5);
+            connector.start_marker_unfilled = true;
+            connector.end_marker_unfilled = true;
+            assert_eq!(required_native_version(&book), 18);
+            let native = export(&book, Format::Thinoda);
+            assert_eq!(manifest_version(&native), 18);
+            assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+            let content = serde_json::to_vec(&book).unwrap();
+            for version in 1..18 {
+                let manifest =
+                    format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+                let forged = zip_with(&[
+                    ("manifest.json", manifest.as_bytes()),
+                    ("content.json", &content),
+                ]);
+                let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+                if version == 17 {
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("bar connector markers require native format version 18")
+                    );
+                }
+            }
+            let xmind = export(&book, Format::XMind);
+            assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+            assert!(
+                String::from_utf8(entry(&xmind, "metadata.json"))
+                    .unwrap()
+                    .contains("THINODA-XMIND-MARKERS-8")
+            );
+        }
+    }
+}
+
+#[test]
 fn connector_markers_render_in_svg_raster_and_presentation_exports() {
     let mut sheet = Sheet::new("Markers", "");
     sheet.root_mode = SheetRootMode::Hidden;
@@ -673,6 +723,107 @@ fn half_circle_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
     });
     connector.end_marker_unfilled = false;
     (book, id)
+}
+
+fn bar_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let (mut book, id) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::BaseDash,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Dash,
+    });
+    connector.start_marker_unfilled = true;
+    connector.end_marker_unfilled = false;
+    (book, id)
+}
+
+#[test]
+fn bar_markers_render_in_visual_and_editable_exports() {
+    let (book, id) = bar_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let paths = [
+        r##"<path d="M 0.00,-7.75 L 0.00,7.75" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+        r##"<path d="M 94.50,5.50 L 83.50,-5.50" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+    ];
+    let presentation =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for path in paths {
+        assert!(svg.contains(path), "{svg}");
+        assert!(presentation.contains(path), "{presentation}");
+    }
+    assert!(svg.contains("M 0.00,0.00 L 100.00,0.00"), "{svg}");
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * png.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * png.height() as f32).floor() as u32;
+        *png.get_pixel(px, py)
+    };
+    for (x, y) in [(0.0, 5.0), (91.75, 2.75)] {
+        assert_ne!(sample(x, y), sample(x, 20.0), "{x}, {y}");
+    }
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    let paths: Vec<_> = slide
+        .split("<p:sp>")
+        .filter(|shape| shape.contains(&format!("Canvas object {id}")))
+        .collect();
+    assert_eq!(paths.len(), 3, "{slide}");
+    for path in &paths {
+        assert_eq!(path.matches("<a:moveTo>").count(), 1);
+        assert_eq!(path.matches("<a:lnTo>").count(), 1);
+        assert!(!path.contains("<a:close/>"));
+        assert!(path.contains(r#"fill="none""#));
+        assert!(path.contains("</a:custGeom><a:noFill/><a:ln"));
+    }
+    let point = |shape: &str, tag: &str| {
+        let (_, point) = shape.split_once(&format!(r#"<a:{tag}><a:pt x=""#)).unwrap();
+        let (x, rest) = point.split_once(r#"" y=""#).unwrap();
+        let (y, _) = rest.split_once('"').unwrap();
+        (x.parse::<f64>().unwrap(), y.parse::<f64>().unwrap())
+    };
+    let start = point(paths[0], "moveTo");
+    let end = point(paths[0], "lnTo");
+    let scale = (end.0 - start.0) / 100.0;
+    assert!(scale > 0.0);
+    let expected = [
+        (paths[1], (94.5, 5.5), (83.5, -5.5)),
+        (paths[2], (0.0, -7.75), (0.0, 7.75)),
+    ];
+    for (shape, first, last) in expected {
+        for (actual, expected) in [
+            (point(shape, "moveTo"), first),
+            (point(shape, "lnTo"), last),
+        ] {
+            assert!((actual.0 - (start.0 + expected.0 * scale)).abs() <= 2.0);
+            assert!((actual.1 - (start.1 + expected.1 * scale)).abs() <= 2.0);
+        }
+    }
+
+    let mut other_fill = book.clone();
+    let CanvasObjectKind::Connector(connector) = &mut other_fill.sheets[0].canvas.objects[0].kind
+    else {
+        panic!("expected connector");
+    };
+    connector.start_marker_unfilled = false;
+    connector.end_marker_unfilled = true;
+    assert_eq!(
+        String::from_utf8(export(&other_fill, Format::Svg)).unwrap(),
+        svg
+    );
 }
 
 #[test]
@@ -1034,6 +1185,13 @@ document[0].render(scale=4).to_pil().convert("RGB").save(sys.stdout.buffer, form
     }
     for (x, y) in [(11.625, -11.625), (91.75, 8.25)] {
         assert_ne!(sample(&open, view, x, y), sample(&open, view, x, 20.0));
+    }
+    let (book, _) = bar_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let view = view_box(&svg);
+    let bars = rasterize(&export(&book, Format::Pdf));
+    for (x, y) in [(0.0, 5.0), (91.75, 2.75)] {
+        assert_ne!(sample(&bars, view, x, y), sample(&bars, view, x, 20.0));
     }
 }
 

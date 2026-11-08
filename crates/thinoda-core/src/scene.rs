@@ -268,6 +268,27 @@ fn connector_marker_geometry(
             line_inset: radius,
         });
     }
+    if kind.is_bar() {
+        let length = marker_size + width + 1.0;
+        let side = normal * (length * 0.5);
+        let (first, last) = if kind == ConnectorMarkerKind::BaseDash {
+            (tip + side, tip - side)
+        } else {
+            (
+                tip - direction * (length * 0.5) + side,
+                tip - direction * (length * 1.5) - side,
+            )
+        };
+        return Some(ConnectorMarkerGeometry {
+            shape: ConnectorMarkerShape::Polygon {
+                points: [first, last, last, last],
+                point_count: 2,
+            },
+            closed: false,
+            filled: false,
+            line_inset: 0.0,
+        });
+    }
     // Keep draw.io's rounded coefficients for stroke-width-dependent tip offsets.
     let offset = width
         * match kind {

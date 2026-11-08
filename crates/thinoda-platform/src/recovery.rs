@@ -58,6 +58,8 @@ const OVAL_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-6";
 const OVAL_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-6";
 const HALF_CIRCLE_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-7";
 const HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-7";
+const BAR_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-8";
+const BAR_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-8";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -79,7 +81,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_half_circle_connector_markers() {
+        tuple.serialize_element(if self.workbook.has_bar_connector_markers() {
+            BAR_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_half_circle_connector_markers() {
             HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
         } else if self.workbook.has_oval_connector_markers() {
             OVAL_MARKER_INK_WORKBOOK_VERSION
@@ -154,7 +158,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_half_circle_connector_markers() {
+    let version = if workbook.has_bar_connector_markers() {
+        BAR_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_half_circle_connector_markers() {
         HALF_CIRCLE_MARKER_WORKBOOK_VERSION
     } else if workbook.has_oval_connector_markers() {
         OVAL_MARKER_WORKBOOK_VERSION
@@ -238,6 +244,8 @@ where
                 && version != OVAL_MARKER_INK_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -260,6 +268,8 @@ where
                 && version != OVAL_MARKER_INK_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -278,6 +288,8 @@ where
                 && version != OVAL_MARKER_INK_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_extended_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -294,6 +306,8 @@ where
                 && version != OVAL_MARKER_INK_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_connector_marker_sizes()
             {
                 return Err(A::Error::custom(
@@ -308,6 +322,8 @@ where
                 && version != OVAL_MARKER_INK_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_connector_marker_fills()
             {
                 return Err(A::Error::custom(
@@ -320,6 +336,8 @@ where
                 && version != OVAL_MARKER_INK_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_diamond_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -330,6 +348,8 @@ where
                 && version != OVAL_MARKER_INK_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_oval_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -338,10 +358,20 @@ where
             }
             if version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
                 && workbook.has_half_circle_connector_markers()
             {
                 return Err(A::Error::custom(
                     "half-circle connector markers require a half-circle-aware recovery workbook",
+                ));
+            }
+            if version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && workbook.has_bar_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "bar connector markers require a bar-aware recovery workbook",
                 ));
             }
             if version == INLINE_WORKBOOK_VERSION && workbook.has_connector_waypoints() {
@@ -357,6 +387,7 @@ where
                 || version == DIAMOND_MARKER_INK_WORKBOOK_VERSION
                 || version == OVAL_MARKER_INK_WORKBOOK_VERSION
                 || version == HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                || version == BAR_MARKER_INK_WORKBOOK_VERSION
             {
                 let pending_ink: String = seq
                     .next_element()?
@@ -1641,6 +1672,75 @@ mod lock_tests {
                     .to_string()
                     .contains("half-circle connector markers require a half-circle-aware recovery workbook")
             );
+        }
+    }
+
+    #[test]
+    fn bar_markers_require_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+            for bar_at_start in [false, true] {
+                let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                connector.arrow_start = true;
+                let bar = Some(ConnectorMarker { kind });
+                let half_circle = Some(ConnectorMarker {
+                    kind: ConnectorMarkerKind::HalfCircle,
+                });
+                (connector.start_marker, connector.end_marker) = if bar_at_start {
+                    (bar, half_circle)
+                } else {
+                    (half_circle, bar)
+                };
+                connector.start_marker_size = Some(0.0);
+                connector.end_marker_size = Some(12.5);
+                connector.start_marker_unfilled = true;
+                connector.end_marker_unfilled = true;
+                book.active_mut()
+                    .add_canvas_object(CanvasObject::connector(connector))
+                    .unwrap();
+                for ink in [None, Some("pending ink")] {
+                    let bytes = match ink {
+                        Some(ink) => {
+                            Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                                .unwrap()
+                        }
+                        None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                    };
+                    let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(snapshot.workbook, book);
+                    assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                    assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+                    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(
+                        value["workbook"][0],
+                        if ink.is_some() {
+                            BAR_MARKER_INK_WORKBOOK_VERSION
+                        } else {
+                            BAR_MARKER_WORKBOOK_VERSION
+                        }
+                    );
+                    value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                        HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                    } else {
+                        HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                    });
+                    assert!(
+                        serde_json::from_value::<Snapshot>(value)
+                            .unwrap_err()
+                            .to_string()
+                            .contains(
+                                "bar connector markers require a bar-aware recovery workbook"
+                            )
+                    );
+                }
+            }
         }
     }
 

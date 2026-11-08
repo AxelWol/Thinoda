@@ -710,6 +710,8 @@ const DE: &[(&str, &str)] = &[
     ("Thin diamond", "Schmale Raute"),
     ("Oval", "Oval"),
     ("Half circle", "Halbkreis"),
+    ("Bar", "Querstrich"),
+    ("Diagonal bar", "Schrägstrich"),
     (
         "Legacy arrowheads approximated in draw.io",
         "Bisherige Pfeilspitzen in draw.io angenähert",
@@ -4728,6 +4730,8 @@ mod tests {
             "Thin diamond",
             "Oval",
             "Half circle",
+            "Bar",
+            "Diagonal bar",
             "Legacy arrowheads approximated in draw.io",
             "Edit label",
             "More formatting options",

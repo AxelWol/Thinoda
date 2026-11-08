@@ -30,12 +30,15 @@ const FILLED_MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-10\n";
 const DIAMOND_MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-11\n";
 const OVAL_MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-12\n";
 const HALF_CIRCLE_MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-13\n";
+const BAR_MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-14\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_half_circle_connector_markers() {
+    let prefix = if sheet.has_bar_connector_markers() {
+        BAR_MARKER_SHEET_PREFIX
+    } else if sheet.has_half_circle_connector_markers() {
         HALF_CIRCLE_MARKER_SHEET_PREFIX
     } else if sheet.has_oval_connector_markers() {
         OVAL_MARKER_SHEET_PREFIX
@@ -80,9 +83,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(HALF_CIRCLE_MARKER_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-13\r\n"))
-        .map(|json| (13, json))
+        .strip_prefix(BAR_MARKER_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-14\r\n"))
+        .map(|json| (14, json))
+        .or_else(|| {
+            text.strip_prefix(HALF_CIRCLE_MARKER_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-13\r\n"))
+                .map(|json| (13, json))
+        })
         .or_else(|| {
             text.strip_prefix(OVAL_MARKER_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-12\r\n"))
@@ -165,6 +173,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     if version < 13 && sheet.has_half_circle_connector_markers() {
         return Err("half-circle connector markers require sheet clipboard version 13".into());
+    }
+    if version < 14 && sheet.has_bar_connector_markers() {
+        return Err("bar connector markers require sheet clipboard version 14".into());
     }
     if version < 6 && sheet.has_connector_waypoints() {
         return Err("connector waypoints require sheet clipboard version 6".into());
@@ -808,6 +819,62 @@ mod tests {
             let forged =
                 encoded.replacen("THINODA-SHEET-13", &format!("THINODA-SHEET-{version}"), 1);
             assert!(decode_sheet(&forged).is_err(), "version {version}");
+        }
+    }
+
+    #[test]
+    fn bar_marker_sheet_clipboards_require_version_fourteen() {
+        use crate::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+            for bar_at_start in [false, true] {
+                let mut sheet = formatted_card_sheet(crate::CardKind::Text);
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                connector.arrow_start = true;
+                let bar = Some(ConnectorMarker { kind });
+                let half_circle = Some(ConnectorMarker {
+                    kind: ConnectorMarkerKind::HalfCircle,
+                });
+                (connector.start_marker, connector.end_marker) = if bar_at_start {
+                    (bar, half_circle)
+                } else {
+                    (half_circle, bar)
+                };
+                connector.start_marker_size = Some(0.0);
+                connector.end_marker_size = Some(12.5);
+                connector.start_marker_unfilled = true;
+                connector.end_marker_unfilled = true;
+                sheet
+                    .add_canvas_object(CanvasObject::connector(connector))
+                    .unwrap();
+                let encoded = encode_sheet(&sheet).unwrap();
+                assert!(encoded.starts_with(BAR_MARKER_SHEET_PREFIX));
+                assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+                assert_eq!(
+                    decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+                    sheet
+                );
+                for version in 1..14 {
+                    let forged = encoded.replacen(
+                        "THINODA-SHEET-14",
+                        &format!("THINODA-SHEET-{version}"),
+                        1,
+                    );
+                    let error = decode_sheet(&forged).unwrap_err();
+                    if version == 13 {
+                        assert!(
+                            error.contains(
+                                "bar connector markers require sheet clipboard version 14"
+                            )
+                        );
+                    }
+                }
+            }
         }
     }
 

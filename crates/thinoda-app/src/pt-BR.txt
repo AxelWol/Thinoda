@@ -19,6 +19,8 @@ Diamond|Losango
 Thin diamond|Losango estreito
 Oval|Oval
 Half circle|Semicírculo
+Bar|Barra
+Diagonal bar|Barra diagonal
 Legacy arrowheads approximated in draw.io|Pontas de seta anteriores aproximadas no draw.io
 Ink settings|Configurações da entrada à mão livre
 Input source|Origem de entrada detectada

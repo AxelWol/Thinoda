@@ -4304,6 +4304,99 @@ mod tests {
     }
 
     #[test]
+    fn bar_markers_paint_open_unfilled_segments() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for (kind, at_start, size, expected) in [
+            (
+                ConnectorMarkerKind::BaseDash,
+                true,
+                12.5,
+                [pos2(100.0, 84.5), pos2(100.0, 115.5)],
+            ),
+            (
+                ConnectorMarkerKind::Dash,
+                false,
+                8.0,
+                [pos2(289.0, 111.0), pos2(267.0, 89.0)],
+            ),
+            (
+                ConnectorMarkerKind::BaseDash,
+                false,
+                0.0,
+                [pos2(300.0, 103.0), pos2(300.0, 97.0)],
+            ),
+            (
+                ConnectorMarkerKind::Dash,
+                true,
+                12.5,
+                [pos2(115.5, 84.5), pos2(146.5, 115.5)],
+            ),
+        ] {
+            for unfilled in [false, true] {
+                let mut sheet = Sheet::new("Bar marker", "");
+                sheet.root_mode = SheetRootMode::Hidden;
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                connector.width = 2.0;
+                connector.arrow_start = at_start;
+                if at_start {
+                    connector.start_marker = Some(ConnectorMarker { kind });
+                    connector.start_marker_size = Some(size);
+                    connector.start_marker_unfilled = unfilled;
+                } else {
+                    connector.end_marker = Some(ConnectorMarker { kind });
+                    connector.end_marker_size = Some(size);
+                    connector.end_marker_unfilled = unfilled;
+                }
+                let id = sheet
+                    .add_canvas_object(CanvasObject::connector(connector))
+                    .unwrap();
+                let layout =
+                    thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+                let scene = build_scene(&sheet, &layout);
+                let SceneGeometry::Polyline { markers, .. } =
+                    &scene.item(SceneId::Object(id)).unwrap().geometry
+                else {
+                    panic!("expected connector");
+                };
+                let xf = Xf {
+                    origin: pos2(100.0, 100.0),
+                    zoom: 2.0,
+                };
+                let color = Color32::from_rgba_unmultiplied(20, 40, 60, 120);
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                    paint_connector_marker(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        markers[usize::from(!at_start)].unwrap(),
+                        xf,
+                        color,
+                        Stroke::new(4.0, color),
+                    );
+                });
+                output.textures_delta.clear();
+                let paths: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        Shape::Path(path) => Some(path),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(paths.len(), 1);
+                assert_eq!(paths[0].points, expected);
+                assert!(!paths[0].closed);
+                assert_eq!(paths[0].fill, Color32::TRANSPARENT);
+            }
+        }
+    }
+
+    #[test]
     fn oval_markers_paint_filled_or_hollow_circles() {
         use thinoda_core::{
             CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,

@@ -952,6 +952,73 @@ fn half_circle_board_clipboards_require_version_ten() {
 }
 
 #[test]
+fn bar_marker_board_clipboards_require_version_eleven() {
+    for kind in [
+        crate::ConnectorMarkerKind::BaseDash,
+        crate::ConnectorMarkerKind::Dash,
+    ] {
+        for bar_at_start in [false, true] {
+            let mut source = Sheet::new("Source", "Root");
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.arrow_start = true;
+            let bar = Some(crate::ConnectorMarker { kind });
+            let half_circle = Some(crate::ConnectorMarker {
+                kind: crate::ConnectorMarkerKind::HalfCircle,
+            });
+            (connector.start_marker, connector.end_marker) = if bar_at_start {
+                (bar, half_circle)
+            } else {
+                (half_circle, bar)
+            };
+            connector.start_marker_size = Some(0.0);
+            connector.end_marker_size = Some(12.5);
+            connector.start_marker_unfilled = true;
+            connector.end_marker_unfilled = true;
+            let id = source
+                .add_canvas_object(CanvasObject::connector(connector.clone()))
+                .unwrap();
+            let payload = copy(&source, &[], &[id]);
+            let encoded = encode_board_payload(&payload).unwrap();
+            assert!(encoded.starts_with(BAR_MARKER_BOARD_PREFIX));
+            assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+            assert_eq!(
+                decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+                payload
+            );
+            for version in 1..11 {
+                let forged = encoded.replacen(
+                    "THINODA-BOARD-CLIPBOARD-11",
+                    &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+                    1,
+                );
+                let error = decode_board_payload(&forged).unwrap_err();
+                if version == 10 {
+                    assert!(
+                        error.contains("bar connector markers require board clipboard version 11")
+                    );
+                }
+            }
+            let mut destination = Sheet::new("Destination", "Root");
+            let pasted =
+                paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+            let CanvasObjectKind::Connector(pasted) =
+                &destination.canvas.object(pasted.objects[0]).unwrap().kind
+            else {
+                panic!("expected connector");
+            };
+            assert_eq!(pasted.start_marker, connector.start_marker);
+            assert_eq!(pasted.end_marker, connector.end_marker);
+            assert_eq!(pasted.start_marker_size, connector.start_marker_size);
+            assert_eq!(pasted.end_marker_size, connector.end_marker_size);
+            assert!(pasted.start_marker_unfilled && pasted.end_marker_unfilled);
+        }
+    }
+}
+
+#[test]
 fn connectors_keep_selected_targets_and_detach_external_targets_at_rendered_points() {
     let mut source = Sheet::new("Source", "Root");
     let external_topic = source.add_child(source.root, None, "External");

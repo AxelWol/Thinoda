@@ -27,6 +27,7 @@ const FILLED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-7\n";
 const DIAMOND_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-8\n";
 const OVAL_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-9\n";
 const HALF_CIRCLE_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-10\n";
+const BAR_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-11\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -45,7 +46,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_half_circle_connector_markers() {
+        if self.fragment.has_bar_connector_markers() {
+            BAR_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_half_circle_connector_markers() {
             HALF_CIRCLE_MARKER_BOARD_PREFIX
         } else if self.fragment.has_oval_connector_markers() {
             OVAL_MARKER_BOARD_PREFIX
@@ -237,9 +240,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(HALF_CIRCLE_MARKER_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-10\r\n"))
-        .map(|json| (10, json))
+        .strip_prefix(BAR_MARKER_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-11\r\n"))
+        .map(|json| (11, json))
+        .or_else(|| {
+            text.strip_prefix(HALF_CIRCLE_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-10\r\n"))
+                .map(|json| (10, json))
+        })
         .or_else(|| {
             text.strip_prefix(OVAL_MARKER_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-9\r\n"))
@@ -308,6 +316,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     }
     if version < 10 && payload.fragment.has_half_circle_connector_markers() {
         return Err("half-circle connector markers require board clipboard version 10".into());
+    }
+    if version < 11 && payload.fragment.has_bar_connector_markers() {
+        return Err("bar connector markers require board clipboard version 11".into());
     }
     if version < 3 && payload.fragment.has_connector_waypoints() {
         return Err("connector waypoints require board clipboard version 3".into());

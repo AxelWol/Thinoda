@@ -785,6 +785,11 @@ impl Sheet {
         self.canvas.has_half_circle_connector_markers()
     }
 
+    /// Whether the sheet needs bar-marker-aware persistence.
+    pub fn has_bar_connector_markers(&self) -> bool {
+        self.canvas.has_bar_connector_markers()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2302,6 +2307,11 @@ impl Workbook {
         self.sheets
             .iter()
             .any(Sheet::has_half_circle_connector_markers)
+    }
+
+    /// Whether any sheet needs bar-marker-aware persistence.
+    pub fn has_bar_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_bar_connector_markers)
     }
 
     pub fn active(&self) -> &Sheet {

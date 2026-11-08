@@ -268,6 +268,15 @@ impl CanvasLayer {
                     .any(|marker| marker.kind == ConnectorMarkerKind::HalfCircle))
         })
     }
+
+    /// Whether this layer needs bar-marker-aware persistence.
+    pub fn has_bar_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.is_bar()))
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -891,6 +900,8 @@ pub enum ConnectorMarkerKind {
     DiamondThin,
     Oval,
     HalfCircle,
+    BaseDash,
+    Dash,
 }
 
 impl ConnectorMarkerKind {
@@ -901,6 +912,10 @@ impl ConnectorMarkerKind {
 
     pub fn is_diamond(self) -> bool {
         matches!(self, Self::Diamond | Self::DiamondThin)
+    }
+
+    pub fn is_bar(self) -> bool {
+        matches!(self, Self::BaseDash | Self::Dash)
     }
 }
 

@@ -197,8 +197,8 @@ Rules (each backed by a test):
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
-  oval markers, and v17 adds half-circle markers. Every later field or
-  passthrough representation that a v17 reader cannot preserve must require a
+  oval markers, v17 adds half-circle markers, and v18 adds bar markers. Every later field or
+  passthrough representation that a v18 reader cannot preserve must require a
   higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
@@ -653,7 +653,7 @@ connections arrive in Phase 8 without changing the gestures).
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
   v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
-  markers, and subsequent additions need a higher version.
+  markers, v18 covers bar markers, and subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1458,6 +1458,31 @@ save-back are not implemented. Actual PowerPoint rendering, physical-device
 behavior and real screen-reader acceptance remain unverified. These short
 importer smokes are not the longer acceptance campaigns and do not replace the
 planned draw.io fuzz target.
+
+**Bar connector markers (partial Phases 3, 4 and 8).** The `baseDash` and
+`dash` draw.io markers are open, unfilled line segments. Their effective length
+is marker size plus stroke width plus one, including for a zero-size marker;
+neither shortens the connector. Their stored fill settings survive a direct
+change to a fillable marker. Native v18, sheet clipboard v14, board clipboard
+v11, recovery marker envelopes v8 with or without pending ink, and private
+XMind snapshots v8 guard these kinds from older readers. Documents without them
+keep their earlier compatible versions.
+
+Geometry was checked against the published diagrams.net editor, including both
+ends, custom and zero sizes, fill invariance, hit testing and lasso selection.
+Canvas, SVG, presentation SVG, PNG pixels, rasterized PDF pixels and editable
+PowerPoint path data were exercised. All 88 currently supplied diagrams passed
+the corpus checks, including an in-memory bar-marker variation of the board
+tutorial. The affected library suites passed 1,934 tests with four ignored;
+board-export, corpus and mutation integrations passed 57 with two ignored. The
+marker PDF rasterization test passed separately. Native and WebAssembly Clippy
+passed with warnings denied. The production web build passed all 27 link-import
+journeys across Chromium, Firefox and WebKit.
+
+**Critique and remaining work.** These add two marker kinds, not the complete
+draw.io marker set. Fixed ports, advanced routing, lossless save-back and the
+other planned phases remain open. Real PowerPoint rendering, physical-device
+behavior and screen-reader acceptance have not been established.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

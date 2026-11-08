@@ -2765,6 +2765,53 @@ mod tests {
     }
 
     #[test]
+    fn lasso_selects_bar_marker_strokes_without_filling_their_bounds() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+            let mut sheet = Sheet::new("Bar marker", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.width = 0.1;
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_size = Some(12.5);
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let scene = scene(&sheet);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let points = markers[1].unwrap();
+            let on_marker = points.points()[0] * 0.8 + points.points()[1] * 0.2;
+            let off_marker = Vec2::new(100.0, 10.0);
+            assert_eq!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(on_marker.x - 0.1, on_marker.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap(),
+                vec![SceneHit::Object(id)],
+                "{kind:?}"
+            );
+            assert!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(off_marker.x - 0.1, off_marker.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap()
+                .is_empty(),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
     fn half_circle_lasso_work_is_budgeted() {
         use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
 

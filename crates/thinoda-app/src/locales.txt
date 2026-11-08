@@ -180,6 +180,8 @@ Thin block arrow|Flecha sólida estrecha|Flèche pleine étroite|Smal fyldt pil|
 Thin diamond|Rombo estrecho|Losange étroit|Smal rombe|Smalle ruit|Losango estreito|Rombo stretto|Wąski romb
 Oval|Óvalo|Ovale|Oval|Ovaal|Oval|Ovale|Owal
 Half circle|Semicírculo|Demi-cercle|Halvcirkel|Halve cirkel|Semicírculo|Semicerchio|Półkole
+Bar|Barra|Barre|Tværstreg|Dwarsstreep|Barra|Barra|Kreska poprzeczna
+Diagonal bar|Barra diagonal|Barre diagonale|Skråstreg|Schuine streep|Barra diagonal|Barra diagonale|Kreska ukośna
 Legacy arrowheads approximated in draw.io|Puntas de flecha anteriores aproximadas en draw.io|Pointes de flèche historiques approximatives dans draw.io|Tidligere pilespidser tilnærmes i draw.io|Eerdere pijlpunten benaderd in draw.io|Pontas de seta anteriores aproximadas no draw.io|Punte delle frecce precedenti approssimate in draw.io|Dotychczasowe groty strzałek przybliżone w draw.io
 Card|Tarjeta|Carte|Kort|Kaart|Cartão|Scheda|Karta
 Rotation|Rotación|Rotation|Rotation|Rotatie|Rotação|Rotazione|Obrót
