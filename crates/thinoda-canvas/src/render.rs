@@ -2313,6 +2313,75 @@ mod tests {
     }
 
     #[test]
+    fn transparent_anchor_proxy_paints_only_its_label() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_min_size(Vec2::new(10.0, 20.0), Vec2::new(100.0, 60.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "Anchor label".into();
+        }
+        shape.style.fill = Some(Color::TRANSPARENT);
+        shape.style.stroke = Some(Color::TRANSPARENT);
+        shape.style.text_color = Some(Color::rgb(0, 0, 255));
+        sheet.add_canvas_object(shape).unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let xf = Xf {
+            origin: pos2(100.0, 100.0),
+            zoom: 1.0,
+        };
+        let expected = [
+            xf.pos(Vec2::new(10.0, 20.0)),
+            xf.pos(Vec2::new(110.0, 20.0)),
+            xf.pos(Vec2::new(110.0, 80.0)),
+            xf.pos(Vec2::new(10.0, 80.0)),
+        ];
+        for dark in [false, true] {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &sheet,
+                        &layout,
+                        xf,
+                        &PaintOptions {
+                            dark,
+                            ..Default::default()
+                        },
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            let path = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Path(path) if path.points == expected => Some(path),
+                    _ => None,
+                })
+                .expect("anchor proxy should retain its geometry");
+            assert_eq!(path.fill, Color32::TRANSPARENT);
+            assert!(matches!(
+                path.stroke.color,
+                egui::epaint::ColorMode::Solid(Color32::TRANSPARENT)
+            ));
+            assert!(output.shapes.iter().any(|clipped| matches!(
+                &clipped.shape,
+                Shape::Text(text)
+                    if text.galley.job.text == "Anchor label"
+                        && text.fallback_color == Color32::BLUE
+            )));
+        }
+    }
+
+    #[test]
     fn interactive_edit_hides_only_the_active_board_label() {
         use thinoda_core::{
             SheetRootMode,

@@ -262,6 +262,52 @@ mod tests {
     }
 
     #[test]
+    fn invisible_anchors_survive_drawio_clipboard_interchange() {
+        use thinoda_core::{Color, Endpoint};
+
+        let xml = r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+            <mxCell id="a" value="Anchor" style="shape=mxgraph.mockup.forms.anchor;fillColor=#ff0000;strokeColor=#00ff00;fontColor=#0000ff;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="b" value="Target" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        </root></mxGraphModel>"##;
+        for text in [xml.to_owned(), encode_uri_component(xml)] {
+            let decoded = decode(&text).unwrap();
+            assert!(decoded.warnings.contains(&ImportWarning::Formatting));
+            let copy = encode(&decoded.payload).unwrap();
+            let again = decode(&copy).unwrap();
+            let mut sheet = Sheet::new("Pasted", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            paste_board_selection(&mut sheet, &again.payload, Vec2::ZERO).unwrap();
+            let anchor = sheet
+                .canvas
+                .objects
+                .iter()
+                .find(|object| object.label() == "Anchor")
+                .unwrap();
+            let target = sheet
+                .canvas
+                .objects
+                .iter()
+                .find(|object| object.label() == "Target")
+                .unwrap();
+            assert_eq!(anchor.style.fill, Some(Color::TRANSPARENT));
+            assert_eq!(anchor.style.stroke, Some(Color::TRANSPARENT));
+            assert_eq!(anchor.style.text_color, Some(Color::rgb(0, 0, 255)));
+            let edge = sheet
+                .canvas
+                .objects
+                .iter()
+                .find_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(edge) => Some(edge),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(edge.from, Endpoint::Object(anchor.id));
+            assert_eq!(edge.to, Endpoint::Object(target.id));
+        }
+    }
+
+    #[test]
     fn encoded_waypoint_connector_attachments_are_reported() {
         use thinoda_core::{CanvasConnector, CanvasObject, Endpoint};
 

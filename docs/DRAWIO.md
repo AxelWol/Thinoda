@@ -1684,6 +1684,39 @@ supported rectangle kinds are convex; extending this property to other shapes
 would require another rendering review. Real-device and screen-reader
 acceptance and the planned 30-minute fuzz campaign remain outstanding.
 
+**Invisible anchor stencils (partial Phases 5 and 6) — critique.** Twelve
+published draw.io anchor shapes with empty shape painters now import as
+transparent, editable rectangle proxies instead of visible placeholders. Their
+labels, bounds, rotation and connector object targets remain available; the
+proxy's fill and stroke are transparent regardless of the source shape colors.
+A removed `fontColor` falls back to draw.io's black text with the requested text
+opacity. File, link and plain or URI-encoded clipboard imports use the same
+conversion. The supplied `requirements-flow.drawio` contains 108 recognized
+anchor cells; its styles and full-document import were exercised.
+
+The review caught two ways to silently change appearance: treating a bare
+stencil name as a registered named style would hide an ordinary placeholder,
+and interpreting `fontColor=none` as transparent would hide a label. Recognition
+now requires an explicit `shape=` key, and the removed font color uses the
+renderer default. Unknown anchors and bare names remain reported placeholders.
+The tests cover all twelve recognized names, nested children, connector
+targets, native and draw.io round trips, clipboard and link imports, canvas
+rendering in both themes, transparent raster output, SVG, PDF creation and
+editable PowerPoint geometry. The affected I/O and canvas libraries passed 642
+tests with two ignored; board export, supplied-corpus, fuzz-seed and mutation
+integration suites passed 62 with two ignored. Native all-target and
+WebAssembly Clippy passed with warnings denied.
+
+This is a warned approximation, not stencil preservation. Import always reports
+Formatting; draw.io export writes a transparent `text;` rectangle rather than
+the original stencil. Source hierarchy, fixed ports, hit behavior and other
+stencil properties are not retained, and the invisible rectangle is selectable
+across its full bounds. Existing label typography, alignment and wrapping also
+remain approximate. The PDF was not independently raster-accepted, and current
+Office, real-device and assistive-technology acceptance remain open. Generic
+stencils, source-preserving save-back and the remaining phase gates are still
+outstanding.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.

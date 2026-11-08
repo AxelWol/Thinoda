@@ -1044,6 +1044,8 @@ enum Kind {
     Approx(ShapeKind, f32, bool),
     /// A connection point drawn as a small dot in the stroke color.
     Waypoint,
+    /// A dummy stencil whose shape is invisible but whose label and bounds remain.
+    Anchor,
     Text,
     Line,
     Image,
@@ -1206,6 +1208,25 @@ fn classify(style: &Style) -> Kind {
             _ => CardKind::Sticky,
         });
     }
+    if matches!(
+        style.get("shape"),
+        Some(
+            "mxgraph.mockup.anchor"
+                | "mxgraph.mockup.forms.anchor"
+                | "mxgraph.mockup.containers.anchor"
+                | "mxgraph.mockup.misc.anchor"
+                | "mxgraph.mockup.graphics.anchor"
+                | "mxgraph.mockup.navigation.anchor"
+                | "mxgraph.ios.anchor"
+                | "mxgraph.ios7ui.anchor"
+                | "mxgraph.android.anchor"
+                | "mxgraph.bootstrap.anchor"
+                | "mxgraph.eip.anchor"
+                | "mxgraph.er.anchor"
+        )
+    ) {
+        return Kind::Anchor;
+    }
     let name = style.shape();
     if name == "swimlane" || style.has("swimlane") || style.flag("container") {
         return Kind::Container;
@@ -1307,6 +1328,12 @@ fn object_style(style: &Style) -> ObjectStyle {
         text_color: style.color("fontColor", "textOpacity"),
         stroke_width: style.stroke_width(),
         opacity: style.opacity(),
+    }
+}
+
+fn restore_removed_font_color(style: &Style, object: &mut CanvasObject) {
+    if style.get("fontColor") == Some("none") {
+        object.style.text_color = Some(style.color_with_opacity(Color::BLACK, "textOpacity"));
     }
 }
 
@@ -1635,10 +1662,7 @@ impl<'a> PageImport<'a> {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
                         stencil,
                     });
-                    if style.get("fontColor") == Some("none") {
-                        object.style.text_color =
-                            Some(style.color_with_opacity(Color::BLACK, "textOpacity"));
-                    }
+                    restore_removed_font_color(style, &mut object);
                 }
                 if style.shape() == "partialRectangle" && matches!(kind, Kind::Approx(..)) {
                     object.style.stroke = Some(Color::TRANSPARENT);
@@ -1652,6 +1676,14 @@ impl<'a> PageImport<'a> {
                 let color = object.style.stroke.unwrap_or(Color::BLACK);
                 object.style.fill = Some(color);
                 object.style.stroke = Some(color);
+                object
+            }
+            Kind::Anchor => {
+                self.warn(ImportWarning::Formatting);
+                let mut object = shape_object(ShapeKind::Rectangle, rect, style.rotation(), label);
+                object.style.fill = Some(Color::TRANSPARENT);
+                object.style.stroke = Some(Color::TRANSPARENT);
+                restore_removed_font_color(style, &mut object);
                 object
             }
             Kind::Text => {

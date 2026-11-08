@@ -118,6 +118,218 @@ fn ordinary_drawio_note_alignment_is_imported() {
     assert_eq!(topic.style.align, Some(thinoda_core::TextAlign::Right));
 }
 
+const INVISIBLE_ANCHORS: &[&str] = &[
+    "mxgraph.mockup.anchor",
+    "mxgraph.mockup.forms.anchor",
+    "mxgraph.mockup.containers.anchor",
+    "mxgraph.mockup.misc.anchor",
+    "mxgraph.mockup.graphics.anchor",
+    "mxgraph.mockup.navigation.anchor",
+    "mxgraph.ios.anchor",
+    "mxgraph.ios7ui.anchor",
+    "mxgraph.android.anchor",
+    "mxgraph.bootstrap.anchor",
+    "mxgraph.eip.anchor",
+    "mxgraph.er.anchor",
+];
+
+#[test]
+fn invisible_anchors_preserve_labels_geometry_and_connector_targets() {
+    for alias in INVISIBLE_ANCHORS {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="Anchor label" style="shape={alias};fillColor=#ff0000;strokeColor=#00ff00;fontColor=#0000ff;rotation=30;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="b" style="shape={alias};fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{alias}"
+        );
+        assert!(!report.warnings.contains(&ImportWarning::Other), "{alias}");
+        let sheet = &report.workbook.sheets[0];
+        let objects = shapes(sheet);
+        assert_eq!(objects.len(), 2, "{alias}");
+        assert_eq!(objects[0].label(), "Anchor label");
+        assert_eq!(objects[0].rect, rect(10.0, 20.0, 100.0, 60.0));
+        assert_eq!(objects[0].rotation, 30.0);
+        assert_eq!(objects[0].style.text_color, Some(Color::rgb(0, 0, 255)));
+        for object in &objects {
+            assert!(matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::Rectangle,
+                    ..
+                }
+            ));
+            assert_eq!(object.style.fill, Some(Color::TRANSPARENT), "{alias}");
+            assert_eq!(object.style.stroke, Some(Color::TRANSPARENT), "{alias}");
+        }
+        let edge = connectors(sheet)[0];
+        assert_eq!(edge.from, Endpoint::Object(objects[0].id));
+        assert_eq!(edge.to, Endpoint::Object(objects[1].id));
+
+        report.workbook.validate().unwrap();
+        let native =
+            export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(
+            crate::import_bytes(Format::Thinoda, &native).unwrap(),
+            report.workbook
+        );
+        let exported = export(&report.workbook).unwrap();
+        let reopened = import(&exported).unwrap();
+        let reopened_objects = shapes(&reopened.workbook.sheets[0]);
+        assert_eq!(reopened_objects.len(), 2, "{alias}");
+        assert_eq!(reopened_objects[0].label(), "Anchor label");
+        assert_eq!(reopened_objects[0].rect, objects[0].rect);
+        assert_eq!(reopened_objects[0].rotation, 30.0);
+        for object in &reopened_objects {
+            assert_eq!(object.style.fill, Some(Color::TRANSPARENT), "{alias}");
+            assert_eq!(object.style.stroke, Some(Color::TRANSPARENT), "{alias}");
+        }
+        let reopened_edge = connectors(&reopened.workbook.sheets[0])[0];
+        assert_eq!(reopened_edge.from, Endpoint::Object(reopened_objects[0].id));
+        assert_eq!(reopened_edge.to, Endpoint::Object(reopened_objects[1].id));
+    }
+}
+
+#[test]
+fn unrecognized_anchor_names_remain_reported_placeholders() {
+    let xml = page(
+        r#"<mxCell id="a" style="shape=mxgraph.example.anchor;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let object = shapes(&report.workbook.sheets[0])[0];
+    assert_ne!(object.style.stroke, Some(Color::TRANSPARENT));
+}
+
+#[test]
+fn bare_anchor_names_are_not_treated_as_registered_shapes() {
+    for alias in INVISIBLE_ANCHORS {
+        let xml = page(&format!(
+            r##"<mxCell id="a" style="{alias};fillColor=#ff0000;strokeColor=#00ff00;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.contains(&ImportWarning::Other), "{alias}");
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.style.fill, Some(Color::rgb(255, 0, 0)), "{alias}");
+        assert_eq!(object.style.stroke, Some(Color::rgb(0, 255, 0)), "{alias}");
+    }
+}
+
+#[test]
+fn invisible_anchor_removed_font_color_uses_drawio_default() {
+    for alias in INVISIBLE_ANCHORS {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="Readable" style="shape={alias};fillColor=#ff0000;strokeColor=#00ff00;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{alias}"
+        );
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.label(), "Readable");
+        assert_eq!(object.style.text_color, Some(Color::rgba(0, 0, 0, 102)));
+        let exported = export(&report.workbook).unwrap();
+        let reopened = import(&exported).unwrap();
+        assert_eq!(
+            shapes(&reopened.workbook.sheets[0])[0].style.text_color,
+            object.style.text_color,
+            "{alias}"
+        );
+    }
+}
+
+#[test]
+fn invisible_anchor_children_and_links_keep_their_board_geometry() {
+    let xml = page(
+        r##"<mxCell id="a" value="Parent anchor" style="shape=mxgraph.mockup.forms.anchor;container=1;image=https://example.invalid/ignored.png;fillColor=#ff0000;strokeColor=#00ff00;" vertex="1" parent="1"><mxGeometry x="100" y="200" width="120" height="80" as="geometry"/></mxCell>
+        <mxCell id="b" value="Child" style="shape=rectangle;" vertex="1" parent="a"><mxGeometry x="10" y="20" width="50" height="30" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert!(!report.warnings.contains(&ImportWarning::Resources));
+    let sheet = &report.workbook.sheets[0];
+    assert!(sheet.zones.is_empty());
+    let objects = shapes(sheet);
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[0].label(), "Parent anchor");
+    assert_eq!(objects[0].style.fill, Some(Color::TRANSPARENT));
+    assert_eq!(objects[0].style.stroke, Some(Color::TRANSPARENT));
+    assert_eq!(objects[1].rect, rect(110.0, 220.0, 50.0, 30.0));
+    assert!(objects[0].group.is_some());
+    assert_eq!(objects[0].group, objects[1].group);
+    let edge = connectors(sheet)[0];
+    assert_eq!(edge.from, Endpoint::Object(objects[0].id));
+    assert_eq!(edge.to, Endpoint::Object(objects[1].id));
+
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.workbook, report.workbook);
+    assert_eq!(linked.warnings, report.warnings);
+}
+
+#[test]
+fn invisible_anchor_exports_paint_the_label_but_not_its_shape() {
+    use std::io::Read;
+
+    let make = |label: &str| {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="{label}" style="shape=mxgraph.mockup.forms.anchor;fillColor=#ff0000;strokeColor=#00ff00;fontColor=#0000ff;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        load(&xml).workbook
+    };
+    let options = ExportOptions {
+        transparent: true,
+        ..Default::default()
+    };
+    let svg =
+        String::from_utf8(export_bytes(&make("Anchor label"), Format::Svg, &options).unwrap())
+            .unwrap();
+    assert!(svg.contains(">Anchor</text>") && svg.contains(">label</text>"));
+    assert!(svg.contains("#0000FF"));
+    assert!(!svg.contains("#FF0000"));
+    assert!(!svg.contains("#00FF00"));
+
+    let png = export_bytes(&make(""), Format::Png, &options).unwrap();
+    let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+    assert!(pixels.pixels().all(|pixel| pixel.0[3] == 0));
+
+    let pdf = export_bytes(&make("Anchor label"), Format::Pdf, &options).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+
+    let mut book = make("Anchor label");
+    let sheet = book.active_mut();
+    let object_id = sheet.canvas.objects[0].id;
+    let root = sheet.add_floating("Slide", Vec2::new(60.0, 130.0));
+    sheet
+        .add_presentation_slide(
+            "Anchor",
+            PresentationSource::Branch(root),
+            rect(-40.0, -40.0, 220.0, 220.0),
+        )
+        .unwrap();
+    let powerpoint = export_bytes(&book, Format::PowerPoint, &options).unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(powerpoint)).unwrap();
+    let mut slide = String::new();
+    archive
+        .by_name("ppt/slides/slide1.xml")
+        .unwrap()
+        .read_to_string(&mut slide)
+        .unwrap();
+    let shape = slide
+        .split("<p:sp>")
+        .find(|fragment| fragment.contains(&format!("Canvas object {object_id}")))
+        .unwrap();
+    assert!(shape.matches(r#"<a:alpha val="0"/>"#).count() >= 2);
+    assert!(slide.contains(r#"val="0000FF""#));
+    assert!(slide.contains("<a:t>Anchor</a:t>"));
+    assert!(slide.contains("<a:t>label</a:t>"));
+}
+
 const MOCKUP_RECTANGLES: &[&str] = &[
     "mxgraph.mockup.rrect",
     "mxgraph.mockup.forms.rrect",
@@ -597,6 +809,63 @@ fn supplied_requirements_flow_classifies_real_mockup_rectangles() {
         rounding_counts(&reopened.workbook),
         rounding_counts(&report.workbook)
     );
+}
+
+#[test]
+fn supplied_requirements_flow_imports_invisible_anchors() {
+    let dir = std::env::var_os("THINODA_DRAWIO_CORPUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("docs")
+                .join("draw-io-examples")
+        });
+    let path = dir.join("requirements-flow.drawio");
+    if !path.is_file() {
+        eprintln!("optional requirements-flow.drawio is absent; skipping");
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let mut count = 0;
+    for source_page in read_pages(&bytes).unwrap() {
+        for cell in read_cells(&source_page.model, &mut BTreeSet::new()) {
+            if !cell
+                .style
+                .get("shape")
+                .is_some_and(|shape| INVISIBLE_ANCHORS.contains(&shape))
+            {
+                continue;
+            }
+            assert_eq!(classify(&cell.style), Kind::Anchor);
+            let mut parts = cell.style.tokens.clone();
+            parts.extend(
+                cell.style
+                    .map
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}")),
+            );
+            let mut style = parts.join(";");
+            if cell.style.suppress_defaults {
+                style.insert(0, ';');
+            }
+            let xml = page(&format!(
+                r#"<mxCell id="a" style="{}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+                esc(&style)
+            ));
+            let report = load(&xml);
+            let object = shapes(&report.workbook.sheets[0])[0];
+            assert_eq!(object.style.fill, Some(Color::TRANSPARENT));
+            assert_eq!(object.style.stroke, Some(Color::TRANSPARENT));
+            assert!(report.warnings.contains(&ImportWarning::Formatting));
+            count += 1;
+        }
+    }
+    eprintln!("classified {count} supplied invisible anchor cells");
+    assert!(count > 0, "supplied example contains no recognized anchors");
+    let report = import(&bytes).unwrap();
+    report.workbook.validate().unwrap();
 }
 
 fn shape(kind: ShapeKind, frame: Rect, label: &str) -> CanvasObject {
