@@ -529,7 +529,7 @@ Whole-card text strip must overlay the canvas without changing its bounds.
 Move the selected connector's properties and quick actions from the board rail
 into their own top contextual strip, preserving their behavior, ownership and
 accessibility while allowing it to coexist with the other strips.
-Keep the board rail permanently low enough to leave room for either strip,
+Keep the board rail permanently low enough to leave room for these strips,
 including in compact windows; opening a strip must not move the rail. Verify
 tool values and dispatch, focus and input ownership, accessibility,
 localization, and window/sheet transitions.
@@ -552,6 +552,15 @@ menu commands remain the fallback. Popup ownership is invalidated on tool,
 sheet, document and instance changes. Keyboard, theme, locale and draft
 regressions are covered; physical touch and assistive-technology acceptance
 remain open.
+
+**Connector-toolbar slice — critique:** a single selected connector now shows
+its route, start/end arrows, colour, width, label editor and format shortcut in
+a horizontally scrollable top overlay instead of the board rail. The selection,
+undo steps, guarded popup ownership and disabled-state behavior are unchanged;
+selected shape controls remain in the rail. The overlay leaves the canvas and
+rail stationary, and remains usable when a very short canvas hides the rail.
+Keyboard, compact layouts, localization and canceled/multitouch actions are
+covered. Physical stylus and assistive-technology acceptance remain open.
 
 **Context-menu slice — critique:** Tools now includes Image card alongside the
 other drawing and card tools; applicable target menus place Zones after Styles

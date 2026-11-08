@@ -2101,6 +2101,7 @@ impl ThinodaApp {
             && self
                 .doc()
                 .is_some_and(|doc| crate::board_ui::has_ink_options(doc.view.board_tool));
+        let show_connector_options = show_board_controls && self.has_connector_options();
         let card_text_open = if show_doc
             && self.mode == CenterMode::Map
             && !self.task_table_visible()
@@ -2110,7 +2111,7 @@ impl ThinodaApp {
             && !self.dialogs.settings
             && !self.dialogs.about
         {
-            self.card_text_toolbar(ui, show_ink_options)
+            self.card_text_toolbar(ui, show_ink_options || show_connector_options)
         } else {
             ctx.data_mut(|data| {
                 data.remove::<CardTextTarget>(card_text_slot(self.current_viewport));
@@ -2161,28 +2162,39 @@ impl ThinodaApp {
         self.finish_card_text_focus_handoff(&ctx);
         self.finish_deferred_card_text_commands(&ctx);
 
-        let (board_toolbar, editing_toolbar, ink_toolbar) = if show_board_controls {
+        let (board_toolbar, editing_toolbar, options_toolbar) = if show_board_controls {
             let ink_toolbar = if show_ink_options {
                 self.ink_options_toolbar(&ctx, center.response.rect, card_text_open)
             } else {
                 Self::close_ink_option_popups(&ctx, self.current_viewport);
                 None
             };
-            let editing_toolbar = if card_text_open || ink_toolbar.is_some() {
+            let connector_toolbar = if show_connector_options {
+                self.connector_options_toolbar(&ctx, center.response.rect, card_text_open)
+            } else {
+                None
+            };
+            if show_connector_options != self.has_connector_options() {
+                ctx.request_repaint();
+            }
+            let options_toolbar = ink_toolbar.or(connector_toolbar);
+            let editing_toolbar = if card_text_open || options_toolbar.is_some() {
                 None
             } else {
                 self.editing_toolbar(&ctx, center.response.rect)
             };
-            let board_toolbar = if (card_text_open || ink_toolbar.is_some())
+            let board_toolbar = if (card_text_open || options_toolbar.is_some())
                 && !crate::board_ui::board_toolbar_fits_below_context(center.response.rect)
             {
-                Self::close_connector_popups(&ctx, self.current_viewport);
+                if connector_toolbar.is_none() {
+                    Self::close_connector_popups(&ctx, self.current_viewport);
+                }
                 None
             } else {
                 self.board_toolbar(&ctx, center.response.rect, editing_toolbar)
             };
             self.armed_shape_hint(&ctx, center.response.rect);
-            (board_toolbar, editing_toolbar, ink_toolbar)
+            (board_toolbar, editing_toolbar, options_toolbar)
         } else {
             Self::close_connector_popups(&ctx, self.current_viewport);
             Self::close_ink_option_popups(&ctx, self.current_viewport);
@@ -2197,7 +2209,7 @@ impl ThinodaApp {
             && !self.any_modal_open()
             && !self.dialogs.settings
         {
-            let context_strip = (card_text_open || ink_toolbar.is_some()).then(|| {
+            let context_strip = (card_text_open || options_toolbar.is_some()).then(|| {
                 egui::Rect::from_min_size(
                     center.response.rect.min,
                     vec2(
@@ -3372,7 +3384,7 @@ impl ThinodaApp {
         }
     }
 
-    fn card_text_toolbar(&mut self, ui: &mut Ui, ink_options_open: bool) -> bool {
+    fn card_text_toolbar(&mut self, ui: &mut Ui, options_open: bool) -> bool {
         let ctx = ui.ctx().clone();
         let viewport = self.current_viewport;
         let slot = card_text_slot(viewport);
@@ -3541,7 +3553,7 @@ impl ThinodaApp {
             .unwrap_or(false);
         let palette = Palette::of(&ctx);
         let canvas = ui.available_rect_before_wrap();
-        let strip = crate::board_ui::context_strip_rects(canvas, true, ink_options_open)
+        let strip = crate::board_ui::context_strip_rects(canvas, true, options_open)
             .0
             .expect("card text strip was requested");
         let panel = egui::Area::new(egui::Id::unique(("thinoda_card_text_toolbar", viewport)))

@@ -566,7 +566,9 @@ semantics and require native v6.
 - Show contextual action icons for the active mode in a separate strip over the
   canvas, above the lowered board toolbox. For ink, expose colour, width,
   opacity, and the supported pen/highlighter stroke types; erasers expose their
-  radius. The canvas remains stationary and the strip scrolls in compact windows.
+  radius. A selected connector gets a separate strip for its route, arrows,
+  colour, width, label editing, and formatting shortcut. The canvas remains
+  stationary and the strips scroll in compact windows.
   When Whole-card text is also open, the strips share the row without overlap.
   On canvases too short for both the strip and toolbox, the toolbox is hidden
   until the strip closes; the existing menus remain available.

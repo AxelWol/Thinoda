@@ -75,6 +75,110 @@ fn close_popup(h: &mut Harness<'_, ThinodaApp>) {
 }
 
 #[test]
+fn selected_connector_properties_overlay_above_stationary_toolbox() {
+    for size in [vec2(320.0, 240.0), vec2(1000.0, 700.0)] {
+        let (mut app, id) = app_with_connector();
+        app.doc_mut().unwrap().view.board_selection.clear();
+        let mut h = harness(app, size);
+        let canvas = h.state().doc().unwrap().view.canvas_rect();
+        let rail_id = egui::Id::unique("thinoda_board_toolbar");
+        let rail = h.ctx.memory(|memory| memory.area_rect(rail_id)).unwrap();
+
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .select_board_object(id);
+        h.run_steps(8);
+
+        let strip = h
+            .ctx
+            .memory(|memory| {
+                memory.area_rect(egui::Id::unique((
+                    "thinoda_connector_options",
+                    egui::ViewportId::ROOT,
+                )))
+            })
+            .expect("selected connector has its own options strip");
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
+        assert!(canvas.contains_rect(strip), "{size:?}: {strip:?}");
+        assert!(!rail.intersects(strip), "{size:?}: {rail:?} {strip:?}");
+        let route = h
+            .get_by_role_and_label(Role::Button, "Connector route")
+            .rect();
+        assert!(strip.contains_rect(route), "{size:?}: {route:?}");
+
+        click(&mut h, Role::Button, "Arrow at start");
+        assert!(connector(h.state(), id).arrow_start);
+        assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let blank = egui::pos2(strip.right() - 8.0, strip.top() + 5.0);
+        h.event(egui::Event::PointerMoved(blank));
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: blank,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(1);
+        }
+        h.run_steps(2);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
+    }
+}
+
+#[test]
+fn connector_options_keep_their_popup_on_a_tiny_canvas() {
+    let (app, id) = app_with_connector();
+    let mut h = harness(app, vec2(320.0, 170.0));
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    assert!(!board_toolbar_fits_below_context(canvas), "{canvas:?}");
+    let rail_id = egui::Id::unique("thinoda_board_toolbar");
+    let rail_visible = |h: &Harness<'_, ThinodaApp>| {
+        h.ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .any(|layer| layer.id == rail_id)
+        })
+    };
+    assert!(!rail_visible(&h));
+    click(&mut h, Role::Button, "Connector route");
+    assert!(h.query_by_role_and_label(Role::Button, "Curve").is_some());
+    click(&mut h, Role::Button, "Curve");
+    assert_eq!(connector(h.state(), id).route, ConnectorRoute::Curve);
+    assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .view
+        .board_selection
+        .clear();
+    h.run_steps(6);
+    assert!(rail_visible(&h));
+    assert!(h.query_by_role_and_label(Role::Button, "Curve").is_none());
+}
+
+#[test]
+fn connector_options_label_is_translated_in_every_supported_language() {
+    for language in i18n::Lang::ALL {
+        let translation = i18n::t_in(language, "Connector options");
+        assert!(!translation.is_empty(), "{language:?}");
+        if language != i18n::Lang::En {
+            assert_ne!(translation, "Connector options", "{language:?}");
+        }
+    }
+}
+
+#[test]
 fn arrow_toggle_clears_custom_marker_and_undo_restores_it() {
     let (mut app, id) = app_with_connector();
     app.doc_mut()

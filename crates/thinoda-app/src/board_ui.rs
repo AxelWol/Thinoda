@@ -44,7 +44,7 @@ pub(crate) fn has_ink_options(tool: BoardTool) -> bool {
 pub(crate) fn context_strip_rects(
     canvas: Rect,
     card: bool,
-    ink: bool,
+    options: bool,
 ) -> (Option<Rect>, Option<Rect>) {
     let row = Rect::from_min_size(
         canvas.min,
@@ -53,10 +53,10 @@ pub(crate) fn context_strip_rects(
             CONTEXT_STRIP_HEIGHT.min(canvas.height().max(0.0)),
         ),
     );
-    if card && ink {
+    if card && options {
         let gap = row.width().min(4.0);
-        let ink_width = ((row.width() - gap) * 0.5).min(200.0);
-        let split = row.right() - ink_width;
+        let options_width = ((row.width() - gap) * 0.5).min(200.0);
+        let split = row.right() - options_width;
         (
             Some(Rect::from_min_max(
                 row.min,
@@ -65,7 +65,7 @@ pub(crate) fn context_strip_rects(
             Some(Rect::from_min_max(egui::pos2(split, row.top()), row.max)),
         )
     } else {
-        (card.then_some(row), ink.then_some(row))
+        (card.then_some(row), options.then_some(row))
     }
 }
 
@@ -565,6 +565,10 @@ impl ThinodaApp {
         })
     }
 
+    pub(crate) fn has_connector_options(&self) -> bool {
+        self.connector_context().is_some()
+    }
+
     fn shape_context(&self) -> Option<ShapeContext> {
         let (target, enabled) = self.single_board_object()?;
         let doc = self.doc()?;
@@ -703,18 +707,17 @@ impl ThinodaApp {
         let tool = doc.view.board_tool;
         let show_minimap = doc.view.show_minimap;
         let collapsed_id = egui::Id::unique(("board_toolbar_collapsed", &doc.key));
-        let last_connector_id = egui::Id::unique(("board_toolbar_last_connector", viewport));
-        let connector_owner = context_target.map(|(target, _)| target.owner.clone());
-        let reveal_connector = connector_owner.is_some()
+        let last_shape_id = egui::Id::unique(("board_toolbar_last_shape", viewport));
+        let shape_owner = shape.as_ref().map(|value| value.target.owner.clone());
+        let reveal_shape = shape_owner.is_some()
             && ctx
-                .data(|data| data.get_temp::<Option<ConnectorOwner>>(last_connector_id))
+                .data(|data| data.get_temp::<Option<ConnectorOwner>>(last_shape_id))
                 .flatten()
-                != connector_owner;
+                != shape_owner;
         let mut collapsed = ctx
             .data(|data| data.get_temp::<bool>(collapsed_id))
             .unwrap_or(true);
         let mut command = None;
-        let mut connector_change = None;
         let mut shape_change = None;
         let mut context_action = None;
         let mut insert_shape = None;
@@ -769,29 +772,11 @@ impl ThinodaApp {
                         .id_salt("board_toolbar_scroll")
                         .min_scrolled_height(0.0)
                         .max_height(available_height);
-                    if reveal_connector {
+                    if reveal_shape {
                         scroll = scroll.vertical_scroll_offset(0.0);
                     }
                     scroll.show(ui, |ui| {
-                        if let Some(connector) = &connector {
-                            ui.push_id(&connector.target.owner, |ui| {
-                                ui.add_enabled_ui(connector.enabled, |ui| {
-                                    let (change, popups) = connector_context_controls(
-                                        ui, canvas, collapsed, row_height, connector,
-                                    );
-                                    connector_change = change;
-                                    connector_popups = popups;
-                                });
-                                context_action = context_action_controls(
-                                    ui,
-                                    collapsed,
-                                    row_height,
-                                    connector.enabled,
-                                    format_panel_open,
-                                );
-                            });
-                            ui.separator();
-                        } else if let Some(shape) = &shape {
+                        if let Some(shape) = &shape {
                             ui.push_id(&shape.target.owner, |ui| {
                                 ui.add_enabled_ui(shape.enabled, |ui| {
                                     let (change, popups) = shape_context_controls(
@@ -913,31 +898,10 @@ impl ThinodaApp {
             });
         ctx.data_mut(|data| {
             data.insert_temp(collapsed_id, collapsed);
-            data.insert_temp(last_connector_id, connector_owner);
+            data.insert_temp(last_shape_id, shape_owner);
         });
-        let action_target = context_target.map(|(target, _)| target.clone());
-        if let Some(connector) = connector.filter(|value| value.enabled) {
-            let mut target = connector.target;
-            if let Some(change) = connector_change {
-                match self.apply_connector_change(&target, change) {
-                    Ok(updated) => target = updated,
-                    Err(error) => {
-                        Self::close_connector_popups(ctx, viewport);
-                        self.toasts.warning(error);
-                        return Some(toolbar.response.rect);
-                    }
-                }
-            }
-            ctx.data_mut(|data| {
-                data.insert_temp(
-                    popup_slot,
-                    ConnectorPopups {
-                        target,
-                        ids: connector_popups,
-                    },
-                );
-            });
-        } else if let Some(shape) = shape.as_ref().filter(|value| value.enabled) {
+        let action_target = shape.as_ref().map(|value| value.target.clone());
+        if let Some(shape) = shape.as_ref().filter(|value| value.enabled) {
             let mut target = shape.target.clone();
             if let Some(change) = shape_change {
                 match self.apply_shape_change(&target, change) {
@@ -979,6 +943,116 @@ impl ThinodaApp {
             self.insert_board_shape(ctx, shape);
         }
         Some(toolbar.response.rect)
+    }
+
+    pub(crate) fn connector_options_toolbar(
+        &mut self,
+        ctx: &Context,
+        canvas: Rect,
+        card_text_open: bool,
+    ) -> Option<Rect> {
+        let viewport = self.current_viewport;
+        let Some(connector) = self.connector_context() else {
+            Self::close_connector_popups(ctx, viewport);
+            return None;
+        };
+        let popup_slot = connector_popup_slot(viewport);
+        let previous = ctx.data(|data| data.get_temp::<ConnectorPopups>(popup_slot));
+        if previous
+            .as_ref()
+            .is_some_and(|previous| !connector.enabled || previous.target != connector.target)
+        {
+            Self::close_connector_popups(ctx, viewport);
+        }
+        let format_panel_open = self.settings.show_format_panel
+            && self.sidebar_family == crate::app::SidebarFamily::Format;
+        let strip = context_strip_rects(canvas, card_text_open, true).1?;
+        let mut change = None;
+        let mut popups = Vec::new();
+        let mut action = None;
+        let area = egui::Area::new(egui::Id::unique(("thinoda_connector_options", viewport)))
+            .order(egui::Order::Middle)
+            .fixed_pos(strip.min)
+            .constrain_to(strip)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.set_min_size(strip.size());
+                ui.set_max_width(strip.width());
+                ui.shrink_clip_rect(strip);
+                egui::Frame::new()
+                    .fill(thinoda_ui::Palette::of_ui(ui).surface)
+                    .inner_margin(egui::Margin::symmetric(6, 3))
+                    .show(ui, |ui| {
+                        ui.set_width((strip.width() - 12.0).max(0.0));
+                        ui.set_min_height((strip.height() - 6.0).max(0.0));
+                        ui.push_id(&connector.target.owner, |ui| {
+                            egui::ScrollArea::horizontal()
+                                .id_salt("board_connector_options")
+                                .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                                .scroll_bar_visibility(
+                                    egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                )
+                                .max_width(ui.available_width())
+                                .min_scrolled_width(0.0)
+                                .max_height((strip.height() - 6.0).max(0.0))
+                                .min_scrolled_height(34.0)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.horizontal_centered(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(t("Connector options")).small(),
+                                        );
+                                        ui.add_enabled_ui(connector.enabled, |ui| {
+                                            (change, popups) = connector_context_controls(
+                                                ui, canvas, true, 34.0, &connector,
+                                            );
+                                        });
+                                        action = context_action_controls(
+                                            ui,
+                                            true,
+                                            34.0,
+                                            connector.enabled,
+                                            format_panel_open,
+                                        );
+                                    });
+                                    crate::ui::reveal_changed_focus(ui);
+                                });
+                        });
+                    });
+            });
+        if connector.enabled {
+            let mut target = connector.target.clone();
+            if let Some(change) = change {
+                match self.apply_connector_change(&target, change) {
+                    Ok(updated) => target = updated,
+                    Err(error) => {
+                        Self::close_connector_popups(ctx, viewport);
+                        self.toasts.warning(error);
+                        return Some(area.response.rect);
+                    }
+                }
+            }
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    popup_slot,
+                    ConnectorPopups {
+                        target,
+                        ids: popups,
+                    },
+                );
+            });
+        }
+        match action {
+            Some(ContextAction::EditLabel) => {
+                Self::close_connector_popups(ctx, viewport);
+                if let Err(error) = self.edit_board_label(&connector.target) {
+                    self.toasts.warning(error);
+                }
+            }
+            Some(ContextAction::FormatPanel) => self.exec(ctx, Cmd::ToggleFormatPanel),
+            None => {}
+        }
+        Some(area.response.rect)
     }
 
     pub(crate) fn close_ink_option_popups(ctx: &Context, viewport: egui::ViewportId) {
