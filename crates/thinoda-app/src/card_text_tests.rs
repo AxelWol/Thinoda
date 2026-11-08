@@ -1375,7 +1375,7 @@ fn keyboard_can_choose_and_reset_color_and_choose_a_font() {
 }
 
 #[test]
-fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_windows() {
+fn formatting_overlays_a_stationary_canvas_and_scrolls_in_compact_windows() {
     for dark in [false, true] {
         for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(960.0, 540.0)] {
             let (mut app, id) = app_with_card(CardKind::Text);
@@ -1385,6 +1385,10 @@ fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_window
                 SettingsTheme::Light
             };
             let mut h = harness(app, size);
+            let canvas_before = h.state().doc().unwrap().view.canvas_rect();
+            let board_before = h
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")));
             if h.query_by_role_and_label(Role::Button, card_text_label())
                 .is_some()
             {
@@ -1394,12 +1398,14 @@ fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_window
             }
             let canvas = h.state().doc().unwrap().view.canvas_rect();
             let bold = h.get_by_role_and_label(Role::Button, "Bold").rect();
-            assert!(bold.bottom() <= canvas.top() + 0.5, "{bold:?} {canvas:?}");
+            assert_eq!(canvas, canvas_before, "opening formatting moved the canvas");
+            assert!(canvas.contains_rect(bold), "{bold:?} {canvas:?}");
             assert!(h.ctx.content_rect().contains_rect(bold));
             let board = h
                 .ctx
                 .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")));
             assert!(!board.unwrap().intersects(bold));
+            assert_eq!(board, board_before, "opening formatting moved the toolbox");
 
             h.get_by_role_and_label(Role::ComboBox, "Font Family")
                 .focus();
@@ -1422,11 +1428,87 @@ fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_window
                 .get_by_role_and_label(Role::ColorWell, "Text Color #FFFFFF")
                 .rect();
             assert!(h.ctx.content_rect().contains_rect(rect), "{rect:?}");
-            assert!(rect.bottom() <= h.state().doc().unwrap().view.canvas_rect().top());
+            assert!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .canvas_rect()
+                    .contains_rect(rect)
+            );
             h.key_press(Key::Space);
             h.run_steps(3);
             assert_eq!(style(&h, id).text_color, Some(Color::WHITE));
         }
+    }
+}
+
+#[test]
+fn formatting_and_ink_options_share_a_stationary_canvas() {
+    for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(1000.0, 700.0)] {
+        let (app, id) = app_with_card(CardKind::Text);
+        let mut h = harness(app, size);
+        if h.query_by_role_and_label(Role::Button, card_text_label())
+            .is_some()
+        {
+            open_toolbar(&mut h);
+        } else {
+            open_toolbar_from_context(&mut h);
+        }
+        let canvas = h.state().doc().unwrap().view.canvas_rect();
+        let board_id = egui::Id::unique("thinoda_board_toolbar");
+        let board = h.ctx.memory(|memory| memory.area_rect(board_id));
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Pen);
+        h.run_steps(8);
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert_eq!(h.ctx.memory(|memory| memory.area_rect(board_id)), board);
+        let (card, ink) = h.ctx.memory(|memory| {
+            (
+                memory.area_rect(egui::Id::unique((
+                    "thinoda_card_text_toolbar",
+                    egui::ViewportId::ROOT,
+                ))),
+                memory.area_rect(egui::Id::unique((
+                    "thinoda_ink_options",
+                    egui::ViewportId::ROOT,
+                ))),
+            )
+        });
+        let (card, ink) = (card.unwrap(), ink.unwrap());
+        assert!(canvas.contains_rect(card) && canvas.contains_rect(ink));
+        assert!(!card.intersects(ink), "{size:?}: {card:?} {ink:?}");
+        assert!(!board.unwrap().intersects(card));
+        assert!(!board.unwrap().intersects(ink));
+
+        h.get_by_role_and_label(Role::Button, "Bold").focus();
+        h.run_steps(6);
+        h.key_press(Key::Space);
+        h.run_steps(4);
+        assert_eq!(style(&h, id).bold, Some(true));
+        h.get_by_role_and_label(Role::Button, "Ink width")
+            .scroll_to_me();
+        h.run_steps(6);
+        h.get_by_role_and_label(Role::Button, "Ink width").click();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Button, "Ink width: 8")
+            .click();
+        h.run_steps(4);
+        assert_eq!(h.state().doc().unwrap().view.ink_settings.width, 8.0);
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .objects
+                .is_empty()
+        );
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
     }
 }
 
@@ -1448,7 +1530,7 @@ fn compact_formatting_keeps_insert_actions_without_covering_the_card() {
     );
     let action = h.get_by_role_and_label(Role::Button, "More insert actions");
     let canvas = h.state().doc().unwrap().view.canvas_rect();
-    assert!(action.rect().bottom() <= canvas.top());
+    assert!(canvas.contains_rect(action.rect()));
     action.click();
     h.run_steps(4);
     h.get_by_role_and_label(Role::Button, "Subtopic").click();
@@ -4317,7 +4399,7 @@ fn logical_viewports_keep_independent_toolbar_owners() {
                     ..Default::default()
                 },
                 |ui| {
-                    app.card_text_toolbar(ui);
+                    app.card_text_toolbar(ui, false);
                 },
             );
             output.textures_delta.clear();

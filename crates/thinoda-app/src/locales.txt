@@ -77,6 +77,7 @@ Object eraser|Borrador de objetos|Gomme d’objets|Objektviskelæder|Objectgum|B
 Pixel eraser|Borrador de píxeles|Gomme de pixels|Pixelviskelæder|Pixelgum|Borracha de píxeis|Gomma per pixel|Gumka pikselowa
 Lasso|Lazo|Lasso|Lasso|Lasso|Laço|Lazo|Lasso
 Stroke type|Tipo de trazo|Type de trait|Stregtype|Lijntype|Tipo de traço|Tipo di tratto|Rodzaj kreski
+Ink options|Opciones de tinta|Options d’encre|Blækindstillinger|Inktopties|Opções de tinta|Opzioni inchiostro|Opcje tuszu
 Ink color|Color de tinta|Couleur de l’encre|Blækfarve|Inktkleur|Cor da tinta|Colore dell’inchiostro|Kolor tuszu
 Ink width|Grosor del trazo|Épaisseur du trait|Stregtykkelse|Lijndikte|Espessura do traço|Spessore del tratto|Grubość kreski
 Eraser radius|Radio del borrador|Rayon de la gomme|Viskelæderets radius|Gumstraal|Raio da borracha|Raggio della gomma|Promień gumki

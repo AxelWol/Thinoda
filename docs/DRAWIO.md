@@ -526,6 +526,9 @@ changes. Use the standard action-icon color for Shape library and Image card,
 leaving Board minimap distinct. Move the pen, highlighter and eraser options
 from the board rail into a separate contextual strip. Both that strip and the
 Whole-card text strip must overlay the canvas without changing its bounds.
+Move the selected connector's properties and quick actions from the board rail
+into their own top contextual strip, preserving their behavior, ownership and
+accessibility while allowing it to coexist with the other strips.
 Keep the board rail permanently low enough to leave room for either strip,
 including in compact windows; opening a strip must not move the rail. Verify
 tool values and dispatch, focus and input ownership, accessibility,
@@ -537,6 +540,18 @@ reachable even for an unbound selection. A stale FIM selection falls back to
 Style on ordinary sheets; returning to a FIM sheet makes the tab available
 again. The FIM source and draft workflows are unchanged. Physical
 assistive-technology acceptance remains open.
+
+**Contextual-toolbar slice — critique:** the Shape library and Image card use
+the other tool actions' colour; the minimap retains its distinct tone. Ink
+settings now live in a separate scrollable overlay, and Whole-card text no
+longer changes the canvas bounds. Both strips can coexist without overlapping,
+including on compact canvases, and clicks on them do not start ink underneath.
+The toolbox normally reserves room for the strips. When the canvas is too short
+to fit both, it is temporarily hidden rather than moved over a strip; existing
+menu commands remain the fallback. Popup ownership is invalidated on tool,
+sheet, document and instance changes. Keyboard, theme, locale and draft
+regressions are covered; physical touch and assistive-technology acceptance
+remain open.
 
 **Context-menu slice — critique:** Tools now includes Image card alongside the
 other drawing and card tools; applicable target menus place Zones after Styles

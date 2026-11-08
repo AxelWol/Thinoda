@@ -563,9 +563,14 @@ semantics and require native v6.
   the toolbar to the available canvas height and scroll rather than hiding
   actions on short windows or at high UI scale. The toolbox starts collapsed
   to avoid obscuring canvas content; either state can be changed by the user.
-- Show contextual action icons for the active mode. For ink, expose colour,
-  width, opacity, and the supported pen/highlighter stroke types; erasers expose
-  their radius. These controls remain usable in either toolbar presentation.
+- Show contextual action icons for the active mode in a separate strip over the
+  canvas, above the lowered board toolbox. For ink, expose colour, width,
+  opacity, and the supported pen/highlighter stroke types; erasers expose their
+  radius. The canvas remains stationary and the strip scrolls in compact windows.
+  When Whole-card text is also open, the strips share the row without overlap.
+  On canvases too short for both the strip and toolbox, the toolbox is hidden
+  until the strip closes; the existing menus remain available.
+  These controls remain usable in either toolbar presentation.
   Colour swatches and graphical width presets complement the exact controls;
   swatches preserve colour alpha and do not change the independent opacity.
 - Inspector sections for card colour, shape fill/stroke, ink width/colour/

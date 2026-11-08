@@ -2091,6 +2091,16 @@ impl ThinodaApp {
             }
         }
 
+        let show_board_controls = show_doc
+            && self.mode == CenterMode::Map
+            && !self.task_table_visible()
+            && !self.zen
+            && !self.any_modal_open()
+            && !self.dialogs.settings;
+        let show_ink_options = show_board_controls
+            && self
+                .doc()
+                .is_some_and(|doc| crate::board_ui::has_ink_options(doc.view.board_tool));
         let card_text_open = if show_doc
             && self.mode == CenterMode::Map
             && !self.task_table_visible()
@@ -2100,7 +2110,7 @@ impl ThinodaApp {
             && !self.dialogs.settings
             && !self.dialogs.about
         {
-            self.card_text_toolbar(ui)
+            self.card_text_toolbar(ui, show_ink_options)
         } else {
             ctx.data_mut(|data| {
                 data.remove::<CardTextTarget>(card_text_slot(self.current_viewport));
@@ -2151,24 +2161,32 @@ impl ThinodaApp {
         self.finish_card_text_focus_handoff(&ctx);
         self.finish_deferred_card_text_commands(&ctx);
 
-        let (board_toolbar, editing_toolbar) = if show_doc
-            && self.mode == CenterMode::Map
-            && !self.task_table_visible()
-            && !self.zen
-            && !self.any_modal_open()
-            && !self.dialogs.settings
-        {
-            let editing_toolbar = if card_text_open {
+        let (board_toolbar, editing_toolbar, ink_toolbar) = if show_board_controls {
+            let ink_toolbar = if show_ink_options {
+                self.ink_options_toolbar(&ctx, center.response.rect, card_text_open)
+            } else {
+                Self::close_ink_option_popups(&ctx, self.current_viewport);
+                None
+            };
+            let editing_toolbar = if card_text_open || ink_toolbar.is_some() {
                 None
             } else {
                 self.editing_toolbar(&ctx, center.response.rect)
             };
-            let board_toolbar = self.board_toolbar(&ctx, center.response.rect, editing_toolbar);
+            let board_toolbar = if (card_text_open || ink_toolbar.is_some())
+                && !crate::board_ui::board_toolbar_fits_below_context(center.response.rect)
+            {
+                Self::close_connector_popups(&ctx, self.current_viewport);
+                None
+            } else {
+                self.board_toolbar(&ctx, center.response.rect, editing_toolbar)
+            };
             self.armed_shape_hint(&ctx, center.response.rect);
-            (board_toolbar, editing_toolbar)
+            (board_toolbar, editing_toolbar, ink_toolbar)
         } else {
             Self::close_connector_popups(&ctx, self.current_viewport);
-            (None, None)
+            Self::close_ink_option_popups(&ctx, self.current_viewport);
+            (None, None, None)
         };
 
         if show_doc
@@ -2179,7 +2197,16 @@ impl ThinodaApp {
             && !self.any_modal_open()
             && !self.dialogs.settings
         {
-            self.topic_toolbar(&ctx, board_toolbar, editing_toolbar);
+            let context_strip = (card_text_open || ink_toolbar.is_some()).then(|| {
+                egui::Rect::from_min_size(
+                    center.response.rect.min,
+                    vec2(
+                        center.response.rect.width(),
+                        crate::board_ui::CONTEXT_STRIP_HEIGHT.min(center.response.rect.height()),
+                    ),
+                )
+            });
+            self.topic_toolbar(&ctx, board_toolbar, editing_toolbar, context_strip);
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
@@ -3345,7 +3372,7 @@ impl ThinodaApp {
         }
     }
 
-    fn card_text_toolbar(&mut self, ui: &mut Ui) -> bool {
+    fn card_text_toolbar(&mut self, ui: &mut Ui, ink_options_open: bool) -> bool {
         let ctx = ui.ctx().clone();
         let viewport = self.current_viewport;
         let slot = card_text_slot(viewport);
@@ -3513,51 +3540,65 @@ impl ThinodaApp {
             .data(|data| data.get_temp::<bool>(slot.with("font_popup")))
             .unwrap_or(false);
         let palette = Palette::of(&ctx);
-        let panel = egui::Panel::top(egui::Id::unique(("thinoda_card_text_toolbar", viewport)))
-            .exact_size(48.0)
-            .frame(
+        let canvas = ui.available_rect_before_wrap();
+        let strip = crate::board_ui::context_strip_rects(canvas, true, ink_options_open)
+            .0
+            .expect("card text strip was requested");
+        let panel = egui::Area::new(egui::Id::unique(("thinoda_card_text_toolbar", viewport)))
+            .order(egui::Order::Middle)
+            .fixed_pos(strip.min)
+            .constrain_to(strip)
+            .movable(false)
+            .show(&ctx, |ui| {
+                ui.set_min_size(strip.size());
+                ui.set_max_width(strip.width());
+                ui.shrink_clip_rect(strip);
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(Margin::symmetric(6, 3)),
-            )
-            .show(ui, |ui| {
-                ui.add_enabled_ui(enabled, |ui| {
-                    ui.push_id(
-                        (
-                            &target.document,
-                            target.instance,
-                            target.sheet,
-                            target.root,
-                            target.topic,
-                        ),
-                        |ui| {
-                            ui.horizontal_centered(|ui| {
-                                close = card_text_owned_icon(
-                                    ui,
-                                    icons::CLOSE,
-                                    t("Close"),
-                                    false,
-                                    false,
-                                    &mut owned_focus,
-                                );
-                                ui.add_enabled_ui(!title_active, |ui| {
-                                    guarded_menu_button(
-                                        ui,
-                                        format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
-                                        |ui| self.formatting_insert_actions(ui, &mut command),
-                                    )
-                                    .response
-                                    .accessible_name(t("More insert actions"))
-                                    .on_hover_text(t("More insert actions"));
-                                });
-                                let width = ui.available_width().max(0.0);
-                                egui::ScrollArea::horizontal()
+                    .inner_margin(Margin::symmetric(6, 3))
+                    .show(ui, |ui| {
+                        ui.set_width((strip.width() - 12.0).max(0.0));
+                        ui.set_min_height((strip.height() - 6.0).max(0.0));
+                        ui.add_enabled_ui(enabled, |ui| {
+                            ui.push_id(
+                                (
+                                    &target.document,
+                                    target.instance,
+                                    target.sheet,
+                                    target.root,
+                                    target.topic,
+                                ),
+                                |ui| {
+                                    ui.horizontal_centered(|ui| {
+                                        close = card_text_owned_icon(
+                                            ui,
+                                            icons::CLOSE,
+                                            t("Close"),
+                                            false,
+                                            false,
+                                            &mut owned_focus,
+                                        );
+                                        ui.add_enabled_ui(!title_active, |ui| {
+                                            guarded_menu_button(
+                                                ui,
+                                                format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
+                                                |ui| {
+                                                    self.formatting_insert_actions(ui, &mut command)
+                                                },
+                                            )
+                                            .response
+                                            .accessible_name(t("More insert actions"))
+                                            .on_hover_text(t("More insert actions"));
+                                        });
+                                        let width = ui.available_width().max(0.0);
+                                        egui::ScrollArea::horizontal()
                                     .id_salt("card_text_controls")
                                     .scroll_source(egui::scroll_area::ScrollSource::ALL)
                                     .scroll_bar_visibility(
                                         egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
                                     )
                                     .max_width(width)
+                                    .min_scrolled_width(0.0)
                                     .max_height(42.0)
                                     .min_scrolled_height(Tokens::ICON_BUTTON)
                                     .auto_shrink([false, false])
@@ -3808,10 +3849,11 @@ impl ThinodaApp {
                                         });
                                         reveal_changed_focus(ui);
                                     });
-                            });
-                        },
-                    );
-                });
+                                    });
+                                },
+                            );
+                        });
+                    });
             });
         let popup_open = font_popup.is_some_and(|(_, open)| open);
         let popup_rect =
@@ -3925,7 +3967,7 @@ impl ThinodaApp {
         if let Some(command) = command {
             self.exec(&ctx, command);
         }
-        !close
+        true
     }
 
     fn topic_toolbar(
@@ -3933,6 +3975,7 @@ impl ThinodaApp {
         ctx: &Context,
         board_toolbar: Option<egui::Rect>,
         editing_toolbar: Option<egui::Rect>,
+        context_strip: Option<egui::Rect>,
     ) {
         if !self.settings.show_topic_toolbar {
             return;
@@ -3991,6 +4034,9 @@ impl ThinodaApp {
         );
         let toolbar_id = egui::Id::unique("thinoda_topic_toolbar");
         let mut available = canvas.shrink(4.0);
+        if let Some(strip) = context_strip {
+            available.min.y = available.min.y.max(strip.bottom() + 4.0);
+        }
         let mut safe_clip = None;
         if is_board && !available.is_positive() {
             return;

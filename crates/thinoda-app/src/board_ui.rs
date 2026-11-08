@@ -26,9 +26,66 @@ use crate::{
 pub(crate) const ARMED_SHAPE_HINT: &str = "Click empty space to add · Esc to finish";
 /// Narrower canvases skip the hint so it never covers the minimap or toolbars.
 pub(crate) const ARMED_SHAPE_HINT_MIN_WIDTH: f32 = 520.0;
+pub(crate) const CONTEXT_STRIP_HEIGHT: f32 = 48.0;
+const BOARD_TOOLBAR_TOP_INSET: f32 = CONTEXT_STRIP_HEIGHT + 16.0;
+const MIN_BOARD_TOOLBAR_HEIGHT: f32 = 70.0;
+
+pub(crate) fn board_toolbar_fits_below_context(canvas: Rect) -> bool {
+    canvas.height() >= CONTEXT_STRIP_HEIGHT + MIN_BOARD_TOOLBAR_HEIGHT + 4.0
+}
+
+pub(crate) fn has_ink_options(tool: BoardTool) -> bool {
+    matches!(
+        tool,
+        BoardTool::Pen | BoardTool::Highlighter | BoardTool::ObjectEraser | BoardTool::PixelEraser
+    )
+}
+
+pub(crate) fn context_strip_rects(
+    canvas: Rect,
+    card: bool,
+    ink: bool,
+) -> (Option<Rect>, Option<Rect>) {
+    let row = Rect::from_min_size(
+        canvas.min,
+        vec2(
+            canvas.width().max(0.0),
+            CONTEXT_STRIP_HEIGHT.min(canvas.height().max(0.0)),
+        ),
+    );
+    if card && ink {
+        let gap = row.width().min(4.0);
+        let ink_width = ((row.width() - gap) * 0.5).min(200.0);
+        let split = row.right() - ink_width;
+        (
+            Some(Rect::from_min_max(
+                row.min,
+                egui::pos2(split - gap, row.bottom()),
+            )),
+            Some(Rect::from_min_max(egui::pos2(split, row.top()), row.max)),
+        )
+    } else {
+        (card.then_some(row), ink.then_some(row))
+    }
+}
 
 fn armed_shape_hint_dismissed_id() -> egui::Id {
     egui::Id::unique("thinoda_armed_shape_hint_dismissed")
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct InkOptionsOwner {
+    document: String,
+    instance: u64,
+    sheet: usize,
+    root: TopicId,
+    tool: BoardTool,
+}
+
+#[derive(Clone)]
+struct InkOptionsPopups {
+    owner: InkOptionsOwner,
+    ids: Vec<egui::Id>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -229,6 +286,10 @@ impl ConnectorChange {
 
 fn connector_popup_slot(viewport: egui::ViewportId) -> egui::Id {
     egui::Id::unique(("board_connector_popups", viewport))
+}
+
+fn ink_popup_slot(viewport: egui::ViewportId) -> egui::Id {
+    egui::Id::unique(("board_ink_popups", viewport))
 }
 
 #[derive(Clone, Copy)]
@@ -641,10 +702,7 @@ impl ThinodaApp {
         let doc = self.doc()?;
         let tool = doc.view.board_tool;
         let show_minimap = doc.view.show_minimap;
-        let mut ink_settings = doc.view.ink_settings;
         let collapsed_id = egui::Id::unique(("board_toolbar_collapsed", &doc.key));
-        let auto_color_id = egui::Id::unique(("board_ink_auto_color", &doc.key));
-        let last_tool_id = egui::Id::unique(("board_toolbar_last_tool", &doc.key));
         let last_connector_id = egui::Id::unique(("board_toolbar_last_connector", viewport));
         let connector_owner = context_target.map(|(target, _)| target.owner.clone());
         let reveal_connector = connector_owner.is_some()
@@ -652,23 +710,6 @@ impl ThinodaApp {
                 .data(|data| data.get_temp::<Option<ConnectorOwner>>(last_connector_id))
                 .flatten()
                 != connector_owner;
-        let reveal_context = reveal_connector
-            || matches!(
-                tool,
-                BoardTool::Pen
-                    | BoardTool::Highlighter
-                    | BoardTool::ObjectEraser
-                    | BoardTool::PixelEraser
-            ) && ctx.data(|data| data.get_temp::<BoardTool>(last_tool_id)) != Some(tool);
-        let mut auto_color = ctx
-            .data(|data| data.get_temp::<bool>(auto_color_id))
-            .unwrap_or(ink_settings.color == Color::BLACK);
-        let background = thinoda_core::theme::Theme::for_settings(&doc.doc.sheet().theme)
-            .background(&doc.doc.sheet().theme, doc.view.dark);
-        let default_ink_color = Color::highest_contrast_on(background);
-        if auto_color {
-            ink_settings.color = default_ink_color;
-        }
         let mut collapsed = ctx
             .data(|data| data.get_temp::<bool>(collapsed_id))
             .unwrap_or(true);
@@ -689,9 +730,11 @@ impl ThinodaApp {
         let editing_toolbar = editing_toolbar
             .filter(|rect| rect.right() > toolbar_left && rect.left() < toolbar_right);
         let top_inset = editing_toolbar
-            .map_or(8.0, |rect| (rect.bottom() - canvas.top() + 8.0).max(8.0))
-            .min((canvas.height() - 100.0).max(0.0));
-        let row_height = ((canvas.height() - 20.0) * 0.5).clamp(20.0, 34.0);
+            .map_or(BOARD_TOOLBAR_TOP_INSET, |rect| {
+                (rect.bottom() - canvas.top() + 8.0).max(BOARD_TOOLBAR_TOP_INSET)
+            })
+            .min((canvas.height() - MIN_BOARD_TOOLBAR_HEIGHT).max(0.0));
+        let row_height = ((canvas.height() - top_inset - 20.0) * 0.5).clamp(20.0, 34.0);
         let inner_height = (canvas.height() - top_inset - 16.0).max(0.0);
         let toolbar = egui::Area::new(egui::Id::unique("thinoda_board_toolbar"))
             .order(egui::Order::Middle)
@@ -726,7 +769,7 @@ impl ThinodaApp {
                         .id_salt("board_toolbar_scroll")
                         .min_scrolled_height(0.0)
                         .max_height(available_height);
-                    if reveal_context {
+                    if reveal_connector {
                         scroll = scroll.vertical_scroll_offset(0.0);
                     }
                     scroll.show(ui, |ui| {
@@ -766,170 +809,6 @@ impl ThinodaApp {
                                 );
                             });
                             ui.separator();
-                        } else if matches!(tool, BoardTool::Pen | BoardTool::Highlighter) {
-                            let color_control = board_tool_popup(
-                                ui,
-                                icons::FORMAT.into(),
-                                "Ink color",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.set_width((canvas.width() - 24.0).clamp(1.0, 164.0));
-                                    reserve_popup_scrollbar_space(ui);
-                                    let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("board_ink_color_choices")
-                                        .min_scrolled_height(max_height.min(120.0))
-                                        .max_height(max_height)
-                                        .show(ui, |ui| {
-                                            ui.checkbox(&mut auto_color, t("Auto"));
-                                            let selected = (!auto_color).then(|| {
-                                                Color32::from_rgb(
-                                                    ink_settings.color.r,
-                                                    ink_settings.color.g,
-                                                    ink_settings.color.b,
-                                                )
-                                            });
-                                            if let Some(color) = widgets::color_swatches(
-                                                ui,
-                                                &crate::ui::SWATCHES,
-                                                selected,
-                                            ) {
-                                                let [r, g, b, _] = color.to_srgba_unmultiplied();
-                                                ink_settings.color =
-                                                    Color::rgba(r, g, b, ink_settings.color.a);
-                                                auto_color = false;
-                                            }
-                                            if !auto_color {
-                                                let mut color =
-                                                    crate::ui::from_color(ink_settings.color);
-                                                if ui
-                                                    .color_edit_button_srgba(&mut color)
-                                                    .accessible_name(t("Ink color"))
-                                                    .changed()
-                                                {
-                                                    let [r, g, b, a] =
-                                                        color.to_srgba_unmultiplied();
-                                                    ink_settings.color = Color::rgba(r, g, b, a);
-                                                }
-                                            }
-                                        });
-                                },
-                            );
-                            let color = if auto_color {
-                                default_ink_color
-                            } else {
-                                ink_settings.color
-                            };
-                            let swatch = Rect::from_min_size(
-                                color_control.rect.left_bottom() + vec2(8.0, -6.0),
-                                vec2(16.0, 3.0),
-                            );
-                            ui.painter().rect_filled(
-                                swatch,
-                                1,
-                                Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a),
-                            );
-                            ui.painter().rect_stroke(
-                                swatch,
-                                1,
-                                egui::Stroke::new(1.0, thinoda_ui::Palette::of_ui(ui).border),
-                                egui::StrokeKind::Inside,
-                            );
-                            board_tool_popup(
-                                ui,
-                                icons::STROKE_WIDTH.into(),
-                                "Ink width",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.set_width((canvas.width() - 24.0).clamp(1.0, 206.0));
-                                    reserve_popup_scrollbar_space(ui);
-                                    let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("board_ink_width_choices")
-                                        .min_scrolled_height(max_height.min(120.0))
-                                        .max_height(max_height)
-                                        .show(ui, |ui| {
-                                            width_presets(ui, &mut ink_settings.width, "Ink width");
-                                            ui.add(
-                                                egui::DragValue::new(&mut ink_settings.width)
-                                                    .range(
-                                                    thinoda_core::board::MIN_STROKE_WIDTH
-                                                        ..=thinoda_core::board::MAX_STROKE_WIDTH,
-                                                ),
-                                            )
-                                            .accessible_name(t("Ink width"));
-                                        });
-                                },
-                            );
-                            board_tool_popup(
-                                ui,
-                                board_tool_glyph(tool),
-                                "Stroke type",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    for (value, label) in [
-                                        (BoardTool::Pen, "Pen"),
-                                        (BoardTool::Highlighter, "Highlighter"),
-                                    ] {
-                                        if board_tool_button(
-                                            ui,
-                                            board_tool_glyph(value),
-                                            label,
-                                            value == tool,
-                                            false,
-                                            row_height,
-                                        )
-                                        .1
-                                        {
-                                            command = Some(Cmd::BoardTool(value));
-                                            ui.close_kind(egui::UiKind::Menu);
-                                        }
-                                    }
-                                },
-                            );
-                            board_tool_popup(
-                                ui,
-                                icons::OPACITY.into(),
-                                "Opacity",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.add(
-                                        egui::DragValue::new(&mut ink_settings.opacity)
-                                            .range(0.0..=1.0)
-                                            .speed(0.01),
-                                    )
-                                    .accessible_name(t("Opacity"));
-                                },
-                            );
-                            if auto_color {
-                                ink_settings.color = default_ink_color;
-                            }
-                            ui.separator();
-                        } else if matches!(tool, BoardTool::ObjectEraser | BoardTool::PixelEraser) {
-                            board_tool_popup(
-                                ui,
-                                icons::STROKE_WIDTH.into(),
-                                "Eraser radius",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.add(
-                                        egui::DragValue::new(&mut ink_settings.eraser_radius)
-                                            .range(0.1..=200.0),
-                                    )
-                                    .accessible_name(t("Eraser radius"));
-                                },
-                            );
-                            ui.separator();
                         }
                         for (value, label) in [
                             (BoardTool::Select, "Select tool"),
@@ -952,7 +831,7 @@ impl ThinodaApp {
                         }
                         board_tool_popup(
                             ui,
-                            icons::BOARD_SHAPES.into(),
+                            board_tool_glyph(BoardTool::Shape(ShapeKind::Rectangle)),
                             "Shape library",
                             collapsed,
                             matches!(tool, BoardTool::Shape(_)),
@@ -1005,7 +884,7 @@ impl ThinodaApp {
                         }
                         if board_tool_button(
                             ui,
-                            icons::IMAGE.into(),
+                            CommandIcon::from(icons::IMAGE).with_tone(ribbon::IconTone::Create),
                             "Image card",
                             false,
                             collapsed,
@@ -1034,13 +913,8 @@ impl ThinodaApp {
             });
         ctx.data_mut(|data| {
             data.insert_temp(collapsed_id, collapsed);
-            data.insert_temp(auto_color_id, auto_color);
-            data.insert_temp(last_tool_id, tool);
             data.insert_temp(last_connector_id, connector_owner);
         });
-        if let Some(doc) = self.doc_mut() {
-            doc.view.ink_settings = ink_settings;
-        }
         let action_target = context_target.map(|(target, _)| target.clone());
         if let Some(connector) = connector.filter(|value| value.enabled) {
             let mut target = connector.target;
@@ -1105,6 +979,338 @@ impl ThinodaApp {
             self.insert_board_shape(ctx, shape);
         }
         Some(toolbar.response.rect)
+    }
+
+    pub(crate) fn close_ink_option_popups(ctx: &Context, viewport: egui::ViewportId) {
+        let slot = ink_popup_slot(viewport);
+        let popups = ctx.data_mut(|data| {
+            let popups = data.get_temp::<InkOptionsPopups>(slot);
+            data.remove::<InkOptionsPopups>(slot);
+            popups
+        });
+        if let Some(popups) = popups {
+            for id in popups.ids {
+                egui::Popup::close_id(ctx, id);
+            }
+        }
+    }
+
+    pub(crate) fn ink_options_toolbar(
+        &mut self,
+        ctx: &Context,
+        canvas: Rect,
+        card_text_open: bool,
+    ) -> Option<Rect> {
+        let viewport = self.current_viewport;
+        let doc = self.doc()?;
+        let tool = doc.view.board_tool;
+        if !has_ink_options(tool) {
+            Self::close_ink_option_popups(ctx, viewport);
+            return None;
+        }
+        let owner = InkOptionsOwner {
+            document: doc.key.clone(),
+            instance: doc.doc.instance_id(),
+            sheet: doc.doc.active_index(),
+            root: doc.doc.sheet().root,
+            tool,
+        };
+        let popup_slot = ink_popup_slot(viewport);
+        if ctx
+            .data(|data| data.get_temp::<InkOptionsPopups>(popup_slot))
+            .is_some_and(|previous| previous.owner != owner)
+        {
+            Self::close_ink_option_popups(ctx, viewport);
+        }
+        let auto_color_id = egui::Id::unique(("board_ink_auto_color", &doc.key));
+        let mut ink_settings = doc.view.ink_settings;
+        let mut auto_color = ctx
+            .data(|data| data.get_temp::<bool>(auto_color_id))
+            .unwrap_or(ink_settings.color == Color::BLACK);
+        let background = thinoda_core::theme::Theme::for_settings(&doc.doc.sheet().theme)
+            .background(&doc.doc.sheet().theme, doc.view.dark);
+        let default_ink_color = Color::highest_contrast_on(background);
+        if auto_color {
+            ink_settings.color = default_ink_color;
+        }
+        let strip = context_strip_rects(canvas, card_text_open, true).1?;
+        let mut command = None;
+        let mut popups = Vec::new();
+        let area = egui::Area::new(egui::Id::unique(("thinoda_ink_options", viewport)))
+            .order(egui::Order::Middle)
+            .fixed_pos(strip.min)
+            .constrain_to(strip)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.set_min_size(strip.size());
+                ui.set_max_width(strip.width());
+                ui.shrink_clip_rect(strip);
+                egui::Frame::new()
+                    .fill(thinoda_ui::Palette::of_ui(ui).surface)
+                    .inner_margin(egui::Margin::symmetric(6, 3))
+                    .show(ui, |ui| {
+                        ui.set_width((strip.width() - 12.0).max(0.0));
+                        ui.set_min_height((strip.height() - 6.0).max(0.0));
+                        ui.push_id(
+                            (&owner.document, owner.instance, owner.sheet, owner.root),
+                            |ui| {
+                                egui::ScrollArea::horizontal()
+                                    .id_salt("board_ink_options")
+                                    .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                                    .scroll_bar_visibility(
+                                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                    )
+                                    .max_width(ui.available_width())
+                                    .min_scrolled_width(0.0)
+                                    .max_height((strip.height() - 6.0).max(0.0))
+                                    .min_scrolled_height(34.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.horizontal_centered(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(t("Ink options")).small(),
+                                            );
+                                            if matches!(tool, BoardTool::Pen | BoardTool::Highlighter)
+                                            {
+                                                let color_control = board_tool_popup(
+                                                    ui,
+                                                    icons::FORMAT.into(),
+                                                    "Ink color",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.set_width(
+                                                            (canvas.width() - 24.0)
+                                                                .clamp(1.0, 164.0),
+                                                        );
+                                                        reserve_popup_scrollbar_space(ui);
+                                                        let max_height = (canvas.height() - 32.0)
+                                                            .clamp(1.0, 180.0);
+                                                        egui::ScrollArea::vertical()
+                                                            .id_salt("board_ink_color_choices")
+                                                            .min_scrolled_height(
+                                                                max_height.min(120.0),
+                                                            )
+                                                            .max_height(max_height)
+                                                            .show(ui, |ui| {
+                                                                ui.checkbox(
+                                                                    &mut auto_color,
+                                                                    t("Auto"),
+                                                                );
+                                                                let selected = (!auto_color)
+                                                                    .then(|| {
+                                                                        Color32::from_rgb(
+                                                                            ink_settings.color.r,
+                                                                            ink_settings.color.g,
+                                                                            ink_settings.color.b,
+                                                                        )
+                                                                    });
+                                                                if let Some(color) =
+                                                                    widgets::color_swatches(
+                                                                        ui,
+                                                                        &crate::ui::SWATCHES,
+                                                                        selected,
+                                                                    )
+                                                                {
+                                                                    let [r, g, b, _] = color
+                                                                        .to_srgba_unmultiplied();
+                                                                    ink_settings.color =
+                                                                        Color::rgba(
+                                                                            r,
+                                                                            g,
+                                                                            b,
+                                                                            ink_settings.color.a,
+                                                                        );
+                                                                    auto_color = false;
+                                                                }
+                                                                if !auto_color {
+                                                                    let mut color = crate::ui::from_color(
+                                                                        ink_settings.color,
+                                                                    );
+                                                                    if ui
+                                                                        .color_edit_button_srgba(
+                                                                            &mut color,
+                                                                        )
+                                                                        .accessible_name(t("Ink color"))
+                                                                        .changed()
+                                                                    {
+                                                                        let [r, g, b, a] = color
+                                                                            .to_srgba_unmultiplied();
+                                                                        ink_settings.color =
+                                                                            Color::rgba(r, g, b, a);
+                                                                    }
+                                                                }
+                                                            });
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&color_control).get_id(),
+                                                );
+                                                let color = if auto_color {
+                                                    default_ink_color
+                                                } else {
+                                                    ink_settings.color
+                                                };
+                                                let swatch = Rect::from_min_size(
+                                                    color_control.rect.left_bottom()
+                                                        + vec2(8.0, -6.0),
+                                                    vec2(16.0, 3.0),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    swatch,
+                                                    1,
+                                                    Color32::from_rgba_unmultiplied(
+                                                        color.r, color.g, color.b, color.a,
+                                                    ),
+                                                );
+                                                ui.painter().rect_stroke(
+                                                    swatch,
+                                                    1,
+                                                    egui::Stroke::new(
+                                                        1.0,
+                                                        thinoda_ui::Palette::of_ui(ui).border,
+                                                    ),
+                                                    egui::StrokeKind::Inside,
+                                                );
+                                                let width_control = board_tool_popup(
+                                                    ui,
+                                                    icons::STROKE_WIDTH.into(),
+                                                    "Ink width",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.set_width(
+                                                            (canvas.width() - 24.0)
+                                                                .clamp(1.0, 206.0),
+                                                        );
+                                                        reserve_popup_scrollbar_space(ui);
+                                                        let max_height = (canvas.height() - 32.0)
+                                                            .clamp(1.0, 180.0);
+                                                        egui::ScrollArea::vertical()
+                                                            .id_salt("board_ink_width_choices")
+                                                            .min_scrolled_height(
+                                                                max_height.min(120.0),
+                                                            )
+                                                            .max_height(max_height)
+                                                            .show(ui, |ui| {
+                                                                width_presets(
+                                                                    ui,
+                                                                    &mut ink_settings.width,
+                                                                    "Ink width",
+                                                                );
+                                                                ui.add(
+                                                                    egui::DragValue::new(
+                                                                        &mut ink_settings.width,
+                                                                    )
+                                                                    .range(
+                                                                        thinoda_core::board::MIN_STROKE_WIDTH
+                                                                            ..=thinoda_core::board::MAX_STROKE_WIDTH,
+                                                                    ),
+                                                                )
+                                                                .accessible_name(t("Ink width"));
+                                                            });
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&width_control).get_id(),
+                                                );
+                                                let stroke_control = board_tool_popup(
+                                                    ui,
+                                                    board_tool_glyph(tool),
+                                                    "Stroke type",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        for (value, label) in [
+                                                            (BoardTool::Pen, "Pen"),
+                                                            (BoardTool::Highlighter, "Highlighter"),
+                                                        ] {
+                                                            if board_tool_button(
+                                                                ui,
+                                                                board_tool_glyph(value),
+                                                                label,
+                                                                value == tool,
+                                                                false,
+                                                                34.0,
+                                                            )
+                                                            .1
+                                                            {
+                                                                command = Some(Cmd::BoardTool(value));
+                                                                ui.close_kind(egui::UiKind::Menu);
+                                                            }
+                                                        }
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&stroke_control).get_id(),
+                                                );
+                                                let opacity_control = board_tool_popup(
+                                                    ui,
+                                                    icons::OPACITY.into(),
+                                                    "Opacity",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.add(
+                                                            egui::DragValue::new(
+                                                                &mut ink_settings.opacity,
+                                                            )
+                                                            .range(0.0..=1.0)
+                                                            .speed(0.01),
+                                                        )
+                                                        .accessible_name(t("Opacity"));
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&opacity_control).get_id(),
+                                                );
+                                            } else {
+                                                let radius_control = board_tool_popup(
+                                                    ui,
+                                                    icons::STROKE_WIDTH.into(),
+                                                    "Eraser radius",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.add(
+                                                            egui::DragValue::new(
+                                                                &mut ink_settings.eraser_radius,
+                                                            )
+                                                            .range(0.1..=200.0),
+                                                        )
+                                                        .accessible_name(t("Eraser radius"));
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&radius_control).get_id(),
+                                                );
+                                            }
+                                        });
+                                        crate::ui::reveal_changed_focus(ui);
+                                    });
+                            },
+                        );
+                    });
+            });
+        if auto_color {
+            ink_settings.color = default_ink_color;
+        }
+        ctx.data_mut(|data| {
+            data.insert_temp(auto_color_id, auto_color);
+            data.insert_temp(popup_slot, InkOptionsPopups { owner, ids: popups });
+        });
+        if let Some(doc) = self.doc_mut() {
+            doc.view.ink_settings = ink_settings;
+        }
+        if let Some(command) = command {
+            self.exec(ctx, command);
+        }
+        Some(area.response.rect)
     }
 
     /// Shift+Enter on a library tile: places the shape in free space beside
@@ -2519,6 +2725,7 @@ mod tests {
     fn expanded_toolbar(ui: &mut Ui, app: &mut ThinodaApp) {
         start_expanded(ui.ctx(), app);
         app.board_toolbar(ui.ctx(), ui.max_rect(), None);
+        app.ink_options_toolbar(ui.ctx(), ui.max_rect(), false);
     }
 
     fn shape_test_theme(ctx: &Context, dark: bool) {
@@ -3493,7 +3700,7 @@ mod tests {
         assert!(harness.query_by_label("Image card").is_some());
 
         harness.get_by_label("Pen").click();
-        harness.run_steps(2);
+        harness.run_steps(5);
         assert_eq!(
             harness.state().doc().unwrap().view.board_tool,
             BoardTool::Pen
@@ -3509,6 +3716,268 @@ mod tests {
         );
         assert!(harness.query_by_label("Eraser radius").is_some());
         assert!(harness.query_by_label("Lasso").is_some());
+    }
+
+    #[test]
+    fn board_action_icons_use_the_same_tone_except_the_minimap() {
+        for dark in [false, true] {
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 1000.0))
+                .build_ui_state(
+                    move |ui, app: &mut ThinodaApp| {
+                        shape_test_theme(ui.ctx(), dark);
+                        expanded_toolbar(ui, app);
+                    },
+                    ThinodaApp::headless(),
+                );
+            harness.run_steps(6);
+            let icon_color = |label: &str, symbol: &str| {
+                let button = harness.get_by_label(label).rect();
+                harness
+                    .output()
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text)
+                            if text.galley.text() == symbol && button.contains(text.pos) =>
+                        {
+                            Some(text.fallback_color)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("missing icon for {label}"))
+            };
+            let action = ribbon::IconTone::Create.color(dark, false);
+            assert_eq!(icon_color("Sticky note", icons::NOTE), action);
+            assert_eq!(icon_color("Shape library", icons::BOARD_SHAPES), action);
+            assert_eq!(icon_color("Image card", icons::IMAGE), action);
+            assert_eq!(
+                icon_color("Board minimap", icons::BOARD_MINIMAP),
+                ribbon::IconTone::Neutral.color(dark, false)
+            );
+            assert_ne!(icon_color("Board minimap", icons::BOARD_MINIMAP), action);
+        }
+    }
+
+    #[test]
+    fn ink_options_overlay_keeps_the_canvas_and_toolbox_stationary() {
+        let mut harness = harness();
+        let canvas = harness.state().doc().unwrap().view.canvas_rect();
+        let toolbar_id = egui::Id::unique("thinoda_board_toolbar");
+        let toolbar = harness
+            .ctx
+            .memory(|memory| memory.area_rect(toolbar_id))
+            .unwrap();
+        let strip_id = egui::Id::unique(("thinoda_ink_options", egui::ViewportId::ROOT));
+        for (label, tool, controls) in [
+            (
+                "Pen",
+                BoardTool::Pen,
+                &["Ink color", "Ink width", "Stroke type", "Opacity"][..],
+            ),
+            (
+                "Highlighter",
+                BoardTool::Highlighter,
+                &["Ink color", "Ink width", "Stroke type", "Opacity"][..],
+            ),
+            (
+                "Object eraser",
+                BoardTool::ObjectEraser,
+                &["Eraser radius"][..],
+            ),
+            (
+                "Pixel eraser",
+                BoardTool::PixelEraser,
+                &["Eraser radius"][..],
+            ),
+        ] {
+            click_scrolled_into_view(&mut harness, label);
+            harness.run_steps(5);
+            assert_eq!(harness.state().doc().unwrap().view.board_tool, tool);
+            assert_eq!(harness.state().doc().unwrap().view.canvas_rect(), canvas);
+            assert_eq!(
+                harness.ctx.memory(|memory| memory.area_rect(toolbar_id)),
+                Some(toolbar)
+            );
+            let strip = harness
+                .ctx
+                .memory(|memory| memory.area_rect(strip_id))
+                .unwrap();
+            assert!(canvas.contains_rect(strip));
+            assert!(!toolbar.intersects(strip), "{label}: {toolbar:?} {strip:?}");
+            for control in controls {
+                assert!(
+                    harness.query_by_label(control).is_some(),
+                    "{label}: {control}"
+                );
+            }
+            let before = harness.state().doc().unwrap().doc.workbook().clone();
+            click_point(
+                &mut harness,
+                egui::pos2(strip.right() - 8.0, strip.top() + 5.0),
+            );
+            assert_eq!(harness.state().doc().unwrap().doc.workbook(), &before);
+            assert!(
+                !harness
+                    .state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .has_pending_ink_gesture()
+            );
+        }
+    }
+
+    #[test]
+    fn ink_popups_close_when_their_tool_sheet_or_document_changes() {
+        for case in ["tool", "sheet", "instance", "document", "hidden"] {
+            let mut harness = harness();
+            click_scrolled_into_view(&mut harness, "Pen");
+            harness.run_steps(5);
+            harness.get_by_label("Ink width").click();
+            harness.run_steps(4);
+            let old = harness
+                .ctx
+                .data(|data| {
+                    data.get_temp::<InkOptionsPopups>(ink_popup_slot(egui::ViewportId::ROOT))
+                })
+                .unwrap();
+            assert!(
+                old.ids
+                    .iter()
+                    .any(|id| egui::Popup::is_id_open(&harness.ctx, *id))
+            );
+            match case {
+                "tool" => harness
+                    .state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .view
+                    .set_board_tool(BoardTool::Highlighter),
+                "sheet" => {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    doc.doc
+                        .add_sheet(thinoda_core::Sheet::new("Other", "Root"))
+                        .unwrap();
+                }
+                "instance" => {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    doc.doc.replace(doc.doc.workbook().clone());
+                }
+                "document" => {
+                    let app = harness.state_mut();
+                    app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+                    app.doc_mut().unwrap().view.set_board_tool(BoardTool::Pen);
+                }
+                "hidden" => harness.state_mut().mode = CenterMode::Outliner,
+                _ => unreachable!(),
+            }
+            harness.run_steps(6);
+            assert!(
+                old.ids
+                    .iter()
+                    .all(|id| !egui::Popup::is_id_open(&harness.ctx, *id)),
+                "old popup remains open after {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn ink_opacity_and_eraser_radius_remain_editable_for_each_tool() {
+        for (tool, label, value) in [
+            (BoardTool::Pen, "Opacity", 0.35),
+            (BoardTool::Highlighter, "Opacity", 0.35),
+            (BoardTool::ObjectEraser, "Eraser radius", 24.0),
+            (BoardTool::PixelEraser, "Eraser radius", 24.0),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.doc_mut().unwrap().view.board_tool = tool;
+            let original = app.doc().unwrap().doc.workbook().clone();
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 800.0))
+                .build_ui_state(expanded_toolbar, app);
+            harness.run_steps(5);
+            harness
+                .get_by_role_and_label(egui::Role::Button, label)
+                .click();
+            harness.run_steps(4);
+            let input = harness.get_by_role_and_label(egui::Role::SpinButton, label);
+            input.click();
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness
+                .get_by_role_and_label(egui::Role::SpinButton, label)
+                .type_text(&value.to_string());
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(4);
+            let doc = harness.state().doc().unwrap();
+            let actual = if label == "Opacity" {
+                doc.view.ink_settings.opacity
+            } else {
+                doc.view.ink_settings.eraser_radius
+            };
+            assert_eq!(actual, value, "{tool:?}");
+            assert_eq!(doc.doc.workbook(), &original);
+        }
+    }
+
+    #[test]
+    fn ink_options_label_is_translated_in_every_supported_language() {
+        for language in i18n::Lang::ALL {
+            let translation = i18n::t_in(language, "Ink options");
+            assert!(!translation.is_empty(), "{language:?}");
+            if language != i18n::Lang::En {
+                assert_ne!(translation, "Ink options", "{language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tiny_canvas_hides_the_toolbox_only_while_an_overlay_is_open() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(320.0, 170.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| app.draw(ui),
+                ThinodaApp::headless(),
+            );
+        harness.run_steps(6);
+        let toolbar_id = egui::Id::unique("thinoda_board_toolbar");
+        let is_visible = |harness: &Harness<'_, ThinodaApp>| {
+            harness.ctx.memory(|memory| {
+                memory
+                    .areas()
+                    .visible_layer_ids()
+                    .iter()
+                    .any(|layer| layer.id == toolbar_id)
+            })
+        };
+        let canvas = harness.state().doc().unwrap().view.canvas_rect();
+        assert!(!board_toolbar_fits_below_context(canvas), "{canvas:?}");
+        assert!(is_visible(&harness));
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Pen);
+        harness.run_steps(6);
+        assert_eq!(harness.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert!(!is_visible(&harness));
+        assert!(harness.query_by_label("Ink color").is_some());
+        assert!(
+            harness
+                .state()
+                .command_available(&Cmd::BoardTool(BoardTool::Select))
+        );
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Select);
+        harness.run_steps(6);
+        assert_eq!(harness.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert!(is_visible(&harness));
     }
 
     #[test]
@@ -3922,7 +4391,7 @@ mod tests {
     }
 
     #[test]
-    fn toolbox_starts_near_top_when_no_toolbar_blocks_it() {
+    fn toolbox_reserves_space_for_a_context_strip() {
         let mut harness = Harness::builder()
             .with_size(vec2(800.0, 500.0))
             .build_ui_state(expanded_toolbar, ThinodaApp::headless());
@@ -3932,8 +4401,8 @@ mod tests {
             .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")))
             .unwrap();
         assert!(
-            toolbar.top() - harness.ctx.content_rect().top() <= 16.0,
-            "unused space above toolbox: {toolbar:?}"
+            toolbar.top() - harness.ctx.content_rect().top() >= CONTEXT_STRIP_HEIGHT,
+            "context strip would overlap the toolbox: {toolbar:?}"
         );
     }
 

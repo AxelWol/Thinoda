@@ -538,6 +538,7 @@ const DE: &[(&str, &str)] = &[
     ("Pixel eraser", "Pixelradierer"),
     ("Lasso", "Lasso"),
     ("Stroke type", "Strichart"),
+    ("Ink options", "Tintenoptionen"),
     ("Ink color", "Tintenfarbe"),
     ("Ink width", "Strichbreite"),
     ("Eraser radius", "Radius des Radierers"),
