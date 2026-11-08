@@ -21,6 +21,8 @@ const CLIPBOARD_MULTIPAGE: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/clipboard-multipage");
 const CLIPBOARD_ENCODED: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/clipboard-encoded");
+const DETACHED_CONNECTOR: &[u8] =
+    include_bytes!("../../../fuzz/corpus/drawio_import/connector-detached");
 
 #[test]
 fn document_seeds_reach_their_importers_and_native_roundtrip() {
@@ -32,6 +34,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             Format::DrawIo,
             PARTIAL_RECTANGLE_CONTAINER,
         ),
+        ("detached connector", Format::DrawIo, DETACHED_CONNECTOR),
         ("warning", Format::DrawIo, WARNING),
         ("compressed", Format::DrawIo, COMPRESSED),
         ("svg", Format::DrawIo, SVG),
@@ -63,6 +66,20 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
                     .contains(&thinoda_io::ImportWarning::Formatting)
             );
             assert_eq!(report.workbook.sheets[0].zones.len(), 1);
+        }
+        if name == "detached connector" {
+            assert!(
+                report
+                    .warnings
+                    .contains(&thinoda_io::ImportWarning::DetachedConnectors)
+            );
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert!(
+                pasted
+                    .warnings
+                    .contains(&thinoda_io::ImportWarning::DetachedConnectors)
+            );
         }
         support::roundtrip_report(report);
         drawio_support::exercise(bytes);

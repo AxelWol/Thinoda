@@ -3252,6 +3252,130 @@ fn nested_geometry_groups_containers_and_edge_labels() {
 }
 
 #[test]
+fn group_and_frame_connector_detachments_are_reported() {
+    let xml = page(
+        r#"
+        <mxCell id="edge" value="Detached" style="endArrow=none;" edge="1" parent="1" source="group" target="lane"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="group" style="group" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="a" vertex="1" parent="group"><mxGeometry width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="b" vertex="1" parent="group"><mxGeometry x="60" width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="200" y="50" width="100" height="100" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report.warnings.contains(&ImportWarning::DetachedConnectors),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = &report.workbook.sheets[0];
+    let edge = connectors(sheet)
+        .into_iter()
+        .find(|edge| edge.label == "Detached")
+        .unwrap();
+    assert_eq!(edge.from, Endpoint::Point(Vec2::new(60.0, 50.0)));
+    assert_eq!(edge.to, Endpoint::Point(Vec2::new(250.0, 100.0)));
+    sheet.validate().unwrap();
+
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    assert_eq!(
+        crate::import_drawio_link(&link).unwrap().warnings,
+        report.warnings
+    );
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert!(pasted.warnings.contains(&ImportWarning::DetachedConnectors));
+
+    let omitted = page(
+        r#"<mxCell id="edge" edge="1" parent="1" source="group" target="missing"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="group" style="group" vertex="1" parent="1"><mxGeometry width="100" height="100" as="geometry"/></mxCell>"#,
+    );
+    let omitted = load(&omitted);
+    assert!(omitted.warnings.contains(&ImportWarning::Other));
+    assert!(
+        !omitted
+            .warnings
+            .contains(&ImportWarning::DetachedConnectors)
+    );
+    assert!(connectors(&omitted.workbook.sheets[0]).is_empty());
+
+    let invalid = page(
+        r#"<mxCell id="group" style="group" vertex="1" parent="1"><mxGeometry width="100" height="100" as="geometry"/></mxCell>
+        <mxCell id="edge" edge="1" parent="1" source="group"><mxGeometry relative="1" as="geometry"><mxPoint x="1e20" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let invalid = load(&invalid);
+    assert!(invalid.warnings.contains(&ImportWarning::Other));
+    assert!(
+        !invalid
+            .warnings
+            .contains(&ImportWarning::DetachedConnectors)
+    );
+    assert!(connectors(&invalid.workbook.sheets[0]).is_empty());
+}
+
+#[test]
+fn shaped_container_fallback_keeps_its_connector_attachment() {
+    let xml = page(
+        r#"<mxCell id="lane" value="Small" style="swimlane;" vertex="1" parent="1"><mxGeometry width="100" height="80" as="geometry"/></mxCell>
+        <mxCell id="shape" vertex="1" parent="1"><mxGeometry x="200" width="50" height="50" as="geometry"/></mxCell>
+        <mxCell id="edge" style="endArrow=none;" edge="1" parent="1" source="lane" target="shape"><mxGeometry relative="1" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(!report.warnings.contains(&ImportWarning::DetachedConnectors));
+    let sheet = &report.workbook.sheets[0];
+    assert!(sheet.zones.is_empty());
+    let lane = shapes(sheet)
+        .into_iter()
+        .find(|object| object.label() == "Small")
+        .unwrap();
+    assert_eq!(connectors(sheet)[0].from, Endpoint::Object(lane.id));
+}
+
+#[test]
+fn missing_connector_terminals_with_fallback_points_are_reported() {
+    let shape = r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry x="100" width="40" height="40" as="geometry"/></mxCell>"#;
+    for (source, target, point) in [
+        (" source=\"missing\"", " target=\"shape\"", "sourcePoint"),
+        (" source=\"shape\"", " target=\"missing\"", "targetPoint"),
+    ] {
+        let xml = page(&format!(
+            r#"{shape}<mxCell id="edge" style="endArrow=none;" edge="1" parent="1"{source}{target}><mxGeometry relative="1" as="geometry"><mxPoint x="7" y="8" as="{point}"/></mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::DetachedConnectors]);
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings == vec![ImportWarning::DetachedConnectors]
+        ));
+        let edge = connectors(&report.workbook.sheets[0])[0];
+        let expected = Endpoint::Point(Vec2::new(7.0, 8.0));
+        assert_eq!(
+            if point == "sourcePoint" {
+                edge.from
+            } else {
+                edge.to
+            },
+            expected
+        );
+    }
+
+    for source in ["", " source=\"\""] {
+        let free = page(&format!(
+            r#"{shape}<mxCell id="edge" style="endArrow=none;" edge="1" parent="1"{source} target="shape"><mxGeometry relative="1" as="geometry"><mxPoint x="7" y="8" as="sourcePoint"/></mxGeometry></mxCell>"#
+        ));
+        assert!(load(&free).warnings.is_empty());
+    }
+
+    let omitted = page(&format!(
+        r#"{shape}<mxCell id="edge" style="endArrow=none;" edge="1" parent="1" source="shape" target="missing"><mxGeometry relative="1" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&omitted);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(!report.warnings.contains(&ImportWarning::DetachedConnectors));
+    assert!(connectors(&report.workbook.sheets[0]).is_empty());
+}
+
+#[test]
 fn shaped_containers_report_their_frame_approximation() {
     for style in [
         "shape=partialRectangle;container=1;left=0;",

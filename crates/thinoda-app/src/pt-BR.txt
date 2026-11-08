@@ -461,6 +461,8 @@ showing the first 8 topics|exibindo os 8 primeiros tópicos
 MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.|A exportação para MindManager não pode preservar todo o conteúdo. Use Exportar com confirmação ou salve como .thinoda.
 Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged.|Só é exportada a folha atual. Podem ser omitidos cores, recursos, relações, layout avançado e dados não suportados. A pasta de trabalho de origem não é alterada.
 Additional or unsupported links|Links adicionais ou não suportados
+Connector attachments were detached|As conexões foram separadas de seus pontos de ancoragem
+Connector attachments may have been detached|As conexões podem ter sido separadas de seus pontos de ancoragem
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão

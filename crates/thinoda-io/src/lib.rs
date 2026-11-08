@@ -384,6 +384,8 @@ pub enum ImportWarning {
     Resources,
     Markers,
     Links,
+    /// A connector's referenced terminal became an unanchored point.
+    DetachedConnectors,
     Other,
 }
 

@@ -165,6 +165,20 @@ pub fn t(en: &'static str) -> &'static str {
     t_in(lang(), en)
 }
 
+pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'static str {
+    use thinoda_io::ImportWarning;
+
+    match warning {
+        ImportWarning::Formatting => "Formatting and styles",
+        ImportWarning::Notes => "Rich notes",
+        ImportWarning::Resources => "Images and attachments",
+        ImportWarning::Markers => "Markers and task data",
+        ImportWarning::Links => "Additional or unsupported links",
+        ImportWarning::DetachedConnectors => "Connector attachments were detached",
+        ImportWarning::Other => "Other unsupported map data",
+    }
+}
+
 pub(crate) fn localize_model_error(error: &str) -> &str {
     localize_model_error_in(lang(), error)
 }
@@ -1334,6 +1348,14 @@ const DE: &[(&str, &str)] = &[
     (
         "Additional or unsupported links",
         "Zusätzliche oder nicht unterstützte Links",
+    ),
+    (
+        "Connector attachments were detached",
+        "Verbindungen wurden von ihren Ankerpunkten gelöst",
+    ),
+    (
+        "Connector attachments may have been detached",
+        "Verbindungen wurden möglicherweise von ihren Ankerpunkten gelöst",
     ),
     (
         "Other unsupported map data",
@@ -4823,6 +4845,8 @@ mod tests {
             "Pasted from draw.io; some content was simplified",
             "Container frames omitted",
             "Additional draw.io pages omitted",
+            "Connector attachments were detached",
+            "Connector attachments may have been detached",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",
             "Could not paste draw.io content",

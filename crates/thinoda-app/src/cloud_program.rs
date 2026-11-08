@@ -13,7 +13,7 @@ use std::{
 };
 
 use egui::{Context, Ui, ViewportId};
-use thinoda_io::{ExportOptions, Format, ImportReport, ImportWarning};
+use thinoda_io::{ExportOptions, Format, ImportReport};
 use thinoda_platform::{
     cloud_auth::{
         self, AppPassword, AuthClient, Cancellation, CloudAccountType, CloudCredential,
@@ -91,6 +91,7 @@ pub(crate) const CLOUD_UI_KEYS: &[&str] = &[
     "Connect contacts your configured provider and may open its sign-in page. Browsing sends folder identifiers; Open downloads content. Save and Upload send document content only when you request them.",
     "Connected. Choose List folder to browse; no files are downloaded automatically.",
     "Connecting cloud account…",
+    "Connector attachments were detached",
     "Copy link",
     "Could not commit document drafts. Your edits are unchanged.",
     "Could not encode the cloud document. Your local edits are unchanged.",
@@ -1942,7 +1943,7 @@ impl ThinodaApp {
                 ));
                 if let Some(opened) = &self.cloud_program.import {
                     for warning in &opened.report.warnings {
-                        ui.label(t(warning_label(*warning)));
+                        ui.label(t(i18n::import_warning_label(*warning)));
                     }
                 }
                 ui.horizontal_wrapped(|ui| {
@@ -2169,17 +2170,6 @@ fn text_field(ui: &mut Ui, key: &'static str, value: &mut String, password: bool
     });
 }
 
-fn warning_label(warning: ImportWarning) -> &'static str {
-    match warning {
-        ImportWarning::Formatting => "Formatting and styles",
-        ImportWarning::Notes => "Rich notes",
-        ImportWarning::Resources => "Images and attachments",
-        ImportWarning::Markers => "Markers and task data",
-        ImportWarning::Links => "Additional or unsupported links",
-        ImportWarning::Other => "Other unsupported map data",
-    }
-}
-
 #[cfg(all(test, not(feature = "integrated-cloud-services")))]
 mod disabled_tests {
     use super::*;
@@ -2369,6 +2359,61 @@ mod tests {
         );
         folder.dropbox_path = None;
         assert!(connection.can_create_in(&folder));
+    }
+
+    #[test]
+    fn cloud_drawio_detachment_requires_cancelable_confirmation() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let xml = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="edge" edge="1" parent="1" source="missing" target="shape" style="endArrow=none;"><mxGeometry relative="1" as="geometry"><mxPoint x="7" y="8" as="sourcePoint"/></mxGeometry></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let report = thinoda_io::import_bytes_with_report(Format::DrawIo, xml.as_bytes()).unwrap();
+        assert!(
+            report
+                .warnings
+                .contains(&thinoda_io::ImportWarning::DetachedConnectors)
+        );
+        let mut app = ThinodaApp::headless();
+        app.set_file_work_mode(crate::file_ops::FileWorkMode::Background);
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let (sender, receiver) = mpsc::channel();
+        assert!(
+            sender
+                .send(Ok(Completion::Opened(Opened {
+                    report,
+                    source: Source {
+                        session: 1,
+                        id: StorageId("synthetic-drawio-id".into()),
+                        revision: Revision("synthetic-revision".into()),
+                        name: "diagram.drawio".into(),
+                        format: Format::DrawIo,
+                    },
+                    viewport: ViewportId::ROOT,
+                })))
+                .is_ok()
+        );
+        app.cloud_program.running = Some(receiver);
+        app.poll_cloud_program(&Context::default());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(app.cloud_program.import.is_some());
+
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1000.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| app.show_cloud_dialogs(ui.ctx()),
+                app,
+            );
+        h.run_steps(3);
+        h.get_by_label(t("Connector attachments were detached"));
+        h.get_by_label(t("Cancel")).click();
+        h.run_steps(3);
+        assert!(h.state().cloud_program.import.is_none());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert!(h.state().cloud_program.sources.is_empty());
     }
 
     #[test]

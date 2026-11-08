@@ -1128,10 +1128,41 @@ is asserted by the app tests. A 21-second AddressSanitizer smoke completed
 14,054 executions; it does not meet the separate 30-minute campaign gate.
 
 These are disclosure safeguards, not preservation of frames or pages. The
-importer can also detach connectors from groups or frames and can simplify
-other source attributes before fragment preparation; the new counts do not
-cover every such loss. Retain the source diagram. Real system clipboard,
-assistive-technology and longer sanitizer-campaign acceptance remain open.
+importer can also detach connectors and simplify other source attributes before
+fragment preparation; the new counts do not cover every such loss. Retain the
+source diagram. Real system clipboard, assistive-technology and longer
+sanitizer-campaign acceptance remain open.
+
+**Connector-attachment disclosure and rubber-duck review.** Edges attached
+to imported groups or frames currently become free endpoints at the area
+centre. A referenced terminal that cannot be imported may similarly fall back
+to the source's explicit endpoint. Both cases now raise a distinct conversion
+warning for local, link and cloud imports. Clipboard paste shows a sticky,
+localized warning as well, including alongside frame or page omission counts.
+The source diagram remains unchanged.
+
+The review distinguished actual detachments from intentionally free endpoints
+and from shaped containers that remain attachable objects. It also checked
+edges processed before their terminals, and ensures the warning is raised only
+when the connector itself was added; a skipped connector keeps the existing
+unsupported-data warning. Local and link imports, cloud confirmation and
+cancel, and the strict no-confirmation API retain their consent safeguards.
+Clipboard warnings aggregate all imported pages, so the attachment notice says
+*may* when the affected page might not be pasted; a regression covers that
+case. The toast remains subject to the normal five-notification queue limit.
+
+The draw.io importer, supplied example corpus and deterministic fuzz seeds,
+clipboard, link, localization and cloud tests passed, as did strict native,
+WebAssembly and fuzz Clippy. The synthetic paste and undo journey passed in
+Chromium, Firefox and WebKit; screenshots showed the warning, while actual
+system clipboard and assistive-technology acceptance remain open. A 21-second
+AddressSanitizer smoke completed 20,419 executions without a reported
+failure; this does not meet the separate 30-minute acceptance campaign gate.
+
+This is not attachment preservation: moving a group or frame does not move the
+free endpoint, and the fallback does not reproduce draw.io perimeter or fixed
+port routing. The versioned scene model, editing, copy/paste, renderers and
+exports still need real group/frame endpoints before this phase can be closed.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

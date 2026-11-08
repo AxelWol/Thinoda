@@ -140,7 +140,8 @@ supported, and ordinary paste does not invoke this import.
 Pasting draw.io diagram text inserts the first page as one undoable edit. A
 persistent warning counts omitted first-page container frames and additional
 pages; children of those frames become free board items. If the first page has
-no pasteable items, the paste is rejected and later pages are not pasted.
+no pasteable items, the paste is rejected and later pages are not pasted. The
+warning also reports connector attachments that may have been detached.
 
 ## Durable browser documents (C1 platform integration)
 

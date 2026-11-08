@@ -7595,16 +7595,8 @@ impl ThinodaApp {
             }
             message.push_str(&format!("\n\n{}:", t("Conversion warnings")));
             for warning in warnings {
-                let label = match warning {
-                    thinoda_io::ImportWarning::Formatting => "Formatting and styles",
-                    thinoda_io::ImportWarning::Notes => "Rich notes",
-                    thinoda_io::ImportWarning::Resources => "Images and attachments",
-                    thinoda_io::ImportWarning::Markers => "Markers and task data",
-                    thinoda_io::ImportWarning::Links => "Additional or unsupported links",
-                    thinoda_io::ImportWarning::Other => "Other unsupported map data",
-                };
                 message.push_str("\n- ");
-                message.push_str(t(label));
+                message.push_str(t(i18n::import_warning_label(*warning)));
             }
             if let Some(choice) = confirm_dialog(
                 ctx,

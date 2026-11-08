@@ -1472,7 +1472,7 @@ struct Context {
 }
 
 enum End {
-    Ready(Endpoint),
+    Ready { endpoint: Endpoint, detached: bool },
     Pending,
     Missing,
 }
@@ -1985,15 +1985,33 @@ impl<'a> PageImport<'a> {
     ) -> End {
         if let Some(&index) = terminal.and_then(|id| self.index.get(id)) {
             match self.items.get(&index) {
-                Some(Item::Object(id)) => return End::Ready(Endpoint::Object(*id)),
-                Some(Item::Card(id)) => return End::Ready(Endpoint::Topic(*id)),
-                Some(Item::Area(rect)) => return End::Ready(Endpoint::Point(rect.center())),
+                Some(Item::Object(id)) => {
+                    return End::Ready {
+                        endpoint: Endpoint::Object(*id),
+                        detached: false,
+                    };
+                }
+                Some(Item::Card(id)) => {
+                    return End::Ready {
+                        endpoint: Endpoint::Topic(*id),
+                        detached: false,
+                    };
+                }
+                Some(Item::Area(rect)) => {
+                    return End::Ready {
+                        endpoint: Endpoint::Point(rect.center()),
+                        detached: true,
+                    };
+                }
                 None if !last_pass && !self.visited[index] => return End::Pending,
                 None => {}
             }
         }
         match point {
-            Some(p) => End::Ready(Endpoint::Point(origin + p)),
+            Some(p) => End::Ready {
+                endpoint: Endpoint::Point(origin + p),
+                detached: terminal.is_some(),
+            },
             None => End::Missing,
         }
     }
@@ -2046,8 +2064,17 @@ impl<'a> PageImport<'a> {
             origin,
             last_pass,
         );
-        let (from, to) = match (from, to) {
-            (End::Ready(from), End::Ready(to)) => (from, to),
+        let (from, to, detached) = match (from, to) {
+            (
+                End::Ready {
+                    endpoint: from,
+                    detached: from_detached,
+                },
+                End::Ready {
+                    endpoint: to,
+                    detached: to_detached,
+                },
+            ) => (from, to, from_detached || to_detached),
             (End::Pending, _) | (_, End::Pending) => {
                 self.deferred.push((index, context));
                 return;
@@ -2118,7 +2145,9 @@ impl<'a> PageImport<'a> {
         object.style.opacity = style.opacity();
         object.band = style.band();
         object.alt_text = cell.tooltip.clone().unwrap_or_default();
-        self.add_object(index, object, context);
+        if self.add_object(index, object, context).is_some() && detached {
+            self.warn(ImportWarning::DetachedConnectors);
+        }
     }
 
     fn finish(mut self) -> Sheet {

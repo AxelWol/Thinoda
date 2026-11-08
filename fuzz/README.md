@@ -45,7 +45,9 @@ consume XML directly. The draw.io target exercises XML, compressed pages,
 editable SVG/PNG, embedded HTML, self-contained `#R` links and plain or
 URI-encoded clipboard text without fetching their URLs. Successful clipboard
 decodes must produce a valid board fragment and report known omissions. Its
-PNG seed is the original editor-exported fixture already used by the importer
+connector-detachment seed checks that frame attachments are reported rather
+than silently converted to free endpoints. Its PNG seed is the original
+editor-exported fixture already used by the importer
 tests. On successful imports, including reports with conversion
 warnings, each target checks validation and an exact round-trip through
 Thinoda's native format. This in-memory check does not bypass the application's
