@@ -22,6 +22,7 @@ unbounded local campaign):
 cargo +nightly fuzz run --release xmind
 cargo +nightly fuzz run --release freemind
 cargo +nightly fuzz run --release opml
+cargo +nightly fuzz run --release drawio_import
 ```
 
 To reproduce the bounded CI smoke locally, run each command with its matching
@@ -31,6 +32,7 @@ dictionary and libFuzzer limits:
 cargo +nightly fuzz run --release xmind -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/xmind.dict
 cargo +nightly fuzz run --release freemind -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/freemind.dict
 cargo +nightly fuzz run --release opml -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/opml.dict
+cargo +nightly fuzz run --release drawio_import -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/drawio_import.dict
 ```
 
 Inputs over 1 MiB are ignored by the targets. XMind accepts raw input as well as
@@ -39,17 +41,28 @@ small generated ZIP package to exercise each XMind entry parser. The corpus also
 contains tiny ZIP package seeds, including PNG image resources with omitted and
 partial dimensions, so mutation reaches image/manifest validation and the
 archive structure; the raw XMind path includes legacy XML. FreeMind and OPML
-consume XML directly. On successful imports each target checks validation and
-an exact round-trip through Thinoda's native format. Fuzzer crashes and assertion
-failures are intentionally not caught; preserve any reproducer under that
-target's corpus and investigate it.
+consume XML directly. The draw.io target exercises XML, compressed pages,
+editable SVG/PNG, embedded HTML and self-contained `#R` links without fetching
+their URLs. Its PNG seed is the original editor-exported fixture already used
+by the importer tests. On successful imports, including reports with conversion
+warnings, each target checks validation and an exact round-trip through
+Thinoda's native format. This in-memory check does not bypass the application's
+conversion-consent flow. Fuzzer crashes and assertion failures are intentionally
+not caught; preserve any reproducer under that target's corpus and investigate it.
+
+The deterministic seed checks verify that each draw.io container and link seed
+actually reaches its intended importer:
+
+```sh
+cargo test --locked -p thinoda-io --test drawio_fuzz_seeds
+```
 
 CI runs on Ubuntu with nightly, caps each campaign at 20 seconds, each input at
 five seconds, maximum input at 1 MiB, RSS at 2 GiB, and the whole job at 30
 minutes including installation and compilation. Corpus files are small original
 examples and packages generated from them; no third-party map data is included.
 
-The separate **Importer acceptance campaigns** workflow runs all three targets
+The separate **Importer acceptance campaigns** workflow runs all four targets
 on Linux with the default sanitizer for 30 minutes each, keeping the same
 per-input time, memory and length limits. It runs for pull requests changing the
 fuzz harness or its workflow, and supports manual dispatch after merging.
@@ -63,7 +76,8 @@ do not disable sanitizers to claim equivalent acceptance.
 
 This smoke is a short regression signal, not exhaustive exploration, a proof of
 parser safety, or a substitute for the deterministic importer tests. In
-particular, it does not probe decompression ratios or allocate oversized
-archives; existing tests continue to verify that declared ZIP entries above
-200 MiB are rejected before decompression. Keep those production protections
-intact. Longer campaigns do not replace broader resource-limit analysis.
+particular, it does not establish decompression-ratio or peak-memory guarantees
+or allocate oversized archives; existing tests continue to verify that declared
+ZIP entries above 200 MiB are rejected before decompression. Keep those
+production protections intact. Longer campaigns do not replace broader
+resource-limit analysis.

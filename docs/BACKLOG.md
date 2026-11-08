@@ -1192,7 +1192,7 @@ dependencies before improving existing offline workflows.
   This is bounded regression coverage, not coverage-guided fuzzing or proof that
   arbitrary inputs are safe; longer campaigns remain open.
 - Coverage-guided importer fuzzing: separate `cargo-fuzz` targets cover XMind,
-  FreeMind and OPML with original generated seeds and dictionaries. Linux CI runs
+  FreeMind, OPML and draw.io with original seeds and dictionaries. Linux CI runs
   each target for 20 seconds with input, timeout, RSS and job-duration limits.
   See [`fuzz/README.md`](../fuzz/README.md) for commands, dependency isolation
   and limits; this smoke does not prove arbitrary inputs safe.

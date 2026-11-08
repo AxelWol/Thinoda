@@ -1486,8 +1486,8 @@ markers still collapse the stroke to a point, which can differ from draw.io.
 Fixed ports, advanced routing, the remaining markers and lossless draw.io
 save-back are not implemented. Actual PowerPoint rendering, physical-device
 behavior and real screen-reader acceptance remain unverified. These short
-importer smokes are not the longer acceptance campaigns and do not replace the
-planned draw.io fuzz target.
+importer smokes were not the longer acceptance campaigns; the draw.io fuzz
+target was added in the later hardening slice below.
 
 **Bar connector markers (partial Phases 3, 4 and 8).** The `baseDash` and
 `dash` draw.io markers are open, unfilled line segments. Their effective length
@@ -1513,6 +1513,21 @@ journeys across Chromium, Firefox and WebKit.
 draw.io marker set. Fixed ports, advanced routing, lossless save-back and the
 other planned phases remain open. Real PowerPoint rendering, physical-device
 behavior and screen-reader acceptance have not been established.
+
+**draw.io importer fuzzing (partial Phase 14) — critique.** A bounded
+coverage-guided target now exercises draw.io XML, compressed pages, embedded
+SVG, PNG, HTML and self-contained links. Successful imports, including reports
+with conversion warnings, must validate and round-trip exactly through the
+native format. Eight deterministic seeds exercise the individual entry points;
+the existing supplied-example corpus also passes. CI runs a short sanitized
+smoke and includes the target in the separate 30-minute acceptance campaign.
+
+Local 20-second AddressSanitizer smokes completed without reported failures:
+20,823 draw.io, 16,369 XMind, 35,485 FreeMind and 33,632 OPML executions.
+Those are limited regression signals, not proof of parser safety or bounds on
+decompression and peak memory. The 30-minute acceptance campaign has not been
+run for this candidate; full interoperability and the other hardening gates
+remain open.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
