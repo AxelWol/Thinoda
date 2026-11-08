@@ -3,8 +3,9 @@
 
 use std::io::{Cursor, Read, Write};
 use thinoda_core::{
-    CanvasConnector, CanvasObject, Card, CardKind, ConnectorMarker, ConnectorMarkerKind, Endpoint,
-    InkStroke, InkTool, PresentationSource, ShapeKind, Sheet, SheetRootMode, Workbook,
+    CanvasConnector, CanvasObject, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
+    DrawioRectangleStencil, Endpoint, InkStroke, InkTool, PresentationSource, ShapeKind,
+    ShapeRounding, Sheet, SheetRootMode, Workbook,
     board::{CanvasObjectKind, RootProjection},
     geometry::{Color, Rect, Vec2},
     outline::{project_to_outline, to_outline},
@@ -499,6 +500,139 @@ fn bar_markers_require_v18_and_aware_xmind_snapshots() {
             );
         }
     }
+}
+
+#[test]
+fn shape_rounding_requires_v19_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Dash,
+    });
+    let mut shape = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rounding = Some(ShapeRounding {
+        radius: 17.0,
+        stencil: DrawioRectangleStencil::Containers,
+    });
+    book.active_mut().add_canvas_object(shape).unwrap();
+    assert_eq!(required_native_version(&book), 19);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 19);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 1..19 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+        if version == 18 {
+            assert!(
+                error
+                    .to_string()
+                    .contains("shape rounding requires native format version 19")
+            );
+        }
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-ROUNDING-1")
+    );
+}
+
+#[test]
+fn shape_rounding_renders_in_svg_raster_pdf_and_powerpoint() {
+    let mut sheet = Sheet::new("Rounded", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+    );
+    shape.style.fill = Some(Color::rgb(200, 30, 40));
+    shape.style.stroke = Some(Color::TRANSPARENT);
+    shape.rounding = Some(ShapeRounding {
+        radius: 40.0,
+        stencil: DrawioRectangleStencil::Mockup,
+    });
+    let id = sheet.add_canvas_object(shape).unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 150.0));
+    sheet
+        .add_presentation_slide(
+            "Rounded",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 220.0)),
+        )
+        .unwrap();
+    let rounded = Workbook::new(sheet);
+    let mut square = rounded.clone();
+    square
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .rounding
+        .as_mut()
+        .unwrap()
+        .radius = 0.0;
+
+    let rounded_svg = String::from_utf8(export(&rounded, Format::Svg)).unwrap();
+    let square_svg = String::from_utf8(export(&square, Format::Svg)).unwrap();
+    assert!(rounded_svg.contains("M 60.00,0.00"), "{rounded_svg}");
+    assert!(square_svg.contains("M 0.00,0.00"), "{square_svg}");
+    let presentation =
+        render_presentation_slide_svg(rounded.active(), 0, &ExportOptions::default()).unwrap();
+    assert!(presentation.contains("M 60.00,0.00"), "{presentation}");
+
+    let rounded_png = image::load_from_memory(&export(&rounded, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let square_png = image::load_from_memory(&export(&square, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let view = view_box(&rounded_svg);
+    assert_eq!(view, view_box(&square_svg));
+    let sample = |image: &image::RgbaImage, x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    assert_ne!(
+        sample(&rounded_png, 3.0, 3.0),
+        sample(&square_png, 3.0, 3.0)
+    );
+    assert_eq!(
+        sample(&rounded_png, 50.0, 50.0),
+        sample(&square_png, 50.0, 50.0)
+    );
+    let rounded_pdf = export(&rounded, Format::Pdf);
+    let square_pdf = export(&square, Format::Pdf);
+    assert!(rounded_pdf.starts_with(b"%PDF"));
+    assert_ne!(rounded_pdf, square_pdf);
+    let rounded_pptx = export(&rounded, Format::PowerPoint);
+    let square_pptx = export(&square, Format::PowerPoint);
+    let rounded_slide = String::from_utf8(entry(&rounded_pptx, "ppt/slides/slide1.xml")).unwrap();
+    let square_slide = String::from_utf8(entry(&square_pptx, "ppt/slides/slide1.xml")).unwrap();
+    let shape_path = |slide: &str| {
+        slide
+            .split("<p:sp>")
+            .find(|fragment| fragment.contains(&format!("Canvas object {id}")))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(
+        shape_path(&rounded_slide).matches("<a:lnTo>").count()
+            > shape_path(&square_slide).matches("<a:lnTo>").count()
+    );
 }
 
 #[test]

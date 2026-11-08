@@ -277,6 +277,11 @@ impl CanvasLayer {
                     .any(|marker| marker.kind.is_bar()))
         })
     }
+
+    /// Whether this layer needs adjustable-corner-aware persistence.
+    pub fn has_shape_rounding(&self) -> bool {
+        self.objects.iter().any(|object| object.rounding.is_some())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -331,6 +336,26 @@ impl Default for ObjectStyle {
     }
 }
 
+/// draw.io rounded-rectangle stencil identifiers with the same radius behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DrawioRectangleStencil {
+    Mockup,
+    Forms,
+    Containers,
+    Misc,
+    Graphics,
+    Text,
+    Ios,
+}
+
+/// An absolute, integer corner radius and its draw.io stencil identity.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ShapeRounding {
+    pub radius: f32,
+    pub stencil: DrawioRectangleStencil,
+}
+
 /// A free object on the board.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanvasObject {
@@ -352,6 +377,9 @@ pub struct CanvasObject {
     pub alt_text: String,
     #[serde(default)]
     pub style: ObjectStyle,
+    /// Optional absolute corner radius for an imported draw.io rectangle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounding: Option<ShapeRounding>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -371,6 +399,7 @@ impl CanvasObject {
             locked: false,
             alt_text: String::new(),
             style: ObjectStyle::default(),
+            rounding: None,
         }
     }
 
@@ -800,6 +829,16 @@ pub struct ShapeGeometry {
 /// Maps a unit-square shape onto `rect` and rotates it by `rotation` degrees around the
 /// centre. Shared by rendering, hit-testing and export.
 pub fn shape_geometry(kind: ShapeKind, rect: Rect, rotation: f32) -> ShapeGeometry {
+    shape_geometry_with_rounding(kind, rect, rotation, None)
+}
+
+/// Shape geometry with an optional absolute rectangle corner radius.
+pub fn shape_geometry_with_rounding(
+    kind: ShapeKind,
+    rect: Rect,
+    rotation: f32,
+    rounding: Option<ShapeRounding>,
+) -> ShapeGeometry {
     let center = rect.center();
     let map = |u: Vec2| {
         rotate_around(
@@ -811,8 +850,17 @@ pub fn shape_geometry(kind: ShapeKind, rect: Rect, rotation: f32) -> ShapeGeomet
             rotation,
         )
     };
+    let outline = match rounding {
+        Some(rounding) if rect.size.x > 0.0 && rect.size.y > 0.0 && rounding.radius > 0.0 => {
+            let rx = (rounding.radius / rect.size.x).min(0.5);
+            let ry = (rounding.radius / rect.size.y).min(0.5);
+            rounded_rect(rx, ry)
+        }
+        Some(_) => ShapeKind::Rectangle.unit_outline(),
+        None => kind.unit_outline(),
+    };
     ShapeGeometry {
-        outline: kind.unit_outline().into_iter().map(map).collect(),
+        outline: outline.into_iter().map(map).collect(),
         details: kind
             .unit_details()
             .into_iter()
@@ -1319,6 +1367,19 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
     }
     if !style.opacity.is_finite() || !(0.0..=1.0).contains(&style.opacity) {
         return Err(format!("canvas object {id} has an invalid opacity"));
+    }
+    if let Some(rounding) = object.rounding
+        && (!matches!(
+            object.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Rectangle | ShapeKind::RoundedRectangle,
+                ..
+            }
+        ) || !rounding.radius.is_finite()
+            || !(0.0..=MAX_BOARD_COORDINATE).contains(&rounding.radius)
+            || rounding.radius.fract() != 0.0)
+    {
+        return Err(format!("canvas object {id} has invalid shape rounding"));
     }
     match &object.kind {
         CanvasObjectKind::Shape { label, .. } => valid_text(label, "shape label")?,

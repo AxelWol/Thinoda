@@ -2,11 +2,13 @@
 //! with rotated hit testing shared by the canvas, exports and tests. See
 //! `docs/FREEFORM.md`.
 
+#[cfg(test)]
+use crate::board::shape_geometry;
 use crate::board::{
     Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorMarkerKind,
-    ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, ShapeKind,
+    ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, ShapeKind, ShapeRounding,
     distance_to_outline, distance_to_polyline, point_in_polygon, points_bounds, rotate_around,
-    rotated_bounds, rotated_rect_contains, shape_geometry,
+    rotated_bounds, rotated_rect_contains, shape_geometry_with_rounding,
 };
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rotated_rect, cubic};
@@ -595,7 +597,8 @@ fn object_item(
     };
     let geometry = match &object.kind {
         CanvasObjectKind::Shape { shape, .. } => {
-            let g = shape_geometry(*shape, object.rect, object.rotation);
+            let g =
+                shape_geometry_with_rounding(*shape, object.rect, object.rotation, object.rounding);
             SceneGeometry::Polygon {
                 outline: g.outline,
                 details: g.details,
@@ -875,7 +878,7 @@ fn topic_anchor(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<(TopicId,
 struct EndTarget {
     rect: Rect,
     rotation: f32,
-    shape: Option<ShapeKind>,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
 }
 
 impl EndTarget {
@@ -897,9 +900,12 @@ impl EndTarget {
             )
         };
         self.shape
-            .filter(|kind| !rectangular(*kind))
-            .and_then(|kind| {
-                let outline = shape_geometry(kind, self.rect, self.rotation).outline;
+            .filter(|(kind, rounding)| {
+                !rectangular(*kind) || rounding.is_some_and(|rounding| rounding.radius > 0.0)
+            })
+            .and_then(|(kind, rounding)| {
+                let outline =
+                    shape_geometry_with_rounding(kind, self.rect, self.rotation, rounding).outline;
                 // Shapes like the right triangle have the box centre on their edge;
                 // cast from the area centroid there so the ray still leaves the inside.
                 let center = self.rect.center();
@@ -1165,7 +1171,9 @@ impl<'a> ConnectorResolver<'a> {
                         rect: object.rect,
                         rotation: object.rotation,
                         shape: match &object.kind {
-                            CanvasObjectKind::Shape { shape, .. } => Some(*shape),
+                            CanvasObjectKind::Shape { shape, .. } => {
+                                Some((*shape, object.rounding))
+                            }
                             _ => None,
                         },
                     })

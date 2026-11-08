@@ -1019,6 +1019,59 @@ fn bar_marker_board_clipboards_require_version_eleven() {
 }
 
 #[test]
+fn shape_rounding_board_clipboard_requires_version_twelve() {
+    use crate::{DrawioRectangleStencil, Rect, ShapeRounding};
+
+    let mut source = Sheet::new("Source", "Root");
+    let rounding = ShapeRounding {
+        radius: 15.0,
+        stencil: DrawioRectangleStencil::Graphics,
+    };
+    let mut shape = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rounding = Some(rounding);
+    let id = source.add_canvas_object(shape).unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(id),
+        Endpoint::Point(Vec2::new(200.0, 100.0)),
+    );
+    connector.end_marker = Some(crate::ConnectorMarker {
+        kind: crate::ConnectorMarkerKind::Dash,
+    });
+    let edge = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id, edge]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(ROUNDING_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..12 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-12",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(decode_board_payload(&forged).is_err(), "version {version}");
+    }
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    assert_eq!(
+        destination
+            .canvas
+            .object(pasted.objects[0])
+            .unwrap()
+            .rounding,
+        Some(rounding)
+    );
+}
+
+#[test]
 fn connectors_keep_selected_targets_and_detach_external_targets_at_rendered_points() {
     let mut source = Sheet::new("Source", "Root");
     let external_topic = source.add_child(source.root, None, "External");

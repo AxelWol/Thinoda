@@ -81,7 +81,10 @@ Anything outside a tier is reported in diagnostics as "preserved, shown approxim
 - Security: `html=1` labels are untrusted HTML (sanitise / convert, never render raw);
   deflate/base64 bombs; deep nesting; huge cell counts; external image URLs (no auto-fetch).
 
-### 2.3 Thinoda today (verified in code)
+### 2.3 Thinoda baseline when the plan was written
+
+This inventory records the starting point, not the current feature set.
+Implementation progress and phase critiques are maintained in section 4.1.
 - Board model (`crates/thinoda-core/src/board.rs`): `CanvasObjectKind = Shape | Ink |
   Connector` (331-341); 29 `ShapeKind`s; `ObjectStyle {fill, stroke, text_color,
   stroke_width, opacity}` (218-242); connector `{from/to: Topic|Object|Point, route:
@@ -197,8 +200,9 @@ Rules (each backed by a test):
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
-  oval markers, v17 adds half-circle markers, and v18 adds bar markers. Every later field or
-  passthrough representation that a v18 reader cannot preserve must require a
+  oval markers, v17 adds half-circle markers, v18 adds bar markers, and v19 adds
+  adjustable rectangle corners. Every later field or passthrough representation
+  that a v19 reader cannot preserve must require a
   higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
@@ -720,7 +724,8 @@ connections arrive in Phase 8 without changing the gestures).
   it: v10 covers waypoints, v11 covers open/block markers, v12 covers classic
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
   v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
-  markers, v18 covers bar markers, and subsequent additions need a higher version.
+  markers, v18 covers bar markers, v19 covers adjustable rectangle corners, and
+  subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1588,12 +1593,43 @@ well as through the full corpus. Existing geometry, labels, representable
 colors and attached connectors stay editable and survive native round trips.
 Validation passed 142 I/O library tests and 12 corpus, fuzz-seed and mutation
 integration tests; native and WebAssembly Clippy passed with warnings denied.
-This is not a general stencil engine or lossless round-trip: Thinoda's rounded
-rectangle uses a fixed, frame-relative radius while draw.io uses an adjustable
-absolute radius, and the original stencil identity and radius are not retained
-when saving the converted document. Dynamic or inherited colors and unresolved
-named styles are warned about, not resolved. Other stylesheet, text-layout and
-stencil details still require the planned fidelity work.
+At this stage, Thinoda still used a fixed, frame-relative radius and did not
+retain the original stencil or radius. The follow-on phase below addresses
+that specific limitation; it does not resolve dynamic or inherited colors,
+unresolved named styles, or general stylesheet and stencil fidelity.
+
+**Absolute mockup corner radii (partial Phase 5) — critique.** The seven
+recognized rectangle stencils now retain a bounded absolute corner radius and
+their stencil identity. Resizing keeps the specified radius, while each visible
+axis is clamped to half the frame dimension; rotation, hit testing, connector
+attachment, visual exports and the quick-shape preview use the same geometry.
+The localized **Corner radius** inspector is available on imported rectangles,
+including square ones. A same-kind quick clone retains the property; changing
+the shape kind discards it and remains undoable. Native workbooks with this
+property require v19, sheet clipboard v15, board clipboard v12, and
+rounding-aware recovery and private XMind envelopes. Legacy content still uses
+its previous versions.
+
+The supplied requirements-flow example was exercised both cell by cell and
+through a full draw.io export/reimport; its retained stencil/radius counts
+match. The affected library suites passed 1,984 tests with four ignored;
+board export, supplied-corpus and fuzz-seed integration suites passed 58 with
+two ignored. The radius inspector, quick insertion, clipboard downgrade
+rejection, native and XMind/recovery compatibility, SVG/raster/PDF/PowerPoint
+exports and a GPU fill-geometry regression were exercised; PDF output was
+compared but not independently raster-accepted. Native and WebAssembly Clippy
+passed with warnings denied.
+
+This is still an approximation, not lossless draw.io support. Rounded corners
+are flattened into eight segments per quarter arc; the original raw `rSize`
+text is not retained and large values are bounded to the model's coordinate
+limit. Invalid values or negative parsed radii use a warned square
+fallback. Unsupported styles, colors and other stencil data remain subject to
+the existing conversion warnings; generic stencils and source passthrough are
+still open. The cached canvas fill topology is safe here because both
+supported rectangle kinds are convex; extending this property to other shapes
+would require another rendering review. Real-device and screen-reader
+acceptance and the planned 30-minute fuzz campaign remain outstanding.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

@@ -1079,6 +1079,51 @@ mod tests {
     }
 
     #[test]
+    fn rounded_shape_clipboard_preserves_radius_and_rejects_downgrade() {
+        use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
+
+        let mut doc = board_with_shape();
+        let id = doc.view.board_selection[0];
+        let rounding = ShapeRounding {
+            radius: 25.0,
+            stencil: DrawioRectangleStencil::Text,
+        };
+        doc.doc
+            .update_canvas_object("Rounding", id, |object| object.rounding = Some(rounding))
+            .unwrap();
+        let before = doc.doc.workbook().clone();
+        let prepared = prepare_copy(&mut doc, false).unwrap().unwrap();
+        let rich = read_html(&prepared.html).unwrap().unwrap();
+        let RichClipboard::Board(encoded) = &rich else {
+            panic!("expected board payload");
+        };
+        assert!(encoded.starts_with("THINODA-BOARD-CLIPBOARD-12\n"));
+        let old = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-12",
+            "THINODA-BOARD-CLIPBOARD-11",
+            1,
+        );
+        assert!(
+            paste(
+                &mut doc,
+                prepared.text.clone(),
+                Some(RichClipboard::Board(old))
+            )
+            .is_err()
+        );
+        assert_eq!(doc.doc.workbook(), &before);
+        assert!(paste(&mut doc, prepared.text, Some(rich)).unwrap());
+        let pasted = doc.view.board_selection[0];
+        assert_ne!(pasted, id);
+        assert_eq!(
+            doc.doc.sheet().canvas.object(pasted).unwrap().rounding,
+            Some(rounding)
+        );
+        assert!(doc.doc.undo());
+        assert_eq!(doc.doc.workbook(), &before);
+    }
+
+    #[test]
     fn cut_verification_requires_matching_text_and_rich_data() {
         let mut source = board_with_shape();
         let prepared = prepare_copy(&mut source, true).unwrap().unwrap();

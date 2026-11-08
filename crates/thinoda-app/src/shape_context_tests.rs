@@ -879,6 +879,34 @@ fn locked_grouped_and_mixed_shape_selections_cannot_be_edited() {
 }
 
 #[test]
+fn shape_toolbar_preserves_or_clears_rounding_as_the_kind_changes() {
+    use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
+
+    let (mut app, id) = app_with_shape();
+    let rounding = ShapeRounding {
+        radius: 18.0,
+        stencil: DrawioRectangleStencil::Misc,
+    };
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Rounding", id, |object| object.rounding = Some(rounding))
+        .unwrap();
+    let target = app.shape_context().unwrap().target;
+    let target = app
+        .apply_shape_change(&target, ShapeChange::Shape(ShapeKind::Rectangle))
+        .unwrap();
+    assert_eq!(object(&app, id).rounding, Some(rounding));
+    app.apply_shape_change(&target, ShapeChange::Shape(ShapeKind::Ellipse))
+        .unwrap();
+    assert_eq!(shape_kind(&app, id), ShapeKind::Ellipse);
+    assert_eq!(object(&app, id).rounding, None);
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(shape_kind(&app, id), ShapeKind::Rectangle);
+    assert_eq!(object(&app, id).rounding, Some(rounding));
+}
+
+#[test]
 fn stale_shape_targets_are_rejected() {
     let (mut app, id) = app_with_shape();
     let target = app.shape_context().unwrap().target;

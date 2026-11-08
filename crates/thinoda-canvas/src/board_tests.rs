@@ -6353,6 +6353,43 @@ fn quick_picker_opens_on_arrow_hover_and_inserts_the_chosen_shape() {
 }
 
 #[test]
+fn quick_shape_picker_preserves_rounding_only_for_the_same_kind() {
+    use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
+
+    let rounding = ShapeRounding {
+        radius: 25.0,
+        stencil: DrawioRectangleStencil::Mockup,
+    };
+    for (chosen, expected) in [("Rectangle", Some(rounding)), ("Diamond", None)] {
+        let mut sheet = board();
+        let source = shape(&mut sheet, 0.0, 0.0, "Source");
+        sheet.canvas.object_mut(source).unwrap().rounding = Some(rounding);
+        let mut h = harness(sheet);
+        select_shape_at(&mut h, Vec2::ZERO);
+        let before = h.state().doc.workbook().clone();
+        let arrow = arrow_center(&h, "Add connected shape to the right");
+        h.hover_at(arrow);
+        h.run_steps(50);
+        let tile = h.get_by_label(chosen).rect().center();
+        h.hover_at(tile);
+        h.run_steps(3);
+        click(&mut h, tile, Modifiers::NONE);
+        h.run_steps(2);
+        let [clone] = h.state().view.board_selection[..] else {
+            panic!("expected one selected shape");
+        };
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(clone).unwrap().rounding,
+            expected,
+            "{chosen}"
+        );
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
 fn quick_picker_opens_on_press_and_hold_without_clicking_the_arrow() {
     let mut sheet = board();
     shape(&mut sheet, 0.0, 0.0, "Source");

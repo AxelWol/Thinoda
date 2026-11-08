@@ -1,6 +1,6 @@
 use super::*;
 use crate::{ExportLoss, ExportOptions, detect_format, export_bytes, export_losses};
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 use thinoda_core::{PresentationSource, board::CanvasCardState};
 
 /// Written by draw.io's algorithm (deflateRaw of encodeURIComponent) in Python,
@@ -128,6 +128,72 @@ fn mockup_rectangle_radius_uses_drawio_style_resolution() {
         ("--1", None),
     ] {
         assert_eq!(mockup_radius_sign(value), expected, "{value:?}");
+    }
+}
+
+#[test]
+fn mockup_rectangle_radius_is_bounded_and_preserved_on_drawio_round_trip() {
+    for (value, expected) in [
+        ("none", 10.0),
+        ("0", 0.0),
+        ("0.9", 0.0),
+        ("-1e-2", 0.0),
+        ("0x10", 16.0),
+        ("1e2", 100.0),
+        ("1e-7", 1.0),
+        ("1.7e-7", 1.0),
+        ("1e21", 1.0),
+        ("1e999", 1.0),
+        ("123ignored", 123.0),
+        ("0xFFFFFFFFFFFFFFFF", MAX_BOARD_COORDINATE),
+        ("9999999", MAX_BOARD_COORDINATE),
+        ("-12", 0.0),
+        ("NaN", 0.0),
+        ("", 0.0),
+    ] {
+        assert_eq!(mockup_radius(value), expected, "{value:?}");
+    }
+
+    for (alias, stencil) in MOCKUP_RECTANGLES.iter().zip([
+        DrawioRectangleStencil::Mockup,
+        DrawioRectangleStencil::Forms,
+        DrawioRectangleStencil::Containers,
+        DrawioRectangleStencil::Misc,
+        DrawioRectangleStencil::Graphics,
+        DrawioRectangleStencil::Text,
+        DrawioRectangleStencil::Ios,
+    ]) {
+        for (source_radius, expected_radius) in [("0", 0.0), ("17", 17.0), ("0x10", 16.0)] {
+            let xml = page(&format!(
+                r##"<mxCell id="a" value="Label" style="shape={alias};rSize={source_radius};fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>"##
+            ));
+            let imported = load(&xml);
+            let expected = ShapeRounding {
+                radius: expected_radius,
+                stencil,
+            };
+            assert_eq!(
+                shapes(&imported.workbook.sheets[0])[0].rounding,
+                Some(expected)
+            );
+            let exported = export_bytes(
+                &imported.workbook,
+                Format::DrawIo,
+                &ExportOptions::default(),
+            )
+            .unwrap();
+            let exported_text = std::str::from_utf8(&exported).unwrap();
+            assert!(exported_text.contains(&format!("shape={alias};rSize={expected_radius};")));
+            let reopened = import(&exported).unwrap();
+            assert_eq!(
+                shapes(&reopened.workbook.sheets[0])[0].rounding,
+                Some(expected)
+            );
+            assert_eq!(
+                shapes(&reopened.workbook.sheets[0])[0].rect,
+                rect(10.0, 20.0, 100.0, 60.0)
+            );
+        }
     }
 }
 
@@ -420,10 +486,18 @@ fn supplied_requirements_flow_classifies_real_mockup_rectangles() {
                 esc(&style)
             ));
             let converted = load(&xml);
+            let object = shapes(&converted.workbook.sheets[0])[0];
             assert!(matches!(
-                shapes(&converted.workbook.sheets[0])[0].kind,
+                object.kind,
                 CanvasObjectKind::Shape { shape, .. } if shape == expected
             ));
+            assert_eq!(
+                object.rounding,
+                Some(ShapeRounding {
+                    radius: cell.style.get("rSize").map_or(10.0, mockup_radius),
+                    stencil: mockup_rectangle_stencil(&cell.style).unwrap(),
+                })
+            );
             if expected == ShapeKind::RoundedRectangle {
                 assert!(converted.warnings.contains(&ImportWarning::Formatting));
             }
@@ -432,6 +506,27 @@ fn supplied_requirements_flow_classifies_real_mockup_rectangles() {
     eprintln!("classified {squares} square and {rounded} rounded supplied mockup rectangles");
     let report = import(&bytes).unwrap();
     report.workbook.validate().unwrap();
+    let rounding_counts = |book: &Workbook| {
+        let mut counts = BTreeMap::new();
+        for rounding in book
+            .sheets
+            .iter()
+            .flat_map(|sheet| &sheet.canvas.objects)
+            .filter_map(|object| object.rounding)
+        {
+            *counts
+                .entry((format!("{:?}", rounding.stencil), rounding.radius.to_bits()))
+                .or_insert(0_usize) += 1;
+        }
+        counts
+    };
+    let exported =
+        export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let reopened = import(&exported).unwrap();
+    assert_eq!(
+        rounding_counts(&reopened.workbook),
+        rounding_counts(&report.workbook)
+    );
 }
 
 fn shape(kind: ShapeKind, frame: Rect, label: &str) -> CanvasObject {

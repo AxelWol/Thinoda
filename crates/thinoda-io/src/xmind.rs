@@ -24,6 +24,7 @@ const DIAMOND_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-5";
 const OVAL_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-6";
 const HALF_CIRCLE_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-7";
 const BAR_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-8";
+const ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-ROUNDING-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -713,7 +714,9 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_bar_connector_markers() {
+    if book.has_shape_rounding() {
+        Ok(serde_json::to_string(&(ROUNDING_SNAPSHOT_VERSION, book))?)
+    } else if book.has_bar_connector_markers() {
         Ok(serde_json::to_string(&(BAR_MARKER_SNAPSHOT_VERSION, book))?)
     } else if book.has_half_circle_connector_markers() {
         Ok(serde_json::to_string(&(
@@ -754,7 +757,7 @@ fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
     }
 }
 
-fn marker_private_snapshot(source: &str) -> bool {
+fn strict_private_snapshot(source: &str) -> bool {
     source
         .trim_start()
         .strip_prefix('[')
@@ -770,10 +773,11 @@ fn marker_private_snapshot(source: &str) -> bool {
                 || version == OVAL_MARKER_SNAPSHOT_VERSION
                 || version == HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
                 || version == BAR_MARKER_SNAPSHOT_VERSION
+                || version == ROUNDING_SNAPSHOT_VERSION
         })
 }
 
-fn snapshot_contains_marker_fields(source: &str) -> bool {
+fn snapshot_contains_versioned_fields(source: &str) -> bool {
     let Ok(value) = serde_json::from_str::<Value>(source) else {
         return false;
     };
@@ -788,14 +792,20 @@ fn snapshot_contains_marker_fields(source: &str) -> bool {
         .flatten()
         .filter_map(|sheet| sheet.get("canvas")?.get("objects")?.as_array())
         .flatten()
-        .filter_map(|object| object.get("kind")?.get("connector")?.as_object())
-        .any(|connector| {
-            connector.contains_key("start_marker")
-                || connector.contains_key("end_marker")
-                || connector.contains_key("start_marker_size")
-                || connector.contains_key("end_marker_size")
-                || connector.contains_key("start_marker_unfilled")
-                || connector.contains_key("end_marker_unfilled")
+        .any(|object| {
+            object.get("rounding").is_some()
+                || object
+                    .get("kind")
+                    .and_then(|kind| kind.get("connector"))
+                    .and_then(Value::as_object)
+                    .is_some_and(|connector| {
+                        connector.contains_key("start_marker")
+                            || connector.contains_key("end_marker")
+                            || connector.contains_key("start_marker_size")
+                            || connector.contains_key("end_marker_size")
+                            || connector.contains_key("start_marker_unfilled")
+                            || connector.contains_key("end_marker_unfilled")
+                    })
         })
 }
 
@@ -811,6 +821,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != OVAL_MARKER_SNAPSHOT_VERSION
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
@@ -823,6 +834,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != OVAL_MARKER_SNAPSHOT_VERSION
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
             && workbook.has_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -836,6 +848,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != OVAL_MARKER_SNAPSHOT_VERSION
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
             && workbook.has_extended_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -849,6 +862,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != OVAL_MARKER_SNAPSHOT_VERSION
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
             && workbook.has_connector_marker_sizes()
         {
             return Err(IoError::NewerVersion(
@@ -860,6 +874,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != OVAL_MARKER_SNAPSHOT_VERSION
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
             && workbook.has_connector_marker_fills()
         {
             return Err(IoError::NewerVersion(
@@ -870,6 +885,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != OVAL_MARKER_SNAPSHOT_VERSION
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
             && workbook.has_diamond_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -879,6 +895,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         if version != OVAL_MARKER_SNAPSHOT_VERSION
             && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
             && workbook.has_oval_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -887,6 +904,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         }
         if version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
             && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
             && workbook.has_half_circle_connector_markers()
         {
             return Err(IoError::NewerVersion(
@@ -894,14 +912,27 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
                     .into(),
             ));
         }
-        if version != BAR_MARKER_SNAPSHOT_VERSION && workbook.has_bar_connector_markers() {
+        if version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_bar_connector_markers()
+        {
             return Err(IoError::NewerVersion(
                 "bar connector markers require a bar-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != ROUNDING_SNAPSHOT_VERSION && workbook.has_shape_rounding() {
+            return Err(IoError::NewerVersion(
+                "shape rounding requires a rounding-aware private XMind snapshot".into(),
             ));
         }
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_shape_rounding() {
+            return Err(IoError::NewerVersion(
+                "shape rounding requires a rounding-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_connector_markers() {
             return Err(IoError::NewerVersion(
                 "connector markers require a marker-aware private XMind snapshot".into(),
@@ -1429,13 +1460,13 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 .and_then(|m| m.get("thinodaWorkbook"))
                 .and_then(Value::as_str)
             {
-                let marker_snapshot = marker_private_snapshot(w);
+                let protected_snapshot = strict_private_snapshot(w);
                 match read_private_snapshot(w) {
                     Ok(workbook) => {
                         if let Err(e) = workbook.validate() {
-                            if marker_snapshot {
+                            if protected_snapshot {
                                 return Err(IoError::Invalid(format!(
-                                    "invalid marker-aware private XMind snapshot: {e}"
+                                    "invalid versioned private XMind snapshot: {e}"
                                 )));
                             }
                             log::warn!("Ignoring invalid private XMind snapshot: {e}");
@@ -1484,7 +1515,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                         }
                     }
                     Err(error @ IoError::NewerVersion(_)) => return Err(error),
-                    Err(error) if marker_snapshot || snapshot_contains_marker_fields(w) => {
+                    Err(error) if protected_snapshot || snapshot_contains_versioned_fields(w) => {
                         return Err(error);
                     }
                     Err(e) => log::warn!("Ignoring unreadable private XMind snapshot: {e}"),
@@ -2236,6 +2267,69 @@ mod tests {
                     Err(IoError::NewerVersion(_))
                 ));
             }
+        }
+    }
+
+    #[test]
+    fn shape_rounding_rejects_old_and_malformed_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind,
+            DrawioRectangleStencil, Endpoint, Rect, ShapeKind, ShapeRounding, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 17.0,
+            stencil: DrawioRectangleStencil::Forms,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Dash,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(BAR_MARKER_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for version in [ROUNDING_SNAPSHOT_VERSION, BAR_MARKER_SNAPSHOT_VERSION] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][0]["rounding"]["radius"] = json!("invalid");
+            let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(import(&make_archive(&entries)).is_err(), "{version}");
         }
     }
 

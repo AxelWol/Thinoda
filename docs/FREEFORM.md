@@ -47,6 +47,17 @@ existing straight, elbow and curve routes. Exact draw.io orthogonal routing
 and segment dragging are not yet available; see
 [DRAWIO.md](DRAWIO.md) for conversion warnings and remaining work.
 
+### Imported rectangle corners
+
+Supported draw.io mockup and iOS rectangles retain their absolute corner radius.
+Select one and use **Corner radius** in the inspector to change it; zero makes
+the corners square. Resizing retains the specified radius, while its visible
+extent is clamped to half the width and height. Rotation, attached connectors,
+copy/paste and visual exports follow the same geometry. Same-kind quick
+clones retain the radius; changing the shape kind removes it, and undo restores
+it. Native files containing this property require format v19; legacy shapes
+and documents keep their previous behavior and format version.
+
 ## 1. Goal
 
 Thinoda should also work as a **whiteboard**, not only as a tree-shaped mind map,

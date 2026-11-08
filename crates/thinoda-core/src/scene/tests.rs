@@ -1553,6 +1553,61 @@ fn polygon_clip_takes_the_outermost_crossing() {
 }
 
 #[test]
+fn adjustable_corners_drive_scene_hits_and_connector_clipping() {
+    use crate::board::{DrawioRectangleStencil, ShapeRounding};
+
+    let mut sheet = Sheet::new("Rounded", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let rounding = ShapeRounding {
+        radius: 40.0,
+        stencil: DrawioRectangleStencil::Misc,
+    };
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect(0.0, 0.0, 100.0, 100.0));
+    object.rounding = Some(rounding);
+    let id = sheet.add_canvas_object(object).unwrap();
+    let (layout, initial_scene) = scene(&sheet);
+    assert_eq!(initial_scene.hit_test(Vec2::new(3.0, 3.0)), None);
+    assert_eq!(
+        initial_scene.hit_test(Vec2::new(50.0, 50.0)),
+        Some(SceneHit::Object(id))
+    );
+    let edge = CanvasConnector::new(
+        Endpoint::Object(id),
+        Endpoint::Point(Vec2::new(200.0, 200.0)),
+    );
+    let end = connector_path(&sheet, &layout, &edge)[0];
+    let expected = 60.0 + 40.0 / 2.0_f32.sqrt();
+    assert!((end - Vec2::new(expected, expected)).length() < 0.01);
+
+    sheet
+        .resize_canvas_object(id, rect(0.0, 0.0, 200.0, 100.0))
+        .unwrap();
+    sheet.rotate_canvas_object(id, 30.0).unwrap();
+    assert_eq!(sheet.canvas.object(id).unwrap().rounding, Some(rounding));
+    let (layout, scene) = scene(&sheet);
+    let item = scene
+        .items
+        .iter()
+        .find(|item| item.id == SceneId::Object(id))
+        .unwrap();
+    let SceneGeometry::Polygon { outline, .. } = &item.geometry else {
+        panic!("expected rounded shape geometry");
+    };
+    let endpoint = connector_path(&sheet, &layout, &edge)[0];
+    assert!(distance_to_outline(endpoint, outline) < 0.01);
+    assert_eq!(
+        outline,
+        &shape_geometry_with_rounding(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 200.0, 100.0),
+            30.0,
+            Some(rounding),
+        )
+        .outline
+    );
+}
+
+#[test]
 fn edge_to_edge_ends_meet_a_bent_target_on_its_path() {
     let mut sheet = Sheet::new("Edges", "");
     sheet.root_mode = SheetRootMode::Hidden;

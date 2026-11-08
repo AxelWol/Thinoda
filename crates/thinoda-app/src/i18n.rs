@@ -543,6 +543,7 @@ const DE: &[(&str, &str)] = &[
     ("Ink color", "Tintenfarbe"),
     ("Ink width", "Strichbreite"),
     ("Eraser radius", "Radius des Radierers"),
+    ("Corner radius", "Eckenradius"),
     ("Collapse board toolbar", "Board-Werkzeugleiste einklappen"),
     ("Expand board toolbar", "Board-Werkzeugleiste ausklappen"),
     ("Hide central topic", "Zentrales Thema ausblenden"),

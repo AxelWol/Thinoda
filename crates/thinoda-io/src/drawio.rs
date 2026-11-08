@@ -20,10 +20,10 @@ use thinoda_core::{
     board::{
         Band, BoardMember, CanvasConnector, CanvasGroupId, CanvasObject, CanvasObjectId,
         CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind, ConnectorRoute,
-        DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, InkStroke, InkTool,
-        MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE,
-        MIN_STROKE_WIDTH, ObjectStyle, ShapeKind, SheetRootMode, normalize_rotation, rotate_around,
-        valid_connector_marker_size,
+        DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil, Endpoint, GridKind, InkStroke,
+        InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH,
+        MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, ShapeKind, ShapeRounding,
+        SheetRootMode, normalize_rotation, rotate_around, valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -1084,19 +1084,59 @@ fn mockup_radius_sign(value: &str) -> Option<std::cmp::Ordering> {
     })
 }
 
+/// Resolves the positive integer passed to the renderer, bounded by the largest
+/// representable frame. Larger values have the same clamped visible corners.
+fn mockup_radius(value: &str) -> f32 {
+    let value = value.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    if value == "none" {
+        return 10.0;
+    }
+    if mockup_radius_sign(value) != Some(std::cmp::Ordering::Greater) {
+        return 0.0;
+    }
+    if let Ok(number) = value.parse::<f64>()
+        && number.is_finite()
+    {
+        if !(1e-6..1e21).contains(&number) {
+            return format!("{number:e}")
+                .bytes()
+                .next()
+                .map_or(0.0, |digit| f32::from(digit - b'0'));
+        }
+        return number.trunc().min(f64::from(MAX_BOARD_COORDINATE)) as f32;
+    }
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let (radix, digits) = if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        (16, hex)
+    } else {
+        (10, value)
+    };
+    digits
+        .bytes()
+        .map_while(|byte| (byte as char).to_digit(radix))
+        .fold(0.0_f32, |result, digit| {
+            (result * radix as f32 + digit as f32).min(MAX_BOARD_COORDINATE)
+        })
+}
+
+fn mockup_rectangle_stencil(style: &Style) -> Option<DrawioRectangleStencil> {
+    Some(match style.get("shape")? {
+        "mxgraph.mockup.rrect" => DrawioRectangleStencil::Mockup,
+        "mxgraph.mockup.forms.rrect" => DrawioRectangleStencil::Forms,
+        "mxgraph.mockup.containers.rrect" => DrawioRectangleStencil::Containers,
+        "mxgraph.mockup.misc.rrect" => DrawioRectangleStencil::Misc,
+        "mxgraph.mockup.graphics.rrect" => DrawioRectangleStencil::Graphics,
+        "mxgraph.mockup.text.rrect" => DrawioRectangleStencil::Text,
+        "mxgraph.ios.rrect" => DrawioRectangleStencil::Ios,
+        _ => return None,
+    })
+}
+
 fn is_mockup_rectangle(style: &Style) -> bool {
-    matches!(
-        style.get("shape"),
-        Some(
-            "mxgraph.mockup.rrect"
-                | "mxgraph.mockup.forms.rrect"
-                | "mxgraph.mockup.containers.rrect"
-                | "mxgraph.mockup.misc.rrect"
-                | "mxgraph.mockup.graphics.rrect"
-                | "mxgraph.mockup.text.rrect"
-                | "mxgraph.ios.rrect"
-        )
-    )
+    mockup_rectangle_stencil(style).is_some()
 }
 
 fn mockup_rectangle(style: &Style) -> Kind {
@@ -1574,9 +1614,15 @@ impl<'a> PageImport<'a> {
                     rect
                 };
                 let mut object = shape_object(shape, frame, total + style.rotation(), label);
-                if is_mockup_rectangle(style) && style.get("fontColor") == Some("none") {
-                    object.style.text_color =
-                        Some(style.color_with_opacity(Color::BLACK, "textOpacity"));
+                if let Some(stencil) = mockup_rectangle_stencil(style) {
+                    object.rounding = Some(ShapeRounding {
+                        radius: style.get("rSize").map_or(10.0, mockup_radius),
+                        stencil,
+                    });
+                    if style.get("fontColor") == Some("none") {
+                        object.style.text_color =
+                            Some(style.color_with_opacity(Color::BLACK, "textOpacity"));
+                    }
                 }
                 if style.shape() == "partialRectangle" && matches!(kind, Kind::Approx(..)) {
                     object.style.stroke = Some(Color::TRANSPARENT);
@@ -2222,6 +2268,18 @@ fn shape_style(shape: ShapeKind) -> &'static str {
     }
 }
 
+fn rounded_stencil_name(stencil: DrawioRectangleStencil) -> &'static str {
+    match stencil {
+        DrawioRectangleStencil::Mockup => "mxgraph.mockup.rrect",
+        DrawioRectangleStencil::Forms => "mxgraph.mockup.forms.rrect",
+        DrawioRectangleStencil::Containers => "mxgraph.mockup.containers.rrect",
+        DrawioRectangleStencil::Misc => "mxgraph.mockup.misc.rrect",
+        DrawioRectangleStencil::Graphics => "mxgraph.mockup.graphics.rrect",
+        DrawioRectangleStencil::Text => "mxgraph.mockup.text.rrect",
+        DrawioRectangleStencil::Ios => "mxgraph.ios.rrect",
+    }
+}
+
 fn topic_shape_style(shape: TopicShape) -> &'static str {
     match shape {
         TopicShape::RoundedRect => "rounded=1;",
@@ -2585,7 +2643,13 @@ impl<'a> PageWriter<'a> {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();
                 let style_ref = &object.style;
-                if *shape == ShapeKind::Rectangle
+                if let Some(rounding) = object.rounding {
+                    style.push_str(&format!(
+                        "shape={};rSize={};",
+                        rounded_stencil_name(rounding.stencil),
+                        num(rounding.radius)
+                    ));
+                } else if *shape == ShapeKind::Rectangle
                     && style_ref.fill.is_some_and(|c| c.a == 0)
                     && style_ref.stroke.is_some_and(|c| c.a == 0)
                 {

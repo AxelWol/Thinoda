@@ -197,6 +197,9 @@ impl ShapeChange {
         match self {
             Self::Shape(kind) => {
                 if let CanvasObjectKind::Shape { shape, .. } = &mut object.kind {
+                    if *shape != kind {
+                        object.rounding = None;
+                    }
                     *shape = kind;
                 }
             }
@@ -1506,6 +1509,7 @@ impl ThinodaApp {
             });
             match &mut edited.kind {
                 CanvasObjectKind::Shape { shape, .. } => {
+                    let previous_shape = *shape;
                     widgets::property_field(ui, t("Shape"), |ui| {
                         egui::ComboBox::from_id_salt(("board_object_shape", id))
                             .selected_text(t(shape_name(*shape)))
@@ -1516,6 +1520,22 @@ impl ThinodaApp {
                             })
                             .response
                     });
+                    if *shape != previous_shape {
+                        edited.rounding = None;
+                    }
+                    if let Some(rounding) = &mut edited.rounding {
+                        let response = widgets::property_field(ui, t("Corner radius"), |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut rounding.radius)
+                                    .range(0.0..=MAX_BOARD_COORDINATE)
+                                    .speed(1.0)
+                                    .fixed_decimals(0),
+                            )
+                        });
+                        if response.changed() {
+                            rounding.radius = rounding.radius.round();
+                        }
+                    }
                     optional_color(ui, "Fill", &mut edited.style.fill, Color::WHITE);
                     optional_color(ui, "Stroke", &mut edited.style.stroke, Color::BLACK);
                     width_field(ui, &mut edited.style.stroke_width);
@@ -1619,6 +1639,7 @@ impl ThinodaApp {
                     .update_canvas_object("Board properties", id, |current| {
                         current.alt_text = edited.alt_text;
                         current.style = edited.style;
+                        current.rounding = edited.rounding;
                         match (&mut current.kind, edited.kind) {
                             (
                                 CanvasObjectKind::Shape { shape, .. },
@@ -6364,6 +6385,140 @@ mod tests {
                 .fill,
             None
         );
+    }
+
+    #[test]
+    #[cfg(feature = "gpu-tests")]
+    fn adjustable_rectangle_corners_paint_the_actual_fill_geometry() {
+        use thinoda_core::{DrawioRectangleStencil, ShapeRounding, Sheet, SheetRootMode, Workbook};
+        use thinoda_platform::settings::ThemeMode;
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        for (x, radius) in [(-120.0, 0.0), (120.0, 40.0)] {
+            let mut shape = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_center_size(Vec2::new(x, 0.0), Vec2::new(100.0, 100.0)),
+            );
+            shape.style.fill = Some(Color::rgb(200, 30, 40));
+            shape.style.stroke = Some(Color::TRANSPARENT);
+            shape.rounding = Some(ShapeRounding {
+                radius,
+                stencil: DrawioRectangleStencil::Mockup,
+            });
+            sheet.add_canvas_object(shape).unwrap();
+        }
+        let mut app = ThinodaApp::headless();
+        app.settings.theme = ThemeMode::Light;
+        app.settings.show_format_panel = false;
+        app.new_doc(Workbook::new(sheet));
+        let mut h = Harness::builder()
+            .wgpu()
+            .with_size(vec2(1200.0, 700.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(6);
+        let image = h.render().expect("rounded rectangle render");
+        let view = &h.state().doc().unwrap().view;
+        let center = view.canvas_rect().center() + view.offset;
+        let sample = |x: f32, y: f32| {
+            let point = center + vec2(x, y) * view.zoom;
+            image
+                .get_pixel(point.x.round() as u32, point.y.round() as u32)
+                .0
+        };
+        assert_eq!(&sample(-120.0, 0.0)[..3], &[200, 30, 40]);
+        assert_eq!(&sample(120.0, 0.0)[..3], &[200, 30, 40]);
+        assert_eq!(&sample(-165.0, -45.0)[..3], &[200, 30, 40]);
+        assert_ne!(&sample(75.0, -45.0)[..3], &[200, 30, 40]);
+    }
+
+    #[test]
+    fn shape_rounding_inspector_is_accessible_localized_and_undoable() {
+        use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
+
+        assert!(i18n::has_translations("Corner radius"));
+        for language in i18n::Lang::ALL {
+            let translated = i18n::t_in(language, "Corner radius");
+            assert!(!translated.is_empty(), "{language:?}");
+            if language != i18n::Lang::En {
+                assert_ne!(translated, "Corner radius", "{language:?}");
+            }
+        }
+
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            BoardRect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        let rounding = ShapeRounding {
+            radius: 15.0,
+            stencil: DrawioRectangleStencil::Forms,
+        };
+        shape.rounding = Some(rounding);
+        let id = doc.doc.add_canvas_object(shape).unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        assert!(
+            !harness
+                .get_by_label("Corner radius")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Corner radius").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Corner radius").type_text("28");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(current(harness.state()).rounding.unwrap().radius, 28.0);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rounding, Some(rounding));
+        for (text, expected) in [
+            ("15.6", 16.0),
+            ("-10", 0.0),
+            ("1000001", MAX_BOARD_COORDINATE),
+        ] {
+            harness.get_by_label("Corner radius").click();
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.get_by_label("Corner radius").type_text(text);
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(3);
+            assert_eq!(current(harness.state()).rounding.unwrap().radius, expected);
+            assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+            harness.run_steps(3);
+            assert_eq!(current(harness.state()).rounding, Some(rounding));
+        }
+        harness.get_by_label("Shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Ellipse").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rounding, None);
+        assert!(harness.query_by_label("Corner radius").is_none());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rounding, Some(rounding));
     }
 
     #[test]

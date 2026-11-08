@@ -790,6 +790,11 @@ impl Sheet {
         self.canvas.has_bar_connector_markers()
     }
 
+    /// Whether the sheet needs adjustable-corner-aware persistence.
+    pub fn has_shape_rounding(&self) -> bool {
+        self.canvas.has_shape_rounding()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2312,6 +2317,11 @@ impl Workbook {
     /// Whether any sheet needs bar-marker-aware persistence.
     pub fn has_bar_connector_markers(&self) -> bool {
         self.sheets.iter().any(Sheet::has_bar_connector_markers)
+    }
+
+    /// Whether any sheet needs adjustable-corner-aware persistence.
+    pub fn has_shape_rounding(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_shape_rounding)
     }
 
     pub fn active(&self) -> &Sheet {

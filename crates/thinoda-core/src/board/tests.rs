@@ -746,6 +746,64 @@ fn every_shape_kind_round_trips_and_has_geometry() {
     }
 }
 
+#[test]
+fn adjustable_rectangle_rounding_is_absolute_and_validated() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    let rounding = ShapeRounding {
+        radius: 10.0,
+        stencil: DrawioRectangleStencil::Forms,
+    };
+    let outline = shape_geometry_with_rounding(ShapeKind::Rectangle, frame, 0.0, Some(rounding));
+    assert!((outline.outline[0] - Vec2::new(100.0, 20.0)).length() < 0.001);
+    assert!((outline.outline[8] - Vec2::new(110.0, 30.0)).length() < 0.001);
+
+    let resized = rect(10.0, 20.0, 200.0, 60.0);
+    let outline = shape_geometry_with_rounding(ShapeKind::Rectangle, resized, 0.0, Some(rounding));
+    assert!((outline.outline[0] - Vec2::new(200.0, 20.0)).length() < 0.001);
+    assert!((outline.outline[8] - Vec2::new(210.0, 30.0)).length() < 0.001);
+
+    let clamped = ShapeRounding {
+        radius: 80.0,
+        ..rounding
+    };
+    let outline = shape_geometry_with_rounding(ShapeKind::Rectangle, frame, 0.0, Some(clamped));
+    assert!((outline.outline[0] - Vec2::new(60.0, 20.0)).length() < 0.001);
+    assert!((outline.outline[8] - Vec2::new(110.0, 50.0)).length() < 0.001);
+    let square = ShapeRounding {
+        radius: 0.0,
+        ..rounding
+    };
+    assert_eq!(
+        shape_geometry_with_rounding(ShapeKind::RoundedRectangle, frame, 0.0, Some(square)),
+        shape_geometry(ShapeKind::Rectangle, frame, 0.0)
+    );
+
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    assert!(!serde_json::to_string(&object).unwrap().contains("rounding"));
+    object.rounding = Some(rounding);
+    validate_object(&object).unwrap();
+    assert_eq!(
+        serde_json::from_str::<CanvasObject>(&serde_json::to_string(&object).unwrap()).unwrap(),
+        object
+    );
+    for radius in [
+        -1.0,
+        0.5,
+        f32::NAN,
+        f32::INFINITY,
+        MAX_BOARD_COORDINATE + 1.0,
+    ] {
+        object.rounding = Some(ShapeRounding { radius, ..rounding });
+        assert!(validate_object(&object).is_err(), "{radius}");
+    }
+    object.rounding = Some(rounding);
+    object.kind = CanvasObjectKind::Shape {
+        shape: ShapeKind::Ellipse,
+        label: String::new(),
+    };
+    assert!(validate_object(&object).is_err());
+}
+
 // ---- ids --------------------------------------------------------------------------------
 
 #[test]

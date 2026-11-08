@@ -160,6 +160,7 @@ Type a label|Escribe una etiqueta|Saisir un libellé|Skriv en etiket|Typ een lab
 Select one board object to edit its properties.|Selecciona un objeto del tablero para editar sus propiedades.|Sélectionnez un objet du tableau pour modifier ses propriétés.|Vælg ét tavleobjekt for at redigere dets egenskaber.|Selecteer één bordobject om de eigenschappen te bewerken.|Selecione um objeto do quadro para editar as respetivas propriedades.|Seleziona un oggetto della lavagna per modificarne le proprietà.|Zaznacz jeden obiekt tablicy, aby edytować jego właściwości.
 Description|Descripción|Description|Beskrivelse|Beschrijving|Descrição|Descrizione|Opis
 Opacity|Opacidad|Opacité|Opacitet|Dekking|Opacidade|Opacità|Krycie
+Corner radius|Radio de esquina|Rayon des coins|Hjørneradius|Hoekradius|Raio dos cantos|Raggio degli angoli|Promień narożnika
 Stroke|Trazo|Trait|Streg|Lijn|Traço|Tratto|Linia
 Connector options|Opciones del conector|Options du connecteur|Forbindelsesindstillinger|Opties voor verbindingslijnen|Opções do conector|Opzioni connettore|Opcje łącznika
 Shape options|Opciones de forma|Options de forme|Formindstillinger|Vormopties|Opções da forma|Opzioni forma|Opcje kształtu

@@ -60,6 +60,8 @@ const HALF_CIRCLE_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-7";
 const HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-7";
 const BAR_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-8";
 const BAR_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-8";
+const ROUNDING_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-ROUNDING-1";
+const ROUNDING_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-ROUNDING-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -81,7 +83,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_bar_connector_markers() {
+        tuple.serialize_element(if self.workbook.has_shape_rounding() {
+            ROUNDING_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_bar_connector_markers() {
             BAR_MARKER_INK_WORKBOOK_VERSION
         } else if self.workbook.has_half_circle_connector_markers() {
             HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
@@ -158,7 +162,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_bar_connector_markers() {
+    let version = if workbook.has_shape_rounding() {
+        ROUNDING_WORKBOOK_VERSION
+    } else if workbook.has_bar_connector_markers() {
         BAR_MARKER_WORKBOOK_VERSION
     } else if workbook.has_half_circle_connector_markers() {
         HALF_CIRCLE_MARKER_WORKBOOK_VERSION
@@ -204,6 +210,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_shape_rounding() {
+                return Err(A::Error::custom(
+                    "shape rounding requires a versioned recovery workbook",
+                ));
+            }
             if workbook.has_connector_markers() {
                 return Err(A::Error::custom(
                     "connector markers require a versioned recovery workbook",
@@ -246,6 +257,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -270,6 +283,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -290,6 +305,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_extended_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -308,6 +325,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_connector_marker_sizes()
             {
                 return Err(A::Error::custom(
@@ -324,6 +343,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_connector_marker_fills()
             {
                 return Err(A::Error::custom(
@@ -338,6 +359,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_diamond_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -350,6 +373,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_oval_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -360,6 +385,8 @@ where
                 && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 && version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_half_circle_connector_markers()
             {
                 return Err(A::Error::custom(
@@ -368,10 +395,20 @@ where
             }
             if version != BAR_MARKER_WORKBOOK_VERSION
                 && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
                 && workbook.has_bar_connector_markers()
             {
                 return Err(A::Error::custom(
                     "bar connector markers require a bar-aware recovery workbook",
+                ));
+            }
+            if version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_shape_rounding()
+            {
+                return Err(A::Error::custom(
+                    "shape rounding requires a rounding-aware recovery workbook",
                 ));
             }
             if version == INLINE_WORKBOOK_VERSION && workbook.has_connector_waypoints() {
@@ -388,6 +425,7 @@ where
                 || version == OVAL_MARKER_INK_WORKBOOK_VERSION
                 || version == HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
                 || version == BAR_MARKER_INK_WORKBOOK_VERSION
+                || version == ROUNDING_INK_WORKBOOK_VERSION
             {
                 let pending_ink: String = seq
                     .next_element()?
@@ -1741,6 +1779,77 @@ mod lock_tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn shape_rounding_requires_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind,
+            DrawioRectangleStencil, Endpoint, Rect, ShapeKind, ShapeRounding, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 16.0,
+            stencil: DrawioRectangleStencil::Ios,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Dash,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    ROUNDING_INK_WORKBOOK_VERSION
+                } else {
+                    ROUNDING_WORKBOOK_VERSION
+                }
+            );
+            let mut older = value.clone();
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                BAR_MARKER_INK_WORKBOOK_VERSION
+            } else {
+                BAR_MARKER_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(older)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("shape rounding requires a rounding-aware recovery workbook")
+            );
+            let mut unversioned = value;
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(
+                serde_json::from_value::<Snapshot>(unversioned)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("shape rounding requires a versioned recovery workbook")
+            );
         }
     }
 

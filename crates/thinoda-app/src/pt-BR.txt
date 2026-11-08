@@ -1,4 +1,5 @@
 # Regional wording overrides.
+Corner radius|Raio dos cantos
 Start arrow style|Estilo da seta inicial
 End arrow style|Estilo da seta final
 Start arrow size|Tamanho da seta inicial

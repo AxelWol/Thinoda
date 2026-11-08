@@ -8,7 +8,7 @@ use thinoda_core::{
     Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
     board::{
         BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
-        rotate_around, rotated_corners,
+        rotate_around, rotated_corners, shape_geometry_with_rounding,
     },
     scene::{SceneGeometry, SceneItem},
 };
@@ -1807,6 +1807,9 @@ fn quick_insert(
     let target = quick_target(doc.sheet(), scene, &object, dir);
     let mut clone = arrow_clone(&object, target.center());
     if let CanvasObjectKind::Shape { shape: kind, .. } = &mut clone.kind {
+        if *kind != shape {
+            clone.rounding = None;
+        }
         *kind = shape;
     }
     let center = object.rotated_bounds().center();
@@ -3919,15 +3922,22 @@ pub(super) fn paint(
             6.0,
             4.0,
         ));
-        let ghost = xf.rect(target);
-        let point = |p: Vec2| ghost.min + vec2(p.x * ghost.width(), p.y * ghost.height());
+        let rounding = match &object.kind {
+            CanvasObjectKind::Shape { shape: source, .. } if *source == shape => object.rounding,
+            _ => None,
+        };
+        let geometry = shape_geometry_with_rounding(shape, target, object.rotation, rounding);
         painter.add(egui::Shape::closed_line(
-            shape.unit_outline().into_iter().map(point).collect(),
+            geometry
+                .outline
+                .into_iter()
+                .map(|point| xf.pos(point))
+                .collect(),
             stroke,
         ));
-        for detail in shape.unit_details() {
+        for detail in geometry.details {
             painter.add(egui::Shape::line(
-                detail.into_iter().map(point).collect(),
+                detail.into_iter().map(|point| xf.pos(point)).collect(),
                 stroke,
             ));
         }

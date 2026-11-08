@@ -142,9 +142,19 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "bar connector markers require native format version 18".into(),
             ));
         }
+        if version < 19 && book.has_shape_rounding() {
+            return Err(IoError::Invalid(
+                "shape rounding requires native format version 19".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_shape_rounding() {
+            return Err(IoError::Invalid(
+                "shape rounding requires a versioned native archive".into(),
+            ));
+        }
         if book.has_connector_markers() {
             return Err(IoError::Invalid(
                 "connector markers require a versioned native archive".into(),
