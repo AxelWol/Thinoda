@@ -26,6 +26,8 @@ const DETACHED_CONNECTOR: &[u8] =
 const MALFORMED_POINT: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/malformed-point");
 const MALFORMED_GEOMETRY: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/malformed-geometry");
+const OUT_OF_RANGE_POINTS: &[u8] =
+    include_bytes!("../../../fuzz/corpus/drawio_import/out-of-range-points");
 
 #[test]
 fn document_seeds_reach_their_importers_and_native_roundtrip() {
@@ -40,6 +42,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         ("detached connector", Format::DrawIo, DETACHED_CONNECTOR),
         ("malformed point", Format::DrawIo, MALFORMED_POINT),
         ("malformed geometry", Format::DrawIo, MALFORMED_GEOMETRY),
+        ("out-of-range points", Format::DrawIo, OUT_OF_RANGE_POINTS),
         ("warning", Format::DrawIo, WARNING),
         ("compressed", Format::DrawIo, COMPRESSED),
         ("svg", Format::DrawIo, SVG),
@@ -109,6 +112,23 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             let objects = &report.workbook.sheets[0].canvas.objects;
             assert_eq!(objects.len(), 1);
             assert_eq!(objects[0].label(), "Safe");
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, vec![thinoda_io::ImportWarning::Other]);
+        }
+        if name == "out-of-range points" {
+            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Other]);
+            let objects = &report.workbook.sheets[0].canvas.objects;
+            assert_eq!(objects.len(), 2);
+            assert!(objects.iter().any(|object| matches!(
+                &object.kind,
+                thinoda_core::CanvasObjectKind::Connector(connector)
+                    if connector.waypoints.len() == 1
+            )));
+            assert!(objects.iter().any(|object| matches!(
+                &object.kind,
+                thinoda_core::CanvasObjectKind::Ink(ink) if ink.points.len() == 2
+            )));
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, vec![thinoda_io::ImportWarning::Other]);

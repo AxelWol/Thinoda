@@ -1234,6 +1234,42 @@ numeric attributes can still produce unsupported composite geometry, and
 warning details are not cell-specific. Connector attachment preservation, real
 system clipboard, accessibility and device acceptance remain open.
 
+**Out-of-range connector points and rubber-duck review.** Finite draw.io points
+can also fall outside Thinoda's board coordinate range, including after parent
+translation or floating-point overflow. Rather than reject a whole usable
+connector or ink stroke because of one such point, import now discards the
+unrepresentable point and reports unsupported data. A usable attached endpoint
+is retained even if its unused fallback is out of range; an unresolved endpoint
+without a usable point still causes the connector to be omitted. For an
+out-of-range group/frame centre, an explicit usable endpoint can instead be
+retained as a reported detached connector. Without one, the connector is
+omitted. Local files, links and clipboard use their existing warning and
+consent paths.
+
+The review checked the limit *after* parent-coordinate translation against the
+same predicate as core board validation: a large local value can legitimately
+translate back into range, while a locally valid value can translate out of
+range. Boundary values, arithmetic overflow, all-invalid ink, attached and
+unresolved ends, both deferred-edge orders and clipboard undo have regressions.
+The previously failing connector and group-fallback cases now retain their
+usable content without fabricating coordinates.
+
+The importer, supplied corpus and deterministic seed tests passed, as did
+clipboard and link tests and strict native, WebAssembly and fuzz Clippy. An
+independent inspection of the 88 supplied diagrams found no newly rejected
+points among 2,291 finite edge points after parent translation; this is not a
+complete visual or source-preservation comparison. A debug web build passed the
+synthetic connector paste/undo journey in Chromium, Firefox and WebKit, with
+the warning visible in screenshots. A 21-second AddressSanitizer smoke
+completed 19,476 executions without a reported failure; the separate 30-minute
+acceptance campaign remains open.
+
+Dropping a point can change the route or join ink segments across the gap, so
+the result is an approximation, not recovery of the original path. Connectors
+whose remaining extent or waypoint count exceeds board limits can still be
+omitted. Other composite geometry, accurate fixed ports, source-preserving
+save-back and real system clipboard and accessibility acceptance remain open.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop

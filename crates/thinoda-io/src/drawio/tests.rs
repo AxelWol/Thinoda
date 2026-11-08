@@ -2477,6 +2477,140 @@ fn malformed_waypoints_are_reported_and_do_not_create_fabricated_points() {
 }
 
 #[test]
+fn out_of_range_waypoints_and_ink_points_are_discarded_after_translation() {
+    let xml = page(
+        r#"<mxCell id="g" style="group" vertex="1" parent="1"><mxGeometry x="100" y="200" width="200" height="200" as="geometry"/></mxCell>
+        <mxCell id="e" style="edgeStyle=none;endArrow=none;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="-1000050" as="sourcePoint"/><mxPoint x="-1000000" as="targetPoint"/><Array as="points"><mxPoint x="-1000100"/><mxPoint x="999901"/><mxPoint x="-1000050" y="-1000201"/><mxPoint x="-100"/></Array></mxGeometry></mxCell>
+        <mxCell id="ink" style="thinodaInk=1;endArrow=none;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="999901" as="sourcePoint"/><Array as="points"><mxPoint x="-100"/><mxPoint x="0"/></Array><mxPoint x="50" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    let sheet = &report.workbook.sheets[0];
+    let edge = connectors(sheet)[0];
+    assert_eq!(edge.from, Endpoint::Point(Vec2::new(-999_950.0, 200.0)));
+    assert_eq!(edge.to, Endpoint::Point(Vec2::new(-999_900.0, 200.0)));
+    assert_eq!(
+        edge.waypoints.as_ref(),
+        &[Vec2::new(-1_000_000.0, 200.0), Vec2::new(0.0, 200.0)]
+    );
+    let ink = sheet
+        .canvas
+        .objects
+        .iter()
+        .find_map(|object| match &object.kind {
+            CanvasObjectKind::Ink(ink) => Some(ink),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        ink.points.as_ref(),
+        &[
+            Vec2::new(0.0, 200.0),
+            Vec2::new(100.0, 200.0),
+            Vec2::new(150.0, 200.0)
+        ]
+    );
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings))
+            if warnings == vec![ImportWarning::Other]
+    ));
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    assert_eq!(
+        crate::import_drawio_link(&link).unwrap().warnings,
+        report.warnings
+    );
+    assert_eq!(
+        crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+        report.warnings
+    );
+    sheet.validate().unwrap();
+}
+
+#[test]
+fn overflowing_translated_waypoints_do_not_remove_usable_connectors() {
+    let xml = page(
+        r#"<mxCell id="g" style="group" vertex="1" parent="1"><mxGeometry x="3e38" as="geometry"/></mxCell>
+        <mxCell id="e" style="edgeStyle=none;endArrow=none;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="-3e38" as="sourcePoint"/><mxPoint x="-3e38" as="targetPoint"/><Array as="points"><mxPoint x="3e38"/><mxPoint x="-3e38"/></Array></mxGeometry></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    let edge = connectors(&report.workbook.sheets[0])[0];
+    assert_eq!(edge.waypoints.as_ref(), &[Vec2::new(0.0, 0.0)]);
+    report.workbook.sheets[0].validate().unwrap();
+}
+
+#[test]
+fn out_of_range_terminal_points_are_discarded_without_losing_valid_attachments() {
+    let shape = r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#;
+    for (terminal, expect_connector) in [
+        (r#" source="shape""#, true),
+        (r#" source="missing""#, false),
+        ("", false),
+    ] {
+        let xml = page(&format!(
+            r#"{shape}<mxCell id="e" style="endArrow=none;" edge="1" parent="1"{terminal} target="shape"><mxGeometry relative="1" as="geometry"><mxPoint x="1000001" as="sourcePoint"/></mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Other]);
+        let sheet = &report.workbook.sheets[0];
+        assert_eq!(connectors(sheet).len(), usize::from(expect_connector));
+        if expect_connector {
+            assert_eq!(
+                connectors(sheet)[0].from,
+                Endpoint::Object(shapes(sheet)[0].id)
+            );
+        }
+        sheet.validate().unwrap();
+    }
+}
+
+#[test]
+fn all_unrepresentable_ink_points_are_omitted() {
+    let xml = page(
+        r#"<mxCell id="ink" style="thinodaInk=1;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1000001" as="sourcePoint"/><Array as="points"><mxPoint y="-1000001"/></Array><mxPoint x="1000002" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    assert!(report.workbook.sheets[0].canvas.objects.is_empty());
+    report.workbook.sheets[0].validate().unwrap();
+}
+
+#[test]
+fn out_of_range_group_center_uses_only_a_usable_explicit_fallback() {
+    let cells = r#"<mxCell id="g" style="group" vertex="1" parent="1"><mxGeometry x="2000000" width="100" height="100" as="geometry"/></mxCell>
+        <mxCell id="safe" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#;
+    for fallback in [None, Some("7"), Some("1000001")] {
+        let point = fallback
+            .map(|x| format!(r#"<mxPoint x="{x}" y="8" as="sourcePoint"/>"#))
+            .unwrap_or_default();
+        let edge = format!(
+            r#"<mxCell id="e" style="endArrow=none;" edge="1" parent="1" source="g" target="safe"><mxGeometry relative="1" as="geometry">{point}</mxGeometry></mxCell>"#
+        );
+        for edge_first in [true, false] {
+            let xml = if edge_first {
+                page(&format!("{edge}{cells}"))
+            } else {
+                page(&format!("{cells}{edge}"))
+            };
+            let report = load(&xml);
+            let sheet = &report.workbook.sheets[0];
+            let edges = connectors(sheet);
+            if fallback == Some("7") {
+                assert_eq!(report.warnings, vec![ImportWarning::DetachedConnectors]);
+                assert_eq!(edges.len(), 1);
+                assert_eq!(edges[0].from, Endpoint::Point(Vec2::new(7.0, 8.0)));
+                assert_eq!(edges[0].to, Endpoint::Object(shapes(sheet)[0].id));
+            } else {
+                assert_eq!(report.warnings, vec![ImportWarning::Other]);
+                assert!(edges.is_empty());
+            }
+            sheet.validate().unwrap();
+        }
+    }
+}
+
+#[test]
 fn malformed_connector_endpoints_are_reported_without_fabricating_points() {
     let shape = r#"<mxCell id="shape" vertex="1" parent="1"><mxGeometry x="100" width="40" height="40" as="geometry"/></mxCell>"#;
     for (point, source, target) in [

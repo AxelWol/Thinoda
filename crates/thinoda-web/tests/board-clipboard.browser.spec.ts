@@ -58,7 +58,7 @@ type BoardObject = {
     id: number;
     kind: {
         shape?: { shape: string; label?: string };
-        connector?: { from: unknown; to: unknown };
+        connector?: { from: unknown; to: unknown; waypoints?: { x: number; y: number }[] };
     };
     style: { fill?: string };
 };
@@ -684,6 +684,35 @@ test("draw.io paste omits a connector with a malformed endpoint", async ({ page 
     await page.keyboard.press("Control+z");
     await frames(page);
     const undone = archive(await saveAs(page, "drawio-malformed-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
+test("draw.io paste keeps a connector with an out-of-range waypoint", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="edge" edge="1" parent="1" style="endArrow=none;">',
+        '<mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/>',
+        '<mxPoint x="100" y="0" as="targetPoint"/><Array as="points">',
+        '<mxPoint x="50" y="20"/><mxPoint x="1000001" y="5"/></Array></mxGeometry></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-range-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-range-warning.png") });
+    const after = archive(await saveAs(page, "drawio-range-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.connector?.waypoints).toHaveLength(1);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-range-undo.thinoda"));
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 

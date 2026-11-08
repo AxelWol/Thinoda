@@ -23,7 +23,7 @@ use thinoda_core::{
         DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil, Endpoint, GridKind, InkStroke,
         InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH,
         MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, RectangleSides, ShapeKind,
-        ShapeRounding, SheetRootMode, normalize_rotation, rotate_around,
+        ShapeRounding, SheetRootMode, normalize_rotation, rotate_around, valid_board_position,
         valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
@@ -1513,6 +1513,22 @@ impl<'a> PageImport<'a> {
         truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings)
     }
 
+    fn translated_point(&mut self, origin: Vec2, point: Vec2) -> Option<Vec2> {
+        let point = origin + point;
+        if valid_board_position(point) {
+            Some(point)
+        } else {
+            self.warn(ImportWarning::Other);
+            None
+        }
+    }
+
+    fn translated_points(&mut self, origin: Vec2, points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
+        points
+            .filter_map(|point| self.translated_point(origin, point))
+            .collect()
+    }
+
     fn register(&mut self, cell: usize, item: Item, context: Context, locked: bool) {
         self.items.insert(cell, item);
         let member = match item {
@@ -1988,13 +2004,7 @@ impl<'a> PageImport<'a> {
         }
     }
 
-    fn end(
-        &self,
-        terminal: Option<&str>,
-        point: Option<Vec2>,
-        origin: Vec2,
-        last_pass: bool,
-    ) -> End {
+    fn end(&self, terminal: Option<&str>, point: Option<Vec2>, last_pass: bool) -> End {
         if let Some(&index) = terminal.and_then(|id| self.index.get(id)) {
             match self.items.get(&index) {
                 Some(Item::Object(id)) => {
@@ -2010,9 +2020,13 @@ impl<'a> PageImport<'a> {
                     };
                 }
                 Some(Item::Area(rect)) => {
-                    return End::Ready {
-                        endpoint: Endpoint::Point(rect.center()),
-                        detached: true,
+                    let center = rect.center();
+                    return match valid_board_position(center).then_some(center).or(point) {
+                        Some(point) => End::Ready {
+                            endpoint: Endpoint::Point(point),
+                            detached: true,
+                        },
+                        None => End::Missing,
                     };
                 }
                 None if !last_pass && !self.visited[index] => return End::Pending,
@@ -2021,7 +2035,7 @@ impl<'a> PageImport<'a> {
         }
         match point {
             Some(p) => End::Ready {
-                endpoint: Endpoint::Point(origin + p),
+                endpoint: Endpoint::Point(p),
                 detached: terminal.is_some(),
             },
             None => End::Missing,
@@ -2038,13 +2052,10 @@ impl<'a> PageImport<'a> {
                 self.warn(ImportWarning::Formatting);
             }
             let g = &cell.geometry;
-            let points: Vec<Vec2> = g
-                .source
-                .iter()
-                .chain(&g.points)
-                .chain(&g.target)
-                .map(|p| origin + *p)
-                .collect();
+            let points = self.translated_points(
+                origin,
+                g.source.iter().chain(&g.points).chain(&g.target).copied(),
+            );
             if points.is_empty() {
                 self.warn(ImportWarning::Other);
                 return;
@@ -2064,18 +2075,16 @@ impl<'a> PageImport<'a> {
             self.add_object(index, object, context);
             return;
         }
-        let from = self.end(
-            cell.source.as_deref(),
-            cell.geometry.source,
-            origin,
-            last_pass,
-        );
-        let to = self.end(
-            cell.target.as_deref(),
-            cell.geometry.target,
-            origin,
-            last_pass,
-        );
+        let source = cell
+            .geometry
+            .source
+            .and_then(|point| self.translated_point(origin, point));
+        let target = cell
+            .geometry
+            .target
+            .and_then(|point| self.translated_point(origin, point));
+        let from = self.end(cell.source.as_deref(), source, last_pass);
+        let to = self.end(cell.target.as_deref(), target, last_pass);
         let (from, to, detached) = match (from, to) {
             (
                 End::Ready {
@@ -2135,12 +2144,9 @@ impl<'a> PageImport<'a> {
         } else {
             ConnectorRoute::Straight
         };
-        connector.waypoints = cell
-            .geometry
-            .points
-            .iter()
-            .map(|point| origin + *point)
-            .collect();
+        connector.waypoints = self
+            .translated_points(origin, cell.geometry.points.iter().copied())
+            .into();
         connector.arrow_end = style.end_arrow();
         connector.arrow_start = style.start_arrow();
         connector.start_marker = style.marker("startArrow");

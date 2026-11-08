@@ -2719,6 +2719,37 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_preserves_connector_after_omitting_unrepresentable_waypoint() {
+        use crate::app::Cmd;
+
+        let text = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="edge" edge="1" parent="1" style="endArrow=none;"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/><Array as="points"><mxPoint x="50" y="20"/><mxPoint x="1000001" y="5"/></Array></mxGeometry></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let items = board_item_count(&app);
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        assert_eq!(board_item_count(&app), items + 1);
+        let object = &app.doc().unwrap().doc.sheet().canvas.objects[0];
+        let thinoda_core::CanvasObjectKind::Connector(connector) = &object.kind else {
+            panic!("expected a connector");
+        };
+        assert_eq!(connector.waypoints.len(), 1);
+        app.toasts.tick(60.0);
+        assert!(app.toasts.texts().any(|text| text
+            == crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_rejects_an_unpasteable_malformed_connector() {
         use crate::app::Cmd;
 

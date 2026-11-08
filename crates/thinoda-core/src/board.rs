@@ -1395,6 +1395,11 @@ fn valid_coordinate(v: f32) -> bool {
     v.is_finite() && v.abs() <= MAX_BOARD_COORDINATE
 }
 
+/// Whether a point is representable as a board position.
+pub fn valid_board_position(position: Vec2) -> bool {
+    valid_position(position)
+}
+
 fn valid_rect(rect: Rect) -> bool {
     valid_position(rect.min)
         && valid_coordinate(rect.size.x)

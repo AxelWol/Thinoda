@@ -32,6 +32,22 @@ fn board() -> (Sheet, TopicId, TopicId, TopicId) {
     (s, a, b, card)
 }
 
+#[test]
+fn board_positions_match_object_point_validation() {
+    for (point, valid) in [
+        (Vec2::new(-MAX_BOARD_COORDINATE, MAX_BOARD_COORDINATE), true),
+        (Vec2::new(MAX_BOARD_COORDINATE + 1.0, 0.0), false),
+        (Vec2::new(0.0, -MAX_BOARD_COORDINATE - 1.0), false),
+        (Vec2::new(f32::NAN, 0.0), false),
+        (Vec2::new(0.0, f32::INFINITY), false),
+    ] {
+        assert_eq!(valid_board_position(point), valid);
+        let object =
+            CanvasObject::ink(InkStroke::new(InkTool::Pen, Color::BLACK, 1.0, vec![point]));
+        assert_eq!(validate_object(&object).is_ok(), valid);
+    }
+}
+
 // ---- serde ------------------------------------------------------------------------------
 
 #[test]
