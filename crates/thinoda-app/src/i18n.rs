@@ -4063,6 +4063,19 @@ const DE: &[(&str, &str)] = &[
         "Pasted from draw.io; some content was simplified",
         "Aus draw.io eingefügt; einige Inhalte wurden vereinfacht",
     ),
+    ("Container frames omitted", "Containerrahmen ausgelassen"),
+    (
+        "Additional draw.io pages omitted",
+        "Weitere draw.io-Seiten ausgelassen",
+    ),
+    (
+        "The first draw.io page has no pasteable items; additional pages were not pasted.",
+        "Die erste draw.io-Seite enthält keine einfügbaren Elemente; weitere Seiten wurden nicht eingefügt.",
+    ),
+    (
+        "The draw.io page has no pasteable items.",
+        "Die draw.io-Seite enthält keine einfügbaren Elemente.",
+    ),
     (
         "Could not paste draw.io content",
         "draw.io-Inhalt konnte nicht eingefügt werden",
@@ -4808,6 +4821,10 @@ mod tests {
             "Copy as draw.io",
             "Copied for draw.io; paste it into a diagram",
             "Pasted from draw.io; some content was simplified",
+            "Container frames omitted",
+            "Additional draw.io pages omitted",
+            "The first draw.io page has no pasteable items; additional pages were not pasted.",
+            "The draw.io page has no pasteable items.",
             "Could not paste draw.io content",
         ];
 

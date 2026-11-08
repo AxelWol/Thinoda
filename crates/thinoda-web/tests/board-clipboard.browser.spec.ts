@@ -593,6 +593,41 @@ test("identical external text does not reuse an earlier rich board selection", a
     expect(afterSheet.floating).toContain(added[0].id);
 });
 
+test("draw.io paste keeps the first page and can be undone", async ({ page }, testInfo) => {
+    const first = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="frame" value="Frame" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1">',
+        '<mxGeometry x="100" y="200" width="240" height="120" as="geometry"/></mxCell>',
+        '<mxCell id="child" value="First page child" style="shape=rectangle;" vertex="1" parent="frame">',
+        '<mxGeometry x="20" y="30" width="80" height="40" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const second = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="other" value="Second page shape" style="shape=rectangle;" vertex="1" parent="1">',
+        '<mxGeometry width="80" height="40" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const file = `<mxfile><diagram name="First">${first}</diagram><diagram name="Second">${second}</diagram></mxfile>`;
+    const before = archive(await saveAs(page, "drawio-paste-before.thinoda"));
+    await page.evaluate((text) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([text], { type: "text/plain" }),
+        })];
+    }, encodeURIComponent(file));
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-paste-warning.png") });
+    const after = archive(await saveAs(page, "drawio-paste-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects.map((object) => object.kind.shape?.label)).toEqual(["First page child"]);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-paste-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("plain clipboard rejects excessive depth and still supports paste and undo", async ({ page }) => {
     const before = archive(await saveAs(page, "plain-depth-before.thinoda"));
     const setText = (text: string) => page.evaluate((value) => {

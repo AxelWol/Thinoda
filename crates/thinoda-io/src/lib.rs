@@ -297,6 +297,10 @@ pub enum IoError {
         "draw.io clipboard conversion would lose content: {0:?}; handle the conversion report explicitly"
     )]
     DrawioClipboardLoss(Vec<ExportLoss>),
+    #[error("The first draw.io page has no pasteable items; additional pages were not pasted.")]
+    DrawioClipboardEmptyFirstPage,
+    #[error("The draw.io page has no pasteable items.")]
+    DrawioClipboardEmptyPage,
     #[error(
         "draw.io export would detach {0} connector-to-connector attachment(s); explicit consent is required"
     )]

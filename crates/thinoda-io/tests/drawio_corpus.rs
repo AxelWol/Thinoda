@@ -248,7 +248,26 @@ fn check(path: &Path) -> Result<String, String> {
 
     let text = String::from_utf8_lossy(&bytes);
     if thinoda_io::drawio_clipboard::looks_like_drawio(&text) {
-        thinoda_io::drawio_clipboard::decode(&text).map_err(|e| format!("clipboard: {e}"))?;
+        use thinoda_io::drawio_clipboard::DrawioPasteLoss;
+
+        let pasted =
+            thinoda_io::drawio_clipboard::decode(&text).map_err(|e| format!("clipboard: {e}"))?;
+        let mut expected = Vec::new();
+        if !book.sheets[0].zones.is_empty() {
+            expected.push(DrawioPasteLoss::ContainerFrames(book.sheets[0].zones.len()));
+        }
+        if book.sheets.len() > 1 {
+            expected.push(DrawioPasteLoss::AdditionalPages(book.sheets.len() - 1));
+        }
+        if pasted.losses != expected {
+            return Err(format!(
+                "clipboard loss report {:?} differs from {expected:?}",
+                pasted.losses
+            ));
+        }
+        if !expected.is_empty() && !pasted.warnings.contains(&thinoda_io::ImportWarning::Other) {
+            return Err("clipboard omissions were not reported as a warning".into());
+        }
     }
     Ok(format!(
         "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} warning kind(s)",

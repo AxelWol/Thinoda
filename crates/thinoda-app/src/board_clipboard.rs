@@ -426,14 +426,26 @@ pub(crate) fn prepare_drawio_copy(
     Ok(Some(copy))
 }
 
+pub(crate) struct DrawioPasteOutcome {
+    simplified: bool,
+    losses: Vec<thinoda_io::drawio_clipboard::DrawioPasteLoss>,
+}
+
 /// Pastes draw.io clipboard text as one undoable edit centred in the view.
-///
-/// Returns whether some draw.io content was simplified.
-pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<bool, String> {
+pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<DrawioPasteOutcome, String> {
     if doc.doc.sheet().fim.is_some() {
         return Err("draw.io content cannot be pasted into a FIM sheet".into());
     }
-    let pasted = thinoda_io::drawio_clipboard::decode(text).map_err(|error| error.to_string())?;
+    let pasted = thinoda_io::drawio_clipboard::decode(text).map_err(|error| match error {
+        thinoda_io::IoError::DrawioClipboardEmptyFirstPage => crate::i18n::t(
+            "The first draw.io page has no pasteable items; additional pages were not pasted.",
+        )
+        .to_owned(),
+        thinoda_io::IoError::DrawioClipboardEmptyPage => {
+            crate::i18n::t("The draw.io page has no pasteable items.").to_owned()
+        }
+        error => error.to_string(),
+    })?;
     doc.view
         .paste_foreign_board(
             &mut doc.doc,
@@ -442,7 +454,29 @@ pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<bool, String
             "Paste from draw.io",
         )
         .map_err(localize_error)?;
-    Ok(!pasted.warnings.is_empty())
+    Ok(DrawioPasteOutcome {
+        simplified: !pasted.warnings.is_empty(),
+        losses: pasted.losses,
+    })
+}
+
+fn drawio_paste_loss_lines(
+    losses: &[thinoda_io::drawio_clipboard::DrawioPasteLoss],
+) -> Vec<String> {
+    use thinoda_io::drawio_clipboard::DrawioPasteLoss;
+
+    losses
+        .iter()
+        .map(|loss| {
+            let (count, label) = match loss {
+                DrawioPasteLoss::ContainerFrames(count) => (count, "Container frames omitted"),
+                DrawioPasteLoss::AdditionalPages(count) => {
+                    (count, "Additional draw.io pages omitted")
+                }
+            };
+            format!("{count} — {}", crate::i18n::t(label))
+        })
+        .collect()
 }
 
 impl crate::app::ThinodaApp {
@@ -753,12 +787,21 @@ impl crate::app::ThinodaApp {
                 if rich.is_none() && thinoda_io::drawio_clipboard::looks_like_drawio(&snapshot.text)
                 {
                     match paste_drawio(doc, &snapshot.text) {
-                        Ok(true) => {
+                        Ok(outcome) if !outcome.losses.is_empty() => {
+                            let message =
+                                crate::i18n::t("Pasted from draw.io; some content was simplified");
+                            let lines = drawio_paste_loss_lines(&outcome.losses);
+                            self.toasts.sticky(
+                                thinoda_ui::toast::ToastKind::Warning,
+                                format!("{message}\n{}", lines.join("\n")),
+                            );
+                        }
+                        Ok(outcome) if outcome.simplified => {
                             self.toasts.warning(crate::i18n::t(
                                 "Pasted from draw.io; some content was simplified",
                             ));
                         }
-                        Ok(false) => {}
+                        Ok(_) => {}
                         Err(error) => {
                             self.toasts.error(format!(
                                 "{}: {}",
@@ -2413,6 +2456,16 @@ mod tests {
     );
 
     #[cfg(not(target_arch = "wasm32"))]
+    const DRAWIO_FRAMED_MODEL: &str = concat!(
+        r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+        r#"<mxCell id="frame" value="Frame" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1">"#,
+        r#"<mxGeometry x="100" y="200" width="240" height="120" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="child" value="Child" style="shape=rectangle;" vertex="1" parent="frame">"#,
+        r#"<mxGeometry x="20" y="30" width="50" height="40" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel>"#
+    );
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn empty_board_app() -> (crate::app::ThinodaApp, Rc<RefCell<native::FakeClipboard>>) {
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = SheetRootMode::Hidden;
@@ -2454,6 +2507,124 @@ mod tests {
             app.exec(&ctx, Cmd::Canvas(Action::Undo));
             assert_eq!(app.doc().unwrap().doc.workbook(), &before);
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_reports_omitted_frames_and_pages_until_dismissed() {
+        use crate::app::Cmd;
+
+        let file = format!(
+            "<mxfile><diagram name=\"First\">{DRAWIO_FRAMED_MODEL}</diagram><diagram name=\"Second\">{DRAWIO_MODEL}</diagram></mxfile>"
+        );
+        for (text, extra_page) in [
+            (DRAWIO_FRAMED_MODEL.to_owned(), false),
+            (file.clone(), true),
+            (
+                thinoda_io::drawio_clipboard::encode_uri_component(&file),
+                true,
+            ),
+        ] {
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let items = board_item_count(&app);
+            clipboard.borrow_mut().text = text;
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            assert_eq!(board_item_count(&app), items + 1);
+            app.toasts.tick(60.0);
+            let notice = app
+                .toasts
+                .texts()
+                .find(|text| text.contains(crate::i18n::t("Container frames omitted")))
+                .expect("omitted frame warning should stay visible");
+            assert!(notice.contains(&format!(
+                "1 — {}",
+                crate::i18n::t("Container frames omitted")
+            )));
+            assert_eq!(
+                notice.contains(crate::i18n::t("Additional draw.io pages omitted")),
+                extra_page
+            );
+            if extra_page {
+                assert!(notice.contains(&format!(
+                    "1 — {}",
+                    crate::i18n::t("Additional draw.io pages omitted")
+                )));
+            }
+
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_reports_additional_pages_without_frames() {
+        use crate::app::Cmd;
+
+        let file = format!(
+            "<mxfile><diagram name=\"First\">{DRAWIO_MODEL}</diagram><diagram name=\"Second\">{DRAWIO_MODEL}</diagram></mxfile>"
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let items = board_item_count(&app);
+        clipboard.borrow_mut().text = file;
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        assert_eq!(board_item_count(&app), items + 3);
+        app.toasts.tick(60.0);
+        let notice = app
+            .toasts
+            .texts()
+            .find(|text| text.contains(crate::i18n::t("Additional draw.io pages omitted")))
+            .expect("omitted page warning should stay visible");
+        assert!(notice.contains(&format!(
+            "1 — {}",
+            crate::i18n::t("Additional draw.io pages omitted")
+        )));
+        assert!(!notice.contains(crate::i18n::t("Container frames omitted")));
+
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_explains_when_the_first_page_has_no_pasteable_items() {
+        use crate::app::Cmd;
+
+        let empty = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#;
+        let file = format!(
+            "<mxfile><diagram name=\"Empty\">{empty}</diagram><diagram name=\"Later\">{DRAWIO_MODEL}</diagram></mxfile>"
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = file;
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+            "The first draw.io page has no pasteable items; additional pages were not pasted."
+        ))));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_reports_a_frame_only_page_as_unpasteable() {
+        use crate::app::Cmd;
+
+        let frame_only = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="frame" value="Frame" style="swimlane;" vertex="1" parent="1"><mxGeometry width="240" height="120" as="geometry"/></mxCell></root></mxGraphModel>"#;
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = frame_only.to_owned();
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text
+                    .contains(crate::i18n::t("The draw.io page has no pasteable items.")))
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

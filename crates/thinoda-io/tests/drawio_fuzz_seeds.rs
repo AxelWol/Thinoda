@@ -17,6 +17,10 @@ const HTML: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/html");
 const LINK: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/link");
 const COMPRESSED_LINK: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/compressed-link");
 const PNG: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/png");
+const CLIPBOARD_MULTIPAGE: &[u8] =
+    include_bytes!("../../../fuzz/corpus/drawio_import/clipboard-multipage");
+const CLIPBOARD_ENCODED: &[u8] =
+    include_bytes!("../../../fuzz/corpus/drawio_import/clipboard-encoded");
 
 #[test]
 fn document_seeds_reach_their_importers_and_native_roundtrip() {
@@ -72,6 +76,44 @@ fn link_seeds_reach_their_importer_and_native_roundtrip() {
         let report = import_drawio_link(link).unwrap();
         assert!(!report.workbook.sheets.is_empty());
         support::roundtrip_report(report);
+        drawio_support::exercise(bytes);
+    }
+}
+
+#[test]
+fn clipboard_seeds_reach_the_decoder_and_validate() {
+    use thinoda_io::drawio_clipboard::{self, DrawioPasteLoss};
+
+    for (bytes, expected) in [
+        (
+            CLIPBOARD_MULTIPAGE,
+            vec![
+                DrawioPasteLoss::ContainerFrames(1),
+                DrawioPasteLoss::AdditionalPages(1),
+            ],
+        ),
+        (CLIPBOARD_ENCODED, vec![]),
+    ] {
+        let text = std::str::from_utf8(bytes).unwrap();
+        let pasted = drawio_clipboard::decode(text).unwrap();
+        pasted.payload.validate().unwrap();
+        assert_eq!(pasted.losses, expected);
+        if bytes == CLIPBOARD_MULTIPAGE {
+            let mut sheet = thinoda_core::Sheet::new("Paste", "");
+            sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+            thinoda_core::clipboard::paste_board_selection(
+                &mut sheet,
+                &pasted.payload,
+                thinoda_core::Vec2::ZERO,
+            )
+            .unwrap();
+            assert_eq!(sheet.canvas.objects.len(), 1);
+            assert_eq!(sheet.canvas.objects[0].label(), "Child");
+            assert_eq!(
+                sheet.canvas.objects[0].rect.min,
+                thinoda_core::Vec2::new(120.0, 230.0)
+            );
+        }
         drawio_support::exercise(bytes);
     }
 }

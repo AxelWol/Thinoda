@@ -42,16 +42,18 @@ contains tiny ZIP package seeds, including PNG image resources with omitted and
 partial dimensions, so mutation reaches image/manifest validation and the
 archive structure; the raw XMind path includes legacy XML. FreeMind and OPML
 consume XML directly. The draw.io target exercises XML, compressed pages,
-editable SVG/PNG, embedded HTML and self-contained `#R` links without fetching
-their URLs. Its PNG seed is the original editor-exported fixture already used
-by the importer tests. On successful imports, including reports with conversion
+editable SVG/PNG, embedded HTML, self-contained `#R` links and plain or
+URI-encoded clipboard text without fetching their URLs. Successful clipboard
+decodes must produce a valid board fragment and report known omissions. Its
+PNG seed is the original editor-exported fixture already used by the importer
+tests. On successful imports, including reports with conversion
 warnings, each target checks validation and an exact round-trip through
 Thinoda's native format. This in-memory check does not bypass the application's
 conversion-consent flow. Fuzzer crashes and assertion failures are intentionally
 not caught; preserve any reproducer under that target's corpus and investigate it.
 
-The deterministic seed checks verify that each draw.io container and link seed
-actually reaches its intended importer:
+The deterministic seed checks verify that each draw.io container, link and
+clipboard seed actually reaches its intended importer:
 
 ```sh
 cargo test --locked -p thinoda-io --test drawio_fuzz_seeds

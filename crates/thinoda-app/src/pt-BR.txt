@@ -968,6 +968,10 @@ Drag onto the board or press Shift+Enter to insert|Arraste para o quadro ou pres
 Copy as draw.io|Copiar como draw.io
 Copied for draw.io; paste it into a diagram|Copiado para o draw.io; cole em um diagrama
 Pasted from draw.io; some content was simplified|Colado do draw.io; parte do conteúdo foi simplificada
+Container frames omitted|Molduras de contêineres omitidas
+Additional draw.io pages omitted|Páginas adicionais do draw.io omitidas
+The first draw.io page has no pasteable items; additional pages were not pasted.|A primeira página do draw.io não contém itens que possam ser colados; as páginas adicionais não foram coladas.
+The draw.io page has no pasteable items.|A página do draw.io não contém itens que possam ser colados.
 Could not paste draw.io content|Não foi possível colar o conteúdo do draw.io
 This HTML contains multiple draw.io diagrams. Export each diagram separately.|Este arquivo HTML contém vários diagramas draw.io. Exporte cada diagrama separadamente.
 This HTML viewer has no embedded diagram. Remote references are not loaded.|Este visualizador HTML não tem um diagrama incorporado. As referências remotas não são carregadas.

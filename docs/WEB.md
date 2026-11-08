@@ -137,6 +137,11 @@ unsaved converted copy; review any conversion warning and save or download a
 `.thinoda` copy. Links containing remote references such as `#U` are not
 supported, and ordinary paste does not invoke this import.
 
+Pasting draw.io diagram text inserts the first page as one undoable edit. A
+persistent warning counts omitted first-page container frames and additional
+pages; children of those frames become free board items. If the first page has
+no pasteable items, the paste is rejected and later pages are not pasted.
+
 ## Durable browser documents (C1 platform integration)
 
 The platform provides `browser_storage::BrowserStorageProvider::new(backup)`

@@ -19,12 +19,24 @@ use thinoda_core::{
 /// Largest clipboard text accepted or produced, matching the board clipboard.
 pub const MAX_TEXT_BYTES: usize = MAX_BOARD_CLIPBOARD_BYTES;
 
+/// Content omitted when an imported diagram becomes a board clipboard fragment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawioPasteLoss {
+    /// Container frames are not supported by the board clipboard payload.
+    ContainerFrames(usize),
+    /// Only the first page of a multi-page diagram is pasted.
+    AdditionalPages(usize),
+}
+
 /// Board content decoded from draw.io clipboard text.
 #[derive(Debug)]
 pub struct DrawioPaste {
     pub payload: BoardClipboardPayload,
     /// Visible sheet-space bounds of the content, used to place the paste.
     pub bounds: Option<Rect>,
+    /// Losses introduced while preparing the board fragment.
+    pub losses: Vec<DrawioPasteLoss>,
+    /// Import warnings, including an `Other` warning when fragment preparation loses content.
     pub warnings: Vec<ImportWarning>,
 }
 
@@ -39,7 +51,7 @@ pub struct DrawioCopy {
 ///
 /// This is a cheap prefix check; [`decode`] performs full validation.
 pub fn looks_like_drawio(text: &str) -> bool {
-    let text = text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
+    let text = trim_clipboard_start(text);
     let starts = |prefix: &str| {
         text.get(..prefix.len())
             .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
@@ -49,7 +61,23 @@ pub fn looks_like_drawio(text: &str) -> bool {
         .any(|prefix| starts(prefix))
 }
 
+fn trim_clipboard_start(mut text: &str) -> &str {
+    text = text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
+    while let Some(prefix) = ["%EF%BB%BF", "%20", "%09", "%0A", "%0D"]
+        .iter()
+        .find(|prefix| {
+            text.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
+    {
+        text = text[prefix.len()..].trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
+    }
+    text
+}
+
 /// Converts draw.io clipboard text into a board payload (first page only).
+/// Container frames and additional pages omitted by the payload are reported in
+/// [`DrawioPaste::losses`] and [`DrawioPaste::warnings`].
 pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
     if text.len() > MAX_TEXT_BYTES {
         return Err(IoError::Invalid(
@@ -61,20 +89,29 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
             "clipboard text is not draw.io data".into(),
         ));
     }
-    let trimmed = text.trim();
+    let trimmed = trim_clipboard_start(text).trim_end();
     let xml = if trimmed.starts_with('%') {
-        drawio::percent_decode(trimmed)
-            .ok_or_else(|| IoError::Invalid("draw.io clipboard data is not valid".into()))?
+        let decoded = drawio::percent_decode(trimmed)
+            .ok_or_else(|| IoError::Invalid("draw.io clipboard data is not valid".into()))?;
+        trim_clipboard_start(&decoded).to_owned()
     } else {
         trimmed.to_owned()
     };
     let report = drawio::import(xml.as_bytes())?;
+    let additional_pages = report.workbook.sheets.len().saturating_sub(1);
     let sheet = report
         .workbook
         .sheets
         .into_iter()
         .next()
         .ok_or_else(|| IoError::Invalid("draw.io clipboard data contains no pages".into()))?;
+    let mut losses = Vec::new();
+    if !sheet.zones.is_empty() {
+        losses.push(DrawioPasteLoss::ContainerFrames(sheet.zones.len()));
+    }
+    if additional_pages > 0 {
+        losses.push(DrawioPasteLoss::AdditionalPages(additional_pages));
+    }
     let layout = layout_sheet(&sheet, &ApproxMeasure, false);
     let topics: Vec<_> = sheet
         .floating
@@ -90,7 +127,13 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
         .collect();
     let payload = copy_board_selection(&sheet, &layout, &topics, &objects)
         .map_err(IoError::Invalid)?
-        .ok_or_else(|| IoError::Invalid("draw.io clipboard data contains no shapes".into()))?;
+        .ok_or({
+            if additional_pages > 0 {
+                IoError::DrawioClipboardEmptyFirstPage
+            } else {
+                IoError::DrawioClipboardEmptyPage
+            }
+        })?;
     let bounds = layout
         .order
         .iter()
@@ -98,10 +141,16 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
         .filter_map(|id| layout.topics.get(id).map(|topic| topic.rect))
         .chain(canvas_bounds(&sheet, &layout))
         .reduce(|a, b| a.union(&b));
+    let mut warnings = report.warnings;
+    if !losses.is_empty() && !warnings.contains(&ImportWarning::Other) {
+        warnings.push(ImportWarning::Other);
+        warnings.sort_unstable();
+    }
     Ok(DrawioPaste {
         payload,
         bounds,
-        warnings: report.warnings,
+        losses,
+        warnings,
     })
 }
 
@@ -177,6 +226,7 @@ mod tests {
     use thinoda_core::board::CanvasObjectKind;
 
     const MODEL: &str = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" value="Start" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="40" width="120" height="60" as="geometry"/></mxCell><mxCell id="b" value="End" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="320" y="40" width="80" height="80" as="geometry"/></mxCell><mxCell id="e" style="edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"/></mxCell></root></mxGraphModel>"#;
+    const FRAMED_MODEL: &str = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="frame" value="Frame" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="200" width="240" height="120" as="geometry"/></mxCell><mxCell id="child" value="Child" style="shape=rectangle;" vertex="1" parent="frame"><mxGeometry x="20" y="30" width="50" height="40" as="geometry"/></mxCell></root></mxGraphModel>"#;
 
     fn kinds(payload: &BoardClipboardPayload) -> (usize, usize) {
         let mut sheet = Sheet::new("t", "");
@@ -207,10 +257,119 @@ mod tests {
         for text in [MODEL.to_owned(), encode_uri_component(MODEL)] {
             let pasted = decode(&text).unwrap();
             assert_eq!(kinds(&pasted.payload), (2, 1));
+            assert!(pasted.losses.is_empty());
             let bounds = pasted.bounds.unwrap();
             assert!((bounds.min.x - 100.0).abs() < 1.0, "{bounds:?}");
             assert!((bounds.max().x - 400.0).abs() < 1.0, "{bounds:?}");
         }
+    }
+
+    #[test]
+    fn bom_prefixed_clipboard_data_decodes_in_plain_and_encoded_forms() {
+        for text in [
+            format!("\u{feff}  {MODEL}"),
+            format!(" \n\u{feff}\t{}", encode_uri_component(MODEL)),
+            encode_uri_component(&format!("\u{feff} \n{MODEL}")),
+        ] {
+            assert!(looks_like_drawio(&text));
+            let pasted = decode(&text).unwrap();
+            assert_eq!(kinds(&pasted.payload), (2, 1));
+            assert!(pasted.losses.is_empty());
+        }
+    }
+
+    #[test]
+    fn encoded_prefix_does_not_decode_percent_signs_in_plain_xml() {
+        let xml = MODEL.replace("Start", "50% and %25");
+        for prefix in ["%20", "%EF%BB%BF%0a", "%20 \u{feff}%09"] {
+            let text = format!("{prefix}{xml}");
+            assert!(looks_like_drawio(&text));
+            let pasted = decode(&text).unwrap();
+            let mut sheet = Sheet::new("Paste", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            paste_board_selection(&mut sheet, &pasted.payload, Vec2::ZERO).unwrap();
+            assert!(
+                sheet
+                    .canvas
+                    .objects
+                    .iter()
+                    .any(|object| object.label() == "50% and %25"),
+                "{prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn clipboard_silent_loss_of_container_frames_is_reported() {
+        for text in [FRAMED_MODEL.to_owned(), encode_uri_component(FRAMED_MODEL)] {
+            let pasted = decode(&text).unwrap();
+            assert_eq!(kinds(&pasted.payload), (1, 0));
+            assert_eq!(pasted.losses, vec![DrawioPasteLoss::ContainerFrames(1)]);
+            assert_eq!(pasted.warnings, vec![ImportWarning::Other]);
+        }
+    }
+
+    #[test]
+    fn clipboard_silent_loss_of_additional_pages_is_reported() {
+        let file = format!(
+            "<mxfile><diagram name=\"First\">{MODEL}</diagram><diagram name=\"Second\">{MODEL}</diagram></mxfile>"
+        );
+        for text in [file.clone(), encode_uri_component(&file)] {
+            let pasted = decode(&text).unwrap();
+            assert_eq!(kinds(&pasted.payload), (2, 1));
+            assert_eq!(pasted.losses, vec![DrawioPasteLoss::AdditionalPages(1)]);
+            assert_eq!(pasted.warnings, vec![ImportWarning::Other]);
+        }
+    }
+
+    #[test]
+    fn clipboard_combines_frame_and_page_losses_without_repeating_warnings() {
+        let first = FRAMED_MODEL
+            .replace("shape=rectangle;", "shape=unknown;")
+            .replace(
+                "</root>",
+                r#"<mxCell id="frame2" value="Another frame" style="swimlane;" vertex="1" parent="1"><mxGeometry x="400" y="200" width="100" height="100" as="geometry"/></mxCell></root>"#,
+            );
+        let file = format!(
+            "<mxfile><diagram name=\"First\">{first}</diagram><diagram name=\"Second\">{MODEL}</diagram><diagram name=\"Third\">{MODEL}</diagram></mxfile>"
+        );
+        let pasted = decode(&file).unwrap();
+        assert_eq!(
+            pasted.losses,
+            vec![
+                DrawioPasteLoss::ContainerFrames(2),
+                DrawioPasteLoss::AdditionalPages(2),
+            ]
+        );
+        assert_eq!(pasted.warnings, vec![ImportWarning::Other]);
+
+        let mut sheet = Sheet::new("Paste", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        paste_board_selection(&mut sheet, &pasted.payload, Vec2::ZERO).unwrap();
+        assert!(sheet.zones.is_empty());
+        assert_eq!(sheet.canvas.objects.len(), 1);
+        assert_eq!(sheet.canvas.objects[0].label(), "Child");
+    }
+
+    #[test]
+    fn clipboard_rejects_a_frame_without_pasteable_content() {
+        let only_frame = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="frame" value="Frame" style="swimlane;startSize=24;" vertex="1" parent="1"><mxGeometry width="240" height="120" as="geometry"/></mxCell></root></mxGraphModel>"#;
+        let error = decode(only_frame).unwrap_err().to_string();
+        assert!(error.contains("no pasteable items"), "{error}");
+    }
+
+    #[test]
+    fn clipboard_explains_when_only_later_pages_have_pasteable_content() {
+        let frame_only = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="frame" value="Frame" style="swimlane;" vertex="1" parent="1"><mxGeometry width="240" height="120" as="geometry"/></mxCell></root></mxGraphModel>"#;
+        let file = format!(
+            "<mxfile><diagram name=\"Empty\">{frame_only}</diagram><diagram name=\"Later\">{MODEL}</diagram></mxfile>"
+        );
+        let error = decode(&file).unwrap_err().to_string();
+        assert!(error.contains("first draw.io page"), "{error}");
+        assert!(
+            error.contains("additional pages were not pasted"),
+            "{error}"
+        );
     }
 
     #[test]

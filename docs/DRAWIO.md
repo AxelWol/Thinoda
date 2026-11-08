@@ -1076,8 +1076,10 @@ or raw XML back. Thinoda now matches both directions:
   data is present. `thinoda_io::drawio_clipboard::decode` runs it through the hardened
   import codec (same 16 MiB cap) and the result lands centred in the visible board area as
   one "Paste from draw.io" undo step, selected. If the importer had to simplify anything, a
-  warning toast says so; malformed data shows an error toast and leaves the sheet alone.
-  FIM sheets refuse the paste.
+  warning toast says so; omitted container frames and extra pages are counted in a
+  persistent, localized warning. Malformed data shows an error toast and leaves the sheet
+  alone. If the first page has no pasteable items, paste is rejected and the user is told
+  that later pages were not pasted. FIM sheets refuse the paste.
 - **Copy:** *Edit ▸ Copy as draw.io* (also in the board item context menu and the ribbon's
   Clipboard group) exports the selected board items through the export codec and writes the
   `encodeURIComponent` form as plain text, so pasting in diagrams.net yields editable
@@ -1087,12 +1089,49 @@ or raw XML back. Thinoda now matches both directions:
   Thinoda's private rich format).
 - Limits: container membership from draw.io (Thinoda zones) is not part of a board
   clipboard fragment, so pasted children arrive as free items; multi-page `mxfile` text
-  pastes its first page.
+  pastes its first page. The warning reports these omissions; it does not preserve them.
 - Tests: `drawio_clipboard` unit tests in thinoda-io (detection, plain/encoded decode,
   round trip, rejection, JS-compatible encoding) and
   `drawio_clipboard_text_pastes_as_one_undoable_selection`,
   `copy_as_drawio_writes_plain_encoded_model_that_pastes_back` and
   `malformed_drawio_text_reports_an_error_without_editing` in the app.
+
+**Clipboard omission safeguard and rubber-duck review.** Preparing a board
+fragment used to discard imported frames and later pages without adding an
+import warning. The decoder now reports the number of frames on the first
+page and the number of additional pages, and the app shows those details in a
+sticky warning. Sticky notifications do not expire on a timer, but remain
+subject to the normal five-notification queue limit. It still pastes only the
+first page and leaves its children outside the omitted frames. An empty or
+frame-only first page is rejected without editing the workbook; when later
+pages exist, the error says they were not pasted.
+
+The review also found that prefix detection accepted a byte-order mark which
+the decoder did not remove. Raw and URI-encoded byte-order marks, spaces,
+tabs and line breaks now follow the same detection and decoding rules. The
+review also caught encoded whitespace followed by plain XML: decoding the
+whole string corrupted or rejected literal percent signs in the XML. Only the
+prefix is stripped in that case; fully encoded XML is still decoded normally.
+Regression cases cover combined and multiple losses, warning deduplication,
+clean and encoded input, sticky notice lifetime, localized messages,
+first-page selection and one-step undo. The supplied diagram corpus checks
+reported counts against the imported workbook, and the draw.io fuzz target
+now validates successful clipboard fragments and their omission warnings.
+
+Validation covered 19 clipboard I/O tests, seven app clipboard tests, 29
+localization tests, five corpus tests using the 88 supplied diagrams, and five
+deterministic fuzz-seed tests. Native, WebAssembly and fuzz Clippy passed with
+warnings denied. A fresh web build passed the synthetic paste/undo journey in
+Chromium, Firefox and WebKit; screenshots showed both omission counts. This
+browser journey does not programmatically inspect the egui warning text, which
+is asserted by the app tests. A 21-second AddressSanitizer smoke completed
+14,054 executions; it does not meet the separate 30-minute campaign gate.
+
+These are disclosure safeguards, not preservation of frames or pages. The
+importer can also detach connectors from groups or frames and can simplify
+other source attributes before fragment preparation; the new counts do not
+cover every such loss. Retain the source diagram. Real system clipboard,
+assistive-technology and longer sanitizer-campaign acceptance remain open.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

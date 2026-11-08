@@ -753,6 +753,10 @@ those system-owned controls. WinGet publishing remains paused.
   links or fragments, decodes them locally without contacting the URL, and
   opens an unsaved converted copy. Remote-reference links such as `#U` are not
   supported; ordinary paste does not invoke this import.
+  Pasting draw.io diagram text inserts the first page as one undoable edit.
+  A persistent warning counts omitted container frames and additional pages;
+  pasted container children become free items. If the first page has no
+  pasteable items, the paste is rejected and later pages are not pasted.
   See [draw.io support and limitations](docs/DRAWIO.md).
 - Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
