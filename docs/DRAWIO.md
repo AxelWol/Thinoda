@@ -1690,9 +1690,10 @@ transparent, editable rectangle proxies instead of visible placeholders. Their
 labels, bounds, rotation and connector object targets remain available; the
 proxy's fill and stroke are transparent regardless of the source shape colors.
 A removed `fontColor` falls back to draw.io's black text with the requested text
-opacity. File, link and plain or URI-encoded clipboard imports use the same
-conversion. The supplied `requirements-flow.drawio` contains 108 recognized
-anchor cells; its styles and full-document import were exercised.
+opacity, subject to the independent-opacity limitation below. File, link and
+plain or URI-encoded clipboard imports use the same conversion. The supplied
+`requirements-flow.drawio` contains 108 recognized anchor cells; its styles and
+full-document import were exercised.
 
 The review caught two ways to silently change appearance: treating a bare
 stencil name as a registered named style would hide an ordinary placeholder,
@@ -1716,6 +1717,88 @@ remain approximate. The PDF was not independently raster-accepted, and current
 Office, real-device and assistive-technology acceptance remain open. Generic
 stencils, source-preserving save-back and the remaining phase gates are still
 outstanding.
+
+**Draw.io label colors and transparency (partial Phases 6 and 9) — critique.**
+The published editor treats `fontColor=none` as a removed color, not invisible
+text. Thinoda now imports it as black with `textOpacity` and reports Formatting,
+because draw.io's default also adapts to dark mode. Fully transparent labels
+export as an RGB `fontColor` with `textOpacity=0`, including transparent colors
+whose RGB channels are nonzero. The same rules apply to shapes, text objects,
+cards, line shapes and connectors, and to file, link and clipboard imports.
+Explicit connector label colors now render independently of their line colors
+on the canvas and in visual and editable PowerPoint exports. An editor-only
+contrast fallback makes otherwise unreadable label text editable without
+changing the saved color; for shapes it judges contrast against the visible
+fill after object opacity, and undo still restores the original label. Draw.io
+connector exports also use the effective stroke-color fallback when the
+connector has no override. Reimporting resolves that fallback to a connector
+color; it does not retain the distinction between the two native fields.
+
+**Compatibility:** earlier Thinoda draw.io exports represented transparent text
+as `fontColor=none`. Draw.io displayed those labels in its default color, but
+older Thinoda versions interpreted them as transparent. Those ambiguous files
+now import as default-colored text with a Formatting warning. Native `.thinoda`
+workbooks retain their existing data; keep a native copy when preserving the
+old interpretation matters.
+
+The review exposed a further model mismatch: draw.io applies `opacity` to the
+shape or line independently of `textOpacity`, while existing Thinoda objects
+apply their opacity to both. The published editor was checked with both HTML and
+SVG labels: `opacity=40;textOpacity=60` leaves the text at 60%, not 24%.
+Imported labels affected by this difference now report Formatting, including
+card backgrounds that cannot retain object opacity. The draw.io export and
+clipboard loss reports count affected labels and implicit connector colors that
+can differ, as well as partially transparent connector labels whose canvas
+compositing differs. A published-viewer probe rendered implicit labels on
+black-stroked connectors black in light mode and white in dark mode, while
+Thinoda inherits the fixed black line color. It also showed that an edge with
+`labelBackgroundColor=none` and a line-shaped vertex without an explicit
+background have no label backdrop. Thinoda cannot represent those choices and
+now warns on import. The app asks for consent on export and shows a localized
+sticky warning after **Copy as draw.io**; the strict clipboard API instead
+refuses a lossy copy. Connector backdrops retain the existing opaque native
+default when no explicit text color is present; explicit text colors use their
+effective alpha. This avoids changing old automatic connector labels merely
+because their line is translucent. SVG groups the explicit label and backdrop
+under one opacity, so their overlap does not accumulate opacity in SVG, PNG,
+JPEG and PDF rendering. Ordinary visual exports and flattened PowerPoint
+viewport slides now report when this grouping can differ from the canvas; the
+app presents the localized warning before exporting or printing.
+PNG output now converts the renderer's premultiplied pixels to straight alpha
+before encoding, preventing translucent colors from becoming too dark when
+another application composites the image.
+
+These warnings are safeguards, not full fidelity. In particular, adaptive
+default colors with independent partial text opacity are not yet represented;
+some imports render at full opacity, or use fixed black and lose dark-mode
+adaptation. A draw.io default label may also differ from Thinoda's inherited
+connector line color, and explicit label backgrounds are not retained.
+The source's absent-backdrop choice is not stored, so it cannot be reported
+again on a later export; retain the original draw.io file.
+Canvas and editable PowerPoint currently paint the translucent connector
+label and its backdrop separately; where a glyph overlaps a line, their
+composition can differ from draw.io's single opacity group. A PDFium raster
+check covers a translucent label over a connector, and pixel regressions also
+cover JPEG and flattened PowerPoint output. This is not general PDF viewer or
+Office acceptance.
+Implementing independent text opacity, adaptive color and background semantics
+requires versioned persistence and coordinated editing, clipboard, canvas and
+export changes; that work remains open. Do not remove the native opacity
+composition without a compatibility migration. Generic stencils,
+source-preserving save-back, real-device and assistive-technology acceptance,
+and the long fuzz campaign remain separate gates.
+
+**Validation and rubber-duck review.** The review found two additional gaps:
+ordinary visual exports could silently differ from the canvas's translucent
+connector compositing, and shape-editor contrast used the unfaded fill. Both
+are now covered as described above. The canvas library passed 490 tests with
+two ignored, shape-label editing passed 18, the app library passed 870 with two
+ignored, and three GPU label-visual tests passed. The I/O library passed 169;
+board export passed 52 with three ignored, and the label-specific ignored PDFium
+test passed when run separately. The current supplied corpus passed all 88
+files and all five corpus tests. Native all-target and WebAssembly Clippy,
+formatting and diff checks passed. These checks do not close the independent
+label-appearance, device, Office or full PDF acceptance work above.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

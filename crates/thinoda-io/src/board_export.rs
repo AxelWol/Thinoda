@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use thinoda_core::{
     CanvasObjectId, Endpoint, Sheet, Topic, Workbook,
-    board::{CanvasObjectKind, SheetRootMode},
+    board::{CanvasObject, CanvasObjectKind, SheetRootMode},
     model::PresentationSource,
 };
 
@@ -202,6 +202,8 @@ pub enum ExportLoss {
     BoundariesDropped(usize),
     /// Camera-image metadata or color profiles may be omitted during normalization.
     OrientedImageMetadataDropped(usize),
+    /// Grouped translucent labels can differ from their canvas compositing.
+    ConnectorLabelCompositingApproximated(usize),
     /// Board grid and snapping settings are not written.
     BoardSettingsDropped,
     /// Inline card titles with formatting or list semantics are not written.
@@ -213,6 +215,8 @@ pub enum ExportLoss {
     ConnectorAttachmentsDetached(usize),
     /// Legacy triangle arrow ends are approximated by draw.io classic arrows.
     LegacyConnectorMarkersApproximated(usize),
+    /// Label color or opacity can differ in draw.io.
+    DrawioLabelAppearanceApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -284,6 +288,23 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
             })
             .sum();
         push(ExportLoss::OrientedImageMetadataDropped, oriented_images);
+        let grouped_labels = sheets
+            .iter()
+            .filter(|(_, sheet)| {
+                format != Format::PowerPoint
+                    || sheet
+                        .presentation
+                        .slides
+                        .iter()
+                        .any(|slide| slide.source == PresentationSource::Viewport)
+            })
+            .flat_map(|(_, sheet)| &sheet.canvas.objects)
+            .filter(|object| connector_label_compositing_differs(object))
+            .count();
+        push(
+            ExportLoss::ConnectorLabelCompositingApproximated,
+            grouped_labels,
+        );
         if format == Format::PowerPoint
             && sheets.iter().any(|(_, sheet)| {
                 sheet.presentation.slides.is_empty()
@@ -368,6 +389,24 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
     out
 }
 
+fn connector_label_compositing_differs(object: &CanvasObject) -> bool {
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        return false;
+    };
+    if connector.label.is_empty() {
+        return false;
+    }
+    object.style.text_color.is_some_and(|color| {
+        let opacity = if object.style.opacity.is_finite() {
+            object.style.opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let alpha = (f32::from(color.a) * opacity).round() as u8;
+        alpha > 0 && alpha < 255
+    })
+}
+
 /// draw.io writes every sheet as a page. Board content round-trips; the mind-map
 /// structure is drawn but not editable as a map.
 fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportLoss> {
@@ -377,6 +416,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut inline_text = 0;
     let mut connector_attachments = 0;
     let mut legacy_markers = 0;
+    let mut label_appearance = 0;
     let mut settings = false;
     for sheet in sheets {
         for (id, topic) in &sheet.topics {
@@ -395,6 +435,17 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         slides += sheet.presentation.slides.len();
         connector_attachments += connector_attachment_counts(sheet).values().sum::<usize>();
         for object in &sheet.canvas.objects {
+            let opacity_differs = !object.label().is_empty()
+                && object.style.opacity < 1.0
+                && object.style.text_color.is_none_or(|color| color.a > 0);
+            let connector_label_differs = matches!(
+                &object.kind,
+                CanvasObjectKind::Connector(connector)
+                    if !connector.label.is_empty()
+                        && (object.style.text_color.is_none()
+                            || connector_label_compositing_differs(object))
+            );
+            label_appearance += usize::from(opacity_differs || connector_label_differs);
             if let CanvasObjectKind::Connector(connector) = &object.kind {
                 legacy_markers +=
                     usize::from(connector.arrow_start && connector.start_marker.is_none());
@@ -417,6 +468,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         (
             ExportLoss::LegacyConnectorMarkersApproximated,
             legacy_markers,
+        ),
+        (
+            ExportLoss::DrawioLabelAppearanceApproximated,
+            label_appearance,
         ),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),

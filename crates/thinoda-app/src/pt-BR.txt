@@ -46,6 +46,8 @@ Save boards as .thinoda to preserve cards, shapes, connectors, frames and board 
 Inline card text and list formatting omitted|Formatação e listas do texto dos cartões omitidas
 Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa mental convertidos em formas
 Connector-to-connector attachments detached|Conexões entre conectores desfeitas
+Label color or opacity may differ in draw.io|A cor ou opacidade dos rótulos pode ser diferente no draw.io
+Translucent connector labels may render differently|Rótulos translúcidos de conexões podem ser exibidos de forma diferente
 Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
 Presentation slides omitted|Slides de apresentação omitidos
 Thinoda on GitHub|Thinoda no GitHub

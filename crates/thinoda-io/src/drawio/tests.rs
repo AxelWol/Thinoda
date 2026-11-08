@@ -118,6 +118,504 @@ fn ordinary_drawio_note_alignment_is_imported() {
     assert_eq!(topic.style.align, Some(thinoda_core::TextAlign::Right));
 }
 
+#[test]
+fn removed_font_color_uses_the_drawio_default_across_board_items() {
+    let xml = page(
+        r##"<mxCell id="a" value="Shape" style="shape=rectangle;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="b" value="Text" style="text;fontColor=none;textOpacity=0;" vertex="1" parent="1"><mxGeometry x="140" y="0" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="c" value="Note" style="shape=note;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry x="0" y="100" width="120" height="80" as="geometry"/></mxCell>
+        <mxCell id="d" value="Line" style="shape=line;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry x="0" y="220" width="100" height="20" as="geometry"/></mxCell>
+        <mxCell id="e" value="Edge" style="endArrow=none;fontColor=none;textOpacity=40;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let sheet = &report.workbook.sheets[0];
+    for (label, expected) in [
+        ("Shape", Color::rgba(0, 0, 0, 102)),
+        ("Text", Color::TRANSPARENT),
+        ("Line", Color::rgba(0, 0, 0, 102)),
+        ("Edge", Color::rgba(0, 0, 0, 102)),
+    ] {
+        let object = sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.label() == label)
+            .unwrap();
+        assert_eq!(object.style.text_color, Some(expected), "{label}");
+    }
+    let note = sheet
+        .topics
+        .values()
+        .find(|topic| topic.title == "Note")
+        .unwrap();
+    assert_eq!(note.style.text_color, Some(Color::rgba(0, 0, 0, 102)));
+    report.workbook.validate().unwrap();
+
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.workbook, report.workbook);
+    assert_eq!(linked.warnings, report.warnings);
+}
+
+#[test]
+fn unresolved_or_invalid_default_text_opacity_is_reported() {
+    for style in [
+        "shape=rectangle;textOpacity=40;",
+        "shape=note;fontColor=default;textOpacity=50;",
+        "shape=line;fontColor=inherit;textOpacity=10;",
+        "shape=rectangle;fontColor=#ff0000;textOpacity=invalid;",
+        "shape=rectangle;fontColor=inherit;",
+        "shape=rectangle;fontColor=invalid;",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="Label" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn drawio_independent_label_opacity_and_default_connector_color_are_reported() {
+    for (element, style, value, warning) in [
+        ("vertex", "shape=rectangle;opacity=40;", "Shape", true),
+        (
+            "vertex",
+            "shape=rectangle;opacity=40;fontColor=#ff0000;textOpacity=60;",
+            "Shape",
+            true,
+        ),
+        (
+            "vertex",
+            "shape=rectangle;opacity=40;fontColor=#ff0000;textOpacity=0;",
+            "Shape",
+            false,
+        ),
+        ("vertex", "shape=rectangle;opacity=40;", "", false),
+        ("vertex", "shape=note;opacity=40;", "", true),
+        ("vertex", "shape=line;strokeColor=#ff0000;", "Line", true),
+        ("vertex", "shape=line;strokeColor=#000000;", "Line", true),
+        (
+            "vertex",
+            "shape=line;strokeColor=#ff0000;fontColor=#000000;",
+            "Line",
+            true,
+        ),
+        (
+            "vertex",
+            "shape=line;strokeColor=#ff0000;fontColor=#000000;textOpacity=0;",
+            "Line",
+            false,
+        ),
+        ("edge", "strokeColor=#ff0000;endArrow=none;", "Edge", true),
+        ("edge", "strokeColor=#000000;endArrow=none;", "Edge", true),
+        (
+            "edge",
+            "strokeColor=#ff0000;fontColor=default;endArrow=none;",
+            "Edge",
+            true,
+        ),
+        (
+            "edge",
+            "strokeColor=#000000;strokeOpacity=40;endArrow=none;",
+            "Edge",
+            true,
+        ),
+        (
+            "edge",
+            "strokeColor=#ff0000;fontColor=#000000;endArrow=none;",
+            "Edge",
+            false,
+        ),
+        (
+            "edge",
+            "strokeColor=#ff0000;fontColor=#000000;textOpacity=50;endArrow=none;",
+            "Edge",
+            true,
+        ),
+        (
+            "edge",
+            "strokeColor=#ff0000;fontColor=#000000;textOpacity=0;endArrow=none;",
+            "Edge",
+            false,
+        ),
+        (
+            "edge",
+            "strokeColor=#ff0000;fontColor=#000000;labelBackgroundColor=none;endArrow=none;",
+            "Edge",
+            true,
+        ),
+        (
+            "edge",
+            "strokeColor=#ff0000;fontColor=#000000;textOpacity=0;labelBackgroundColor=none;endArrow=none;",
+            "Edge",
+            false,
+        ),
+        ("edge", "endArrow=none;", "Edge", true),
+        ("edge", "opacity=40;endArrow=none;", "Edge", true),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="{value}" style="{style}" {element}="1" parent="1"><mxGeometry x="0" y="0" width="100" height="60" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warning,
+            "{element} {style} {value:?}: {:?}",
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn zero_opacity_hides_text_even_when_font_color_is_unresolved() {
+    for style in [
+        "shape=rectangle;textOpacity=0;",
+        "shape=rectangle;fontColor=default;textOpacity=0;",
+        "shape=rectangle;fontColor=inherit;textOpacity=0;",
+        "shape=rectangle;textOpacity=-20;",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="Hidden" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}"
+        );
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.style.text_color, Some(Color::TRANSPARENT), "{style}");
+    }
+}
+
+#[test]
+fn imported_text_opacity_is_used_by_visual_exports() {
+    let options = ExportOptions {
+        transparent: true,
+        ..Default::default()
+    };
+    for (style, svg_color, visible) in [
+        ("fontColor=none;textOpacity=40;", "#00000066", true),
+        ("textOpacity=0;", "#00000000", false),
+        ("fontColor=#0c2238;textOpacity=0;", "#0C223800", false),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="Label" style="shape=rectangle;fillColor=none;strokeColor=none;{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let book = load(&xml).workbook;
+        let svg = String::from_utf8(export_bytes(&book, Format::Svg, &options).unwrap()).unwrap();
+        assert!(svg.contains(&format!(r#"fill="{svg_color}">Label</text>"#)));
+        let png = export_bytes(&book, Format::Png, &options).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        let max_alpha = pixels.pixels().map(|pixel| pixel.0[3]).max().unwrap();
+        if visible {
+            assert!(max_alpha > 0 && max_alpha <= 102, "{style}: {max_alpha}");
+        } else {
+            assert_eq!(max_alpha, 0, "{style}");
+        }
+    }
+}
+
+#[test]
+fn connector_visual_exports_separate_text_color_from_the_line_and_backdrop() {
+    let options = ExportOptions {
+        transparent: true,
+        ..Default::default()
+    };
+    let mut line_pixel = None;
+    for (explicit, label_color, backdrop_alpha) in [
+        (None, "#C81E2840", 255),
+        (Some(Color::rgba(12, 34, 56, 128)), "#0C2238", 64),
+        (Some(Color::rgba(12, 34, 56, 0)), "#0C2238", 0),
+    ] {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(0.0, 0.0)),
+            Endpoint::Point(Vec2::new(120.0, 0.0)),
+        );
+        connector.label = "Edge".into();
+        connector.color = Some(Color::rgba(200, 30, 40, 128));
+        connector.arrow_end = false;
+        let mut object = CanvasObject::connector(connector);
+        object.style.text_color = explicit;
+        object.style.opacity = 0.5;
+        sheet.add_canvas_object(object).unwrap();
+        let book = Workbook::new(sheet);
+        let svg = String::from_utf8(export_bytes(&book, Format::Svg, &options).unwrap()).unwrap();
+        assert!(svg.contains(r##"stroke="#C81E2840""##), "{svg}");
+        let label = svg
+            .find(&format!("fill=\"{label_color}\">Edge</text>"))
+            .unwrap();
+        let backdrop = svg[..label].rsplit("<rect ").next().unwrap();
+        let attribute = |source: &str, name: &str| {
+            source
+                .split(&format!("{name}=\""))
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap()
+                .to_owned()
+        };
+        let fill = attribute(backdrop, "fill");
+        assert_eq!(fill.len(), 7, "{backdrop}");
+        if backdrop_alpha != 255 {
+            assert!(
+                svg.contains(&format!(
+                    "<g opacity=\"{:.6}\">",
+                    f32::from(backdrop_alpha) / 255.0
+                )),
+                "{svg}"
+            );
+        }
+
+        let view_box = attribute(&svg, "viewBox");
+        let values: Vec<f32> = view_box
+            .split_whitespace()
+            .map(|part| part.parse().unwrap())
+            .collect();
+        let x: f32 = attribute(backdrop, "x").parse().unwrap();
+        let y: f32 = attribute(backdrop, "y").parse().unwrap();
+        let width: f32 = attribute(backdrop, "width").parse().unwrap();
+        let height: f32 = attribute(backdrop, "height").parse().unwrap();
+        let pixels = image::load_from_memory(&export_bytes(&book, Format::Png, &options).unwrap())
+            .unwrap()
+            .to_rgba8();
+        let sample = |x: f32, y: f32| {
+            pixels.get_pixel(
+                (x - values[0]).floor() as u32,
+                (y - values[1]).floor() as u32,
+            )
+        };
+        let alpha = sample(x + 2.5, y + height - 4.0).0[3];
+        assert!(
+            (i16::from(alpha) - backdrop_alpha).abs() <= 2,
+            "{explicit:?}: {alpha}"
+        );
+        let line = *sample(10.0, -0.5);
+        assert!(line.0[3] > 0);
+        if let Some(previous) = line_pixel {
+            assert_eq!(line, previous, "{explicit:?}");
+        }
+        line_pixel = Some(line);
+        if backdrop_alpha == 64 {
+            let mut saw_text = false;
+            for iy in (y as i32 + 2)..-2 {
+                for ix in (x as i32 + 3)..((x + width) as i32 - 3) {
+                    let pixel = sample(ix as f32 + 0.5, iy as f32 + 0.5).0;
+                    assert!(pixel[3] <= 65, "overlapping label alpha: {pixel:?}");
+                    saw_text |= pixel[3] > 0 && pixel[0] < 180;
+                }
+            }
+            assert!(saw_text, "the checked region must contain label glyphs");
+        }
+    }
+}
+
+#[test]
+fn drawio_exports_warn_when_object_opacity_changes_label_appearance() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    for (label, opacity, color) in [
+        ("Shape", 0.4, Some(Color::rgba(12, 34, 56, 128))),
+        ("Automatic", 0.6, None),
+        ("Hidden", 0.4, Some(Color::TRANSPARENT)),
+        ("Opaque", 1.0, Some(Color::BLACK)),
+        ("", 0.4, Some(Color::BLACK)),
+    ] {
+        let mut object = shape(ShapeKind::Rectangle, rect(0.0, 0.0, 100.0, 60.0), label);
+        object.style.opacity = opacity;
+        object.style.text_color = color;
+        sheet.add_canvas_object(object).unwrap();
+    }
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label = "Edge".into();
+    connector.arrow_end = false;
+    let mut object = CanvasObject::connector(connector);
+    object.style.opacity = 0.5;
+    sheet.add_canvas_object(object).unwrap();
+    let mut colored_connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    colored_connector.label = "Colored edge".into();
+    colored_connector.color = Some(Color::rgb(200, 30, 40));
+    colored_connector.arrow_end = false;
+    sheet
+        .add_canvas_object(CanvasObject::connector(colored_connector))
+        .unwrap();
+    let mut automatic_connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    automatic_connector.label = "Automatic edge".into();
+    automatic_connector.arrow_end = false;
+    sheet
+        .add_canvas_object(CanvasObject::connector(automatic_connector))
+        .unwrap();
+    let mut black_connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    black_connector.label = "Black edge".into();
+    black_connector.color = Some(Color::BLACK);
+    black_connector.arrow_end = false;
+    sheet
+        .add_canvas_object(CanvasObject::connector(black_connector))
+        .unwrap();
+    let mut translucent_connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    translucent_connector.label = "Translucent edge".into();
+    translucent_connector.arrow_end = false;
+    let mut translucent_object = CanvasObject::connector(translucent_connector);
+    translucent_object.style.text_color = Some(Color::rgba(0, 0, 255, 128));
+    sheet.add_canvas_object(translucent_object).unwrap();
+    for (label, color) in [
+        ("Opaque edge", Color::rgb(0, 0, 255)),
+        ("Invisible edge", Color::TRANSPARENT),
+    ] {
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.label = label.into();
+        connector.arrow_end = false;
+        let mut object = CanvasObject::connector(connector);
+        object.style.text_color = Some(color);
+        sheet.add_canvas_object(object).unwrap();
+    }
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioLabelAppearanceApproximated(7)],
+            "{format:?}"
+        );
+    }
+    assert!(export_losses(&book, Format::Thinoda, &ExportOptions::default()).is_empty());
+}
+
+#[test]
+fn drawio_connector_export_uses_the_effective_stroke_color() {
+    let fallback = Color::rgba(40, 80, 120, 128);
+    let override_color = Color::rgb(200, 30, 40);
+    for (connector_color, style_stroke, expected) in [
+        (None, None, None),
+        (None, Some(fallback), Some(fallback)),
+        (Some(override_color), Some(fallback), Some(override_color)),
+        (None, Some(Color::TRANSPARENT), Some(Color::TRANSPARENT)),
+    ] {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.color = connector_color;
+        connector.arrow_end = false;
+        let mut object = CanvasObject::connector(connector);
+        object.style.stroke = style_stroke;
+        sheet.add_canvas_object(object).unwrap();
+        let restored = roundtrip(&Workbook::new(sheet));
+        assert_eq!(
+            connectors(&restored.sheets[0])[0].color,
+            expected,
+            "connector={connector_color:?}, style={style_stroke:?}"
+        );
+    }
+}
+
+#[test]
+fn transparent_text_is_exported_with_zero_opacity_and_round_trips() {
+    use std::io::Read;
+
+    for transparent in [Color::TRANSPARENT, Color::rgba(12, 34, 56, 0)] {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = shape(ShapeKind::Rectangle, rect(0.0, 0.0, 100.0, 60.0), "Shape");
+        object.style.text_color = Some(transparent);
+        let object_id = sheet.add_canvas_object(object).unwrap();
+        let card = sheet
+            .add_card(
+                "Card",
+                Vec2::new(240.0, 30.0),
+                Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+            )
+            .unwrap();
+        sheet.topic_mut(card).unwrap().style.text_color = Some(transparent);
+        let mut connector =
+            CanvasConnector::new(Endpoint::Object(object_id), Endpoint::Topic(card));
+        connector.label = "Edge".into();
+        let mut edge = CanvasObject::connector(connector);
+        edge.style.text_color = Some(transparent);
+        sheet.add_canvas_object(edge).unwrap();
+        let original = Workbook::new(sheet);
+
+        let xml = String::from_utf8(export(&original).unwrap()).unwrap();
+        assert_eq!(xml.matches("textOpacity=0;").count(), 3, "{xml}");
+        assert!(!xml.contains("fontColor=none;"), "{xml}");
+        let report = load(&xml);
+        let sheet = &report.workbook.sheets[0];
+        for label in ["Shape", "Edge"] {
+            let object = sheet
+                .canvas
+                .objects
+                .iter()
+                .find(|object| object.label() == label)
+                .unwrap();
+            assert_eq!(object.style.text_color, Some(transparent), "{label}");
+        }
+        let card = sheet
+            .topics
+            .values()
+            .find(|topic| topic.title == "Card")
+            .unwrap();
+        assert_eq!(card.style.text_color, Some(transparent));
+
+        let mut presentation = report.workbook.clone();
+        presentation
+            .active_mut()
+            .add_presentation_slide(
+                "Text alpha",
+                PresentationSource::Branch(card.id),
+                rect(-50.0, -100.0, 450.0, 260.0),
+            )
+            .unwrap();
+        let powerpoint =
+            export_bytes(&presentation, Format::PowerPoint, &ExportOptions::default()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(powerpoint)).unwrap();
+        let mut slide = String::new();
+        archive
+            .by_name("ppt/slides/slide1.xml")
+            .unwrap()
+            .read_to_string(&mut slide)
+            .unwrap();
+        for label in ["Shape", "Card", "Edge"] {
+            let text = slide
+                .split("<p:sp>")
+                .find(|fragment| fragment.contains(&format!("<a:t>{label}</a:t>")))
+                .unwrap_or_else(|| panic!("missing {label} in PowerPoint slide"));
+            assert!(text.contains(r#"<a:alpha val="0"/>"#), "{label}: {text}");
+        }
+        let edge_background = slide
+            .split("<p:sp>")
+            .find(|fragment| fragment.contains("Connector label background"))
+            .unwrap();
+        assert!(edge_background.contains(r#"<a:alpha val="0"/>"#));
+    }
+}
+
 const INVISIBLE_ANCHORS: &[&str] = &[
     "mxgraph.mockup.anchor",
     "mxgraph.mockup.forms.anchor",
@@ -587,7 +1085,7 @@ fn mockup_rectangle_warns_about_unresolved_default_colors_and_opacity() {
             "fillColor=default;strokeColor=#000;fontColor=#000;",
             true,
         ),
-        ("", "fillColor=#fff;strokeColor=#000;fontColor=none;", false),
+        ("", "fillColor=#fff;strokeColor=#000;fontColor=none;", true),
         ("", "strokeColor=#000;fontColor=#000;fillOpacity=40;", true),
         ("", "fillColor=#fff;fontColor=#000;strokeOpacity=40;", true),
         ("", "fillColor=#fff;strokeColor=#000;textOpacity=40;", true),
@@ -644,19 +1142,12 @@ fn mockup_rectangle_warns_about_unresolved_default_colors_and_opacity() {
 #[test]
 fn mockup_none_font_color_uses_drawio_black_and_text_opacity() {
     for alias in MOCKUP_RECTANGLES {
-        for (radius, warning) in [("0", false), ("10", true)] {
+        for radius in ["0", "10"] {
             let xml = page(&format!(
                 r##"<mxCell id="a" value="Readable" style="shape={alias};rSize={radius};fillColor=#fff;strokeColor=#000;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
             ));
             let report = load(&xml);
-            assert_eq!(
-                report.warnings,
-                if warning {
-                    vec![ImportWarning::Formatting]
-                } else {
-                    vec![]
-                }
-            );
+            assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
             let object = shapes(&report.workbook.sheets[0])[0];
             assert_eq!(object.label(), "Readable");
             assert_eq!(object.style.text_color, Some(Color::rgba(0, 0, 0, 102)));
@@ -1010,9 +1501,13 @@ fn board() -> Workbook {
 }
 
 fn roundtrip(book: &Workbook) -> Workbook {
+    roundtrip_with_warnings(book, &[])
+}
+
+fn roundtrip_with_warnings(book: &Workbook, expected: &[ImportWarning]) -> Workbook {
     let bytes = export(book).unwrap();
     let report = import(&bytes).unwrap();
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(report.warnings, expected);
     report.workbook.validate().unwrap();
     report.workbook
 }
@@ -1051,10 +1546,10 @@ fn shape_summaries(sheet: &Sheet) -> Vec<String> {
 }
 
 #[test]
-fn board_round_trips_without_warnings_and_is_idempotent() {
+fn board_round_trips_with_reported_color_approximations_and_is_idempotent() {
     let original = board();
-    let first = roundtrip(&original);
-    let second = roundtrip(&first);
+    let first = roundtrip_with_warnings(&original, &[ImportWarning::Formatting]);
+    let second = roundtrip_with_warnings(&first, &[ImportWarning::Formatting]);
     assert_eq!(first, second, "re-export changed the imported board");
     assert_eq!(export(&first).unwrap(), export(&second).unwrap());
 
@@ -1946,7 +2441,7 @@ fn nested_connector_waypoints_import_and_round_trip_in_parent_coordinates() {
         r#"
         <mxCell id="g" style="group" vertex="1" parent="1"><mxGeometry x="100" y="200" width="300" height="200" as="geometry"/></mxCell>
         <mxCell id="a" value="A" vertex="1" parent="g"><mxGeometry width="20" height="20" as="geometry"/></mxCell>
-        <mxCell id="e" value="Route" style="edgeStyle=none;endArrow=none;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="50" y="10" as="sourcePoint"/><mxPoint x="150" y="90" as="targetPoint"/><Array as="points"><mxPoint x="80" y="10"/><mxPoint x="80" y="90"/></Array></mxGeometry></mxCell>
+        <mxCell id="e" value="Route" style="edgeStyle=none;endArrow=none;fontColor=#000000;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="50" y="10" as="sourcePoint"/><mxPoint x="150" y="90" as="targetPoint"/><Array as="points"><mxPoint x="80" y="10"/><mxPoint x="80" y="90"/></Array></mxGeometry></mxCell>
         "#,
     );
     let sheet = clean(&xml);
@@ -2680,6 +3175,7 @@ fn waypoint_connector_attachments_export_at_path_midpoint_with_loss_warning() {
             vec![
                 ExportLoss::ConnectorAttachmentsDetached(1),
                 ExportLoss::LegacyConnectorMarkersApproximated(2),
+                ExportLoss::DrawioLabelAppearanceApproximated(2),
             ]
         );
         assert!(matches!(
@@ -3158,7 +3654,10 @@ fn export_reports_flattened_map_content() {
     let mut book = board();
     assert_eq!(
         export_losses(&book, Format::DrawIo, &ExportOptions::default()),
-        vec![ExportLoss::LegacyConnectorMarkersApproximated(2)]
+        vec![
+            ExportLoss::LegacyConnectorMarkersApproximated(2),
+            ExportLoss::DrawioLabelAppearanceApproximated(2),
+        ]
     );
     let sheet = &mut book.sheets[0];
     let idea = sheet.add_floating("Idea", Vec2::new(200.0, -300.0));
@@ -3176,13 +3675,14 @@ fn export_reports_flattened_map_content() {
         vec![
             ExportLoss::MapElementsFlattened(2),
             ExportLoss::LegacyConnectorMarkersApproximated(2),
+            ExportLoss::DrawioLabelAppearanceApproximated(2),
             ExportLoss::TopicDetailsDropped(1),
             ExportLoss::SlidesDropped(1),
         ]
     );
     let bytes = export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
     let report = import(&bytes).unwrap();
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
     let sheet = &report.workbook.sheets[0];
     assert!(shapes(sheet).iter().any(|o| o.label() == "Idea"));
     assert!(shapes(sheet).iter().any(|o| o.label() == "Detail"));

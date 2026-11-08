@@ -498,6 +498,14 @@ const DE: &[(&str, &str)] = &[
         "Verbindungen zwischen Verbindungslinien gelöst",
     ),
     (
+        "Label color or opacity may differ in draw.io",
+        "Farbe oder Deckkraft der Beschriftung können in draw.io abweichen",
+    ),
+    (
+        "Translucent connector labels may render differently",
+        "Halbtransparente Verbindungsbeschriftungen können anders dargestellt werden",
+    ),
+    (
         "Topic notes, labels, markers or tasks omitted",
         "Notizen, Beschriftungen, Markierungen oder Aufgaben von Themen ausgelassen",
     ),
@@ -5016,6 +5024,8 @@ mod tests {
             "Inline card text and list formatting omitted",
             "Mind-map topics and links flattened to shapes",
             "Connector-to-connector attachments detached",
+            "Label color or opacity may differ in draw.io",
+            "Translucent connector labels may render differently",
             "Topic notes, labels, markers or tasks omitted",
             "Presentation slides omitted",
         ];

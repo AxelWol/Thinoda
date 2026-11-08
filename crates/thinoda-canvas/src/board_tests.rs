@@ -4476,6 +4476,58 @@ fn connector_label_draft_is_available_for_snapshot_recovery() {
 }
 
 #[test]
+fn transparent_shape_and_connector_labels_remain_editable_without_recoloring() {
+    for dark in [false, true] {
+        for connector in [false, true] {
+            let mut sheet = board();
+            let id = if connector {
+                let mut edge = CanvasConnector::new(
+                    Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                edge.label = "Before".into();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(edge))
+                    .unwrap()
+            } else {
+                shape(&mut sheet, 0.0, 0.0, "Before")
+            };
+            sheet.canvas.object_mut(id).unwrap().style.text_color =
+                Some(thinoda_core::Color::TRANSPARENT);
+            let mut h = harness(sheet);
+            h.state_mut().view.dark = dark;
+            {
+                let state = h.state_mut();
+                assert!(state.view.begin_board_label(&state.doc, id));
+            }
+            h.run_steps(2);
+            h.get_by_label("Board object label").type_text("After");
+            h.run_steps(2);
+            h.key_press(Key::Enter);
+            h.run_steps(2);
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(
+                object.label(),
+                "After",
+                "dark={dark}, connector={connector}"
+            );
+            assert_eq!(
+                object.style.text_color,
+                Some(thinoda_core::Color::TRANSPARENT)
+            );
+            assert!(h.state_mut().doc.undo());
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), "Before");
+            assert_eq!(
+                object.style.text_color,
+                Some(thinoda_core::Color::TRANSPARENT)
+            );
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
 fn connector_label_editor_tracks_asymmetric_waypoint_path() {
     let mut sheet = board();
     let mut connector = CanvasConnector::new(

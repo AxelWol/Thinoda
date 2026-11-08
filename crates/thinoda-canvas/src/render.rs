@@ -1079,6 +1079,18 @@ pub fn board_label_colors(
     (text, color32(background))
 }
 
+pub(crate) fn shape_label_editor_background(
+    sheet: &Sheet,
+    style: &thinoda_core::board::ObjectStyle,
+    dark: bool,
+) -> Color32 {
+    let page = core_color32(sheet_background(sheet, dark));
+    let background = style.fill.map_or(page, |fill| {
+        core_color32(opacity_color(color32(fill), style.opacity)).over(page)
+    });
+    color32(background)
+}
+
 fn opacity_color(color: Color32, opacity: f32) -> Color32 {
     color.gamma_multiply(opacity.clamp(0.0, 1.0))
 }
@@ -1319,14 +1331,22 @@ fn paint_canvas_object(
                 if !connector.label.is_empty() && editing_board_object != Some(object.id) {
                     let mid = xf.pos(label_center.expect("a connector path has points"));
                     let font = FontId::proportional((12.0 * z).max(7.0));
-                    let galley = painter.layout_no_wrap(connector.label.clone(), font, color);
+                    let text_color = object
+                        .style
+                        .text_color
+                        .map(color32)
+                        .map(|color| opacity_color(color, object.style.opacity))
+                        .unwrap_or(color);
+                    let background = sheet_background(sheet, opts.dark);
+                    let backdrop = if object.style.text_color.is_some() {
+                        opacity_color(background, f32::from(text_color.a()) / 255.0)
+                    } else {
+                        background
+                    };
+                    let galley = painter.layout_no_wrap(connector.label.clone(), font, text_color);
                     let rect = Rect::from_center_size(mid, galley.size() + vec2(8.0, 4.0) * z);
-                    painter.rect_filled(
-                        rect,
-                        CornerRadius::same((4.0 * z) as u8),
-                        sheet_background(sheet, opts.dark),
-                    );
-                    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, color);
+                    painter.rect_filled(rect, CornerRadius::same((4.0 * z) as u8), backdrop);
+                    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
                 }
             }
         }
@@ -2310,6 +2330,111 @@ mod tests {
         let expected = opacity_color(color32(Color::highest_contrast_on(under)), 0.5);
         assert_eq!(label_color(&fallback_output), expected);
         fallback_output.textures_delta.clear();
+    }
+
+    #[test]
+    fn connector_labels_use_explicit_text_color_without_changing_the_line() {
+        use thinoda_core::board::{CanvasConnector, Endpoint};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(10.0, 20.0)),
+            Endpoint::Point(Vec2::new(110.0, 20.0)),
+        );
+        connector.label = "Edge label".into();
+        connector.color = Some(Color::rgba(200, 30, 40, 128));
+        connector.arrow_end = false;
+        let mut object = CanvasObject::connector(connector);
+        object.style.opacity = 0.5;
+        let id = sheet.add_canvas_object(object).unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let xf = Xf {
+            origin: pos2(100.0, 100.0),
+            zoom: 1.0,
+        };
+        let line_color = opacity_color(color32(Color::rgba(200, 30, 40, 128)), 0.5);
+        for dark in [false, true] {
+            for explicit in [
+                None,
+                Some(Color::rgb(0, 0, 255)),
+                Some(Color::rgba(0, 0, 255, 128)),
+                Some(Color::TRANSPARENT),
+            ] {
+                sheet.canvas.object_mut(id).unwrap().style.text_color = explicit;
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_pass(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        paint_map(
+                            &ctx.layer_painter(egui::LayerId::background()),
+                            &sheet,
+                            &layout,
+                            xf,
+                            &PaintOptions {
+                                dark,
+                                ..Default::default()
+                            },
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                let label = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        Shape::Text(text) if text.galley.job.text == "Edge label" => Some(text),
+                        _ => None,
+                    });
+                let expected = explicit
+                    .map(color32)
+                    .map(|color| opacity_color(color, 0.5))
+                    .unwrap_or(line_color);
+                assert_eq!(label.unwrap().fallback_color, expected, "{explicit:?}");
+                let backdrop = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        Shape::Rect(rect)
+                            if rect.rect.contains(xf.pos(Vec2::new(60.0, 20.0)))
+                                && rect.rect.width() < 200.0 =>
+                        {
+                            Some(rect)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                let background = sheet_background(&sheet, dark);
+                let expected_backdrop = if explicit.is_some() {
+                    opacity_color(background, f32::from(expected.a()) / 255.0)
+                } else {
+                    background
+                };
+                assert_eq!(backdrop.fill, expected_backdrop, "{explicit:?}");
+                let line = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        Shape::Path(path)
+                            if path.points
+                                == [
+                                    xf.pos(Vec2::new(10.0, 20.0)),
+                                    xf.pos(Vec2::new(110.0, 20.0)),
+                                ] =>
+                        {
+                            Some(path)
+                        }
+                        _ => None,
+                    });
+                assert!(matches!(
+                    line.unwrap().stroke.color,
+                    egui::epaint::ColorMode::Solid(color) if color == line_color
+                ));
+            }
+        }
     }
 
     #[test]

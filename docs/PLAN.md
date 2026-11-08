@@ -62,6 +62,7 @@ complete:
 | Bar-marker geometry, persistence, controls and validation | Complete locally | The bar-marker checkpoint in [DRAWIO.md](DRAWIO.md#41-implementation-progress) records compatibility, tests and critique; other marker and connector work remains |
 | Adjustable mockup rectangle radii | Complete locally | The absolute-radius checkpoint records persistence gates, tests, critique and limitations; generic stencils remain open |
 | Invisible draw.io anchors | Complete locally | The anchor checkpoint records transparent proxies, conversion warnings, tests and remaining source-fidelity limits; generic stencils remain open |
+| Draw.io label colors and transparency | Partial | Removed colors and fully transparent text are distinguished; editor contrast and visual-export warnings are improved. Independent text opacity, adaptive defaults and label backgrounds still require versioned model and renderer work |
 | Windows pen ink | Partial | Pen-first browser interruption mitigation is implemented; native Windows pen identity, ambiguous or touch-first streams and physical-device acceptance remain |
 | SVG sheet clipboard | Partial | Windows and supported browsers publish SVG with editable sheet text; real system clipboard, recipient and cross-platform acceptance remain |
 | Ink input and performance | Partial | Define budgets and verify representative native, browser, GPU, touch and stylus workloads |

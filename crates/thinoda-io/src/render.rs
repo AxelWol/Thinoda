@@ -1200,6 +1200,7 @@ fn board_object_svg(
                 size,
                 color,
                 backdrop,
+                group_backdrop,
             } => {
                 let c = rect.center();
                 if rotation != 0.0 {
@@ -1208,6 +1209,19 @@ fn board_object_svg(
                         pivot.x, pivot.y
                     ));
                 }
+                let grouped = group_backdrop.filter(|_| color.a < 255);
+                let (color, backdrop) = if let Some(background) = grouped {
+                    out.push_str(&format!(
+                        "<g opacity=\"{:.6}\">",
+                        f32::from(color.a) / 255.0
+                    ));
+                    (
+                        Color::rgba(color.r, color.g, color.b, 255),
+                        Some(background),
+                    )
+                } else {
+                    (color, backdrop)
+                };
                 if let Some(backdrop) = backdrop {
                     out.push_str(&format!(
                         "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"3\" fill=\"{}\"/>",
@@ -1228,6 +1242,9 @@ fn board_object_svg(
                         col(color),
                         esc(line)
                     ));
+                }
+                if grouped.is_some() {
+                    out.push_str("</g>");
                 }
                 if rotation != 0.0 {
                     out.push_str("</g>");
@@ -1357,7 +1374,11 @@ pub(crate) fn raster_svg(
         resvg::tiny_skia::Transform::from_scale(scale, scale),
         &mut pix.as_mut(),
     );
-    let rgba = pix.data().to_vec();
+    let mut rgba = pix.data().to_vec();
+    // JPEG has no alpha; its existing path composites over black.
+    if fmt != image::ImageFormat::Jpeg {
+        unpremultiply_rgba(&mut rgba);
+    }
     let mut img = image::RgbaImage::from_raw(width, height, rgba)
         .ok_or_else(|| IoError::Invalid("invalid rendered image".into()))?;
     let mut out = Cursor::new(Vec::new());
@@ -1373,6 +1394,18 @@ pub(crate) fn raster_svg(
     }
     Ok(out.into_inner())
 }
+
+pub(crate) fn unpremultiply_rgba(rgba: &mut [u8]) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        let alpha = u16::from(pixel[3]);
+        if alpha > 0 && alpha < 255 {
+            for channel in &mut pixel[..3] {
+                *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+            }
+        }
+    }
+}
+
 pub(crate) fn pdf(
     w: &Workbook,
     o: &ExportOptions,
@@ -1557,6 +1590,23 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use thinoda_core::{Rect, Sheet};
+
+    #[test]
+    fn transparent_png_uses_straight_alpha_for_color_channels() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="3" height="1">
+            <rect x="0" width="1" height="1" fill="#FF8000" fill-opacity="0.5"/>
+            <rect x="1" width="1" height="1" fill="#14283C"/>
+        </svg>"##;
+        let png = raster_svg(svg, 1.0, image::ImageFormat::Png).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        let translucent = pixels.get_pixel(0, 0).0;
+        assert_eq!(translucent[0], 255);
+        assert!((127..=129).contains(&translucent[1]));
+        assert_eq!(translucent[2], 0);
+        assert!((127..=128).contains(&translucent[3]));
+        assert_eq!(pixels.get_pixel(1, 0).0, [20, 40, 60, 255]);
+        assert_eq!(pixels.get_pixel(2, 0).0, [0, 0, 0, 0]);
+    }
 
     #[test]
     fn visual_image_budget_is_cumulative_and_does_not_change_on_failure() {
@@ -2149,11 +2199,20 @@ mod tests {
             (y0..y1)
                 .flat_map(|y| (x0..x1).map(move |x| (x, y)))
                 .filter(|(x, y)| {
-                    clipped
-                        .get_pixel(*x, *y)
-                        .0
+                    // Compare visible premultiplied colors; straight RGB can
+                    // differ substantially when alpha is close to zero.
+                    let premultiply = |pixel: [u8; 4]| {
+                        let alpha = u16::from(pixel[3]);
+                        [
+                            (u16::from(pixel[0]) * alpha + 127) / 255,
+                            (u16::from(pixel[1]) * alpha + 127) / 255,
+                            (u16::from(pixel[2]) * alpha + 127) / 255,
+                            alpha,
+                        ]
+                    };
+                    premultiply(clipped.get_pixel(*x, *y).0)
                         .iter()
-                        .zip(unclipped.get_pixel(*x, *y).0)
+                        .zip(premultiply(unclipped.get_pixel(*x, *y).0))
                         .any(|(a, b)| a.abs_diff(b) > 2)
                 })
                 .count()

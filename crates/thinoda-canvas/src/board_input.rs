@@ -4240,6 +4240,17 @@ fn label_text_halo(
     )
 }
 
+fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
+    let [r, g, b, a] = text.to_srgba_unmultiplied();
+    let [br, bg, bb, _] = background.to_srgba_unmultiplied();
+    let background = thinoda_core::Color::rgb(br, bg, bb);
+    if thinoda_core::Color::rgba(r, g, b, a).contrast_on(background) < 4.5 {
+        crate::render::color32(thinoda_core::Color::highest_contrast_on(background))
+    } else {
+        text
+    }
+}
+
 fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
     let rect = match &object.kind {
         CanvasObjectKind::Shape { shape, .. } => {
@@ -4509,6 +4520,12 @@ pub(super) fn show_label_editor(
     // Keep the shape outline visible; connector labels retain their line backdrop.
     let (text_color, background) =
         crate::render::board_label_colors(doc.sheet(), &object.style, view.dark);
+    let contrast_background = if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+        crate::render::shape_label_editor_background(doc.sheet(), &object.style, view.dark)
+    } else {
+        background
+    };
+    let text_color = label_editor_text_color(text_color, contrast_background);
     if !input_only && matches!(object.kind, CanvasObjectKind::Connector(_)) {
         ui.painter().rect_filled(rect, 2.0, background);
     }
@@ -4608,6 +4625,70 @@ pub(super) fn show_label_editor(
         *edit_error = Some(error);
         if !minimap_blocks_keyboard {
             ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
+    }
+}
+
+#[cfg(test)]
+mod label_editor_color_tests {
+    use super::*;
+
+    #[test]
+    fn editor_contrasts_transparent_and_low_contrast_text_without_changing_readable_colors() {
+        for background in [
+            Color32::WHITE,
+            Color32::BLACK,
+            Color32::from_rgb(50, 80, 110),
+        ] {
+            for text in [
+                Color32::TRANSPARENT,
+                Color32::from_black_alpha(102),
+                background,
+            ] {
+                let result = label_editor_text_color(text, background);
+                let [r, g, b, a] = result.to_srgba_unmultiplied();
+                let [br, bg, bb, _] = background.to_srgba_unmultiplied();
+                assert!(
+                    thinoda_core::Color::rgba(r, g, b, a)
+                        .contrast_on(thinoda_core::Color::rgb(br, bg, bb))
+                        >= 4.5
+                );
+            }
+        }
+        assert_eq!(
+            label_editor_text_color(Color32::BLUE, Color32::WHITE),
+            Color32::BLUE
+        );
+    }
+
+    #[test]
+    fn shape_editor_contrast_uses_the_visible_fill_after_object_opacity() {
+        let sheet = Sheet::new("Board", "");
+        for (dark, fill, text) in [
+            (true, thinoda_core::Color::WHITE, Color32::WHITE),
+            (false, thinoda_core::Color::BLACK, Color32::BLACK),
+        ] {
+            let style = thinoda_core::board::ObjectStyle {
+                fill: Some(fill),
+                text_color: Some(fill),
+                opacity: 0.0,
+                ..Default::default()
+            };
+            let (_, unfaded) = crate::render::board_label_colors(&sheet, &style, dark);
+            let visible = crate::render::shape_label_editor_background(&sheet, &style, dark);
+            assert_ne!(unfaded, visible);
+            assert_ne!(label_editor_text_color(text, unfaded), text);
+            assert_eq!(label_editor_text_color(text, visible), text);
+            assert_eq!(visible, crate::render::sheet_background(&sheet, dark));
+
+            let opaque = thinoda_core::board::ObjectStyle {
+                opacity: 1.0,
+                ..style
+            };
+            assert_eq!(
+                crate::render::shape_label_editor_background(&sheet, &opaque, dark),
+                crate::render::board_label_colors(&sheet, &opaque, dark).1
+            );
         }
     }
 }

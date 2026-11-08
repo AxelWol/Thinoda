@@ -581,6 +581,18 @@ impl Style {
         Some(self.color_with_opacity(color, opacity_key))
     }
 
+    fn text_color(&self) -> Option<Color> {
+        if self.get("fontColor") == Some("none") {
+            Some(self.color_with_opacity(Color::BLACK, "textOpacity"))
+        } else {
+            self.color("fontColor", "textOpacity").or_else(|| {
+                self.num("textOpacity")
+                    .is_some_and(|opacity| opacity <= 0.0)
+                    .then_some(Color::TRANSPARENT)
+            })
+        }
+    }
+
     fn color_with_opacity(&self, mut color: Color, opacity_key: &str) -> Color {
         if let Some(opacity) = self.num(opacity_key) {
             color.a = (f32::from(color.a) * (opacity / 100.0).clamp(0.0, 1.0)).round() as u8;
@@ -596,6 +608,21 @@ impl Style {
 
     fn opacity(&self) -> f32 {
         (self.num("opacity").unwrap_or(100.0) / 100.0).clamp(0.0, 1.0)
+    }
+
+    fn label_opacity_loss(&self) -> bool {
+        self.opacity() < 1.0 && self.num("textOpacity").is_none_or(|opacity| opacity > 0.0)
+    }
+
+    fn connector_label_appearance_loss(&self, source_is_edge: bool) -> bool {
+        let text = self.text_color();
+        let visible = text.is_none_or(|color| color.a > 0);
+        let translucent = text.is_some_and(|color| color.a > 0 && color.a < 255);
+        matches!(self.get("fontColor"), None | Some("" | "default"))
+            || visible
+                && (!source_is_edge
+                    || self.get("labelBackgroundColor") == Some("none")
+                    || translucent)
     }
 
     fn band(&self) -> Band {
@@ -702,7 +729,19 @@ impl Style {
             self.get(key)
                 .is_some_and(|_| self.num(key).is_none_or(|value| value != default))
         };
+        let unresolved_text_opacity = self.get("textOpacity").is_some_and(|_| {
+            self.num("textOpacity").is_none_or(|opacity| {
+                opacity != 100.0 && self.color("fontColor", "textOpacity").is_none()
+            })
+        });
+        let unresolved_font_color = self.get("fontColor").is_some_and(|color| {
+            !matches!(color, "" | "default" | "none")
+                && self.color("fontColor", "textOpacity").is_none()
+        });
         FLAGS.iter().any(|key| self.flag(key))
+            || self.get("fontColor") == Some("none")
+            || unresolved_text_opacity
+            || unresolved_font_color
             || colored("gradientColor")
             || colored("labelBackgroundColor")
             || colored("labelBorderColor")
@@ -1325,15 +1364,9 @@ fn object_style(style: &Style) -> ObjectStyle {
     ObjectStyle {
         fill: style.color("fillColor", "fillOpacity"),
         stroke: style.color("strokeColor", "strokeOpacity"),
-        text_color: style.color("fontColor", "textOpacity"),
+        text_color: style.text_color(),
         stroke_width: style.stroke_width(),
         opacity: style.opacity(),
-    }
-}
-
-fn restore_removed_font_color(style: &Style, object: &mut CanvasObject) {
-    if style.get("fontColor") == Some("none") {
-        object.style.text_color = Some(style.color_with_opacity(Color::BLACK, "textOpacity"));
     }
 }
 
@@ -1627,6 +1660,13 @@ impl<'a> PageImport<'a> {
         let cell = &cells[index];
         let style = &cell.style;
         let label = self.label(cell);
+        if style.opacity() < 1.0 && matches!(kind, Kind::Card(_) | Kind::Image)
+            || !label.is_empty()
+                && (style.label_opacity_loss()
+                    || kind == Kind::Line && style.connector_label_appearance_loss(false))
+        {
+            self.warn(ImportWarning::Formatting);
+        }
         if cell.link.is_some() && !matches!(kind, Kind::Card(_)) {
             self.warn(ImportWarning::Links);
         }
@@ -1662,7 +1702,6 @@ impl<'a> PageImport<'a> {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
                         stencil,
                     });
-                    restore_removed_font_color(style, &mut object);
                 }
                 if style.shape() == "partialRectangle" && matches!(kind, Kind::Approx(..)) {
                     object.style.stroke = Some(Color::TRANSPARENT);
@@ -1683,7 +1722,6 @@ impl<'a> PageImport<'a> {
                 let mut object = shape_object(ShapeKind::Rectangle, rect, style.rotation(), label);
                 object.style.fill = Some(Color::TRANSPARENT);
                 object.style.stroke = Some(Color::TRANSPARENT);
-                restore_removed_font_color(style, &mut object);
                 object
             }
             Kind::Text => {
@@ -1751,6 +1789,7 @@ impl<'a> PageImport<'a> {
                 connector.color = style.color("strokeColor", "strokeOpacity");
                 connector.width = style.stroke_width();
                 let mut object = CanvasObject::connector(connector);
+                object.style.text_color = style.text_color();
                 object.style.opacity = style.opacity();
                 object.band = style.band();
                 object
@@ -1816,7 +1855,7 @@ impl<'a> PageImport<'a> {
             Ok(id) => {
                 if let Some(topic) = self.sheet.topic_mut(id) {
                     topic.style.fill = card.color;
-                    topic.style.text_color = style.color("fontColor", "textOpacity");
+                    topic.style.text_color = style.text_color();
                     if matches!(kind, CardKind::Sticky | CardKind::Text) {
                         topic.style.align = style.text_align();
                     }
@@ -1944,6 +1983,11 @@ impl<'a> PageImport<'a> {
                 }
             }
         }
+        if !label.is_empty()
+            && (style.label_opacity_loss() || style.connector_label_appearance_loss(true))
+        {
+            self.warn(ImportWarning::Formatting);
+        }
         let mut connector = CanvasConnector::new(from, to);
         connector.route = if style.flag("curved") {
             ConnectorRoute::Curve
@@ -1973,7 +2017,7 @@ impl<'a> PageImport<'a> {
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
         let mut object = CanvasObject::connector(connector);
-        object.style.text_color = style.color("fontColor", "textOpacity");
+        object.style.text_color = style.text_color();
         object.style.opacity = style.opacity();
         object.band = style.band();
         object.alt_text = cell.tooltip.clone().unwrap_or_default();
@@ -2105,14 +2149,7 @@ fn rasterize_svg(svg: &[u8], display: Vec2) -> Option<(Vec<u8>, Vec2)> {
     );
     // tiny-skia stores premultiplied alpha; PNG expects straight alpha.
     let mut rgba = pixmap.take();
-    for pixel in rgba.as_chunks_mut::<4>().0 {
-        let alpha = u16::from(pixel[3]);
-        if alpha > 0 && alpha < 255 {
-            for channel in &mut pixel[..3] {
-                *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
-            }
-        }
-    }
+    crate::render::unpremultiply_rgba(&mut rgba);
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new(&mut png)
         .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
@@ -2268,7 +2305,8 @@ fn color_keys(out: &mut String, key: &str, opacity_key: &str, color: Option<Colo
     let Some(color) = color else {
         return;
     };
-    if color.a == 0 {
+    // Removing a font color restores draw.io's default instead of hiding text.
+    if color.a == 0 && key != "fontColor" {
         out.push_str(&format!("{key}=none;"));
         return;
     }
@@ -2793,7 +2831,12 @@ impl<'a> PageWriter<'a> {
                 if connector.end_marker_unfilled {
                     style.push_str("endFill=0;");
                 }
-                color_keys(&mut style, "strokeColor", "strokeOpacity", connector.color);
+                color_keys(
+                    &mut style,
+                    "strokeColor",
+                    "strokeOpacity",
+                    connector.color.or(object.style.stroke),
+                );
                 color_keys(
                     &mut style,
                     "fontColor",

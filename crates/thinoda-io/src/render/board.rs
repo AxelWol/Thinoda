@@ -51,6 +51,8 @@ pub(crate) enum Prim {
         color: Color,
         /// Backdrop behind the text (connector labels).
         backdrop: Option<Color>,
+        /// Unfaded backdrop when text and backdrop share one opacity group.
+        group_backdrop: Option<Color>,
     },
 }
 
@@ -211,6 +213,7 @@ pub(crate) fn object_prims(
                         opacity,
                     ),
                     backdrop: None,
+                    group_backdrop: None,
                 });
             }
         }
@@ -288,14 +291,24 @@ pub(crate) fn object_prims(
                     longest as f32 * 12.0 * 0.6 + 8.0,
                     lines.len() as f32 * 12.0 * 1.25 + 4.0,
                 );
+                let text_color = object
+                    .style
+                    .text_color
+                    .map(|text| faded(text, opacity))
+                    .unwrap_or(color);
                 out.push(Prim::Text {
                     rect: Rect::from_center_size(mid, size),
                     pivot: mid,
                     rotation: 0.0,
                     lines,
                     size: 12.0,
-                    color,
-                    backdrop: Some(background),
+                    color: text_color,
+                    backdrop: Some(if object.style.text_color.is_some() {
+                        faded(background, f32::from(text_color.a) / 255.0)
+                    } else {
+                        background
+                    }),
+                    group_backdrop: object.style.text_color.map(|_| background),
                 });
             }
         }

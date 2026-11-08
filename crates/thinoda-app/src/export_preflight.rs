@@ -176,6 +176,10 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     *count,
                     "Camera image metadata or color profiles may be omitted",
                 ),
+                ExportLoss::ConnectorLabelCompositingApproximated(count) => (
+                    *count,
+                    "Translucent connector labels may render differently",
+                ),
                 ExportLoss::InlineTextDropped(count) => {
                     (*count, "Inline card text and list formatting omitted")
                 }
@@ -187,6 +191,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 }
                 ExportLoss::LegacyConnectorMarkersApproximated(count) => {
                     (*count, "Legacy arrowheads approximated in draw.io")
+                }
+                ExportLoss::DrawioLabelAppearanceApproximated(count) => {
+                    (*count, "Label color or opacity may differ in draw.io")
                 }
                 ExportLoss::TopicDetailsDropped(count) => {
                     (*count, "Topic notes, labels, markers or tasks omitted")

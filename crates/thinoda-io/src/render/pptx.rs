@@ -323,6 +323,7 @@ impl Drawing {
                     size,
                     color,
                     backdrop,
+                    group_backdrop: _,
                 } => {
                     let previous_rotation = self.rotation;
                     self.rotation = (rotation != 0.0).then_some(Rotation {

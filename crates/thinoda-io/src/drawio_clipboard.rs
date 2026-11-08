@@ -308,6 +308,80 @@ mod tests {
     }
 
     #[test]
+    fn label_color_defaults_and_transparency_survive_drawio_clipboard() {
+        use thinoda_core::Color;
+
+        let xml = r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+            <mxCell id="a" value="Default" style="shape=rectangle;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="b" value="Transparent" style="shape=rectangle;fontColor=#0c2238;textOpacity=0;" vertex="1" parent="1"><mxGeometry x="120" width="100" height="60" as="geometry"/></mxCell>
+        </root></mxGraphModel>"##;
+        for text in [xml.to_owned(), encode_uri_component(xml)] {
+            let decoded = decode(&text).unwrap();
+            assert!(decoded.warnings.contains(&ImportWarning::Formatting));
+            let copy = encode(&decoded.payload).unwrap();
+            let again = decode(&copy).unwrap();
+            let mut sheet = Sheet::new("Pasted", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            paste_board_selection(&mut sheet, &again.payload, Vec2::ZERO).unwrap();
+            for (label, expected) in [
+                ("Default", Color::rgba(0, 0, 0, 102)),
+                ("Transparent", Color::rgba(12, 34, 56, 0)),
+            ] {
+                let object = sheet
+                    .canvas
+                    .objects
+                    .iter()
+                    .find(|object| object.label() == label)
+                    .unwrap();
+                assert_eq!(object.style.text_color, Some(expected), "{label}");
+            }
+        }
+    }
+
+    #[test]
+    fn label_appearance_approximation_is_reported_for_clipboard_conversion() {
+        let xml = r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+            <mxCell id="a" value="Label" style="shape=rectangle;fontColor=#ff0000;opacity=40;textOpacity=60;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>
+        </root></mxGraphModel>"##;
+        for text in [xml.to_owned(), encode_uri_component(xml)] {
+            let pasted = decode(&text).unwrap();
+            assert!(pasted.warnings.contains(&ImportWarning::Formatting));
+            let copied = encode_with_report(&pasted.payload).unwrap();
+            assert_eq!(
+                copied.losses,
+                vec![ExportLoss::DrawioLabelAppearanceApproximated(1)]
+            );
+            assert!(matches!(
+                encode(&pasted.payload),
+                Err(IoError::DrawioClipboardLoss(losses))
+                    if losses == copied.losses
+            ));
+        }
+    }
+
+    #[test]
+    fn connector_label_backdrop_approximations_are_reported_in_clipboard() {
+        let xml = r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+            <mxCell id="a" value="Translucent" style="fontColor=#000000;textOpacity=50;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell>
+            <mxCell id="b" value="No background" style="fontColor=#000000;labelBackgroundColor=none;endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="20" as="sourcePoint"/><mxPoint x="100" y="20" as="targetPoint"/></mxGeometry></mxCell>
+            <mxCell id="c" value="Line" style="shape=line;fontColor=#000000;" vertex="1" parent="1"><mxGeometry y="40" width="100" height="1" as="geometry"/></mxCell>
+        </root></mxGraphModel>"##;
+        for text in [xml.to_owned(), encode_uri_component(xml)] {
+            let pasted = decode(&text).unwrap();
+            assert!(pasted.warnings.contains(&ImportWarning::Formatting));
+            let copied = encode_with_report(&pasted.payload).unwrap();
+            assert_eq!(
+                copied.losses,
+                vec![ExportLoss::DrawioLabelAppearanceApproximated(1)]
+            );
+            assert!(matches!(
+                encode(&pasted.payload),
+                Err(IoError::DrawioClipboardLoss(losses)) if losses == copied.losses
+            ));
+        }
+    }
+
+    #[test]
     fn encoded_waypoint_connector_attachments_are_reported() {
         use thinoda_core::{CanvasConnector, CanvasObject, Endpoint};
 
@@ -339,6 +413,7 @@ mod tests {
             vec![
                 ExportLoss::ConnectorAttachmentsDetached(1),
                 ExportLoss::LegacyConnectorMarkersApproximated(2),
+                ExportLoss::DrawioLabelAppearanceApproximated(1),
             ]
         );
         assert!(matches!(
@@ -347,6 +422,7 @@ mod tests {
                 if losses == vec![
                     ExportLoss::ConnectorAttachmentsDetached(1),
                     ExportLoss::LegacyConnectorMarkersApproximated(2),
+                    ExportLoss::DrawioLabelAppearanceApproximated(1),
                 ]
         ));
 

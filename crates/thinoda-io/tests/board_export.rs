@@ -2066,6 +2066,215 @@ fn export_losses_itemise_board_content_per_format() {
     }
 }
 
+#[test]
+fn translucent_connector_compositing_loss_matches_export_scope() {
+    let mut sheet = Sheet::new("First", "");
+    for (label, opacity, text_color) in [
+        ("Translucent color", 1.0, Some(Color::rgba(30, 60, 90, 128))),
+        ("Translucent object", 0.5, Some(Color::BLACK)),
+        ("Automatic", 0.5, None),
+        ("Opaque", 1.0, Some(Color::BLACK)),
+        ("Transparent", 1.0, Some(Color::TRANSPARENT)),
+        ("Rounds to transparent", 0.1, Some(Color::rgba(0, 0, 0, 1))),
+        ("", 0.5, Some(Color::BLACK)),
+        ("Zero opacity", 0.0, Some(Color::BLACK)),
+    ] {
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.label = label.into();
+        let mut object = CanvasObject::connector(connector);
+        object.style.opacity = opacity;
+        object.style.text_color = text_color;
+        sheet.add_canvas_object(object).unwrap();
+    }
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.text_color = Some(Color::rgba(0, 0, 0, 128));
+    sheet.add_canvas_object(shape).unwrap();
+
+    let mut second = Sheet::new("Second", "");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label = "Second sheet".into();
+    let mut object = CanvasObject::connector(connector);
+    object.style.text_color = Some(Color::rgba(0, 0, 0, 128));
+    second.add_canvas_object(object).unwrap();
+    let mut book = Workbook::new(sheet);
+    book.sheets.push(second);
+    book.validate().unwrap();
+
+    let options = ExportOptions::default();
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        assert_eq!(
+            export_losses(&book, format, &options),
+            vec![ExportLoss::ConnectorLabelCompositingApproximated(2)],
+            "{format:?}"
+        );
+        let second_sheet = ExportOptions {
+            sheet: Some(1),
+            ..options.clone()
+        };
+        assert_eq!(
+            export_losses(&book, format, &second_sheet),
+            vec![ExportLoss::ConnectorLabelCompositingApproximated(1)],
+            "{format:?}"
+        );
+    }
+    assert!(export_losses(&book, Format::Thinoda, &options).is_empty());
+    assert!(export_losses(&book, Format::PowerPoint, &options).is_empty());
+
+    let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0));
+    let root = book.sheets[0].add_floating("Branch", Vec2::new(150.0, 100.0));
+    book.sheets[0]
+        .add_presentation_slide("Editable", PresentationSource::Branch(root), frame)
+        .unwrap();
+    assert!(export_losses(&book, Format::PowerPoint, &options).is_empty());
+    book.sheets[0]
+        .add_presentation_slide("Viewport", PresentationSource::Viewport, frame)
+        .unwrap();
+    assert_eq!(
+        export_losses(&book, Format::PowerPoint, &options),
+        vec![ExportLoss::ConnectorLabelCompositingApproximated(2)]
+    );
+    let second_sheet = ExportOptions {
+        sheet: Some(1),
+        ..options
+    };
+    assert!(export_losses(&book, Format::PowerPoint, &second_sheet).is_empty());
+}
+
+fn translucent_connector_label_book() -> Workbook {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(120.0, 0.0)),
+    );
+    connector.label = "MMMMMMMM".into();
+    connector.color = Some(Color::BLACK);
+    connector.width = 8.0;
+    connector.arrow_end = false;
+    let mut object = CanvasObject::connector(connector);
+    object.style.text_color = Some(Color::rgba(255, 0, 0, 128));
+    sheet.add_canvas_object(object).unwrap();
+    Workbook::new(sheet)
+}
+
+fn grouped_red(pixel: [u8; 3]) -> bool {
+    (110..=145).contains(&pixel[0]) && pixel[1] < 15 && pixel[2] < 15
+}
+
+#[test]
+fn translucent_connector_grouping_survives_jpeg_and_viewport_powerpoint() {
+    let mut book = translucent_connector_label_book();
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgb8();
+    let jpeg = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Jpeg, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgb8();
+    assert_eq!(png.dimensions(), jpeg.dimensions());
+    let mut expected = 0;
+    let mut matched = 0;
+    for (x, y, pixel) in png.enumerate_pixels() {
+        if grouped_red(pixel.0) {
+            expected += 1;
+            let actual = jpeg.get_pixel(x, y).0;
+            matched +=
+                usize::from((80..=175).contains(&actual[0]) && actual[1] < 40 && actual[2] < 40);
+        }
+    }
+    assert!(expected > 20, "the PNG must contain glyphs over the line");
+    assert!(
+        matched * 2 >= expected,
+        "JPEG preserved {matched} of {expected} opaque glyph interiors"
+    );
+
+    book.active_mut()
+        .add_presentation_slide(
+            "Viewport",
+            PresentationSource::Viewport,
+            Rect::from_min_size(Vec2::new(-20.0, -30.0), Vec2::new(160.0, 90.0)),
+        )
+        .unwrap();
+    let pptx = export(&book, Format::PowerPoint);
+    let image = image::load_from_memory(&entry(&pptx, "ppt/media/slide1-viewport.png"))
+        .unwrap()
+        .to_rgb8();
+    assert!(
+        image.pixels().filter(|pixel| grouped_red(pixel.0)).count() > 20,
+        "the flattened slide must preserve grouped glyphs over the line"
+    );
+}
+
+#[test]
+#[ignore = "requires Python 3, pypdfium2 and Pillow"]
+fn translucent_connector_pdf_preserves_grouped_label_compositing() {
+    use std::process::{Command, Stdio};
+
+    let book = translucent_connector_label_book();
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgb8();
+    let pdf = export_bytes_with_consent(&book, Format::Pdf, &options, true).unwrap();
+    let script = r#"
+import sys
+import pypdfium2 as pdfium
+document = pdfium.PdfDocument(sys.stdin.buffer.read())
+assert len(document) == 1
+document[0].render(scale=4).to_pil().convert("RGB").save(sys.stdout.buffer, format="PNG")
+"#;
+    let mut child = Command::new("python")
+        .args(["-c", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("install Python, pypdfium2 and Pillow to run this ignored test");
+    child.stdin.take().unwrap().write_all(&pdf).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "PDF rasterization failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let raster = image::load_from_memory(&output.stdout).unwrap().to_rgb8();
+    assert_eq!(raster.dimensions(), png.dimensions());
+    let mut expected = 0;
+    let mut matched = 0;
+    for (x, y, pixel) in png.enumerate_pixels() {
+        if grouped_red(pixel.0) {
+            expected += 1;
+            matched += usize::from(grouped_red(raster.get_pixel(x, y).0));
+        }
+    }
+    assert!(expected > 20, "the PNG must contain glyphs over the line");
+    assert!(
+        matched * 2 >= expected,
+        "PDF preserved {matched} of {expected} opaque glyph interiors"
+    );
+}
+
 // --- outline projection ---------------------------------------------------------------
 
 #[test]
