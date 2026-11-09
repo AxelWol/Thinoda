@@ -229,13 +229,14 @@ test("clicking another sheet finishes a shape label without losing the click", a
     const bounds = (await colorBounds(page, await page.screenshot(), [[23, 201, 135]], 5))[0];
     const canvasBox = await canvas.boundingBox();
     if (!canvasBox) throw new Error("The board canvas is unavailable");
-    await canvas.dblclick({
-        position: {
-            x: Math.round((bounds.minX + bounds.maxX) / 2 - canvasBox.x),
-            y: Math.round((bounds.minY + bounds.maxY) / 2 - canvasBox.y),
-        },
-        delay: 100,
-    });
+    const shapePosition = {
+        x: Math.round((bounds.minX + bounds.maxX) / 2 - canvasBox.x),
+        y: Math.round((bounds.minY + bounds.maxY) / 2 - canvasBox.y),
+    };
+    // Let selection and its contextual toolbar settle before the double click.
+    await canvas.click({ position: shapePosition });
+    await frames(page);
+    await canvas.dblclick({ position: shapePosition });
     await frames(page);
     const input = page.locator("input[type='text']");
     await expect(input).toBeFocused();

@@ -857,12 +857,12 @@ test("a shape library drag creates one selected, undoable shape", async ({ page 
 
     // The browser canvas does not yet expose egui controls as DOM elements.
     const startLibraryDrag = async () => {
-        await page.mouse.click(35, 275);
+        await page.mouse.click(35, 330);
         await frames(page);
-        await page.mouse.move(240, 370);
+        await page.mouse.move(288, 428);
         await page.mouse.down();
         for (let step = 1; step <= 4; step++) {
-            await page.mouse.move(240, 370 + 6 * step);
+            await page.mouse.move(288, 428 + 6 * step);
             await frames(page);
         }
     };

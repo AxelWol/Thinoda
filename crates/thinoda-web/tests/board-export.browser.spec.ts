@@ -241,6 +241,14 @@ for (const image of [
         const chooser = page.waitForEvent("filechooser");
         await command(page, "Open");
         await (await chooser).setFiles({ name: image.name, mimeType: image.mime, buffer: bytes });
+        // The import reports approximated formatting and requires explicit consent.
+        // Its egui dialog is painted on the canvas, without DOM button nodes.
+        await page.mouse.move(670, 907);
+        await expect.poll(() => page.locator("#thinoda_canvas").evaluate(
+            (canvas) => (canvas as HTMLCanvasElement).style.cursor,
+        ), { timeout: 30_000 }).toBe("pointer");
+        await page.mouse.click(670, 907);
+        await frames(page);
         await expect.poll(shapePixels, { timeout: 30_000 }).toBeGreaterThan(2_000);
         const reopened = sheetFrom(await saveAs(page, `editable-${image.extension}-reopened.thinoda`));
         expect(reopened.root_mode).toBe("hidden");
