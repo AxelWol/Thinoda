@@ -149,7 +149,6 @@ fn active_tab_resolution_and_non_palette_targets_are_explicit() {
     for (id, expected) in [
         ("topic.edit", Cmd::Canvas(Action::StartEdit)),
         ("edit.copy", Cmd::Canvas(Action::Copy)),
-        ("edit.copy-drawio", Cmd::CopyAsDrawio),
         ("edit.cut", Cmd::Canvas(Action::Cut)),
         ("edit.paste", Cmd::MenuPaste),
         (
@@ -167,6 +166,16 @@ fn active_tab_resolution_and_non_palette_targets_are_explicit() {
     assert_eq!(
         Cmd::Canvas(Action::Paste(None)).shortcut_id(),
         Cmd::MenuPaste.shortcut_id()
+    );
+    // "Copy as draw.io" is the one copy variant offered in the palette.
+    assert_eq!(
+        app.shortcut_command("edit.copy-drawio"),
+        Some(Cmd::CopyAsDrawio)
+    );
+    assert!(
+        ThinodaApp::palette_commands()
+            .iter()
+            .any(|(cmd, _)| cmd == &Cmd::CopyAsDrawio)
     );
     for format in Format::EXPORTABLE {
         let command = Cmd::Export(*format);
