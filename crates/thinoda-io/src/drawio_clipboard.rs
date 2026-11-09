@@ -500,9 +500,26 @@ mod tests {
                 let payload = copy_board_selection(&sheet, &layout, &[id], &[])
                     .unwrap()
                     .unwrap();
-                let text = encode(&payload).unwrap();
-                let decoded = decode(&text).unwrap();
-                assert!(!decoded.warnings.contains(&ImportWarning::Formatting));
+                let copy = encode_with_report(&payload).unwrap();
+                let (losses, warnings) = if kind == CardKind::Sticky {
+                    (
+                        vec![ExportLoss::DrawioCardAppearanceApproximated(1)],
+                        vec![ImportWarning::DrawioFoldedNotesApproximated],
+                    )
+                } else {
+                    (vec![], vec![])
+                };
+                assert_eq!(copy.losses, losses);
+                if losses.is_empty() {
+                    assert_eq!(encode(&payload).unwrap(), copy.text);
+                } else {
+                    assert!(matches!(
+                        encode(&payload),
+                        Err(IoError::DrawioClipboardLoss(actual)) if actual == losses
+                    ));
+                }
+                let decoded = decode(&copy.text).unwrap();
+                assert_eq!(decoded.warnings, warnings);
                 let mut restored = Sheet::new("Restored", "");
                 restored.root_mode = SheetRootMode::Hidden;
                 paste_board_selection(&mut restored, &decoded.payload, Vec2::ZERO).unwrap();

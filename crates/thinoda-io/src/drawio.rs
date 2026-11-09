@@ -1494,7 +1494,7 @@ fn classify(style: &Style) -> Kind {
             }
         }
         "text" => Kind::Text,
-        "note" => Kind::Card(CardKind::Sticky),
+        "note" | "note2" => Kind::Card(CardKind::Sticky),
         "line" => Kind::Line,
         "image" => Kind::Image,
         "ellipse"
@@ -1848,6 +1848,9 @@ impl<'a> PageImport<'a> {
         let card_text_alignment = matches!(kind, Kind::Card(CardKind::Sticky | CardKind::Text));
         if cell.style.formatting_loss(false, card_text_alignment) {
             self.warn(ImportWarning::Formatting);
+        }
+        if matches!(cell.style.shape(), "note" | "note2") {
+            self.warn(ImportWarning::DrawioFoldedNotesApproximated);
         }
         match kind {
             Kind::Group => {
@@ -2952,6 +2955,17 @@ enum Terminal {
     Point(Vec2),
 }
 
+pub(crate) fn card_image<'a>(
+    sheet: &'a Sheet,
+    topic: &thinoda_core::Topic,
+) -> Option<&'a Resource> {
+    topic
+        .image
+        .as_deref()
+        .and_then(|reference| sheet.resources.get(reference).ok())
+        .filter(|resource| matches!(resource.media_type.as_str(), "image/png" | "image/jpeg"))
+}
+
 struct PageWriter<'a> {
     sheet: &'a Sheet,
     out: String,
@@ -3497,11 +3511,7 @@ impl<'a> PageWriter<'a> {
             return;
         };
         let (parent, origin) = self.parent(BoardMember::Card(id));
-        let image = topic
-            .image
-            .as_deref()
-            .and_then(|reference| self.sheet.resources.get(reference).ok())
-            .filter(|resource| matches!(resource.media_type.as_str(), "image/png" | "image/jpeg"));
+        let image = card_image(self.sheet, topic);
         let mut style = String::from(match (card.kind, image) {
             (CardKind::Sticky, _) => "shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;",
             (CardKind::Text, _) => "text;thinodaCard=text;",

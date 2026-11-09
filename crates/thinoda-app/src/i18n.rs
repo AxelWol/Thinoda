@@ -182,6 +182,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::DrawioBackgroundAdjusted => {
             "draw.io page background was approximated or omitted"
         }
+        ImportWarning::DrawioFoldedNotesApproximated => {
+            "draw.io folded notes may be flattened or simplified"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -537,6 +540,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Page background may differ in draw.io",
         "Der Seitenhintergrund kann in draw.io abweichen",
+    ),
+    (
+        "Cards may show folded corners in draw.io",
+        "Karten können in draw.io gefaltete Ecken zeigen",
     ),
     (
         "Translucent connector labels may render differently",
@@ -1387,6 +1394,10 @@ const DE: &[(&str, &str)] = &[
     (
         "draw.io page background was approximated or omitted",
         "Der draw.io-Seitenhintergrund wurde angenähert oder ausgelassen",
+    ),
+    (
+        "draw.io folded notes may be flattened or simplified",
+        "Gefaltete draw.io-Notizen können abgeflacht oder vereinfacht werden",
     ),
     (
         "Other unsupported map data",
@@ -4882,6 +4893,8 @@ mod tests {
             "draw.io grid settings were adjusted",
             "draw.io page background was approximated or omitted",
             "Page background may differ in draw.io",
+            "draw.io folded notes may be flattened or simplified",
+            "Cards may show folded corners in draw.io",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",
             "Could not paste draw.io content",

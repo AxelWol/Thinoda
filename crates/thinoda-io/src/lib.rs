@@ -392,6 +392,8 @@ pub enum ImportWarning {
     DrawioGridAdjusted,
     /// A draw.io page background was approximated or omitted.
     DrawioBackgroundAdjusted,
+    /// A draw.io folded note's appearance was approximated.
+    DrawioFoldedNotesApproximated,
     Other,
 }
 

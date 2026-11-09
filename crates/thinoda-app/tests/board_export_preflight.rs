@@ -965,6 +965,43 @@ fn drawio_background_loss_preflight_is_localized_and_cancelable() {
 }
 
 #[test]
+fn drawio_folded_card_loss_preflight_is_localized_and_cancelable() {
+    let _guard = lock_ui();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = true;
+    sheet
+        .add_card(
+            "Sticky",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        for language in Language::ALL {
+            let mut h = harness(app(book.clone(), language));
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Export(format));
+            h.run_steps(3);
+            has_label(
+                &h,
+                &format!("1 — {}", t("Cards may show folded corners in draw.io")),
+            );
+            click(&mut h, t("Cancel"));
+            assert!(
+                h.state().file_activity().is_empty(),
+                "{format:?}, {language:?}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+    }
+}
+
+#[test]
 fn editable_image_disclosure_rejects_a_changed_document_or_active_sheet() {
     let _guard = lock_ui();
     for format in [Format::DrawIoSvg, Format::DrawIoPng] {
@@ -2002,6 +2039,68 @@ fn cli_drawio_background_approximation_requires_loss_consent() {
         reopened
             .warnings
             .contains(&thinoda_io::ImportWarning::DrawioBackgroundAdjusted)
+    );
+    assert_eq!(std::fs::read(&input).unwrap(), source);
+}
+
+#[test]
+fn cli_drawio_folded_card_approximation_requires_loss_consent() {
+    let _guard = lock_ui();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("card.thinoda");
+    let output = directory.path().join("card.drawio");
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = true;
+    sheet
+        .add_card(
+            "Sticky",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let source = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    std::fs::write(&input, &source).unwrap();
+    std::fs::write(&output, b"existing").unwrap();
+
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(error.contains("--allow-lossy"), "{error}");
+    assert!(
+        Lang::ALL
+            .iter()
+            .any(|&lang| error.contains(t_in(lang, "Cards may show folded corners in draw.io"))),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"existing");
+
+    let accepted = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .arg("--allow-lossy")
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let reopened =
+        thinoda_io::import_bytes_with_report(Format::DrawIo, &std::fs::read(&output).unwrap())
+            .unwrap();
+    assert!(
+        reopened
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioFoldedNotesApproximated)
     );
     assert_eq!(std::fs::read(&input).unwrap(), source);
 }

@@ -1602,6 +1602,40 @@ preflight. Keep the original and a `.thinoda` copy; this is not source-preservin
 save-back. New warning and export-loss variants are public API additions that
 exhaustive Rust matches must handle.
 
+**Folded-note checkpoint (partial Phases 5, 6 and 11).** Ordinary draw.io
+`note` and `note2` vertices import as editable sticky cards, retaining their
+labels, supported alignment, color, center, rotation and supported connections.
+Dimensions below Thinoda's 16-unit minimum are enlarged. Import identifies the
+appearance change, including on clipboard paste and link import; notes used as
+containers or with image styles may become frames, image cards or placeholders
+instead. Thinoda's existing sticky cards and image cards without an exportable
+image still export as draw.io notes; file, editable-image and clipboard export
+reports the number of affected cards. The current published editor renders a
+fold on both source variants and on the `shape=note` Thinoda export.
+
+**Rubber-duck self-critique.** This is an editable approximation, not a native
+folded-note stencil. Fold size, its stroke or shading, `note2` label margins,
+ports and source style are not retained, and other appearance differences can
+remain. The specific warning also appears when reopening existing Thinoda
+draw.io exports that use a note shape: their corner really does differ in
+draw.io. The warning is conservative even when a source has no visible fold;
+clipboard warnings aggregate all source pages, including pages that are not
+pasted. Export counts image-card placeholders only when they use the same
+note fallback as the writer. New import-warning and export-loss variants are
+public API additions that exhaustive Rust matches must handle. Keep the original
+and a native copy; faithful geometry and source-preserving save-back remain open.
+
+Validation passed 253 IO library tests, 11 supplied-corpus tests, six
+deterministic fuzz-seed tests, 62 selected draw.io app tests, the additional
+source-protection and all-language label tests, and 52 board-export preflight
+tests. The production web build and the paste/copy/undo journey passed in
+Chromium, Firefox and WebKit; the warning screenshots were inspected.
+Formatting and native, WebAssembly and fuzz Clippy passed with warnings denied.
+A 21-second Linux AddressSanitizer smoke completed 9,125 executions without a
+reported failure or reproducer. It does not satisfy the separate 30-minute fuzz
+campaign; physical-device, system-clipboard, accessibility and viewer acceptance
+also remain open.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop

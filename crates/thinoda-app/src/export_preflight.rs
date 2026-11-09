@@ -209,6 +209,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::DrawioBackgroundAppearanceApproximated(count) => {
                     (*count, "Page background may differ in draw.io")
                 }
+                ExportLoss::DrawioCardAppearanceApproximated(count) => {
+                    (*count, "Cards may show folded corners in draw.io")
+                }
                 ExportLoss::TopicDetailsDropped(count) => {
                     (*count, "Topic notes, labels, markers or tasks omitted")
                 }

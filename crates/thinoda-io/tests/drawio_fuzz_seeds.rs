@@ -32,6 +32,7 @@ const APPEARANCE_COLORS: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/appearance-colors");
 const CSS_COLORS: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/css-colors");
 const PAGE_BACKGROUND: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/page-background");
+const FOLDED_NOTES: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/folded-notes");
 const DOUBLE_ELLIPSE: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/double-ellipse");
 const FLOWCHART_ANNOTATION: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/flowchart-annotation");
@@ -55,6 +56,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         ("appearance colors", Format::DrawIo, APPEARANCE_COLORS),
         ("css colors", Format::DrawIo, CSS_COLORS),
         ("page background", Format::DrawIo, PAGE_BACKGROUND),
+        ("folded notes", Format::DrawIo, FOLDED_NOTES),
         ("double ellipse", Format::DrawIo, DOUBLE_ELLIPSE),
         ("flowchart annotation", Format::DrawIo, FLOWCHART_ANNOTATION),
         ("flowchart process", Format::DrawIo, FLOWCHART_PROCESS),
@@ -186,6 +188,30 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert!(pasted.warnings.is_empty());
+        }
+        if name == "folded notes" {
+            assert_eq!(
+                report.warnings,
+                vec![thinoda_io::ImportWarning::DrawioFoldedNotesApproximated]
+            );
+            let sheet = &report.workbook.sheets[0];
+            assert_eq!(
+                sheet
+                    .topics
+                    .values()
+                    .filter(|topic| topic.card.is_some())
+                    .count(),
+                2
+            );
+            assert!(sheet.canvas.objects.iter().any(|object| matches!(
+                &object.kind,
+                thinoda_core::CanvasObjectKind::Connector(connector)
+                    if matches!(connector.from, thinoda_core::Endpoint::Topic(_))
+                        && matches!(connector.to, thinoda_core::Endpoint::Topic(_))
+            )));
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, report.warnings);
         }
         if name == "double ellipse" {
             assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);

@@ -432,6 +432,7 @@ pub(crate) struct DrawioPasteOutcome {
     losses: Vec<thinoda_io::drawio_clipboard::DrawioPasteLoss>,
     detached_connectors: bool,
     unsupported_shapes: bool,
+    folded_notes: bool,
 }
 
 /// Pastes draw.io clipboard text as one undoable edit centred in the view.
@@ -467,6 +468,9 @@ pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<DrawioPasteO
         unsupported_shapes: pasted
             .warnings
             .contains(&thinoda_io::ImportWarning::UnsupportedDrawioShapes),
+        folded_notes: pasted
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioFoldedNotesApproximated),
     })
 }
 
@@ -801,6 +805,7 @@ impl crate::app::ThinodaApp {
                             if !outcome.losses.is_empty()
                                 || outcome.detached_connectors
                                 || outcome.unsupported_shapes
+                                || outcome.folded_notes
                                 || outcome.possible_omissions =>
                         {
                             let message = crate::i18n::t(
@@ -817,6 +822,14 @@ impl crate::app::ThinodaApp {
                                 lines.push(
                                     crate::i18n::t(
                                         "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+                                    )
+                                    .to_owned(),
+                                );
+                            }
+                            if outcome.folded_notes {
+                                lines.push(
+                                    crate::i18n::t(
+                                        "draw.io folded notes may be flattened or simplified",
                                     )
                                     .to_owned(),
                                 );
@@ -2865,6 +2878,49 @@ mod tests {
             == crate::i18n::t(
                 "Pasted from draw.io; some content may have been omitted or simplified"
             )));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_folded_note_paste_and_copy_disclose_appearance_changes() {
+        use crate::app::Cmd;
+        use thinoda_core::CardKind;
+
+        let text = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="note" vertex="1" parent="1" value="Note" style="shape=note2;boundedLbl=1;size=15;"><mxGeometry width="180" height="120" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        let doc = app.doc().unwrap();
+        let note = doc.doc.sheet().topic(doc.view.selection[0]).unwrap();
+        assert_eq!(note.title, "Note");
+        assert_eq!(note.card.unwrap().kind, CardKind::Sticky);
+        assert!(app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+            "draw.io folded notes may be flattened or simplified"
+        ))));
+
+        app.exec(&ctx, Cmd::CopyAsDrawio);
+        let copied = clipboard.borrow().text.clone();
+        let pasted = thinoda_io::drawio_clipboard::decode(&copied).unwrap();
+        assert!(
+            pasted
+                .warnings
+                .contains(&thinoda_io::ImportWarning::DrawioFoldedNotesApproximated)
+        );
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text
+                    .contains(crate::i18n::t("Cards may show folded corners in draw.io")))
+        );
+
         app.exec(&ctx, Cmd::Canvas(Action::Undo));
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }

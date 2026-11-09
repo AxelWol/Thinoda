@@ -520,6 +520,44 @@ fn supplied_uml_activity_keeps_its_rgb_colors() {
 }
 
 #[test]
+fn supplied_uml_activity_note_is_editable_with_a_warning() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let path = dir.join("uml-activity-example.drawio");
+    if !path.is_file() {
+        return;
+    }
+    let report =
+        thinoda_io::import_bytes_with_report(Format::DrawIo, &std::fs::read(path).unwrap())
+            .unwrap();
+    assert!(
+        report
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioFoldedNotesApproximated)
+    );
+    let note = report
+        .workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| sheet.topics.values())
+        .find(|topic| topic.title == "Note")
+        .expect("the supplied UML activity should contain its note");
+    let card = note.card.expect("the note should become an editable card");
+    assert_eq!(card.kind, thinoda_core::CardKind::Sticky);
+    assert_eq!(card.size, Vec2::new(80.0, 40.0));
+    assert_eq!(note.position, Some(Vec2::new(612.5, 100.0)));
+    report.workbook.validate().unwrap();
+    let native =
+        thinoda_io::export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default())
+            .unwrap();
+    assert_eq!(
+        thinoda_io::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
 fn supplied_uml_package_keeps_its_thin_diamond_markers() {
     let Some(dir) = corpus_dir() else {
         return;

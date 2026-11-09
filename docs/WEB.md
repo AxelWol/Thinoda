@@ -148,6 +148,10 @@ both themes, without changing its settings for shapes. Older viewers may not
 support this syntax. Translucent backgrounds require export confirmation
 because editors can blend them over different colors.
 
+Ordinary folded draw.io notes import as editable flat sticky cards with a
+warning; notes used as containers or images can be simplified differently.
+Export and **Copy as draw.io** report that flat cards can gain folded corners.
+
 Double ellipses import as editable single ellipses with a formatting warning;
 their inner outline and exact label bounds are not preserved.
 

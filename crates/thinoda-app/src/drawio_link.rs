@@ -547,6 +547,55 @@ mod tests {
     }
 
     #[test]
+    fn folded_note_link_shows_a_cancelable_specific_warning() {
+        let xml = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="note" vertex="1" parent="1" value="Note" style="shape=note2;boundedLbl=1;size=15;"><mxGeometry width="180" height="120" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let link = format!(
+            "#R{}",
+            thinoda_io::drawio_clipboard::encode_uri_component(xml)
+        );
+        let mut h = harness();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        h.state_mut().import_drawio_link_text(&link).unwrap();
+        h.run_steps(3);
+        assert_eq!(
+            h.state().dialogs.imports.front().unwrap().2,
+            vec![ImportWarning::DrawioFoldedNotesApproximated]
+        );
+        assert!(h.query_all_by_role(Role::Label).any(|node| {
+            node.value().is_some_and(|value| {
+                value.contains(t("draw.io folded notes may be flattened or simplified"))
+            })
+        }));
+        h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+        h.run_steps(3);
+        assert!(h.state().dialogs.imports.is_empty());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+
+        h.state_mut().import_drawio_link_text(&link).unwrap();
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, t("Import converted copy"))
+            .click();
+        h.run_steps(3);
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topics
+                .values()
+                .any(|topic| topic.title == "Note"
+                    && topic
+                        .card
+                        .is_some_and(|card| card.kind == thinoda_core::CardKind::Sticky))
+        );
+    }
+
+    #[test]
     fn rejected_link_does_not_change_documents_or_queue_warnings() {
         let mut app = app_with_changes();
         let before = app.doc().unwrap().doc.workbook().clone();

@@ -35,6 +35,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::DrawioCollapsedProcessApproximated(22),
         ExportLoss::DrawioGridSettingsApproximated(23),
         ExportLoss::DrawioBackgroundAppearanceApproximated(24),
+        ExportLoss::DrawioCardAppearanceApproximated(25),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -58,6 +59,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     assert!(lines[21].starts_with("22 — "), "{}", lines[21]);
     assert!(lines[22].starts_with("23 — "), "{}", lines[22]);
     assert!(lines[23].starts_with("24 — "), "{}", lines[23]);
+    assert!(lines[24].starts_with("25 — "), "{}", lines[24]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -74,6 +76,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         (22, "Collapsed process outlines may be omitted in draw.io"),
         (23, "Grid or snapping may differ in draw.io"),
         (24, "Page background may differ in draw.io"),
+        (25, "Cards may show folded corners in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }

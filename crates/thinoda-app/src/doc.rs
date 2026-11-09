@@ -1768,6 +1768,41 @@ mod tests {
     }
 
     #[test]
+    fn folded_drawio_note_requires_consent_and_preserves_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("note.drawio");
+        let xml = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="note" value="Note" style="shape=note2;boundedLbl=1;size=15;" vertex="1" parent="1"><mxGeometry width="180" height="120" as="geometry"/></mxCell></root></mxGraphModel>"#;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(
+            warnings,
+            vec![thinoda_io::ImportWarning::DrawioFoldedNotesApproximated]
+        );
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        let native = directory.path().join("note.thinoda");
+        document.save_to(&native, false).unwrap();
+        let reopened = OpenDoc::open(&native).unwrap();
+        let note = reopened
+            .doc
+            .sheet()
+            .topics
+            .values()
+            .find(|topic| topic.title == "Note")
+            .unwrap();
+        assert_eq!(note.card.unwrap().kind, thinoda_core::CardKind::Sticky);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), xml);
+    }
+
+    #[test]
     fn supported_drawio_markers_open_without_confirmation_and_save_as_native() {
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 

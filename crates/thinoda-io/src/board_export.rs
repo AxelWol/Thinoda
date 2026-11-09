@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use thinoda_core::{
     CanvasObjectId, Endpoint, Sheet, Topic, Workbook,
-    board::{CanvasObject, CanvasObjectKind, ShapeKind, SheetRootMode},
+    board::{CanvasObject, CanvasObjectKind, CardKind, ShapeKind, SheetRootMode},
     model::PresentationSource,
 };
 
@@ -228,6 +228,8 @@ pub enum ExportLoss {
     DrawioGridSettingsApproximated(usize),
     /// Translucent backgrounds can blend against different editor backgrounds.
     DrawioBackgroundAppearanceApproximated(usize),
+    /// Flat cards are exported as draw.io notes with folded corners.
+    DrawioCardAppearanceApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -432,6 +434,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut collapsed_processes = 0;
     let mut grid_settings = 0;
     let mut background_appearance = 0;
+    let mut card_appearance = 0;
     for sheet in sheets {
         for (id, topic) in &sheet.topics {
             if topic.card.is_none() && !sheet.is_anchor(*id) {
@@ -444,6 +447,11 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
                     || topic.todo.is_some(),
             );
             inline_text += usize::from(!topic.inline_text.is_empty());
+            card_appearance += usize::from(topic.card.is_some_and(|card| match card.kind {
+                CardKind::Sticky => true,
+                CardKind::Image => crate::drawio::card_image(sheet, topic).is_none(),
+                CardKind::Text => false,
+            }));
         }
         flattened += sheet.relationships.len() + sheet.boundaries.len() + sheet.summaries.len();
         slides += sheet.presentation.slides.len();
@@ -533,6 +541,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         (
             ExportLoss::DrawioBackgroundAppearanceApproximated,
             background_appearance,
+        ),
+        (
+            ExportLoss::DrawioCardAppearanceApproximated,
+            card_appearance,
         ),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),

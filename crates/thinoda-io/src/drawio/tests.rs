@@ -658,11 +658,12 @@ fn sticky_and_text_card_alignment_survives_drawio_interchange() {
             let xml = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
             assert!(xml.contains(&format!("align={value};")), "{kind:?}: {xml}");
             let imported = load(&xml);
-            assert!(
-                !imported.warnings.contains(&ImportWarning::Formatting),
-                "{kind:?} {align:?}: {:?}",
-                imported.warnings
-            );
+            let warnings = if kind == CardKind::Sticky {
+                vec![ImportWarning::DrawioFoldedNotesApproximated]
+            } else {
+                vec![]
+            };
+            assert_eq!(imported.warnings, warnings, "{kind:?} {align:?}");
             let card = imported.workbook.sheets[0]
                 .topics
                 .values()
@@ -695,7 +696,10 @@ fn ordinary_drawio_note_alignment_is_imported() {
         r#"<mxCell id="a" value="External note" style="shape=note;align=right;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="240" height="140" as="geometry"/></mxCell>"#,
     );
     let report = load(&xml);
-    assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::DrawioFoldedNotesApproximated]
+    );
     let topic = report.workbook.sheets[0]
         .topics
         .values()
@@ -703,6 +707,236 @@ fn ordinary_drawio_note_alignment_is_imported() {
         .unwrap();
     assert_eq!(topic.card.unwrap().kind, CardKind::Sticky);
     assert_eq!(topic.style.align, Some(thinoda_core::TextAlign::Right));
+}
+
+#[test]
+fn drawio_folded_notes_become_editable_cards_with_disclosed_appearance() {
+    for style in [
+        "shape=note;",
+        "shape=note2;boundedLbl=1;size=15;",
+        "note2;boundedLbl=1;size=15;",
+        "shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;",
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="Folded" style="{style}fillColor=#F4C27A;align=right;rotation=30;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="180" height="120" as="geometry"/></mxCell>
+            <mxCell id="b" value="Target" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry x="250" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="e" edge="1" parent="1" source="a" target="b" style="endArrow=none;"><mxGeometry relative="1" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings,
+            vec![ImportWarning::DrawioFoldedNotesApproximated],
+            "{style}"
+        );
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings == report.warnings
+        ));
+        let sheet = report.workbook.active();
+        let note = sheet
+            .topics
+            .values()
+            .find(|topic| topic.title == "Folded")
+            .unwrap();
+        assert_eq!(note.card.unwrap().kind, CardKind::Sticky);
+        assert_eq!(note.card.unwrap().size, Vec2::new(180.0, 120.0));
+        assert_eq!(note.card.unwrap().rotation, 30.0);
+        assert_eq!(note.card.unwrap().color, Some(Color::rgb(244, 194, 122)));
+        assert_eq!(note.position, Some(Vec2::new(100.0, 80.0)));
+        assert_eq!(note.style.align, Some(TextAlign::Right));
+        assert_eq!(connectors(sheet)[0].from, Endpoint::Topic(note.id));
+        report.workbook.validate().unwrap();
+
+        let native =
+            export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(
+            crate::import_bytes(Format::Thinoda, &native).unwrap(),
+            report.workbook
+        );
+        let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+        assert_eq!(pasted.warnings, report.warnings);
+        assert!(pasted.losses.is_empty());
+    }
+}
+
+#[test]
+fn folded_note_warnings_cover_container_and_image_fallbacks() {
+    let inline = format!("data:image/png,{}", b64(&tiny_png(4, 4)));
+    for style in [
+        "shape=note2;container=1;".to_owned(),
+        "shape=note;image=https://example.invalid/note.png;".to_owned(),
+        format!("shape=note2;image={inline};"),
+        "shape=note;thinodaCard=text;".to_owned(),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="Note" style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>
+            <mxCell id="b" value="Keep" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry x="350" width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            report
+                .warnings
+                .contains(&ImportWarning::DrawioFoldedNotesApproximated),
+            "{style}: {:?}",
+            report.warnings
+        );
+        report.workbook.validate().unwrap();
+        let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+        assert!(
+            pasted
+                .warnings
+                .contains(&ImportWarning::DrawioFoldedNotesApproximated),
+            "{style}: {:?}",
+            pasted.warnings
+        );
+    }
+}
+
+#[test]
+fn folded_notes_below_card_minimum_keep_their_center_and_warn() {
+    let xml = page(
+        r#"<mxCell id="a" value="Tiny" style="shape=note2;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="8" height="4" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::DrawioFoldedNotesApproximated]
+    );
+    let note = report
+        .workbook
+        .active()
+        .topics
+        .values()
+        .find(|topic| topic.title == "Tiny")
+        .unwrap();
+    assert_eq!(note.position, Some(Vec2::new(14.0, 22.0)));
+    assert_eq!(
+        note.card.unwrap().size,
+        Vec2::new(MIN_CARD_SIZE, MIN_CARD_SIZE)
+    );
+}
+
+#[test]
+fn folded_note_warnings_include_omitted_clipboard_pages() {
+    let first = concat!(
+        r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+        r#"<mxCell id="shape" value="Rectangle" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel>"#
+    );
+    let later = concat!(
+        r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+        r#"<mxCell id="note" value="Later note" style="shape=note2;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel>"#
+    );
+    let file = format!(
+        r#"<mxfile><diagram name="First">{first}</diagram><diagram name="Later">{later}</diagram></mxfile>"#
+    );
+    for text in [
+        file.clone(),
+        crate::drawio_clipboard::encode_uri_component(&file),
+    ] {
+        let pasted = crate::drawio_clipboard::decode(&text).unwrap();
+        assert_eq!(
+            pasted.losses,
+            vec![crate::drawio_clipboard::DrawioPasteLoss::AdditionalPages(1)]
+        );
+        assert!(
+            pasted
+                .warnings
+                .contains(&ImportWarning::DrawioFoldedNotesApproximated)
+        );
+        let mut sheet = Sheet::new("Paste", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        thinoda_core::clipboard::paste_board_selection(&mut sheet, &pasted.payload, Vec2::ZERO)
+            .unwrap();
+        assert!(
+            !sheet
+                .topics
+                .values()
+                .any(|topic| topic.title == "Later note")
+        );
+    }
+}
+
+#[test]
+fn drawio_note_fallbacks_report_only_cards_on_exported_pages() {
+    let mut first = Sheet::new("First", "");
+    first.root_mode = SheetRootMode::Hidden;
+    first.board.grid = GridKind::Lines;
+    first.board.snap = true;
+    for (index, kind) in [
+        CardKind::Sticky,
+        CardKind::Sticky,
+        CardKind::Text,
+        CardKind::Image,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        first
+            .add_card(
+                &format!("Card {index}"),
+                Vec2::new(index as f32 * 200.0, 0.0),
+                Card::new(kind, Vec2::new(120.0, 80.0)),
+            )
+            .unwrap();
+    }
+    let image = first
+        .add_card(
+            "Image with pixels",
+            Vec2::new(800.0, 0.0),
+            Card::new(CardKind::Image, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let resource = Resource::new("image.png", "image/png", tiny_png(4, 4)).unwrap();
+    images::set_image(&mut first, image, Some((resource, Vec2::new(4.0, 4.0)))).unwrap();
+
+    let mut second = Sheet::new("Second", "");
+    second.root_mode = SheetRootMode::Hidden;
+    second.board.grid = GridKind::Lines;
+    second.board.snap = true;
+    second
+        .add_card(
+            "Another sticky",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let mut book = Workbook::new(first);
+    book.sheets.push(second);
+    book.active_sheet = 1;
+    book.validate().unwrap();
+
+    for (index, expected) in [(0, 3), (1, 1)] {
+        let options = ExportOptions {
+            sheet: Some(index),
+            ..Default::default()
+        };
+        assert_eq!(
+            export_losses(&book, Format::DrawIo, &options),
+            vec![ExportLoss::DrawioCardAppearanceApproximated(4)]
+        );
+        for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+            assert_eq!(
+                export_losses(&book, format, &options),
+                vec![ExportLoss::DrawioCardAppearanceApproximated(expected)],
+                "{format:?}, sheet {index}"
+            );
+        }
+        assert!(export_losses(&book, Format::Thinoda, &options).is_empty());
+    }
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioCardAppearanceApproximated(1)]
+        );
+    }
+
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert_eq!(xml.matches("shape=note;thinodaCard=sticky;").count(), 3);
+    assert_eq!(xml.matches("shape=note;thinodaCard=image;").count(), 1);
+    assert_eq!(xml.matches("shape=image;thinodaCard=image;").count(), 1);
 }
 
 #[test]
@@ -1632,7 +1866,13 @@ fn css_colors_cover_cards_connectors_ink_and_swimlane_bodies() {
         <mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor=rgba(40,50,60,0.5);" vertex="1" parent="1"><mxGeometry x="150" width="300" height="200" as="geometry"/></mxCell>"#,
     );
     let report = load(&xml);
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert_eq!(
+        report.warnings,
+        vec![
+            ImportWarning::Formatting,
+            ImportWarning::DrawioFoldedNotesApproximated,
+        ]
+    );
     let sheet = &report.workbook.sheets[0];
     let card = sheet
         .topics
@@ -1672,11 +1912,15 @@ fn transparent_card_and_swimlane_colors_are_not_silently_defaulted() {
                 r#"<mxCell id="card" value="Card" style="{kind};fillColor={value};" vertex="1" parent="1"><mxGeometry width="100" height="80" as="geometry"/></mxCell>"#
             ));
             let report = load(&xml);
-            assert_eq!(
-                report.warnings,
-                vec![ImportWarning::Formatting],
-                "{kind}, {value}"
-            );
+            let warnings = if kind == "shape=note" {
+                vec![
+                    ImportWarning::Formatting,
+                    ImportWarning::DrawioFoldedNotesApproximated,
+                ]
+            } else {
+                vec![ImportWarning::Formatting]
+            };
+            assert_eq!(report.warnings, warnings, "{kind}, {value}");
             let card = report.workbook.sheets[0]
                 .topics
                 .values()
@@ -1708,7 +1952,15 @@ fn transparent_card_and_swimlane_colors_are_not_silently_defaulted() {
             r#"<mxCell id="card" value="Card" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="80" as="geometry"/></mxCell>"#
         ));
         let report = load(&xml);
-        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+        let warnings = if style.starts_with("shape=note;") {
+            vec![
+                ImportWarning::Formatting,
+                ImportWarning::DrawioFoldedNotesApproximated,
+            ]
+        } else {
+            vec![ImportWarning::Formatting]
+        };
+        assert_eq!(report.warnings, warnings, "{style}");
     }
 }
 
@@ -1719,7 +1971,13 @@ fn transparent_css_colors_keep_hidden_rgb_through_drawio_export() {
         <mxCell id="card" value="Card" style="shape=note;fillColor=rgba(70,80,90,0);" vertex="1" parent="1"><mxGeometry x="120" width="100" height="80" as="geometry"/></mxCell>"#,
     );
     let original = load(&xml);
-    assert_eq!(original.warnings, vec![ImportWarning::Formatting]);
+    assert_eq!(
+        original.warnings,
+        vec![
+            ImportWarning::Formatting,
+            ImportWarning::DrawioFoldedNotesApproximated,
+        ]
+    );
     let exported = String::from_utf8(export(&original.workbook).unwrap()).unwrap();
     assert!(exported.contains("fillColor=#0A141E;fillOpacity=0;"));
     assert!(exported.contains("strokeColor=#28323C;strokeOpacity=0;"));
@@ -3262,8 +3520,12 @@ fn shape_summaries(sheet: &Sheet) -> Vec<String> {
 #[test]
 fn board_round_trips_with_reported_color_approximations_and_is_idempotent() {
     let original = board();
-    let first = roundtrip_with_warnings(&original, &[ImportWarning::Formatting]);
-    let second = roundtrip_with_warnings(&first, &[ImportWarning::Formatting]);
+    let warnings = [
+        ImportWarning::Formatting,
+        ImportWarning::DrawioFoldedNotesApproximated,
+    ];
+    let first = roundtrip_with_warnings(&original, &warnings);
+    let second = roundtrip_with_warnings(&first, &warnings);
     assert_eq!(first, second, "re-export changed the imported board");
     assert_eq!(export(&first).unwrap(), export(&second).unwrap());
 
@@ -5523,8 +5785,14 @@ fn notes_text_lines_directions_and_user_objects() {
         "#,
     );
     let report = load(&xml);
-    // The card tooltip has no native equivalent.
-    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    // The card tooltip and folded outlines have no native equivalents.
+    assert_eq!(
+        report.warnings,
+        vec![
+            ImportWarning::DrawioFoldedNotesApproximated,
+            ImportWarning::Other,
+        ]
+    );
     let sheet = &report.workbook.sheets[0];
     let note = sheet.topics.values().find(|t| t.title == "Note").unwrap();
     let card = note.card.unwrap();
@@ -6186,6 +6454,7 @@ fn export_reports_flattened_map_content() {
             ExportLoss::LegacyConnectorMarkersApproximated(2),
             ExportLoss::DrawioLabelAppearanceApproximated(2),
             ExportLoss::DrawioGridSettingsApproximated(1),
+            ExportLoss::DrawioCardAppearanceApproximated(2),
         ]
     );
     let sheet = &mut book.sheets[0];
@@ -6206,13 +6475,20 @@ fn export_reports_flattened_map_content() {
             ExportLoss::LegacyConnectorMarkersApproximated(2),
             ExportLoss::DrawioLabelAppearanceApproximated(2),
             ExportLoss::DrawioGridSettingsApproximated(1),
+            ExportLoss::DrawioCardAppearanceApproximated(2),
             ExportLoss::TopicDetailsDropped(1),
             ExportLoss::SlidesDropped(1),
         ]
     );
     let bytes = export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
     let report = import(&bytes).unwrap();
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert_eq!(
+        report.warnings,
+        vec![
+            ImportWarning::Formatting,
+            ImportWarning::DrawioFoldedNotesApproximated,
+        ]
+    );
     let sheet = &report.workbook.sheets[0];
     assert!(shapes(sheet).iter().any(|o| o.label() == "Idea"));
     assert!(shapes(sheet).iter().any(|o| o.label() == "Detail"));

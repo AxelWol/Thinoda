@@ -800,6 +800,44 @@ test("draw.io paste warns when a double ellipse is simplified", async ({ page },
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("folded draw.io notes paste as editable cards with copy and paste warnings", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="note" vertex="1" parent="1" value="Folded note" ',
+        'style="shape=note2;boundedLbl=1;size=15;align=right;fillColor=#F4C27A;">',
+        '<mxGeometry width="180" height="120" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-note-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-note-paste-warning.png") });
+    const after = archive(await saveAs(page, "drawio-note-after.thinoda"));
+    const sheet = after.content.sheets[after.content.active_sheet];
+    const note = Object.values(sheet.topics).find((topic) => topic.title === "Folded note");
+    expect(note?.card).toMatchObject({ kind: "sticky", color: "#F4C27A" });
+    expect(note?.style?.align).toBe("right");
+
+    const previous = await page.evaluate(() => window.__thinodaTestClipboard.plainWrites);
+    await command(page, "Copy as draw.io");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites))
+        .toBe(previous + 1);
+    const copied = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    expect(decodeURIComponent(copied)).toContain("shape=note;thinodaCard=sticky;");
+    await page.screenshot({ path: testInfo.outputPath("drawio-note-copy-warning.png") });
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-note-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("draw.io process paste warns and copies its square approximation", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',

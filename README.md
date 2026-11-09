@@ -764,6 +764,9 @@ those system-owned controls. WinGet publishing remains paused.
   colors in both themes; older viewers may not support that syntax.
   Translucent backgrounds require export confirmation because the editors can
   blend them over different colors.
+  Ordinary folded draw.io notes import as editable flat sticky cards with a
+  warning; notes used as containers or images can be simplified differently.
+  Export and **Copy as draw.io** report that flat cards can gain folded corners.
   Double ellipses import as editable single ellipses with a formatting warning;
   their inner outline and exact label bounds are not preserved.
   Flowchart annotation brackets import as editable open-sided rectangles with
