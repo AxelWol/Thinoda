@@ -1,3 +1,5 @@
+_Last updated: 2026-11-09 11:10:44 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # draw.io example corpus
 
 The `.drawio` and `.xml` files in this directory are unmodified examples from

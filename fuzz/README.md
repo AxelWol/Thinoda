@@ -1,4 +1,4 @@
-_Last updated: 2026-10-27 17:27:36 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-09 08:39:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Importer fuzzing
 

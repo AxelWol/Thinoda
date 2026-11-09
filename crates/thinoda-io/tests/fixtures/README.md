@@ -1,3 +1,5 @@
+_Last updated: 2026-11-07 13:42:13 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # draw.io fixtures
 
 `published-rectangle.drawio.png` was exported from the published

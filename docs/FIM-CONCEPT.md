@@ -1,4 +1,4 @@
-_Last updated: 2026-11-01 10:56:56 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-08 08:05:58 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # FIM authoring workspace: concept and delivery contract
 
