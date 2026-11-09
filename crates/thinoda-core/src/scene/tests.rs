@@ -207,6 +207,19 @@ fn fixed_connector_ports_match_drawio_rectangle_ellipse_and_rhombus_perimeters()
             perimeter: true,
         });
         let actual = connector_path(&sheet, &layout, &connector)[0];
+        let object = sheet.canvas.object(target).unwrap();
+        let CanvasObjectKind::Shape { shape, .. } = object.kind else {
+            panic!("expected shape");
+        };
+        assert_eq!(
+            fixed_connector_port_position(
+                object.rect,
+                object.rotation,
+                Some((shape, object.rounding)),
+                connector.from_port.unwrap(),
+            ),
+            actual
+        );
         assert!(
             (actual - expected).length() < 0.001,
             "{target:?} {position:?} {offset:?}: {actual:?} != {expected:?}"
@@ -1181,6 +1194,10 @@ fn bands_paint_in_order() {
 
     // The Above object covers the root; the Below object is covered by it.
     assert_eq!(sc.hit_test(Vec2::ZERO), Some(SceneHit::Object(above)));
+    assert_eq!(
+        sc.hit_test_tolerance_excluding(Vec2::ZERO, HIT_TOLERANCE, Some(SceneId::Object(above))),
+        Some(SceneHit::Topic(s.root))
+    );
     s.set_canvas_band(&[above], Band::Below).unwrap();
     let (_, sc) = scene(&s);
     assert_eq!(sc.hit_test(Vec2::ZERO), Some(SceneHit::Topic(s.root)));

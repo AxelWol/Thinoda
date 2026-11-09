@@ -739,8 +739,11 @@ those system-owned controls. WinGet publishing remains paused.
   Unsupported marker shapes, sizes outside
   that range, and unsupported fill values trigger a formatting warning.
   Supported fixed connector points, offsets and perimeter settings are retained
-  for attached shapes and topics. Shift-drag an endpoint onto a target to fix
-  it; Enter or Space toggles a focused endpoint. Unsupported constraints and
+  for attached shapes and topics. Hover a rectangle, rounded rectangle, ellipse,
+  diamond or rectangular topic to reveal connection crosses; drag from or drop
+  onto a cross to fix an attachment. Shift-drag also fixes an arbitrary endpoint;
+  Enter or Space toggles a focused endpoint, and Home/End cycle visible default
+  points. Unsupported constraints and
   possible position differences are reported. Export requires consent if a
   fixed point may move or if an unexported collapsed topic detaches it.
   Existing Thinoda triangle arrows retain

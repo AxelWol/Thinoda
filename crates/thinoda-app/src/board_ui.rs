@@ -502,7 +502,7 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.from = t("From").into();
     labels.to = t("To").into();
     labels.fixed_attachment = t("Fixed attachment").into();
-    labels.connector_end_hint = t("Drag to reconnect; Shift-drag onto a shape or topic fixes the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS).").into();
+    labels.connector_end_hint = t("Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.").into();
     labels.free_point = t("Free point").into();
     labels.resize = t("Resize board item").into();
     labels.rotate = t("Rotate board item").into();

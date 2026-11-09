@@ -850,7 +850,20 @@ impl Scene {
 
     /// Top-most topic or object within `tolerance` of `p`.
     pub fn hit_test_tolerance(&self, p: Vec2, tolerance: f32) -> Option<SceneHit> {
+        self.hit_test_tolerance_excluding(p, tolerance, None)
+    }
+
+    /// Top-most hit within `tolerance`, excluding an item being manipulated.
+    pub fn hit_test_tolerance_excluding(
+        &self,
+        p: Vec2,
+        tolerance: f32,
+        excluded: Option<SceneId>,
+    ) -> Option<SceneHit> {
         self.items.iter().rev().find_map(|item| {
+            if excluded == Some(item.id) {
+                return None;
+            }
             let hit = match item.id {
                 SceneId::Zone(_) => return None,
                 SceneId::Topic(id) => SceneHit::Topic(id),
@@ -982,6 +995,23 @@ impl EndTarget {
             })
             .unwrap_or_else(|| clip_to_rotated_rect(self.rect, self.rotation, toward))
     }
+}
+
+/// Resolves a fixed connector port with the same geometry used by scene routing.
+pub fn fixed_connector_port_position(
+    rect: Rect,
+    rotation: f32,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    port: ConnectorPort,
+) -> Vec2 {
+    EndTarget {
+        rect,
+        rotation,
+        shape,
+    }
+    .with_port(Some(port))
+    .rect
+    .center()
 }
 
 /// draw.io applies a constraint to the unrotated perimeter before rotating it.

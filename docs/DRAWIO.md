@@ -351,10 +351,11 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   port. Endpoint handles show state like draw.io (filled = connected, outline-highlight =
   floating, × = fixed point); connection points (`×`) appear
   on hover over any shape while dragging an end (built-ins: 4/8/16 default points per
-  shape kind; stencils: `<constraint>`s). The current partial implementation uses
-  Shift-drag onto a shape or topic, or Enter/Space on a focused endpoint, to
-  toggle an editable fixed attachment; named/default port sets and hover affordances
-  remain planned.
+  shape kind; stencils: `<constraint>`s). The current partial implementation exposes
+  16 points for rectangles, rounded rectangles and rectangular topics, and eight
+  for ellipses and diamonds. Points can start or terminate a connector; Shift-drag
+  still fixes arbitrary positions, and focused endpoints support keyboard editing.
+  Other built-in shapes, named ports and stencil constraints remain planned.
 - **Direction arrows on hover** (light-blue ↑→↓←): click = clone + connect in that
   direction (respecting spacing/grid, avoiding overlaps); drag = draw connector, drop on a
   shape/port to connect or on empty space to create a connected clone; hold/hover on an
@@ -2660,7 +2661,8 @@ label-appearance, device, Office or full PDF acceptance work above.
 **Fixed connector attachments (partial Phases 3, 6 and 8) — critique.**
 Connectors can retain a normalized fixed point, offset and perimeter flag on
 each attached shape or topic. Shift-drag fixes a dropped endpoint; dragging
-without Shift returns it to automatic attachment. A focused endpoint also
+without Shift away from a connection cross returns it to automatic attachment.
+A focused endpoint also
 supports Enter/Space, arrow-key movement and Ctrl/Command-arrow target cycling.
 The accessibility control describes the state and gesture. Edits, target
 deletion and clipboard remapping remain undoable; copying without a target
@@ -2713,6 +2715,51 @@ metadata for a later export; keep the original diagram. Localized accessibility
 metadata and simulated activation are covered, but physical-device and
 screen-reader acceptance remain open. The separate Office, PDF-viewer and
 four-target long fuzz campaign gates also remain open.
+
+**Default connection points (partial Phase 8) — critique.** Hovering a supported
+rectangle, rounded rectangle or rectangular topic exposes 16 connection crosses;
+ellipses and diamonds expose eight. These are the default constraints observed
+in the published editor for those shape families, including tested sizes from
+10×10 to 500×300; separate ellipse projection probes covered 50% to 400% zoom.
+They use the same normalized positions, perimeter projection and rotation as
+fixed connector routing. A drag from a cross starts a fixed-source connector;
+the Connector tool supports both drag and click-click creation. Dropping on a
+cross fixes the destination
+for those paths, existing endpoint handles, direction arrows and outline drags.
+Dropping on the body away from a cross remains floating, and Shift-drag still
+fixes an arbitrary endpoint. Undo and redo retain both endpoint and port.
+
+Connection crosses use a four-screen-point hit radius. Scene paint order,
+frame clipping and selected controls take precedence; points outside rounded
+outlines remain reachable, including above a lower overlapping shape. A
+contrasting halo and crosshair cursor make a hovered point easier to identify.
+Focused endpoint controls describe Home/End cycling of visible default points;
+existing Enter/Space, arrow and Ctrl/Command-arrow gestures remain available. This
+keyboard alternative does not expose a separate accessibility node for every
+cross; the first cycle from a floating or custom attachment chooses the nearest
+visible point. Unavailable point sets produce a localized error instead of
+silently ignoring the key. Hover lookup and candidate filtering are linear in
+scene size with a bounded number of point projections, rather than cloning the
+scene or resolving a connector for every cross. An interchange test covers every
+default point on the four supported canvas shape families; the supplied corpus
+validated 88 diagrams with conversion warnings reported.
+
+**Rubber-duck findings and remaining scope.** Initially a rounded-corner cross
+could disappear when a lower shape was under it or when rotation placed it
+outside painted bounds; the lookup now checks higher-painted point candidates
+using the object's rotated box before falling back to the body hit. Nearby
+upper objects suppress points they would intercept within the hit tolerance.
+Shape resize and rotate handles retain priority over crosses, and Alt-drag
+still duplicates a shape when started on a cross. Connector creation, endpoint,
+quick-arrow and outline drags cancel when released over an obscuring control.
+Self-connections keep the existing routing, which is not yet draw.io's
+outside-loop routing; Alt-drop and custom triangle, cloud and stencil
+constraints are not claimed as parity.
+Only the verified shape families above expose crosses, and non-rectangular topic
+perimeters remain unsupported. The markers use continuous canvas coordinates,
+not the published editor's screen-pixel rounding. Native formats and clipboard
+versions do not change in this slice. Physical touch and screen-reader review,
+advanced routing and the other release gates remain open.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

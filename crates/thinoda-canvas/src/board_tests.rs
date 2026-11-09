@@ -2823,6 +2823,465 @@ fn fixed_connector_attachment_toggles_with_accessibility_click() {
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
+fn default_port(x: f32, y: f32) -> Option<ConnectorPort> {
+    Some(ConnectorPort {
+        position: Vec2::new(x, y),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    })
+}
+
+#[test]
+fn connection_point_drag_from_hovered_shapes_creates_fixed_undoable_edges() {
+    for tool in [
+        BoardTool::Select,
+        BoardTool::Shape(ShapeKind::RoundedRectangle),
+    ] {
+        let mut sheet = board();
+        let source = shape(&mut sheet, -250.0, 0.0, "Source");
+        let target = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Ellipse,
+                thinoda_core::Rect::from_center_size(
+                    Vec2::new(200.0, 100.0),
+                    Vec2::new(120.0, 80.0),
+                ),
+            ))
+            .unwrap();
+        let mut h = harness(sheet);
+        set_tool(&mut h, tool);
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, Vec2::new(-190.0, 0.0));
+        let end = point(&h, Vec2::new(140.0, 100.0));
+        h.hover_at(point(&h, Vec2::new(-250.0, 0.0)));
+        h.run_steps(3);
+        let cross = point(&h, Vec2::new(-190.0, 0.0));
+        assert!(h.output().shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::LineSegment { points, .. }
+                if points[0].distance(cross - vec2(2.5, 0.0)) < 0.1
+                && points[1].distance(cross + vec2(2.5, 0.0)) < 0.1)
+        }));
+        h.hover_at(cross);
+        h.run_steps(3);
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            egui::CursorIcon::Crosshair
+        );
+        assert!(h.output().shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
+                if points[0].distance(cross - vec2(4.0, 0.0)) < 0.1
+                && points[1].distance(cross + vec2(4.0, 0.0)) < 0.1
+                && stroke.width >= 4.0)
+        }));
+        drag(&mut h, start, end);
+        assert_eq!(h.state().doc.workbook(), &before);
+        finish_drag(&mut h, end);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected one connector for {tool:?}");
+        };
+        let connector = connector(&h, edge);
+        assert_eq!(connector.from, Endpoint::Object(source));
+        assert_eq!(connector.to, Endpoint::Object(target));
+        assert_eq!(connector.from_port, default_port(1.0, 0.5));
+        assert_eq!(connector.to_port, default_port(0.0, 0.5));
+        let after = h.state().doc.workbook().clone();
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state_mut().doc.redo());
+        assert_eq!(h.state().doc.workbook(), &after);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn connection_points_on_rectangular_map_topics_create_fixed_edges() {
+    for central in [true, false] {
+        for tool in [BoardTool::Select, BoardTool::Connector] {
+            let mut sheet = if central {
+                Sheet::new("Map", "Central")
+            } else {
+                board()
+            };
+            let topic = if central {
+                sheet.root
+            } else {
+                sheet.add_floating("Floating", Vec2::new(-200.0, 0.0))
+            };
+            sheet.topic_mut(topic).unwrap().style.shape = Some(thinoda_core::TopicShape::Rect);
+            let target = shape(&mut sheet, 300.0, 200.0, "Target");
+            let mut h = harness(sheet);
+            set_tool(&mut h, tool);
+            let before = h.state().doc.workbook().clone();
+            let rect = h.state().view.cache.as_ref().unwrap().layout.topics[&topic].rect;
+            let start = point(&h, Vec2::new(rect.max().x, rect.center().y));
+            let end = point(&h, Vec2::new(240.0, 200.0));
+            drag(&mut h, start, end);
+            finish_drag(&mut h, end);
+            let [edge] = connectors(h.state().doc.sheet())[..] else {
+                panic!("expected a connector for {tool:?}, central: {central}");
+            };
+            let connector = connector(&h, edge);
+            assert_eq!(connector.from, Endpoint::Topic(topic));
+            assert_eq!(connector.from_port, default_port(1.0, 0.5));
+            assert_eq!(connector.to, Endpoint::Object(target));
+            assert_eq!(connector.to_port, default_port(0.0, 0.5));
+            assert!(h.state_mut().doc.undo());
+            assert_eq!(h.state().doc.workbook(), &before);
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
+fn connection_tool_supports_fixed_and_floating_click_click_attachments() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, -250.0, 0.0, "Source");
+    let target = shape(&mut sheet, 200.0, 100.0, "Target");
+    let mut h = harness(sheet);
+    set_tool(&mut h, BoardTool::Connector);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-190.0, 0.0));
+    let target_cross = point(&h, Vec2::new(140.0, 100.0));
+    click(&mut h, start, Modifiers::NONE);
+    click(&mut h, target_cross, Modifiers::NONE);
+    let [edge] = connectors(h.state().doc.sheet())[..] else {
+        panic!("expected one connector");
+    };
+    let edge_connector = connector(&h, edge);
+    assert_eq!(
+        (edge_connector.from, edge_connector.to),
+        (Endpoint::Object(source), Endpoint::Object(target))
+    );
+    assert_eq!(edge_connector.from_port, default_port(1.0, 0.5));
+    assert_eq!(edge_connector.to_port, default_port(0.0, 0.5));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.run_steps(30);
+    click(&mut h, start, Modifiers::NONE);
+    let target_body = point(&h, Vec2::new(200.0, 100.0));
+    click(&mut h, target_body, Modifiers::NONE);
+    let edge = connectors(h.state().doc.sheet())[0];
+    let edge_connector = connector(&h, edge);
+    assert_eq!(edge_connector.from_port, default_port(1.0, 0.5));
+    assert_eq!(edge_connector.to, Endpoint::Object(target));
+    assert_eq!(edge_connector.to_port, None);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connection_tool_drag_snaps_rotated_points_at_multiple_zooms() {
+    for zoom in [0.5, 2.0] {
+        let mut sheet = board();
+        let source = shape(&mut sheet, -140.0, 0.0, "Source");
+        sheet.rotate_canvas_object(source, 90.0).unwrap();
+        let target = shape(&mut sheet, 140.0, 0.0, "Target");
+        let mut h = harness(sheet);
+        h.state_mut().view.set_zoom(zoom);
+        set_tool(&mut h, BoardTool::Connector);
+        let start = point(&h, Vec2::new(-140.0, 60.0)) + vec2(2.0, 0.0);
+        let end = point(&h, Vec2::new(80.0, 0.0)) + vec2(2.0, 0.0);
+        drag(&mut h, start, end);
+        finish_drag(&mut h, end);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected a connector at zoom {zoom}");
+        };
+        let connector = connector(&h, edge);
+        assert_eq!(
+            (connector.from, connector.to),
+            (Endpoint::Object(source), Endpoint::Object(target))
+        );
+        assert_eq!(connector.from_port, default_port(1.0, 0.5));
+        assert_eq!(connector.to_port, default_port(0.0, 0.5));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn connection_point_gestures_cancel_cleanly_and_allow_existing_self_connections() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let from = point(&h, Vec2::new(60.0, 0.0));
+    let to = point(&h, Vec2::new(0.0, -40.0));
+    drag(&mut h, from, to);
+    h.key_press(Key::Escape);
+    h.run_steps(1);
+    finish_drag(&mut h, to);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+
+    h.run_steps(30);
+    touch(&mut h, egui::TouchPhase::Start, from);
+    touch(&mut h, egui::TouchPhase::Move, to);
+    touch(&mut h, egui::TouchPhase::Cancel, to);
+    touch(&mut h, egui::TouchPhase::End, to);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+
+    h.run_steps(30);
+    drag(&mut h, from, to);
+    finish_drag(&mut h, to);
+    let [edge] = connectors(h.state().doc.sheet())[..] else {
+        panic!("expected one self-connection");
+    };
+    let connector = connector(&h, edge);
+    assert_eq!(connector.from, Endpoint::Object(source));
+    assert_eq!(connector.to, Endpoint::Object(source));
+    assert_eq!(connector.from_port, default_port(1.0, 0.5));
+    assert_eq!(connector.to_port, default_port(0.5, 0.0));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connection_point_drags_do_not_start_or_end_under_an_overlay() {
+    let mut sheet = board();
+    shape(&mut sheet, -200.0, 0.0, "Source");
+    shape(&mut sheet, 200.0, 0.0, "Target");
+    let probe = harness(sheet.clone());
+    let source = point(&probe, Vec2::new(-140.0, 0.0));
+    let target = point(&probe, Vec2::new(140.0, 0.0));
+    for (tool, covered) in [
+        (BoardTool::Select, source),
+        (BoardTool::Select, target),
+        (BoardTool::Connector, target),
+    ] {
+        let overlay = Rect::from_center_size(covered, vec2(80.0, 80.0));
+        let mut h = harness_with_overlay(sheet.clone(), Some(overlay));
+        set_tool(&mut h, tool);
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, Vec2::new(-140.0, 0.0));
+        let end = point(&h, Vec2::new(140.0, 0.0));
+        assert!(overlay.contains(if covered == source { start } else { end }));
+        drag(&mut h, start, end);
+        finish_drag(&mut h, end);
+        assert_eq!(h.state().doc.workbook(), &before, "{tool:?}, {covered:?}");
+        assert!(!h.state().doc.can_undo());
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn endpoint_drag_does_not_reconnect_under_an_overlay() {
+    let mut sheet = board();
+    shape(&mut sheet, 200.0, 0.0, "Target");
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-200.0, 0.0)),
+            Endpoint::Point(Vec2::ZERO),
+        )))
+        .unwrap();
+    let probe = harness(sheet.clone());
+    let target = point(&probe, Vec2::new(140.0, 0.0));
+    let overlay = Rect::from_center_size(target, vec2(80.0, 80.0));
+    let mut h = harness_with_overlay(sheet, Some(overlay));
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let handle = h.get_by_label("Connector To").rect().center();
+    let target = point(&h, Vec2::new(140.0, 0.0));
+    drag(&mut h, handle, target);
+    finish_drag(&mut h, target);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn quick_arrow_and_outline_drags_do_not_connect_under_an_overlay() {
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Source");
+    shape(&mut sheet, 300.0, 250.0, "Target");
+    let probe = harness(sheet.clone());
+    let target = point(&probe, Vec2::new(240.0, 250.0));
+    let overlay = Rect::from_center_size(target, vec2(80.0, 80.0));
+    for quick_arrow in [true, false] {
+        let mut h = harness_with_overlay(sheet.clone(), Some(overlay));
+        if quick_arrow {
+            select_shape_at(&mut h, Vec2::ZERO);
+        }
+        let before = h.state().doc.workbook().clone();
+        let start = if quick_arrow {
+            arrow_center(&h, "Add connected shape to the right")
+        } else {
+            point(&h, Vec2::new(67.0, 0.0))
+        };
+        let target = point(&h, Vec2::new(240.0, 250.0));
+        drag(&mut h, start, target);
+        finish_drag(&mut h, target);
+        assert_eq!(
+            h.state().doc.workbook(),
+            &before,
+            "quick arrow: {quick_arrow}"
+        );
+        assert!(!h.state().doc.can_undo());
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn selected_resize_control_takes_priority_over_a_connection_point() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let original = h.state().doc.sheet().canvas.object(source).unwrap().rect;
+    let corner = h.get_by_label("Resize board item").rect().center();
+    h.hover_at(corner);
+    h.run_steps(2);
+    assert!(!h.state().view.board_input.connection_hot);
+    let end = corner + vec2(40.0, 20.0);
+    drag(&mut h, corner, end);
+    finish_drag(&mut h, end);
+    assert!(connectors(h.state().doc.sheet()).is_empty());
+    assert_ne!(
+        h.state().doc.sheet().canvas.object(source).unwrap().rect,
+        original
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn alt_drag_from_a_connection_point_preserves_shape_duplication() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let cross = point(&h, Vec2::new(60.0, 0.0));
+    let end = cross + vec2(150.0, 80.0);
+    begin_alt_drag(&mut h, cross, end);
+    finish_alt_drag(&mut h, end, Modifiers::ALT);
+    assert!(connectors(h.state().doc.sheet()).is_empty());
+    let [copy] = h.state().view.board_selection[..] else {
+        panic!("expected a selected duplicate");
+    };
+    assert_ne!(copy, source);
+    assert!(h.state().doc.sheet().canvas.object(copy).is_some());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connection_points_reconnect_existing_endpoints_and_support_keyboard_cycles() {
+    let mut sheet = board();
+    let target = shape(&mut sheet, 200.0, 0.0, "Target");
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-200.0, 0.0)),
+            Endpoint::Point(Vec2::ZERO),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let handle = h.get_by_label("Connector To").rect().center();
+    let cross = point(&h, Vec2::new(140.0, 0.0));
+    drag(&mut h, handle, cross);
+    finish_drag(&mut h, cross);
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    let fixed = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &fixed);
+    h.run_steps(3);
+    let handle = h.get_by_label("Connector To, Fixed attachment");
+    assert!(
+        handle
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Home/End")
+    );
+    handle.focus();
+    h.run_steps(2);
+    h.key_press(Key::End);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.25));
+    h.key_press(Key::Home);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to_port, None);
+    h.key_press(Key::End);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_connection_point_cycle_reports_unsupported_targets() {
+    let mut sheet = board();
+    let target = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Triangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(200.0, 0.0), Vec2::new(120.0, 80.0)),
+        ))
+        .unwrap();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-200.0, 0.0)),
+            Endpoint::Object(target),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    h.get_by_label("Connector To").focus();
+    h.run_steps(2);
+    h.key_press(Key::End);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert_eq!(h.state().errors.len(), 1);
+    assert!(
+        h.state().errors[0]
+            .to_string()
+            .contains("no visible connection points")
+    );
+}
+
+#[test]
+fn quick_arrow_and_outline_drops_can_fix_the_destination() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let target = shape(&mut sheet, 300.0, 250.0, "Target");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let before = h.state().doc.workbook().clone();
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    let cross = point(&h, Vec2::new(240.0, 250.0));
+    drag(&mut h, arrow, cross);
+    finish_drag(&mut h, cross);
+    let edge = connectors(h.state().doc.sheet())[0];
+    assert_eq!(connector(&h, edge).from, Endpoint::Object(source));
+    assert_eq!(connector(&h, edge).from_port, None);
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.state_mut().view.board_selection.clear();
+    h.run_steps(30);
+    let outline = point(&h, Vec2::new(67.0, 0.0));
+    drag(&mut h, outline, cross);
+    finish_drag(&mut h, cross);
+    let edge = connectors(h.state().doc.sheet())[0];
+    assert_eq!(connector(&h, edge).from, Endpoint::Object(source));
+    assert_eq!(connector(&h, edge).from_port, None);
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
 #[test]
 fn connector_creation_and_endpoint_edits_are_undoable() {
     let mut sheet = board();

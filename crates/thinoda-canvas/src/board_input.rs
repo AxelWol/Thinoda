@@ -5,7 +5,7 @@ use crate::actions::{BoardAction, apply_board_action, board_actions};
 use std::collections::{HashMap, HashSet, VecDeque};
 use thinoda_core::{
     CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorPort, EditError,
-    EditResult, Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
+    EditResult, Endpoint, Scene, SceneId, SheetRootMode, TopicShape, ZOrder, Zone, ZoneId,
     board::{
         BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
         rotate_around, rotated_corners, shape_geometry_with_style,
@@ -42,6 +42,8 @@ pub(super) struct State {
     arrow_hover: Option<((SceneId, ArrowDir), Option<f64>)>,
     /// Shape whose outline band is hovered, where a drag draws a connector.
     pub(super) outline_hover: Option<CanvasObjectId>,
+    pub(super) connection_hot: bool,
+    connection_hover: Option<ConnectionPoints>,
 }
 
 /// draw.io-style shape picker shown next to a direction arrow.
@@ -179,8 +181,41 @@ pub(super) fn end_focus_exit(ctx: &egui::Context, view: &mut MapView, next: Opti
     }
 }
 
+#[derive(Clone, Copy)]
+struct ConnectorAttachment {
+    endpoint: Endpoint,
+    port: Option<ConnectorPort>,
+}
+
+impl ConnectorAttachment {
+    fn floating(endpoint: Endpoint) -> Self {
+        Self {
+            endpoint,
+            port: None,
+        }
+    }
+
+    fn connector(self, to: Self) -> CanvasConnector {
+        let mut connector = CanvasConnector::new(self.endpoint, to.endpoint);
+        connector.from_port = self.port;
+        connector.to_port = to.port;
+        connector
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ConnectionPoint {
+    attachment: ConnectorAttachment,
+    position: Vec2,
+}
+
+struct ConnectionPoints {
+    item: SceneId,
+    points: Vec<ConnectionPoint>,
+}
+
 struct PendingConnector {
-    from: Endpoint,
+    from: ConnectorAttachment,
     point: Vec2,
     state: u64,
     sheet: usize,
@@ -218,7 +253,7 @@ enum GestureKind {
         tool: BoardTool,
         start: Vec2,
         current: Vec2,
-        from: Endpoint,
+        from: ConnectorAttachment,
     },
     Move {
         start: Vec2,
@@ -602,20 +637,474 @@ fn endpoint_at(
     point: Vec2,
     except: Option<CanvasObjectId>,
 ) -> Endpoint {
-    // Excluding the connector being edited lets a handle reach a target beneath it.
-    let hit = if let Some(except) = except {
-        let mut scene = scene.clone();
-        scene
-            .items
-            .retain(|item| item.id != SceneId::Object(except));
-        scene.hit_test(point)
-    } else {
-        scene.hit_test(point)
-    };
+    let hit = scene.hit_test_tolerance_excluding(
+        point,
+        thinoda_core::scene::HIT_TOLERANCE,
+        except.map(SceneId::Object),
+    );
     match hit {
         Some(SceneHit::Topic(id)) if !sheet.is_anchor(id) => Endpoint::Topic(id),
         Some(SceneHit::Object(id)) => Endpoint::Object(id),
         _ => Endpoint::Point(snapped(sheet, point)),
+    }
+}
+
+const CONNECTION_POINT_RADIUS: f32 = 4.0;
+const RECTANGLE_CONNECTION_POINTS: [(f32, f32); 16] = [
+    (0.0, 0.0),
+    (0.25, 0.0),
+    (0.5, 0.0),
+    (0.75, 0.0),
+    (1.0, 0.0),
+    (1.0, 0.25),
+    (1.0, 0.5),
+    (1.0, 0.75),
+    (1.0, 1.0),
+    (0.75, 1.0),
+    (0.5, 1.0),
+    (0.25, 1.0),
+    (0.0, 1.0),
+    (0.0, 0.75),
+    (0.0, 0.5),
+    (0.0, 0.25),
+];
+const PERIMETER_CONNECTION_POINTS: [(f32, f32); 8] = [
+    (0.0, 0.0),
+    (0.5, 0.0),
+    (1.0, 0.0),
+    (1.0, 0.5),
+    (1.0, 1.0),
+    (0.5, 1.0),
+    (0.0, 1.0),
+    (0.0, 0.5),
+];
+
+impl ConnectionPoints {
+    fn nearest(&self, point: Vec2, tolerance: f32) -> Option<ConnectionPoint> {
+        self.points
+            .iter()
+            .copied()
+            .filter(|candidate| (candidate.position - point).length() <= tolerance)
+            .min_by(|a, b| {
+                (a.position - point)
+                    .length()
+                    .total_cmp(&(b.position - point).length())
+            })
+    }
+}
+
+fn connection_points_for_item(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    index: usize,
+    object: Option<&CanvasObject>,
+    excluded: Option<SceneId>,
+    occlusion_tolerance: Option<f32>,
+) -> Option<ConnectionPoints> {
+    let item = &scene.items[index];
+    let (endpoint, rect, rotation, shape, positions): (_, _, _, _, &[(f32, f32)]) = match item.id {
+        SceneId::Object(id) => {
+            let object = object?;
+            let CanvasObjectKind::Shape { shape, .. } = object.kind else {
+                return None;
+            };
+            let positions = match shape {
+                ShapeKind::Rectangle | ShapeKind::RoundedRectangle => {
+                    &RECTANGLE_CONNECTION_POINTS[..]
+                }
+                ShapeKind::Ellipse | ShapeKind::Diamond => &PERIMETER_CONNECTION_POINTS[..],
+                _ => return None,
+            };
+            (
+                Endpoint::Object(id),
+                object.rect,
+                object.rotation,
+                Some((shape, object.rounding)),
+                positions,
+            )
+        }
+        SceneId::Topic(id) if !sheet.is_anchor(id) => {
+            if !matches!(
+                layout.topics.get(&id)?.style.shape,
+                TopicShape::Rect | TopicShape::RoundedRect | TopicShape::Capsule
+            ) {
+                return None;
+            }
+            let SceneGeometry::Rect { rect, rotation } = item.geometry else {
+                return None;
+            };
+            (
+                Endpoint::Topic(id),
+                rect,
+                rotation,
+                None,
+                &RECTANGLE_CONNECTION_POINTS[..],
+            )
+        }
+        _ => return None,
+    };
+    if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+        return None;
+    }
+    let points = positions
+        .iter()
+        .filter_map(|&(x, y)| {
+            let port = ConnectorPort {
+                position: Vec2::new(x, y),
+                offset: Vec2::ZERO,
+                perimeter: true,
+            };
+            let position =
+                thinoda_core::scene::fixed_connector_port_position(rect, rotation, shape, port);
+            if item.clip.is_some_and(|clip| !clip.contains(position)) {
+                return None;
+            }
+            let obscured = occlusion_tolerance.is_some_and(|tolerance| {
+                scene
+                    .hit_test_tolerance_excluding(position, tolerance, excluded)
+                    .and_then(|hit| {
+                        let id = match hit {
+                            SceneHit::Object(id) => SceneId::Object(id),
+                            SceneHit::Topic(id) => SceneId::Topic(id),
+                        };
+                        scene.items.iter().rposition(|other| other.id == id)
+                    })
+                    .is_some_and(|top| top > index)
+            });
+            (!obscured).then_some(ConnectionPoint {
+                attachment: ConnectorAttachment {
+                    endpoint,
+                    port: Some(port),
+                },
+                position,
+            })
+        })
+        .collect();
+    Some(ConnectionPoints {
+        item: item.id,
+        points,
+    })
+}
+
+fn connection_points_at(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+    zoom: f32,
+    except: Option<CanvasObjectId>,
+) -> Option<ConnectionPoints> {
+    let tolerance = CONNECTION_POINT_RADIUS / zoom;
+    let excluded = except.map(SceneId::Object);
+    let body = scene
+        .hit_test_tolerance_excluding(point, tolerance, excluded)
+        .and_then(|hit| {
+            let id = match hit {
+                SceneHit::Topic(id) => SceneId::Topic(id),
+                SceneHit::Object(id) => SceneId::Object(id),
+            };
+            scene.items.iter().rposition(|item| item.id == id)
+        });
+
+    // Rotated rounded corners can put a connection point outside painted bounds.
+    let possibly_nearby = |item: &SceneItem| {
+        let margin = item.bounds.size.x.max(item.bounds.size.y) * 0.5;
+        Some(item.id) != excluded
+            && item.clip.is_none_or(|clip| clip.contains(point))
+            && item.bounds.expand(tolerance + margin).contains(point)
+    };
+    let first_higher = body.map_or(0, |index| index + 1);
+    if scene.items[first_higher..].iter().any(possibly_nearby) {
+        let objects: HashMap<_, _> = sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object))
+            .collect();
+        let candidate = scene
+            .items
+            .iter()
+            .enumerate()
+            .skip(first_higher)
+            .rev()
+            .filter(|(_, item)| possibly_nearby(item))
+            .find_map(|(index, item)| {
+                let object = match item.id {
+                    SceneId::Object(id) => objects.get(&id).copied(),
+                    _ => None,
+                };
+                let bounds = object.map_or(item.bounds, CanvasObject::rotated_bounds);
+                if !bounds.expand(tolerance).contains(point) {
+                    return None;
+                }
+                let points = connection_points_for_item(
+                    sheet, layout, scene, index, object, excluded, None,
+                )?;
+                points.nearest(point, tolerance).map(|_| (index, object))
+            })
+            .and_then(|(index, object)| {
+                connection_points_for_item(
+                    sheet,
+                    layout,
+                    scene,
+                    index,
+                    object,
+                    excluded,
+                    Some(tolerance),
+                )
+            });
+        if let Some(points) = candidate
+            && points.nearest(point, tolerance).is_some()
+        {
+            return Some(points);
+        }
+    }
+    let index = body?;
+    let object = match scene.items[index].id {
+        SceneId::Object(id) => sheet.canvas.object(id),
+        _ => None,
+    };
+    connection_points_for_item(
+        sheet,
+        layout,
+        scene,
+        index,
+        object,
+        excluded,
+        Some(tolerance),
+    )
+}
+
+fn attachment_at(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+    zoom: f32,
+    except: Option<CanvasObjectId>,
+) -> ConnectorAttachment {
+    connection_point_at(sheet, layout, scene, point, zoom, except).map_or_else(
+        || ConnectorAttachment::floating(endpoint_at(sheet, scene, point, except)),
+        |point| point.attachment,
+    )
+}
+
+fn connection_point_at(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+    zoom: f32,
+    except: Option<CanvasObjectId>,
+) -> Option<ConnectionPoint> {
+    connection_points_at(sheet, layout, scene, point, zoom, except)
+        .and_then(|points| points.nearest(point, CONNECTION_POINT_RADIUS / zoom))
+}
+
+#[cfg(test)]
+mod connection_point_tests {
+    use super::*;
+    use thinoda_core::{ApproxMeasure, layout_sheet, scene::build_scene};
+
+    fn setup(kind: ShapeKind, rect: thinoda_core::Rect, rotation: f32) -> (Sheet, CanvasObjectId) {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = CanvasObject::shape(kind, rect);
+        object.rotation = rotation;
+        let id = sheet.add_canvas_object(object).unwrap();
+        (sheet, id)
+    }
+
+    #[test]
+    fn verified_connection_points_share_routing_geometry_at_any_rotation() {
+        let rect = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(200.0, 100.0));
+        for (kind, count) in [
+            (ShapeKind::Rectangle, 16),
+            (ShapeKind::RoundedRectangle, 16),
+            (ShapeKind::Ellipse, 8),
+            (ShapeKind::Diamond, 8),
+        ] {
+            for rotation in [0.0, 37.0, 90.0] {
+                let (sheet, id) = setup(kind, rect, rotation);
+                let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                let scene = build_scene(&sheet, &layout);
+                let points =
+                    connection_points_at(&sheet, &layout, &scene, Vec2::ZERO, 1.0, None).unwrap();
+                assert_eq!(points.item, SceneId::Object(id));
+                assert_eq!(points.points.len(), count, "{kind:?}, {rotation}");
+                for point in points.points {
+                    let port = point.attachment.port.unwrap();
+                    assert!(port.perimeter);
+                    assert_eq!(port.offset, Vec2::ZERO);
+                    assert_eq!(
+                        point.position,
+                        thinoda_core::scene::fixed_connector_port_position(
+                            rect,
+                            rotation,
+                            Some((kind, None)),
+                            port
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn marker_tolerance_is_in_screen_space_and_rounded_corners_remain_reachable() {
+        let rect = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(400.0, 400.0));
+        let (sheet, _) = setup(ShapeKind::RoundedRectangle, rect, 0.0);
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        for zoom in [0.25, 0.5, 1.0, 2.0, 4.0] {
+            let marker = Vec2::new(200.0, 0.0);
+            let inside = marker + Vec2::new(0.0, 3.9 / zoom);
+            let outside = marker + Vec2::new(0.0, 4.1 / zoom);
+            assert!(connection_point_at(&sheet, &layout, &scene, inside, zoom, None).is_some());
+            assert!(connection_point_at(&sheet, &layout, &scene, outside, zoom, None).is_none());
+            assert!(
+                connection_point_at(&sheet, &layout, &scene, rect.max(), zoom, None).is_some(),
+                "rounded corner at zoom {zoom}"
+            );
+        }
+        let (rotated, _) = setup(ShapeKind::RoundedRectangle, rect, 45.0);
+        let layout = layout_sheet(&rotated, &ApproxMeasure, false);
+        let scene = build_scene(&rotated, &layout);
+        let corner = rotate_around(rect.max(), rect.center(), 45.0);
+        assert!(
+            !scene.items[0].bounds.expand(4.0).contains(corner),
+            "fixture must put the cross outside painted bounds"
+        );
+        assert!(
+            connection_point_at(&rotated, &layout, &scene, corner, 1.0, None).is_some(),
+            "rotated rounded corners remain reachable"
+        );
+    }
+
+    #[test]
+    fn rectangular_card_connection_points_follow_card_rotation() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut card = Card::new(CardKind::Sticky, Vec2::new(200.0, 100.0));
+        card.rotation = 90.0;
+        let id = sheet.add_card("Card", Vec2::ZERO, card).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let points = connection_points_at(&sheet, &layout, &scene, Vec2::ZERO, 1.0, None)
+            .expect("sticky card connection points");
+        assert_eq!(points.item, SceneId::Topic(id));
+        assert_eq!(points.points.len(), 16);
+        let right = points
+            .points
+            .iter()
+            .find(|point| point.attachment.port.unwrap().position == Vec2::new(1.0, 0.5))
+            .unwrap();
+        assert_eq!(right.attachment.endpoint, Endpoint::Topic(id));
+        assert!((right.position - Vec2::new(0.0, 100.0)).length() < 0.01);
+    }
+
+    #[test]
+    fn markers_obey_paint_order_clipping_and_supported_shape_scope() {
+        let rect = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(200.0, 100.0));
+        let (mut sheet, lower) = setup(ShapeKind::Rectangle, rect, 0.0);
+        let upper = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                rect.translate(Vec2::new(130.0, 0.0)),
+            ))
+            .unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let lower_points =
+            connection_points_at(&sheet, &layout, &scene, Vec2::new(-50.0, 0.0), 1.0, None)
+                .unwrap();
+        assert_eq!(lower_points.item, SceneId::Object(lower));
+        assert!(
+            lower_points
+                .points
+                .iter()
+                .all(|point| point.position.x < 100.0)
+        );
+        let overlapping =
+            connection_points_at(&sheet, &layout, &scene, Vec2::new(75.0, 0.0), 1.0, None).unwrap();
+        assert_eq!(overlapping.item, SceneId::Object(upper));
+        let excluded = connection_points_at(
+            &sheet,
+            &layout,
+            &scene,
+            Vec2::new(75.0, 0.0),
+            1.0,
+            Some(upper),
+        )
+        .unwrap();
+        assert_eq!(excluded.item, SceneId::Object(lower));
+
+        let (mut overlap, underneath) = setup(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(400.0, 300.0)),
+            0.0,
+        );
+        let rounded = overlap
+            .add_canvas_object(CanvasObject::shape(ShapeKind::RoundedRectangle, rect))
+            .unwrap();
+        let layout = layout_sheet(&overlap, &ApproxMeasure, false);
+        let scene = build_scene(&overlap, &layout);
+        assert_eq!(
+            scene.hit_test(rect.max()),
+            Some(SceneHit::Object(underneath))
+        );
+        let point = connection_point_at(&overlap, &layout, &scene, rect.max(), 1.0, None)
+            .expect("top rounded corner remains reachable over a lower shape");
+        assert_eq!(point.attachment.endpoint, Endpoint::Object(rounded));
+
+        let (mut adjacent, lower) = setup(ShapeKind::Rectangle, rect, 0.0);
+        adjacent
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                rect.translate(Vec2::new(203.0, 0.0)),
+            ))
+            .unwrap();
+        let layout = layout_sheet(&adjacent, &ApproxMeasure, false);
+        let scene = build_scene(&adjacent, &layout);
+        let points =
+            connection_points_at(&adjacent, &layout, &scene, Vec2::new(-50.0, 0.0), 1.0, None)
+                .unwrap();
+        assert_eq!(points.item, SceneId::Object(lower));
+        assert!(points.points.iter().all(|point| point.position.x < 100.0));
+
+        let (mut clipped, id) = setup(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_min_size(Vec2::new(-80.0, -40.0), Vec2::new(240.0, 80.0)),
+            0.0,
+        );
+        clipped
+            .create_board_frame(
+                "Frame",
+                thinoda_core::Rect::from_min_size(
+                    Vec2::new(-100.0, -100.0),
+                    Vec2::new(200.0, 200.0),
+                ),
+            )
+            .unwrap();
+        clipped.zones[0].clip = true;
+        let layout = layout_sheet(&clipped, &ApproxMeasure, false);
+        let scene = build_scene(&clipped, &layout);
+        let points =
+            connection_points_at(&clipped, &layout, &scene, Vec2::ZERO, 1.0, None).unwrap();
+        assert_eq!(points.item, SceneId::Object(id));
+        assert!(points.points.iter().all(|point| point.position.x <= 100.0));
+        assert!(
+            connection_point_at(&clipped, &layout, &scene, Vec2::new(160.0, 0.0), 1.0, None)
+                .is_none()
+        );
+
+        let (unsupported, _) = setup(ShapeKind::Triangle, rect, 0.0);
+        let layout = layout_sheet(&unsupported, &ApproxMeasure, false);
+        let scene = build_scene(&unsupported, &layout);
+        assert!(
+            connection_points_at(&unsupported, &layout, &scene, Vec2::ZERO, 1.0, None).is_none()
+        );
     }
 }
 
@@ -865,7 +1354,7 @@ fn create(
     view: &mut MapView,
     tool: BoardTool,
     rect: thinoda_core::Rect,
-    endpoints: Option<(Endpoint, Endpoint)>,
+    endpoints: Option<(ConnectorAttachment, ConnectorAttachment)>,
 ) -> EditResult<bool> {
     match tool {
         BoardTool::Sticky | BoardTool::Text => {
@@ -888,8 +1377,7 @@ fn create(
             let Some((from, to)) = endpoints else {
                 return Ok(false);
             };
-            let id =
-                doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+            let id = doc.add_canvas_object(CanvasObject::connector(from.connector(to)))?;
             select_hit(view, doc.sheet(), SceneHit::Object(id), false);
             Ok(true)
         }
@@ -919,8 +1407,8 @@ fn create_at(
     let rect = thinoda_core::Rect::from_center_size(center, size);
     let ends = (tool == BoardTool::Connector).then(|| {
         (
-            Endpoint::Point(center - Vec2::new(60.0, 0.0)),
-            Endpoint::Point(center + Vec2::new(60.0, 0.0)),
+            ConnectorAttachment::floating(Endpoint::Point(center - Vec2::new(60.0, 0.0))),
+            ConnectorAttachment::floating(Endpoint::Point(center + Vec2::new(60.0, 0.0))),
         )
     });
     create(doc, view, tool, rect, ends)
@@ -1811,6 +2299,7 @@ fn arrow_click(
 fn arrow_drop(
     doc: &mut Document,
     view: &mut MapView,
+    layout: &Layout,
     scene: &Scene,
     source: CanvasObjectId,
     point: Vec2,
@@ -1823,7 +2312,8 @@ fn arrow_drop(
         return Ok(false);
     }
     let from = Endpoint::Object(source);
-    match endpoint_at(doc.sheet(), scene, point, Some(source)) {
+    let target = attachment_at(doc.sheet(), layout, scene, point, view.zoom, Some(source));
+    match target.endpoint {
         Endpoint::Point(center) if modifiers.command => {
             let (id, _) = doc.add_connected_canvas_object(
                 arrow_clone(&object, center),
@@ -1831,9 +2321,10 @@ fn arrow_drop(
             )?;
             select_hit(view, doc.sheet(), SceneHit::Object(id), false);
         }
-        to => {
-            let edge =
-                doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+        _ => {
+            let edge = doc.add_canvas_object(CanvasObject::connector(
+                ConnectorAttachment::floating(from).connector(target),
+            ))?;
             select_hit(view, doc.sheet(), SceneHit::Object(edge), false);
         }
     }
@@ -2264,6 +2755,84 @@ fn activate_waypoint_insertion(
     }
 }
 
+fn cycle_connection_point(
+    doc: &mut Document,
+    layout: &Layout,
+    scene: &Scene,
+    control: Control,
+    zoom: f32,
+    forward: bool,
+) -> EditResult<bool> {
+    let SceneId::Object(edge) = control.item else {
+        return Ok(false);
+    };
+    let start = control.kind == ControlKind::From;
+    let (endpoint, current) = connector_end(doc.sheet(), edge, start)
+        .ok_or_else(|| EditError::Invalid("connector no longer exists".into()))?;
+    let target = match endpoint {
+        Endpoint::Object(id) => SceneId::Object(id),
+        Endpoint::Topic(id) => SceneId::Topic(id),
+        Endpoint::Point(_) => {
+            return Err(EditError::Invalid(
+                "no visible connection points on this target".into(),
+            ));
+        }
+    };
+    let index = scene
+        .items
+        .iter()
+        .rposition(|item| item.id == target)
+        .ok_or_else(|| EditError::Invalid("no visible connection points on this target".into()))?;
+    let object = match target {
+        SceneId::Object(id) => doc.sheet().canvas.object(id),
+        _ => None,
+    };
+    let points = connection_points_for_item(
+        doc.sheet(),
+        layout,
+        scene,
+        index,
+        object,
+        Some(SceneId::Object(edge)),
+        Some(CONNECTION_POINT_RADIUS / zoom),
+    )
+    .filter(|points| !points.points.is_empty())
+    .ok_or_else(|| EditError::Invalid("no visible connection points on this target".into()))?;
+    let current_index = points
+        .points
+        .iter()
+        .position(|point| point.attachment.port == current && current.is_some());
+    let next = if let Some(current) = current_index {
+        if forward {
+            (current + 1) % points.points.len()
+        } else {
+            (current + points.points.len() - 1) % points.points.len()
+        }
+    } else {
+        points
+            .points
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                (a.position - control.point)
+                    .length()
+                    .total_cmp(&(b.position - control.point).length())
+            })
+            .map(|(index, _)| index)
+            .ok_or_else(|| {
+                EditError::Invalid("no visible connection points on this target".into())
+            })?
+    };
+    set_endpoint(
+        doc,
+        edge,
+        start,
+        endpoint,
+        points.points[next].attachment.port,
+    )?;
+    Ok(true)
+}
+
 fn keyboard_control(
     ui: &Ui,
     doc: &mut Document,
@@ -2347,6 +2916,26 @@ fn keyboard_control(
     {
         toggle_fixed_endpoint(doc, view, scene, control, out);
         return;
+    }
+    if matches!(control.kind, ControlKind::From | ControlKind::To) {
+        let direction = ui.input_mut(|input| {
+            if input.consume_key(Modifiers::NONE, Key::Home) {
+                Some(false)
+            } else if input.consume_key(Modifiers::NONE, Key::End) {
+                Some(true)
+            } else {
+                None
+            }
+        });
+        if let Some(forward) = direction {
+            if prepare_edit(doc, view, out)
+                && let Err(error) =
+                    cycle_connection_point(doc, layout, scene, control, view.zoom, forward)
+            {
+                out.error = Some(error);
+            }
+            return;
+        }
     }
     // Let the canvas own Alt+arrow duplication/rotation even when a handle is
     // focused. `consume_key` otherwise accepts extra Alt modifiers.
@@ -2717,7 +3306,9 @@ fn update_gesture(
     ui: &Ui,
     doc: &mut Document,
     view: &mut MapView,
+    layout: &Layout,
     scene: &Scene,
+    response: &Response,
     pointer: Option<Pos2>,
     enabled: bool,
     event_offset: usize,
@@ -2837,9 +3428,23 @@ fn update_gesture(
     }
     if release.is_some() {
         let is_arrow = matches!(drag.kind, GestureKind::Arrow { .. });
+        let connecting = match &drag.kind {
+            GestureKind::Create {
+                tool: BoardTool::Connector,
+                ..
+            }
+            | GestureKind::Endpoint { .. } => true,
+            GestureKind::Arrow { current, .. } | GestureKind::Outline { current, .. } => {
+                (*current - drag.origin).length() * view.zoom >= ARROW_DRAG
+            }
+            _ => false,
+        };
         if !drag.canceled
             && (drag.moved || is_arrow)
-            && pointer.is_some_and(|point| view.canvas_rect.contains(point))
+            && pointer.is_some_and(|point| {
+                view.canvas_rect.contains(point)
+                    && (!connecting || canvas_point_unobscured(ui, response, point))
+            })
         {
             let duplicating = matches!(
                 drag.kind,
@@ -2860,7 +3465,8 @@ fn update_gesture(
                     from,
                 } => {
                     if tool == BoardTool::Connector {
-                        let to = endpoint_at(doc.sheet(), scene, current, None);
+                        let to =
+                            attachment_at(doc.sheet(), layout, scene, current, view.zoom, None);
                         create(
                             doc,
                             view,
@@ -2920,13 +3526,16 @@ fn update_gesture(
                     }
                 }
                 GestureKind::Endpoint { id, start, point } => {
-                    let end = endpoint_at(doc.sheet(), scene, point, Some(id));
-                    let port = if release_modifiers.shift {
-                        fixed_port_at(doc.sheet(), scene, end, point, None)
+                    let target =
+                        attachment_at(doc.sheet(), layout, scene, point, view.zoom, Some(id));
+                    let port = if target.port.is_some() {
+                        Ok(target.port)
+                    } else if release_modifiers.shift {
+                        fixed_port_at(doc.sheet(), scene, target.endpoint, point, None)
                     } else {
                         Ok(None)
                     };
-                    port.and_then(|port| set_endpoint(doc, id, start, end, port))
+                    port.and_then(|port| set_endpoint(doc, id, start, target.endpoint, port))
                         .map(|()| true)
                 }
                 GestureKind::Waypoint {
@@ -2951,7 +3560,7 @@ fn update_gesture(
                 } => {
                     let modifiers = ctx.input(|input| input.modifiers);
                     if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
-                        arrow_drop(doc, view, scene, source, current, modifiers)
+                        arrow_drop(doc, view, layout, scene, source, current, modifiers)
                     } else {
                         let mode = ArrowMode::from_modifiers(modifiers);
                         arrow_click(doc, view, scene, source, dir, mode)
@@ -2962,7 +3571,7 @@ fn update_gesture(
                 } => {
                     if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
                         let modifiers = ctx.input(|input| input.modifiers);
-                        arrow_drop(doc, view, scene, source, current, modifiers)
+                        arrow_drop(doc, view, layout, scene, source, current, modifiers)
                     } else {
                         Ok(false)
                     }
@@ -3009,6 +3618,8 @@ pub(super) fn interact(
     view.board_input.armed_hover = false;
     view.board_input.ghost = None;
     view.board_input.outline_hover = None;
+    view.board_input.connection_hot = false;
+    view.board_input.connection_hover = None;
     let ctx = ui.ctx().clone();
     if view.board_input.last_tool != view.board_tool {
         view.board_input.cancel_gesture();
@@ -3064,7 +3675,67 @@ pub(super) fn interact(
     }
     let over_controls = interact_controls(ui, doc, view, layout, scene, enabled, out);
     update_hover_shape(view, doc.sheet(), scene, response, over_controls);
-    if update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out) {
+    let connecting = match view.board_input.gesture.as_ref().map(|drag| &drag.kind) {
+        Some(GestureKind::Create {
+            tool: BoardTool::Connector,
+            ..
+        })
+        | Some(GestureKind::Endpoint { .. })
+        | Some(GestureKind::Arrow { .. })
+        | Some(GestureKind::Outline { .. }) => true,
+        Some(_) => false,
+        None => matches!(
+            view.board_tool,
+            BoardTool::Select | BoardTool::Connector | BoardTool::Shape(_)
+        ),
+    };
+    let except = match view.board_input.gesture.as_ref().map(|drag| &drag.kind) {
+        Some(GestureKind::Endpoint { id, .. }) => Some(*id),
+        Some(GestureKind::Arrow { source, .. } | GestureKind::Outline { source, .. }) => {
+            Some(*source)
+        }
+        _ => None,
+    };
+    if enabled && connecting && view.board_input.quick.is_none() {
+        view.board_input.connection_hover = pointer
+            .filter(|point| canvas_point_unobscured(ui, response, *point))
+            .and_then(|point| {
+                connection_points_at(
+                    doc.sheet(),
+                    layout,
+                    scene,
+                    view.xf().sheet(point),
+                    view.zoom,
+                    except,
+                )
+            });
+        let alt_copies_shape = view.board_input.gesture.is_none()
+            && matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_))
+            && ctx.input(|input| input.modifiers.alt);
+        view.board_input.connection_hot = !alt_copies_shape
+            && (!over_controls || view.board_input.gesture.is_some())
+            && pointer.is_some_and(|point| {
+                view.board_input
+                    .connection_hover
+                    .as_ref()
+                    .and_then(|points| {
+                        points.nearest(view.xf().sheet(point), CONNECTION_POINT_RADIUS / view.zoom)
+                    })
+                    .is_some()
+            });
+    }
+    if update_gesture(
+        ui,
+        doc,
+        view,
+        layout,
+        scene,
+        response,
+        pointer,
+        enabled,
+        event_offset,
+        out,
+    ) {
         return true;
     }
     if !enabled {
@@ -3105,8 +3776,11 @@ pub(super) fn interact(
     // only empty canvas creates. A press already creating keeps creating.
     let armed = matches!(tool, BoardTool::Shape(_));
     let on_content = |point: Pos2| {
+        let sheet_point = view.xf().sheet(point);
         canvas_point_unobscured(ui, response, point)
-            && armed_target(doc, view, layout, scene, view.xf().sheet(point))
+            && (armed_target(doc, view, layout, scene, sheet_point)
+                || connection_point_at(doc.sheet(), layout, scene, sheet_point, view.zoom, None)
+                    .is_some())
     };
     let armed_idle =
         armed && view.board_input.creation_press.is_none() && view.board_input.connector.is_none();
@@ -3181,20 +3855,48 @@ pub(super) fn interact(
                 && released.is_none_or(|point| canvas_point_unobscured(ui, response, point))
                 && prepare_edit(doc, view, out)
             {
-                let start = view.xf().sheet(origin);
-                let from = view
-                    .board_input
-                    .connector
-                    .as_ref()
-                    .map_or_else(|| endpoint_at(doc.sheet(), scene, start, None), |p| p.from);
+                let origin = view.xf().sheet(origin);
+                let (from, start) = if tool != BoardTool::Connector {
+                    (
+                        ConnectorAttachment::floating(Endpoint::Point(origin)),
+                        origin,
+                    )
+                } else if let Some(pending) = &view.board_input.connector {
+                    (pending.from, pending.point)
+                } else if let Some(point) =
+                    connection_point_at(doc.sheet(), layout, scene, origin, view.zoom, None)
+                {
+                    (point.attachment, point.position)
+                } else {
+                    (
+                        ConnectorAttachment::floating(endpoint_at(
+                            doc.sheet(),
+                            scene,
+                            origin,
+                            None,
+                        )),
+                        origin,
+                    )
+                };
                 let kind = GestureKind::Create {
                     tool,
                     start,
                     current: start,
                     from,
                 };
-                view.board_input.gesture = Some(gesture(doc, view, kind, start));
-                update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+                view.board_input.gesture = Some(gesture(doc, view, kind, origin));
+                update_gesture(
+                    ui,
+                    doc,
+                    view,
+                    layout,
+                    scene,
+                    response,
+                    pointer,
+                    enabled,
+                    event_offset,
+                    out,
+                );
             }
         } else if response.clicked()
             && (pressed_origin.is_none() || view.board_input.creation_press.is_some())
@@ -3204,7 +3906,11 @@ pub(super) fn interact(
         {
             let point = view.xf().sheet(point);
             let result = if tool == BoardTool::Connector {
-                let end = endpoint_at(doc.sheet(), scene, point, None);
+                let fixed = connection_point_at(doc.sheet(), layout, scene, point, view.zoom, None);
+                let end = fixed.map_or_else(
+                    || ConnectorAttachment::floating(endpoint_at(doc.sheet(), scene, point, None)),
+                    |fixed| fixed.attachment,
+                );
                 if let Some(pending) = view.board_input.connector.take() {
                     create(
                         doc,
@@ -3216,7 +3922,7 @@ pub(super) fn interact(
                 } else {
                     view.board_input.connector = Some(PendingConnector {
                         from: end,
-                        point,
+                        point: fixed.map_or(point, |fixed| fixed.position),
                         state: doc.state_id(),
                         sheet: doc.active_index(),
                         sheet_identity: sheet_identity(doc),
@@ -3244,6 +3950,35 @@ pub(super) fn interact(
             .input(|input| input.pointer.press_origin())
             .unwrap_or_default();
         let point = view.xf().sheet(origin);
+        if !ctx.input(|input| input.modifiers.alt)
+            && canvas_point_unobscured(ui, response, origin)
+            && let Some(source) =
+                connection_point_at(doc.sheet(), layout, scene, point, view.zoom, None)
+        {
+            if !prepare_edit(doc, view, out) {
+                return true;
+            }
+            let kind = GestureKind::Create {
+                tool: BoardTool::Connector,
+                start: source.position,
+                current: source.position,
+                from: source.attachment,
+            };
+            view.board_input.gesture = Some(gesture(doc, view, kind, point));
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
+            return true;
+        }
         let hit = scene.hit_test(point);
         let board_hit = hit.filter(|hit| match *hit {
             SceneHit::Object(_) => true,
@@ -3262,7 +3997,18 @@ pub(super) fn interact(
                 current: point,
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, point));
-            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
             return true;
         }
         if let Some(hit) = board_hit {
@@ -3291,7 +4037,18 @@ pub(super) fn interact(
                 duplicate: modifiers.alt,
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, point));
-            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
             return true;
         }
         // Frames use the legacy zone hit test. Capture only board-frame
@@ -3320,7 +4077,18 @@ pub(super) fn interact(
                 duplicate: true,
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, point));
-            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
             return true;
         }
     }
@@ -3987,6 +4755,41 @@ pub(super) fn paint(
             Stroke::new(2.0, color),
             StrokeKind::Outside,
         );
+    }
+
+    if let Some(points) = &view.board_input.connection_hover {
+        let clipped = scene
+            .item(points.item)
+            .and_then(|item| item.clip)
+            .map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let target = clipped.as_ref().unwrap_or(painter);
+        let hot = pointer
+            .and_then(|point| points.nearest(xf.sheet(point), CONNECTION_POINT_RADIUS / xf.zoom))
+            .map(|point| point.position);
+        let accent = view.accent;
+        let brightness =
+            u32::from(accent.r()) * 299 + u32::from(accent.g()) * 587 + u32::from(accent.b()) * 114;
+        let halo = if brightness > 127_500 {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        };
+        for point in &points.points {
+            let center = xf.pos(point.position);
+            if !view.canvas_rect.contains(center) {
+                continue;
+            }
+            let active = hot == Some(point.position);
+            let radius = if active { 4.0 } else { 2.5 };
+            let stroke = Stroke::new(if active { 2.0 } else { 1.0 }, view.accent);
+            for segment in [
+                [center - vec2(radius, 0.0), center + vec2(radius, 0.0)],
+                [center - vec2(0.0, radius), center + vec2(0.0, radius)],
+            ] {
+                target.line_segment(segment, Stroke::new(stroke.width + 2.0, halo));
+                target.line_segment(segment, stroke);
+            }
+        }
     }
 
     for control in controls(view, sheet, layout, scene) {

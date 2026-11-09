@@ -119,10 +119,13 @@ half-circles and bars remain open; their fill setting is retained when changing
 directly to a fillable draw.io marker. Unsupported marker shapes, out-of-range sizes
 and unsupported fill values trigger a formatting warning. Supported fixed
 connector points, offsets and perimeter settings are retained on attached
-shapes and topics. Shift-drag an endpoint onto a target to fix it; Enter or
-Space toggles a focused endpoint. Unsupported constraints and possible position
-differences are reported. Export requires consent if a fixed point may move
-or if an unexported collapsed topic detaches it.
+shapes and topics. Hover a rectangle, rounded rectangle, ellipse, diamond or
+rectangular topic to reveal connection crosses; drag from or drop onto a cross
+to fix the attachment. Shift-drag also fixes an arbitrary endpoint. Enter or
+Space toggles a focused endpoint; Home/End cycle visible default points.
+Unsupported constraints and possible position differences are reported. Export
+requires consent if a fixed point may move or if an unexported collapsed topic
+detaches it.
 Existing Thinoda triangle arrows retain their native appearance; draw.io export
 warns that they will be approximated. Keep the original diagram.
 

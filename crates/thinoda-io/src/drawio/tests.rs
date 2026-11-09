@@ -6158,6 +6158,116 @@ fn attached_fixed_connector_ports_survive_file_link_and_clipboard_conversion() {
 }
 
 #[test]
+fn default_connection_points_round_trip_for_supported_shape_families() {
+    let rectangle = [
+        (0.0, 0.0),
+        (0.25, 0.0),
+        (0.5, 0.0),
+        (0.75, 0.0),
+        (1.0, 0.0),
+        (1.0, 0.25),
+        (1.0, 0.5),
+        (1.0, 0.75),
+        (1.0, 1.0),
+        (0.75, 1.0),
+        (0.5, 1.0),
+        (0.25, 1.0),
+        (0.0, 1.0),
+        (0.0, 0.75),
+        (0.0, 0.5),
+        (0.0, 0.25),
+    ];
+    let perimeter = [
+        (0.0, 0.0),
+        (0.5, 0.0),
+        (1.0, 0.0),
+        (1.0, 0.5),
+        (1.0, 1.0),
+        (0.5, 1.0),
+        (0.0, 1.0),
+        (0.0, 0.5),
+    ];
+    let mut sheet = Sheet::new("Points", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let target = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(700.0, 0.0), Vec2::new(120.0, 80.0)),
+        ))
+        .unwrap();
+    let mut expected = Vec::new();
+    for (index, (kind, positions)) in [
+        (ShapeKind::Rectangle, &rectangle[..]),
+        (ShapeKind::RoundedRectangle, &rectangle[..]),
+        (ShapeKind::Ellipse, &perimeter[..]),
+        (ShapeKind::Diamond, &perimeter[..]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let source = sheet
+            .add_canvas_object(CanvasObject::shape(
+                kind,
+                Rect::from_min_size(Vec2::new(index as f32 * 160.0, 0.0), Vec2::new(120.0, 80.0)),
+            ))
+            .unwrap();
+        for &(x, y) in positions {
+            let port = ConnectorPort {
+                position: Vec2::new(x, y),
+                offset: Vec2::ZERO,
+                perimeter: true,
+            };
+            let mut connector =
+                CanvasConnector::new(Endpoint::Object(source), Endpoint::Object(target));
+            connector.arrow_end = false;
+            connector.from_port = Some(port);
+            connector.to_port = Some(ConnectorPort {
+                position: Vec2::new(0.0, 0.5),
+                offset: Vec2::ZERO,
+                perimeter: true,
+            });
+            sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            expected.push((kind, port));
+        }
+    }
+    let original = Workbook::new(sheet);
+    original.validate().unwrap();
+    let bytes = export(&original).unwrap();
+    let restored = import(&bytes).unwrap();
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    let sheet = &restored.workbook.sheets[0];
+    for connector in connectors(sheet) {
+        let Endpoint::Object(source) = connector.from else {
+            panic!("fixed source was detached");
+        };
+        let CanvasObjectKind::Shape { shape, .. } = sheet.canvas.object(source).unwrap().kind
+        else {
+            panic!("fixed source is not a shape");
+        };
+        let entry = (shape, connector.from_port.unwrap());
+        let index = expected
+            .iter()
+            .position(|candidate| *candidate == entry)
+            .expect("unexpected or changed default connection point");
+        expected.swap_remove(index);
+        assert_eq!(
+            connector.to_port,
+            Some(ConnectorPort {
+                position: Vec2::new(0.0, 0.5),
+                offset: Vec2::ZERO,
+                perimeter: true,
+            })
+        );
+    }
+    assert!(
+        expected.is_empty(),
+        "missing connection points: {expected:?}"
+    );
+}
+
+#[test]
 fn fixed_connector_ports_on_collapsed_topics_require_consent_and_keep_visible_points() {
     let mut sheet = Sheet::new("Collapsed", "");
     sheet.root_mode = SheetRootMode::Hidden;

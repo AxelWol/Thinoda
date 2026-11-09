@@ -222,6 +222,9 @@ fn localize_model_error_in(language: Lang, error: &str) -> &str {
         "fixed connector ports require a shape or topic" => {
             t_in(language, "Fixed connector ports require a shape or topic.")
         }
+        "no visible connection points on this target" => {
+            t_in(language, "No visible connection points on this target.")
+        }
         "fixed connector port exceeds supported limits" => {
             t_in(language, "Fixed connector port exceeds supported limits.")
         }
@@ -689,8 +692,12 @@ const DE: &[(&str, &str)] = &[
     ("To", "Nach"),
     ("Fixed attachment", "Fester Verbindungspunkt"),
     (
-        "Drag to reconnect; Shift-drag onto a shape or topic fixes the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS).",
-        "Zum Neuverbinden ziehen; mit Umschalt auf eine Form oder ein Thema ziehen, um den Verbindungspunkt zu fixieren. Eingabe schaltet die Fixierung um; Pfeiltasten verschieben einen festen Punkt, Strg+Pfeiltasten wechseln das Ziel (Befehlstaste auf macOS).",
+        "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.",
+        "Zum Neuverbinden ziehen; auf einem Kreuz oder mit Umschalt auf einer Form oder einem Thema ablegen, um den Verbindungspunkt zu fixieren. Eingabe schaltet die Fixierung um; Pfeiltasten verschieben einen festen Punkt, Strg+Pfeiltasten wechseln das Ziel (Befehlstaste auf macOS), Pos1/Ende wechseln sichtbare Verbindungspunkte.",
+    ),
+    (
+        "No visible connection points on this target.",
+        "An diesem Ziel sind keine Verbindungspunkte sichtbar.",
     ),
     (
         "Fixed connector ports require a shape or topic.",
@@ -4288,6 +4295,10 @@ mod tests {
                 "Fixed connector ports require a shape or topic.",
             ),
             (
+                "no visible connection points on this target",
+                "No visible connection points on this target.",
+            ),
+            (
                 "fixed connector port exceeds supported limits",
                 "Fixed connector port exceeds supported limits.",
             ),
@@ -4852,7 +4863,8 @@ mod tests {
             "From",
             "To",
             "Fixed attachment",
-            "Drag to reconnect; Shift-drag onto a shape or topic fixes the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS).",
+            "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.",
+            "No visible connection points on this target.",
             "Fixed connector ports require a shape or topic.",
             "Fixed connector port exceeds supported limits.",
             "Cannot preserve the fixed connector attachment before deletion.",

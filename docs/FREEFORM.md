@@ -49,13 +49,17 @@ and segment dragging are not yet available; see
 
 ### Fixed connector attachments
 
-Select a connector and Shift-drag an endpoint onto a shape or topic to fix the
-attachment at that position. Drag without Shift to reconnect normally and
-return to automatic attachment. A focused endpoint can also be fixed or reset
-with Enter or Space; arrow keys adjust a fixed point, while Ctrl+arrows
-(Command+arrows on macOS) cycle targets. Alt+arrows still duplicate the
-selection. Moving a projected point with an arrow pins its visible position
-without further perimeter projection. These edits are undoable and the
+Hover a rectangle, rounded rectangle, ellipse, diamond or rectangular topic
+to reveal connection crosses. Drag from a cross to start a connector, or drop
+an endpoint, Connector-tool drag, direction arrow or outline drag on one to fix
+the attachment. The Connector tool also supports clicking a source and then a
+destination. Dropping on a body away from a cross leaves a floating attachment;
+Shift-dragging an endpoint onto a shape or topic fixes an arbitrary position.
+A focused endpoint can be fixed or reset with Enter or Space; arrow keys adjust
+a fixed point, Ctrl+arrows (Command+arrows on macOS) cycle targets, and Home/End
+cycle visible default points on supported targets. Alt+arrows still duplicate
+the selection. Moving a projected point with an arrow pins its visible
+position without further perimeter projection. These edits are undoable and the
 endpoint control describes them to assistive technology.
 
 Supported draw.io fixed points use normalized positions, optional offsets and

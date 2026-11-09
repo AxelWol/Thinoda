@@ -169,7 +169,7 @@ impl Default for BoardLabels {
             from: "From".into(),
             to: "To".into(),
             fixed_attachment: "Fixed attachment".into(),
-            connector_end_hint: "Drag to reconnect; Shift-drag onto a shape or topic fixes the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS).".into(),
+            connector_end_hint: "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.".into(),
             free_point: "Free point".into(),
             resize: "Resize board item".into(),
             rotate: "Rotate board item".into(),
@@ -2687,7 +2687,11 @@ impl MapCanvas {
                 Drag::Zone { resize: true, .. } => egui::CursorIcon::ResizeNwSe,
                 Drag::Zone { .. } => egui::CursorIcon::Grabbing,
                 _ if space || view.board_tool == BoardTool::Hand => egui::CursorIcon::Grab,
-                _ if view.board_input.outline_hover.is_some() => egui::CursorIcon::Crosshair,
+                _ if view.board_input.connection_hot
+                    || view.board_input.outline_hover.is_some() =>
+                {
+                    egui::CursorIcon::Crosshair
+                }
                 _ if view.board_tool != BoardTool::Select && !view.board_input.armed_hover => {
                     egui::CursorIcon::Crosshair
                 }
