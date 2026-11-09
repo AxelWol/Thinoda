@@ -121,11 +121,12 @@ unsupported fill values, and fixed-port hints trigger a formatting warning.
 Existing Thinoda triangle arrows retain their native appearance; draw.io export
 warns that they will be approximated. Keep the original diagram.
 
-Import also warns when explicit fill, stroke, text or swimlane body colors
-cannot be resolved or depend on a theme, or when opacity or stroke width is
-invalid or outside the supported range. Adaptive colors can be flattened and
-inherited colors can fall back to Thinoda defaults. Other appearance losses may
-still go unreported.
+Import converts supported CSS named, RGB/RGBA, HSL/HSLA, HWB and hex colors
+into editable sRGB colors. It also warns when explicit fill, stroke, text or
+swimlane body colors cannot be resolved or depend on a theme, or when opacity
+or stroke width is invalid or outside the supported range. Adaptive colors can
+be flattened and inherited colors can fall back to Thinoda defaults. Other
+appearance losses may still go unreported.
 
 Opening editable images also accepts older URI- or base64-encoded SVG diagrams
 and older PNG diagram metadata. Ordinary PNG drops still add an image; a

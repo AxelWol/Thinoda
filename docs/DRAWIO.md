@@ -1316,6 +1316,52 @@ styles are retained. The generic warning is not cell-specific. Renderer parity,
 source-preserving save-back and real clipboard and accessibility acceptance
 remain open.
 
+**Static CSS colors and rubber-duck review (partial Phases 6, 9 and 13).**
+The published editor and the supplied UML activity diagram use CSS colors as
+well as hex. Import resolves named colors, `transparent`, RGB/RGBA,
+HSL/HSLA, HWB and three-, four-, six- and eight-digit hex to editable 8-bit
+sRGB. CSS alpha and the corresponding draw.io opacity are combined. Shapes,
+lines, connectors, ink, cards, swimlane colors, mockup rectangles and partial
+rectangles use the same resolver. Native storage retains the converted colors;
+draw.io export now keeps hidden nonblack RGB components with zero opacity
+instead of replacing them with `none`.
+
+The review found several ways a seemingly complete parser would be misleading.
+Commas inside `rgb(...)` previously broke the light alternative of
+`light-dark(...)`; bounded, nested alternatives are now parsed as CSS, the
+light value is retained when resolvable, and loss of the dark alternative is
+reported. Missing delimiters, trailing tokens and nonfinite hue are rejected
+with a Formatting warning. The historical bare-hex and multiple-`#` fallbacks
+remain for compatibility but still warn. Dynamic colors, unsupported color
+spaces and HSL/HWB missing components are not silently converted. The parser
+limits color-function nesting to 16 levels.
+
+Transparent sticky and text-card fills are no longer replaced by default
+colors; they warn because card outlines are coupled to fill. Explicit card
+outline colors warn because they are not independently represented. Swimlane
+body colors remain stored but are rendered as translucent frame tints; visible
+bodies, explicit header or label colors and transparent outlines therefore
+warn. These disclosures do not make those presentations faithful.
+
+Validation passed 218 I/O library tests, six supplied-corpus tests, six
+deterministic fuzz-seed tests and 15 app clipboard tests. The expanded alpha
+cases also passed individually. A debug web build passed the synthetic
+color-paste and undo journey in Chromium, Firefox and WebKit. An isolated SVG
+probe of 30%-alpha paint at 50% fill opacity produced alpha 39 in all three
+engines, matching the imported 8-bit result; this is not a full renderer
+comparison. Formatting, native/WebAssembly/fuzz Clippy with warnings denied,
+and regenerated license notices passed. A 21-second Linux AddressSanitizer
+smoke completed 9,394 executions without a reported failure; it is not the
+separate 30-minute acceptance campaign.
+
+Conversion still flattens source CSS into 8-bit colors and does not preserve
+the original expression. `light-dark(...)` alternatives that the parser cannot
+resolve, `var(...)`, `currentColor`, Lab/OKLab and wide-gamut colors can remain
+unresolved. Draw.io's page-wide adaptive mode can also alter otherwise fixed
+colors in dark mode, and is not comprehensively detected for ordinary shapes.
+Real system clipboards, physical accessibility acceptance, renderer parity and
+source-preserving save-back remain open.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop

@@ -279,6 +279,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cssparser-color"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "114504b9a8d627e73f72d1c80583c8194eb8e0007da29b57782b729c7a7166bd"
+dependencies = [
+ "cssparser",
+]
+
+[[package]]
 name = "cssparser-macros"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1957,6 +1966,8 @@ version = "0.23.0"
 dependencies = [
  "base64 0.23.1",
  "crc32fast",
+ "cssparser",
+ "cssparser-color",
  "epaint_default_fonts",
  "getrandom 0.3.4",
  "html-escape",

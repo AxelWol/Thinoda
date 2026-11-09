@@ -30,6 +30,7 @@ const OUT_OF_RANGE_POINTS: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/out-of-range-points");
 const APPEARANCE_COLORS: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/appearance-colors");
+const CSS_COLORS: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/css-colors");
 
 #[test]
 fn document_seeds_reach_their_importers_and_native_roundtrip() {
@@ -46,6 +47,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         ("malformed geometry", Format::DrawIo, MALFORMED_GEOMETRY),
         ("out-of-range points", Format::DrawIo, OUT_OF_RANGE_POINTS),
         ("appearance colors", Format::DrawIo, APPEARANCE_COLORS),
+        ("css colors", Format::DrawIo, CSS_COLORS),
         ("warning", Format::DrawIo, WARNING),
         ("compressed", Format::DrawIo, COMPRESSED),
         ("svg", Format::DrawIo, SVG),
@@ -145,6 +147,23 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, report.warnings);
         }
+        if name == "css colors" {
+            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            let objects = &report.workbook.sheets[0].canvas.objects;
+            assert_eq!(objects.len(), 3);
+            assert_eq!(
+                objects[0].style.fill,
+                Some(thinoda_core::Color::rgba(10, 20, 30, 64))
+            );
+            assert_eq!(
+                objects[1].style.fill,
+                Some(thinoda_core::Color::rgb(1, 2, 3))
+            );
+            assert_eq!(objects[2].style.fill, None);
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, report.warnings);
+        }
         support::roundtrip_report(report);
         drawio_support::exercise(bytes);
     }
@@ -227,6 +246,31 @@ fn partial_rectangle_style_and_byte_mutations_reach_the_fuzz_harness() {
             input[index] = byte;
             drawio_support::exercise(&input);
         }
+    }
+}
+
+#[test]
+fn css_color_mutations_reach_the_fuzz_harness() {
+    let seed = std::str::from_utf8(CSS_COLORS).unwrap();
+    let original = "rgba(10,20,30,0.5)";
+    assert_eq!(seed.matches(original).count(), 1);
+    for value in [
+        "red",
+        "transparent",
+        "#abcd",
+        "rgb(100%,0%,50%)",
+        "hsl(-120,100%,50%)",
+        "hwb(1e999 0% 0%)",
+        "light-dark(rgb(1,2,3),rgb(4,5,6))",
+        "light-dark(#fff,)",
+        "rgb(1,2,3",
+        "rgba(1,2,3,NaN)",
+        "##fff",
+    ] {
+        let input = seed.replacen(original, value, 1);
+        let report = import_bytes_with_report(Format::DrawIo, input.as_bytes()).unwrap();
+        support::roundtrip_report(report);
+        drawio_support::exercise(input.as_bytes());
     }
 }
 

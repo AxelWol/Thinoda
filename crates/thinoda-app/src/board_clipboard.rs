@@ -2775,6 +2775,35 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_preserves_css_colors_and_undoes_paste() {
+        use crate::app::Cmd;
+        use thinoda_core::Color;
+
+        let text = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="shape" vertex="1" parent="1" value="Color" style="shape=rectangle;fillColor=rgba(10,20,30,0.5);fillOpacity=50;strokeColor=blue;fontColor=green;"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        let sheet = app.doc().unwrap().doc.sheet();
+        let object = sheet.canvas.objects.first().unwrap();
+        assert_eq!(object.style.fill, Some(Color::rgba(10, 20, 30, 64)));
+        assert_eq!(object.style.stroke, Some(Color::rgb(0, 0, 255)));
+        assert_eq!(object.style.text_color, Some(Color::rgb(0, 128, 0)));
+        assert!(!app.toasts.texts().any(|text| text
+            == crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_rejects_an_unpasteable_malformed_connector() {
         use crate::app::Cmd;
 

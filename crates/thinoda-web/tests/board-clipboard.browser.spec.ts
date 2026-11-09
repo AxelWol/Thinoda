@@ -60,7 +60,7 @@ type BoardObject = {
         shape?: { shape: string; label?: string };
         connector?: { from: unknown; to: unknown; waypoints?: { x: number; y: number }[] };
     };
-    style: { fill?: string };
+    style: { fill?: string; stroke?: string; text_color?: string };
 };
 
 type BoardSheet = {
@@ -741,6 +741,38 @@ test("draw.io paste warns about unresolved shape appearance", async ({ page }, t
     await page.keyboard.press("Control+z");
     await frames(page);
     const undone = archive(await saveAs(page, "drawio-appearance-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
+test("draw.io paste preserves CSS colors and can be undone", async ({ page }) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" value="Color" ',
+        'style="shape=rectangle;fillColor=rgba(10,20,30,0.5);fillOpacity=50;strokeColor=blue;fontColor=green;">',
+        '<mxGeometry width="100" height="60" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-css-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    const after = archive(await saveAs(page, "drawio-css-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape?.label).toBe("Color");
+    expect(objects[0].style).toMatchObject({
+        fill: "#0A141E40",
+        stroke: "#0000FF",
+        text_color: "#008000",
+    });
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-css-undo.thinoda"));
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 

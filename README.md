@@ -741,10 +741,12 @@ those system-owned controls. WinGet publishing remains paused.
   warning. Existing Thinoda triangle arrows retain
   their appearance in native files; exporting them for draw.io warns that their
   appearance is approximated.
-  Import also warns about explicit unresolved or theme-dependent colors and
-  invalid or out-of-range opacity and stroke-width values. Adaptive colors can
-  be flattened and inherited colors can fall back to Thinoda defaults; the
-  warning does not imply that all unsupported appearance is detected.
+  Import converts supported CSS named, RGB/RGBA, HSL/HSLA, HWB and hex colors
+  into editable sRGB colors. It warns about explicit unresolved or
+  theme-dependent colors and invalid or out-of-range opacity and stroke-width
+  values. Adaptive colors can be flattened and inherited colors can fall back
+  to Thinoda defaults; the warning does not imply that all unsupported
+  appearance is detected.
   Unsupported content can prevent export. Editable image export is not Save As
   or lossless save-back.
   Import also recognizes legacy URI- or base64-encoded SVG diagrams and older

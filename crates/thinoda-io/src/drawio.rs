@@ -12,6 +12,8 @@
 
 use crate::{Format, ImportReport, ImportWarning, IoError};
 use base64::Engine;
+use cssparser::{ParseError, Parser, ParserInput};
+use cssparser_color::{Color as CssColor, RgbaLegacy, hsl_to_rgb, hwb_to_rgb};
 use quick_xml::events::{BytesStart, Event};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use thinoda_core::{
@@ -500,6 +502,158 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
 // ---------------------------------------------------------------------------------------
 // Styles and labels
 
+const MAX_COLOR_NESTING: usize = 16;
+
+#[derive(Clone, Copy)]
+struct ParsedColor {
+    color: Option<Color>,
+    approximate: bool,
+}
+
+fn color_delimiters_balanced(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                if i + 1 == bytes.len() {
+                    return false;
+                }
+                i += 2;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < bytes.len() && &bytes[i..i + 2] != b"*/" {
+                    i += 1;
+                }
+                if i + 1 == bytes.len() || i == bytes.len() {
+                    return false;
+                }
+                i += 2;
+            }
+            b'\'' | b'"' => return false,
+            b'(' => {
+                depth += 1;
+                if depth > MAX_COLOR_NESTING {
+                    return false;
+                }
+                i += 1;
+            }
+            b')' => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    depth == 0
+}
+
+fn css_rgba(color: RgbaLegacy) -> Option<Color> {
+    color.alpha.is_finite().then(|| {
+        Color::rgba(
+            color.red,
+            color.green,
+            color.blue,
+            (color.alpha * 255.0).round() as u8,
+        )
+    })
+}
+
+fn static_css_color(color: CssColor) -> Option<Color> {
+    match color {
+        CssColor::Rgba(color) => css_rgba(color),
+        CssColor::Hsl(color) => {
+            let (hue, saturation, lightness, alpha) = (
+                color.hue?,
+                color.saturation?,
+                color.lightness?,
+                color.alpha?,
+            );
+            if !hue.is_finite()
+                || !(0.0..=360.0).contains(&hue)
+                || !saturation.is_finite()
+                || !lightness.is_finite()
+                || !alpha.is_finite()
+            {
+                return None;
+            }
+            let (red, green, blue) = hsl_to_rgb(hue / 360.0, saturation, lightness);
+            css_rgba(RgbaLegacy::from_floats(red, green, blue, alpha))
+        }
+        CssColor::Hwb(color) => {
+            let (hue, whiteness, blackness, alpha) =
+                (color.hue?, color.whiteness?, color.blackness?, color.alpha?);
+            if !hue.is_finite()
+                || !(0.0..=360.0).contains(&hue)
+                || !whiteness.is_finite()
+                || !blackness.is_finite()
+                || !alpha.is_finite()
+            {
+                return None;
+            }
+            let (red, green, blue) = hwb_to_rgb(hue / 360.0, whiteness, blackness);
+            css_rgba(RgbaLegacy::from_floats(red, green, blue, alpha))
+        }
+        _ => None,
+    }
+}
+
+fn parse_css_color<'i>(
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    if depth >= MAX_COLOR_NESTING {
+        return Err(input.new_custom_error(()));
+    }
+    if input
+        .try_parse(|input| input.expect_function_matching("light-dark"))
+        .is_ok()
+    {
+        return input.parse_nested_block(|input| {
+            let light = parse_css_color(input, depth + 1)?;
+            input.expect_comma()?;
+            parse_css_color(input, depth + 1)?;
+            Ok(ParsedColor {
+                color: light.color,
+                approximate: true,
+            })
+        });
+    }
+    let color = static_css_color(CssColor::parse(input)?);
+    Ok(ParsedColor {
+        color,
+        approximate: color.is_none(),
+    })
+}
+
+fn parse_style_color(value: &str) -> Option<ParsedColor> {
+    if value == "none" {
+        return Some(ParsedColor {
+            color: Some(Color::TRANSPARENT),
+            approximate: false,
+        });
+    }
+    if color_delimiters_balanced(value) {
+        let mut input = ParserInput::new(value);
+        let mut parser = Parser::new(&mut input);
+        if let Ok(parsed) = parse_css_color(&mut parser, 0)
+            && parser.expect_exhausted().is_ok()
+        {
+            return Some(parsed);
+        }
+    }
+    // Keep the historical bare/multiple-# hex fallback, but disclose it as non-CSS.
+    Color::from_hex(value).map(|color| ParsedColor {
+        color: Some(color),
+        approximate: true,
+    })
+}
+
 #[derive(Debug, Default)]
 struct Style {
     tokens: Vec<String>,
@@ -598,17 +752,7 @@ impl Style {
 
     /// `None` for absent or theme-default colors; `none` is transparent.
     fn color(&self, key: &str, opacity_key: &str) -> Option<Color> {
-        let value = self.get(key)?;
-        let value = value
-            .strip_prefix("light-dark(")
-            .and_then(|v| v.split(',').next())
-            .unwrap_or(value)
-            .trim();
-        let color = match value {
-            "" | "default" | "inherit" => return None,
-            "none" => return Some(Color::TRANSPARENT),
-            hex => Color::from_hex(hex)?,
-        };
+        let color = parse_style_color(self.get(key)?)?.color?;
         Some(self.color_with_opacity(color, opacity_key))
     }
 
@@ -732,12 +876,9 @@ impl Style {
     }
 
     fn color_appearance_loss(&self, key: &str, opacity_key: &str) -> bool {
-        let unresolved_color = self.get(key).is_some_and(|value| {
-            value != "none"
-                && !value
-                    .strip_prefix('#')
-                    .is_some_and(|hex| !hex.starts_with('#') && Color::from_hex(hex).is_some())
-        });
+        let unresolved_color = self
+            .get(key)
+            .is_some_and(|value| parse_style_color(value).is_none_or(|parsed| parsed.approximate));
         let unresolved_opacity = self.get(opacity_key).is_some_and(|_| {
             self.num(opacity_key).is_none_or(|opacity| {
                 !(0.0..=100.0).contains(&opacity)
@@ -1258,15 +1399,13 @@ fn mockup_rectangle(style: &Style) -> Kind {
     let radius = style
         .get("rSize")
         .map_or(Some(Ordering::Greater), mockup_radius_sign);
-    let unresolved_color = ["fillColor", "strokeColor", "fontColor"]
-        .iter()
-        .any(|key| match style.get(key) {
-            Some("none") => false,
-            Some(value) => !value
-                .strip_prefix('#')
-                .is_some_and(|hex| !hex.starts_with('#') && Color::from_hex(hex).is_some()),
-            _ => true,
-        });
+    let unresolved_color = [
+        ("fillColor", "fillOpacity"),
+        ("strokeColor", "strokeOpacity"),
+        ("fontColor", "textOpacity"),
+    ]
+    .iter()
+    .any(|(key, opacity)| style.get(key).is_none() || style.color_appearance_loss(key, opacity));
     let unresolved_opacity = [
         ("fillColor", "fillOpacity"),
         ("strokeColor", "strokeOpacity"),
@@ -1450,13 +1589,8 @@ fn partial_rectangle_colors(
                 Some(style.color_with_opacity(fallback, opacity_key))
             }
             Some("none") => Some(Color::TRANSPARENT),
-            Some(value) => {
-                let explicit = value
-                    .strip_prefix('#')
-                    .is_some_and(|hex| Color::from_hex(hex).is_some());
-                if !explicit {
-                    approximate = true;
-                }
+            Some(_) => {
+                approximate |= style.color_appearance_loss(key, opacity_key);
                 style.color(key, opacity_key).or_else(|| {
                     approximate = true;
                     Some(style.color_with_opacity(fallback, opacity_key))
@@ -1766,16 +1900,22 @@ impl<'a> PageImport<'a> {
         if !swimlane {
             self.warn(ImportWarning::Formatting);
         }
+        let stroke = cell.style.color("strokeColor", "strokeOpacity");
+        let background = if swimlane {
+            cell.style.color("swimlaneFillColor", "fillOpacity")
+        } else {
+            cell.style.color("fillColor", "fillOpacity")
+        };
+        if stroke.is_some_and(|color| color.a == 0)
+            || swimlane && background.is_some_and(|color| color.a > 0)
+            || swimlane && cell.style.get("fillColor").is_some()
+            || !label.is_empty() && cell.style.get("fontColor").is_some()
+        {
+            self.warn(ImportWarning::Formatting);
+        }
         if let Some(zone) = self.sheet.zones.iter_mut().find(|z| z.id == id) {
-            zone.color = cell
-                .style
-                .color("strokeColor", "strokeOpacity")
-                .filter(|c| c.a > 0);
-            zone.background_color = if swimlane {
-                cell.style.color("swimlaneFillColor", "fillOpacity")
-            } else {
-                cell.style.color("fillColor", "fillOpacity")
-            };
+            zone.color = stroke.filter(|c| c.a > 0);
+            zone.background_color = background;
             zone.clip = cell.style.flag("thinodaClip");
         }
         self.zones.push((id, Vec::new(), Vec::new()));
@@ -1985,9 +2125,12 @@ impl<'a> PageImport<'a> {
             ),
         );
         card.rotation = normalize_rotation(style.rotation());
-        card.color = style
-            .color("fillColor", "fillOpacity")
-            .filter(|c| c.a > 0 || kind == CardKind::Image);
+        card.color = style.color("fillColor", "fillOpacity");
+        if style.get("strokeColor").is_some()
+            || kind != CardKind::Image && card.color.is_some_and(|color| color.a == 0)
+        {
+            self.warn(ImportWarning::Formatting);
+        }
         // draw.io image cells have no background, so keep the card see-through.
         if image.as_ref().is_some_and(|image| image.plain) {
             card.color = Some(card.color.unwrap_or(Color::TRANSPARENT));
@@ -2470,7 +2613,7 @@ fn color_keys(out: &mut String, key: &str, opacity_key: &str, color: Option<Colo
         return;
     };
     // Removing a font color restores draw.io's default instead of hiding text.
-    if color.a == 0 && key != "fontColor" {
+    if color == Color::TRANSPARENT && key != "fontColor" {
         out.push_str(&format!("{key}=none;"));
         return;
     }
@@ -2483,25 +2626,6 @@ fn color_keys(out: &mut String, key: &str, opacity_key: &str, color: Option<Colo
             "{opacity_key}={};",
             num(f32::from(color.a) / 255.0 * 100.0)
         ));
-    }
-}
-
-fn partial_rectangle_color_keys(
-    out: &mut String,
-    key: &str,
-    opacity_key: &str,
-    color: Option<Color>,
-) {
-    if let Some(color) = color
-        && color.a == 0
-        && (color.r != 0 || color.g != 0 || color.b != 0)
-    {
-        out.push_str(&format!(
-            "{key}=#{:02X}{:02X}{:02X};{opacity_key}=0;",
-            color.r, color.g, color.b
-        ));
-    } else {
-        color_keys(out, key, opacity_key, color);
     }
 }
 
@@ -2951,18 +3075,8 @@ impl<'a> PageWriter<'a> {
                 } else {
                     style_ref.stroke
                 };
-                if object.rectangle_sides.is_some() {
-                    partial_rectangle_color_keys(&mut style, "fillColor", "fillOpacity", fill);
-                    partial_rectangle_color_keys(
-                        &mut style,
-                        "strokeColor",
-                        "strokeOpacity",
-                        stroke,
-                    );
-                } else {
-                    color_keys(&mut style, "fillColor", "fillOpacity", fill);
-                    color_keys(&mut style, "strokeColor", "strokeOpacity", stroke);
-                }
+                color_keys(&mut style, "fillColor", "fillOpacity", fill);
+                color_keys(&mut style, "strokeColor", "strokeOpacity", stroke);
                 color_keys(&mut style, "fontColor", "textOpacity", style_ref.text_color);
                 let width = if object.rectangle_sides.is_some()
                     && style_ref.fill.is_none()

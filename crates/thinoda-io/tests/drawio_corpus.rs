@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use thinoda_core::{
-    Rect, RectangleSides, Sheet, Vec2, Workbook,
+    Color, Rect, RectangleSides, Sheet, Vec2, Workbook,
     board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute},
 };
 use thinoda_io::{ExportOptions, Format};
@@ -323,6 +323,31 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
     }
     eprintln!("{} file(s), {} failure(s)", files.len(), failures.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn supplied_uml_activity_keeps_its_rgb_colors() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let path = dir.join("uml-activity-example.drawio");
+    if !path.is_file() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let book = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes)
+        .unwrap()
+        .workbook;
+    let object = book
+        .sheets
+        .iter()
+        .flat_map(|sheet| &sheet.canvas.objects)
+        .find(|object| object.label().contains("Guard statement"))
+        .expect("the supplied UML activity should contain its guard statement");
+    assert_eq!(object.style.fill, Some(Color::WHITE));
+    assert_eq!(object.style.stroke, Some(Color::BLACK));
+    assert_eq!(object.style.text_color, Some(Color::BLACK));
+    book.validate().unwrap();
 }
 
 #[test]

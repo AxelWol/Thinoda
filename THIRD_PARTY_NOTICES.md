@@ -254,9 +254,9 @@ holders.
 
 ## Notable licenses
 
-- **MPL-2.0** (`option-ext`, `cssparser`, `cssparser-macros`, `dtoa-short`,
-  `selectors`): file-level copyleft. The unmodified source is available from
-  the linked repositories.
+- **MPL-2.0** (`option-ext`, `cssparser`, `cssparser-color`, `cssparser-macros`,
+  `dtoa-short`, `selectors`): file-level copyleft. The unmodified source is
+  available from the linked repositories.
 - **CDLA-Permissive-2.0** (`webpki-roots`): data license for the bundled
   Mozilla root certificate list.
 - **Unicode-3.0** (ICU4X crates): Unicode data and software license.
@@ -278,7 +278,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-636 crates.
+637 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -372,6 +372,7 @@ LGPL/MPL licensing:
 | crunchy | 0.2.4 | MIT | <https://github.com/eira-fransham/crunchy> |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/traits> |
 | cssparser | 0.36.0 | MPL-2.0 | <https://github.com/servo/rust-cssparser> |
+| cssparser-color | 0.4.0 | MPL-2.0 | <https://github.com/servo/rust-cssparser> |
 | cssparser-macros | 0.6.1 | MPL-2.0 | <https://github.com/servo/rust-cssparser> |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | <https://github.com/rust-windowing/cursor-icon> |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url> |

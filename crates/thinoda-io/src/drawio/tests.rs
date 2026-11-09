@@ -189,7 +189,6 @@ fn appearance_colors_that_cannot_be_preserved_are_reported() {
             "swimlane",
             "indicated",
             "default",
-            "red",
             "fff",
             "##fff",
             "light-dark(#aabbcc,#ddeeff)",
@@ -249,13 +248,7 @@ fn appearance_opacity_and_stroke_width_losses_are_reported() {
 
 #[test]
 fn appearance_swimlane_body_colors_that_cannot_be_preserved_are_reported() {
-    for value in [
-        "",
-        "inherit",
-        "default",
-        "red",
-        "light-dark(#aabbcc,#ddeeff)",
-    ] {
+    for value in ["", "inherit", "default", "light-dark(#aabbcc,#ddeeff)"] {
         let xml = page(&format!(
             r#"<mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
         ));
@@ -268,12 +261,26 @@ fn appearance_swimlane_body_colors_that_cannot_be_preserved_are_reported() {
         assert_eq!(report.workbook.sheets[0].zones.len(), 1);
     }
 
-    for value in ["#abcdef", "none"] {
+    for value in ["none", "transparent"] {
         let xml = page(&format!(
             r#"<mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
         ));
         let report = load(&xml);
         assert!(report.warnings.is_empty(), "{value}: {:?}", report.warnings);
+        report.workbook.validate().unwrap();
+    }
+
+    for value in ["#abcdef", "red", "rgb(10,20,30)"] {
+        let xml = page(&format!(
+            r#"<mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor={value};" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{value}");
+        assert!(
+            report.workbook.sheets[0].zones[0]
+                .background_color
+                .is_some()
+        );
         report.workbook.validate().unwrap();
     }
 }
@@ -326,6 +333,307 @@ fn appearance_warning_reaches_strict_import_links_and_clipboard() {
         crate::import_bytes(Format::Thinoda, &native).unwrap(),
         report.workbook
     );
+}
+
+#[test]
+fn css_color_values_import_as_explicit_colors() {
+    for (value, expected) in [
+        ("rgb(255, 255, 255)", Color::WHITE),
+        ("rgb(100%,0%,50%)", Color::rgb(255, 0, 128)),
+        ("rgba(10,20,30,0.5)", Color::rgba(10, 20, 30, 128)),
+        (
+            "rgba(10,20,30,0.5);fillOpacity=50",
+            Color::rgba(10, 20, 30, 64),
+        ),
+        (
+            "rgba(10,20,30,0.3);fillOpacity=50",
+            Color::rgba(10, 20, 30, 39),
+        ),
+        ("hsl(120,100%,50%)", Color::rgb(0, 255, 0)),
+        ("hsl(0.5turn 100% 50% / 25%)", Color::rgba(0, 255, 255, 64)),
+        (
+            "hsl(0 100% 50% / 30%);fillOpacity=50",
+            Color::rgba(255, 0, 0, 39),
+        ),
+        ("hwb(240 0% 0%)", Color::rgb(0, 0, 255)),
+        (
+            "hwb(240 0% 0% / 30%);fillOpacity=50",
+            Color::rgba(0, 0, 255, 39),
+        ),
+        ("rgb(255 0 0 / 50%)", Color::rgba(255, 0, 0, 128)),
+        ("rgb(1,/* ( ) */2,3)", Color::rgb(1, 2, 3)),
+        ("cornflowerblue", Color::rgb(100, 149, 237)),
+        ("ReD", Color::rgb(255, 0, 0)),
+        ("transparent", Color::TRANSPARENT),
+        ("#f008", Color::rgba(255, 0, 0, 136)),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="Color" style="shape=rectangle;fillColor={value};strokeColor=blue;fontColor=green;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{value}: {:?}", report.warnings);
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.style.fill, Some(expected), "{value}");
+        assert_eq!(object.style.stroke, Some(Color::rgb(0, 0, 255)), "{value}");
+        assert_eq!(
+            object.style.text_color,
+            Some(Color::rgb(0, 128, 0)),
+            "{value}"
+        );
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn malformed_and_unsupported_css_colors_are_reported_without_inventing_colors() {
+    for value in [
+        "rgb(1,2)",
+        "rgb(1,2,3,4,5)",
+        "rgb(1,2,3) trailing",
+        "rgb(1,2,3",
+        "rgb(1,2,3)/*",
+        "rgb(100%,0,0)",
+        "hsl(1e999,100%,50%)",
+        "currentColor",
+        "var(--unknown)",
+        "color(display-p3 1 0 0)",
+        "light-dark(rgb(1,2,3),rgb(4,5,6)",
+        "light-dark(#fff,)",
+        "light-dark(#fff,#000,#123)",
+        "light-dark(#fff,var(--unknown))",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="shape=rectangle;fillColor={value};" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{value}");
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0].style.fill,
+            None,
+            "{value}"
+        );
+        report.workbook.validate().unwrap();
+    }
+
+    for (value, expected) in [("fff", Color::WHITE), ("##123", Color::rgb(17, 34, 51))] {
+        let style = Style::parse(&format!("fillColor={value};"));
+        assert_eq!(style.color("fillColor", "fillOpacity"), Some(expected));
+        assert!(style.color_appearance_loss("fillColor", "fillOpacity"));
+    }
+}
+
+#[test]
+fn css_colors_preserve_the_light_alternative_and_report_the_dark_one() {
+    let xml = page(
+        r#"<mxCell id="a" style="shape=rectangle;fillColor=light-dark(rgb(10,20,30),rgba(40,50,60,0.5));strokeColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert_eq!(
+        shapes(&report.workbook.sheets[0])[0].style.fill,
+        Some(Color::rgb(10, 20, 30))
+    );
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.warnings, report.warnings);
+    assert_eq!(linked.workbook, report.workbook);
+    assert_eq!(
+        crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+        report.warnings
+    );
+
+    for (value, expected) in [
+        (
+            "light-dark(light-dark(red,blue),currentColor)",
+            Color::rgb(255, 0, 0),
+        ),
+        (
+            "LIGHT-DARK(rgb(10,20,30),color(display-p3 1 0 0))",
+            Color::rgb(10, 20, 30),
+        ),
+    ] {
+        let style = Style::parse(&format!("fillColor={value};"));
+        assert_eq!(style.color("fillColor", "fillOpacity"), Some(expected));
+        assert!(style.color_appearance_loss("fillColor", "fillOpacity"));
+    }
+    let deeply_nested = format!("{}red{}", "light-dark(".repeat(40), ",blue)".repeat(40));
+    let style = Style::parse(&format!("fillColor={deeply_nested};"));
+    assert_eq!(style.color("fillColor", "fillOpacity"), None);
+    assert!(style.color_appearance_loss("fillColor", "fillOpacity"));
+    let bounded = format!(
+        "{}rgb(1,2,3){}",
+        "light-dark(".repeat(MAX_COLOR_NESTING - 1),
+        ",blue)".repeat(MAX_COLOR_NESTING - 1)
+    );
+    let style = Style::parse(&format!("fillColor={bounded};"));
+    assert_eq!(
+        style.color("fillColor", "fillOpacity"),
+        Some(Color::rgb(1, 2, 3))
+    );
+    assert!(style.color_appearance_loss("fillColor", "fillOpacity"));
+}
+
+#[test]
+fn css_colors_cover_cards_connectors_ink_and_swimlane_bodies() {
+    let xml = page(
+        r#"<mxCell id="card" value="Card" style="shape=note;fillColor=rgba(10,20,30,0.5);fontColor=blue;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="80" as="geometry"/></mxCell>
+        <mxCell id="edge" style="strokeColor=rgb(255,0,0);endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="100" as="sourcePoint"/><mxPoint x="100" y="100" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="ink" style="thinodaInk=pen;strokeColor=hsl(120,100%,50%);endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="120" as="sourcePoint"/><mxPoint x="100" y="120" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;swimlaneFillColor=rgba(40,50,60,0.5);" vertex="1" parent="1"><mxGeometry x="150" width="300" height="200" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let sheet = &report.workbook.sheets[0];
+    let card = sheet
+        .topics
+        .values()
+        .find(|topic| topic.title == "Card")
+        .unwrap();
+    assert_eq!(card.card.unwrap().color, Some(Color::rgba(10, 20, 30, 128)));
+    assert_eq!(card.style.text_color, Some(Color::rgb(0, 0, 255)));
+    assert_eq!(connectors(sheet)[0].color, Some(Color::rgb(255, 0, 0)));
+    let ink = sheet
+        .canvas
+        .objects
+        .iter()
+        .find_map(|object| match &object.kind {
+            CanvasObjectKind::Ink(ink) => Some(ink),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(ink.color, Color::rgb(0, 255, 0));
+    assert_eq!(
+        sheet.zones[0].background_color,
+        Some(Color::rgba(40, 50, 60, 128))
+    );
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
+fn transparent_card_and_swimlane_colors_are_not_silently_defaulted() {
+    for kind in ["shape=note", "thinodaCard=text"] {
+        for value in ["none", "transparent", "rgba(10,20,30,0)"] {
+            let xml = page(&format!(
+                r#"<mxCell id="card" value="Card" style="{kind};fillColor={value};" vertex="1" parent="1"><mxGeometry width="100" height="80" as="geometry"/></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings,
+                vec![ImportWarning::Formatting],
+                "{kind}, {value}"
+            );
+            let card = report.workbook.sheets[0]
+                .topics
+                .values()
+                .find(|topic| topic.title == "Card")
+                .unwrap();
+            assert_eq!(card.card.unwrap().color.unwrap().a, 0, "{kind}, {value}");
+            assert_eq!(card.style.fill, card.card.unwrap().color);
+            report.workbook.validate().unwrap();
+        }
+    }
+
+    for style in [
+        "swimlane;strokeColor=transparent;",
+        "swimlane;fillColor=red;",
+        "swimlane;fontColor=blue;",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="lane" value="Lane" style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+    }
+
+    for style in [
+        "shape=note;strokeColor=red;",
+        "thinodaCard=text;strokeColor=none;",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="card" value="Card" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="80" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+    }
+}
+
+#[test]
+fn transparent_css_colors_keep_hidden_rgb_through_drawio_export() {
+    let xml = page(
+        r#"<mxCell id="shape" value="Shape" style="shape=rectangle;fillColor=rgba(10,20,30,0);strokeColor=rgba(40,50,60,0);" vertex="1" parent="1"><mxGeometry width="100" height="80" as="geometry"/></mxCell>
+        <mxCell id="card" value="Card" style="shape=note;fillColor=rgba(70,80,90,0);" vertex="1" parent="1"><mxGeometry x="120" width="100" height="80" as="geometry"/></mxCell>"#,
+    );
+    let original = load(&xml);
+    assert_eq!(original.warnings, vec![ImportWarning::Formatting]);
+    let exported = String::from_utf8(export(&original.workbook).unwrap()).unwrap();
+    assert!(exported.contains("fillColor=#0A141E;fillOpacity=0;"));
+    assert!(exported.contains("strokeColor=#28323C;strokeOpacity=0;"));
+    assert!(exported.contains("fillColor=#46505A;fillOpacity=0;"));
+    let restored = load(&exported);
+    assert_eq!(
+        shapes(&restored.workbook.sheets[0])[0].style.fill,
+        Some(Color::rgba(10, 20, 30, 0))
+    );
+    assert_eq!(
+        shapes(&restored.workbook.sheets[0])[0].style.stroke,
+        Some(Color::rgba(40, 50, 60, 0))
+    );
+    let card = restored.workbook.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.title == "Card")
+        .unwrap();
+    assert_eq!(card.card.unwrap().color, Some(Color::rgba(70, 80, 90, 0)));
+}
+
+#[test]
+fn css_colors_are_recognized_by_mockup_and_partial_rectangles() {
+    for (shape, suffix) in [
+        ("mxgraph.mockup.rrect", "rSize=0;"),
+        ("partialRectangle", ""),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" value="Color" style="shape={shape};{suffix}fillColor=red;strokeColor=blue;fontColor=green;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ))
+        .replacen("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#, 1);
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{shape}: {:?}", report.warnings);
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.style.fill, Some(Color::rgb(255, 0, 0)));
+        assert_eq!(object.style.stroke, Some(Color::rgb(0, 0, 255)));
+        assert_eq!(object.style.text_color, Some(Color::rgb(0, 128, 0)));
+    }
+}
+
+#[test]
+fn css_colors_are_used_by_visual_export_and_native_roundtrip() {
+    let xml = page(
+        r#"<mxCell id="a" value="Color" style="shape=rectangle;fillColor=rgba(10,20,30,0.5);fillOpacity=50;strokeColor=rgb(100%,0%,0%);fontColor=blue;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let options = ExportOptions {
+        transparent: true,
+        ..Default::default()
+    };
+    let svg =
+        String::from_utf8(export_bytes(&report.workbook, Format::Svg, &options).unwrap()).unwrap();
+    assert!(svg.contains(r##"fill="#0A141E40""##), "{svg}");
+    assert!(svg.contains(r##"stroke="#FF0000""##), "{svg}");
+    assert!(svg.contains(r##"fill="#0000FF">Color</text>"##), "{svg}");
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
 }
 
 #[test]
@@ -1197,6 +1505,9 @@ fn mockup_rectangle_radius_and_inherited_color_report_approximations() {
             "##fff",
             "light-dark(#aabbcc,#ddeeff)",
         ] {
+            if value == "red" && key != "gradientColor" {
+                continue;
+            }
             let xml = page(&format!(
                 r##"<mxCell id="a" style="shape=mxgraph.mockup.rrect;rSize=0;fillColor=#fff;strokeColor=#000;fontColor=#000;{key}={value};" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
             ));
