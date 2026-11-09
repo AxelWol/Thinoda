@@ -791,7 +791,8 @@ those system-owned controls. WinGet publishing remains paused.
   supported; ordinary paste does not invoke this import.
   Pasting draw.io diagram text inserts the first page as one undoable edit.
   A persistent warning reports possible omissions and counts omitted container
-  frames and additional pages; pasted container children become free items.
+  frames and additional pages; content-conversion warnings describe the first
+  page, and pasted container children become free items.
   Connector attachments that cannot be retained are also reported. Malformed
   or out-of-range connector and ink points are discarded instead of being
   replaced with invented coordinates; a shape with malformed geometry and its

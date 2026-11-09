@@ -818,7 +818,7 @@ fn folded_notes_below_card_minimum_keep_their_center_and_warn() {
 }
 
 #[test]
-fn folded_note_warnings_include_omitted_clipboard_pages() {
+fn folded_note_warnings_ignore_omitted_clipboard_pages() {
     let first = concat!(
         r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
         r#"<mxCell id="shape" value="Rectangle" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
@@ -841,11 +841,7 @@ fn folded_note_warnings_include_omitted_clipboard_pages() {
             pasted.losses,
             vec![crate::drawio_clipboard::DrawioPasteLoss::AdditionalPages(1)]
         );
-        assert!(
-            pasted
-                .warnings
-                .contains(&ImportWarning::DrawioFoldedNotesApproximated)
-        );
+        assert_eq!(pasted.warnings, vec![ImportWarning::Other]);
         let mut sheet = Sheet::new("Paste", "");
         sheet.root_mode = SheetRootMode::Hidden;
         thinoda_core::clipboard::paste_board_selection(&mut sheet, &pasted.payload, Vec2::ZERO)
@@ -857,6 +853,11 @@ fn folded_note_warnings_include_omitted_clipboard_pages() {
                 .any(|topic| topic.title == "Later note")
         );
     }
+    let report = load(&file);
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::DrawioFoldedNotesApproximated]
+    );
 }
 
 #[test]

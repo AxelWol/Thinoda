@@ -2681,7 +2681,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn drawio_clipboard_reports_possible_detachments_on_omitted_pages() {
+    fn drawio_clipboard_ignores_detachments_on_omitted_pages() {
         use crate::app::Cmd;
 
         let later = concat!(
@@ -2701,21 +2701,23 @@ mod tests {
         app.exec(&ctx, Cmd::MenuPaste);
         assert_eq!(board_item_count(&app), items + 3);
         app.toasts.tick(60.0);
-        let notice = app
-            .toasts
-            .texts()
-            .find(|text| text.contains(crate::i18n::t("Additional draw.io pages omitted")))
-            .expect("omitted page warning should stay visible");
-        assert!(notice.contains(crate::i18n::t(
-            "Connector attachments may have been detached"
-        )));
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains(crate::i18n::t("Additional draw.io pages omitted")))
+        );
+        assert!(!app.toasts.texts().any(|text| {
+            text.contains(crate::i18n::t(
+                "Connector attachments may have been detached",
+            ))
+        }));
         app.exec(&ctx, Cmd::Canvas(Action::Undo));
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn drawio_clipboard_reports_unsupported_shapes_on_first_and_later_pages() {
+    fn drawio_clipboard_reports_unsupported_shapes_only_on_the_first_page() {
         use crate::app::Cmd;
 
         let chair = concat!(
@@ -2726,9 +2728,14 @@ mod tests {
         let later = format!(
             "<mxfile><diagram name=\"First\">{DRAWIO_MODEL}</diagram><diagram name=\"Later\">{chair}</diagram></mxfile>"
         );
-        for (text, expected_items, omitted_pages) in
-            [(chair.to_owned(), 1, false), (later, 3, true)]
-        {
+        let first = format!(
+            "<mxfile><diagram name=\"First\">{chair}</diagram><diagram name=\"Later\">{DRAWIO_MODEL}</diagram></mxfile>"
+        );
+        for (text, expected_items, omitted_pages, unsupported_shapes) in [
+            (chair.to_owned(), 1, false, true),
+            (first, 1, true, true),
+            (later, 3, true, false),
+        ] {
             let (mut app, clipboard) = empty_board_app();
             let before = app.doc().unwrap().doc.workbook().clone();
             let items = board_item_count(&app);
@@ -2737,17 +2744,18 @@ mod tests {
             app.exec(&ctx, Cmd::MenuPaste);
             assert_eq!(board_item_count(&app), items + expected_items);
             app.toasts.tick(60.0);
-            let notice = app
-                .toasts
-                .texts()
-                .find(|text| {
+            assert_eq!(
+                app.toasts.texts().any(|text| {
                     text.contains(crate::i18n::t(
                         "Unsupported shapes or styles in the draw.io source may appear as rectangles",
                     ))
-                })
-                .expect("unsupported shape warning should stay visible");
+                }),
+                unsupported_shapes
+            );
             assert_eq!(
-                notice.contains(crate::i18n::t("Additional draw.io pages omitted")),
+                app.toasts
+                    .texts()
+                    .any(|text| text.contains(crate::i18n::t("Additional draw.io pages omitted"))),
                 omitted_pages
             );
             app.exec(&ctx, Cmd::Canvas(Action::Undo));
@@ -2923,6 +2931,54 @@ mod tests {
 
         app.exec(&ctx, Cmd::Canvas(Action::Undo));
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_paste_reports_only_first_page_appearance_warnings() {
+        use crate::app::Cmd;
+
+        let plain = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="shape" vertex="1" parent="1" value="Rectangle" style="shape=rectangle;"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let changed = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="note" vertex="1" parent="1" value="Note" style="shape=note2;"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="shape" vertex="1" parent="1" value="Unknown" style="shape=unknown;"><mxGeometry x="120" width="100" height="60" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        for (first, later, changed_is_pasted) in [(plain, changed, false), (changed, plain, true)] {
+            let file = format!(
+                "<mxfile><diagram name=\"First\">{first}</diagram><diagram name=\"Later\">{later}</diagram></mxfile>"
+            );
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            clipboard.borrow_mut().text = file;
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            let messages: Vec<_> = app.toasts.texts().collect();
+            assert!(
+                messages
+                    .iter()
+                    .any(|text| text.contains(crate::i18n::t("Additional draw.io pages omitted")))
+            );
+            for warning in [
+                "draw.io folded notes may be flattened or simplified",
+                "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+            ] {
+                assert_eq!(
+                    messages
+                        .iter()
+                        .any(|text| text.contains(crate::i18n::t(warning))),
+                    changed_is_pasted,
+                    "{warning}"
+                );
+            }
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

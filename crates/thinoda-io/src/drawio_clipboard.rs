@@ -36,7 +36,7 @@ pub struct DrawioPaste {
     pub bounds: Option<Rect>,
     /// Losses introduced while preparing the board fragment.
     pub losses: Vec<DrawioPasteLoss>,
-    /// Import warnings, including an `Other` warning when fragment preparation loses content.
+    /// First-page import warnings, including an `Other` warning when fragment preparation loses content.
     pub warnings: Vec<ImportWarning>,
 }
 
@@ -97,7 +97,7 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
     } else {
         trimmed.to_owned()
     };
-    let report = drawio::import(xml.as_bytes())?;
+    let (report, mut warnings) = drawio::import_with_first_page_warnings(xml.as_bytes())?;
     let additional_pages = report.workbook.sheets.len().saturating_sub(1);
     let sheet = report
         .workbook
@@ -141,7 +141,6 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
         .filter_map(|id| layout.topics.get(id).map(|topic| topic.rect))
         .chain(canvas_bounds(&sheet, &layout))
         .reduce(|a, b| a.union(&b));
-    let mut warnings = report.warnings;
     // Board and page settings are not part of a clipboard fragment.
     warnings.retain(|warning| {
         !matches!(
@@ -413,6 +412,71 @@ mod tests {
             assert_eq!(kinds(&pasted.payload), (2, 1));
             assert_eq!(pasted.losses, vec![DrawioPasteLoss::AdditionalPages(1)]);
             assert_eq!(pasted.warnings, vec![ImportWarning::Other]);
+        }
+    }
+
+    #[test]
+    fn clipboard_warnings_describe_the_first_page_only() {
+        use base64::Engine as _;
+
+        let changed = MODEL
+            .replace("rounded=1;", "shape=unknown;dashed=1;")
+            .replace("source=\"a\"", "source=\"missing\"")
+            .replace(
+                r#"<mxGeometry relative="1" as="geometry"/>"#,
+                r#"<mxGeometry relative="1" as="geometry"><mxPoint x="30" y="40" as="sourcePoint"/></mxGeometry>"#,
+            )
+            .replace(
+                "</root>",
+                r#"<mxCell id="note" value="Folded" style="shape=note2;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></root>"#,
+            );
+        let all_warnings = vec![
+            ImportWarning::Formatting,
+            ImportWarning::DetachedConnectors,
+            ImportWarning::UnsupportedDrawioShapes,
+            ImportWarning::DrawioFoldedNotesApproximated,
+            ImportWarning::Other,
+        ];
+        let compressed = base64::engine::general_purpose::STANDARD.encode(
+            miniz_oxide::deflate::compress_to_vec(encode_uri_component(&changed).as_bytes(), 6),
+        );
+        for (first, later, expected) in [
+            (MODEL, changed.as_str(), vec![ImportWarning::Other]),
+            (MODEL, compressed.as_str(), vec![ImportWarning::Other]),
+            (changed.as_str(), MODEL, all_warnings.clone()),
+            (compressed.as_str(), changed.as_str(), all_warnings.clone()),
+        ] {
+            let file = format!(
+                "<mxfile><diagram name=\"First\">{first}</diagram><diagram name=\"Later\">{later}</diagram></mxfile>"
+            );
+            let report = drawio::import(file.as_bytes()).unwrap();
+            assert_eq!(report.warnings, all_warnings);
+            assert_eq!(report.workbook.sheets.len(), 2);
+            assert!(matches!(
+                crate::import_bytes(crate::Format::DrawIo, file.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(ref warnings)) if warnings == &all_warnings
+            ));
+            let link = format!("#R{}", encode_uri_component(&file));
+            assert_eq!(
+                crate::import_drawio_link(&link).unwrap().warnings,
+                all_warnings
+            );
+            for text in [file.clone(), encode_uri_component(&file)] {
+                let pasted = decode(&text).unwrap();
+                assert_eq!(pasted.losses, vec![DrawioPasteLoss::AdditionalPages(1)]);
+                assert_eq!(pasted.warnings, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn clipboard_still_rejects_malformed_omitted_pages() {
+        let file = format!(
+            "<mxfile><diagram name=\"First\">{MODEL}</diagram><diagram name=\"Broken\">not-base64!</diagram></mxfile>"
+        );
+        assert!(drawio::import(file.as_bytes()).is_err());
+        for text in [file.clone(), encode_uri_component(&file)] {
+            assert!(decode(&text).is_err());
         }
     }
 

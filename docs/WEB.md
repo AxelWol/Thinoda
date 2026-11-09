@@ -184,8 +184,9 @@ supported, and ordinary paste does not invoke this import.
 Pasting draw.io diagram text inserts the first page as one undoable edit. A
 persistent warning reports possible omissions and counts omitted first-page
 container frames and additional pages; children of those frames become free
-board items. It also reports connector attachments that may have been
-detached. Malformed or out-of-range connector and ink points are discarded
+board items. Content-conversion warnings describe the first page, including
+connector attachments that may have been detached. Malformed or out-of-range
+connector and ink points are discarded
 rather than replaced with invented coordinates; a shape with malformed geometry
 and its children are omitted with a warning. If the first page has no pasteable
 items, the paste is rejected and later pages are not pasted. A formatting-only

@@ -256,6 +256,7 @@ fn check(path: &Path) -> Result<String, String> {
 
     let text = String::from_utf8_lossy(&bytes);
     if thinoda_io::drawio_clipboard::looks_like_drawio(&text) {
+        use thinoda_io::ImportWarning;
         use thinoda_io::drawio_clipboard::DrawioPasteLoss;
 
         let pasted =
@@ -275,6 +276,34 @@ fn check(path: &Path) -> Result<String, String> {
         }
         if !expected.is_empty() && !pasted.warnings.contains(&thinoda_io::ImportWarning::Other) {
             return Err("clipboard omissions were not reported as a warning".into());
+        }
+        if pasted.warnings.iter().any(|warning| {
+            !report.warnings.contains(warning)
+                && !(*warning == ImportWarning::Other && !expected.is_empty())
+        }) {
+            return Err(format!(
+                "clipboard introduced an unrelated import warning: {:?}",
+                pasted.warnings
+            ));
+        }
+        if book.sheets.len() == 1 {
+            let mut first_page_warnings = report.warnings.clone();
+            first_page_warnings.retain(|warning| {
+                !matches!(
+                    warning,
+                    ImportWarning::DrawioGridAdjusted | ImportWarning::DrawioBackgroundAdjusted
+                )
+            });
+            if !expected.is_empty() && !first_page_warnings.contains(&ImportWarning::Other) {
+                first_page_warnings.push(ImportWarning::Other);
+                first_page_warnings.sort_unstable();
+            }
+            if pasted.warnings != first_page_warnings {
+                return Err(format!(
+                    "clipboard warnings {:?} differ from first-page warnings {first_page_warnings:?}",
+                    pasted.warnings
+                ));
+            }
         }
     }
     Ok(format!(

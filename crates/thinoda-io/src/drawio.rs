@@ -2791,23 +2791,33 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
 
 /// Imports every page of a draw.io document as a Freeform board sheet.
 pub(crate) fn import(bytes: &[u8]) -> Result<ImportReport, IoError> {
+    import_with_first_page_warnings(bytes).map(|(report, _)| report)
+}
+
+/// Imports all pages, retaining the first page's warnings separately for clipboard paste.
+pub(crate) fn import_with_first_page_warnings(
+    bytes: &[u8],
+) -> Result<(ImportReport, Vec<ImportWarning>), IoError> {
     let pages = read_pages(bytes)?;
     let mut warnings = BTreeSet::new();
-    let mut sheets = pages
-        .iter()
-        .enumerate()
-        .map(|(i, page)| import_page(page, i + 1, &mut warnings));
-    let mut workbook = Workbook::new(
-        sheets
-            .next()
-            .ok_or_else(|| invalid("draw.io document contains no pages"))?,
+    let (first, rest) = pages
+        .split_first()
+        .ok_or_else(|| invalid("draw.io document contains no pages"))?;
+    let mut workbook = Workbook::new(import_page(first, 1, &mut warnings));
+    let first_page_warnings = warnings.iter().copied().collect();
+    workbook.sheets.extend(
+        rest.iter()
+            .enumerate()
+            .map(|(i, page)| import_page(page, i + 2, &mut warnings)),
     );
-    workbook.sheets.extend(sheets);
-    Ok(ImportReport {
-        format: Format::DrawIo,
-        workbook,
-        warnings: warnings.into_iter().collect(),
-    })
+    Ok((
+        ImportReport {
+            format: Format::DrawIo,
+            workbook,
+            warnings: warnings.into_iter().collect(),
+        },
+        first_page_warnings,
+    ))
 }
 
 // ---------------------------------------------------------------------------------------

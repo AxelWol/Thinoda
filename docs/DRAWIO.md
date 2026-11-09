@@ -1083,9 +1083,9 @@ or raw XML back. Thinoda now matches both directions:
   starts with `<mxGraphModel`, `<mxfile` or their `%3C`-encoded forms when no Thinoda rich
   data is present. `thinoda_io::drawio_clipboard::decode` runs it through the hardened
   import codec (same 16 MiB cap) and the result lands centred in the visible board area as
-  one "Paste from draw.io" undo step, selected. If the importer had to simplify anything, a
-  warning toast says so; possible omitted content, omitted container frames and extra
-  pages are reported in a persistent, localized warning. Unparseable data shows an error
+  one "Paste from draw.io" undo step, selected. If the importer had to simplify first-page
+  content, a warning toast says so; possible omitted content, omitted container frames and
+  extra pages are reported in a persistent, localized warning. Unparseable data shows an error
   toast and leaves the sheet alone. If the first page has no pasteable items, paste is
   rejected and the user is told that later pages were not pasted. FIM sheets refuse the
   paste.
@@ -1156,9 +1156,10 @@ edges processed before their terminals, and ensures the warning is raised only
 when the connector itself was added; a skipped connector keeps the existing
 unsupported-data warning. Local and link imports, cloud confirmation and
 cancel, and the strict no-confirmation API retain their consent safeguards.
-Clipboard warnings aggregate all imported pages, so the attachment notice says
-*may* when the affected page might not be pasted; a regression covers that
-case. The toast remains subject to the normal five-notification queue limit.
+At this checkpoint clipboard warnings aggregated all imported pages, so the
+attachment notice said *may* when the affected page might not be pasted. The
+later first-page warning checkpoint narrows this behavior. The toast remains
+subject to the normal five-notification queue limit.
 
 The draw.io importer, supplied example corpus and deterministic fuzz seeds,
 clipboard, link, localization and cloud tests passed, as did strict native,
@@ -1497,10 +1498,10 @@ silently ignored. Such combinations now report a Formatting warning, including
 styles whose properties might in fact be overridden; this is deliberately
 conservative rather than a stylesheet resolver. draw.io's
 [stylesheet documentation](https://jgraph.github.io/mxgraph/docs/js-api/files/view/mxStylesheet-js.html)
-describes named styles and default suppression. Clipboard warnings currently
-aggregate all source pages, even though only the first page is pasted, so the
-message refers to the source rather than asserting that a particular pasted
-object was replaced.
+describes named styles and default suppression. At this checkpoint clipboard
+warnings aggregated all source pages; the later first-page warning checkpoint
+narrows their scope. The message remains conservative about exactly which
+first-page object was replaced.
 
 This is disclosure, not chair or generic-stencil support. Source identifiers,
 the original shape/style data, exact appearance, counts, affected-object
@@ -1619,8 +1620,9 @@ ports and source style are not retained, and other appearance differences can
 remain. The specific warning also appears when reopening existing Thinoda
 draw.io exports that use a note shape: their corner really does differ in
 draw.io. The warning is conservative even when a source has no visible fold;
-clipboard warnings aggregate all source pages, including pages that are not
-pasted. Export counts image-card placeholders only when they use the same
+at this checkpoint clipboard warnings included pages that were not pasted.
+The later first-page warning checkpoint narrows their scope. Export counts
+image-card placeholders only when they use the same
 note fallback as the writer. New import-warning and export-loss variants are
 public API additions that exhaustive Rust matches must handle. Keep the original
 and a native copy; faithful geometry and source-preserving save-back remain open.
@@ -1635,6 +1637,35 @@ A 21-second Linux AddressSanitizer smoke completed 9,125 executions without a
 reported failure or reproducer. It does not satisfy the separate 30-minute fuzz
 campaign; physical-device, system-clipboard, accessibility and viewer acceptance
 also remain open.
+
+**Clipboard warning scope and rubber-duck review (partial Phase 11).**
+Pasting a multi-page `mxfile` still takes only the first page and reports the
+number of omitted pages. Content-conversion warnings now come from that first
+page rather than from pages that were never pasted. File and link imports still
+report warnings from every page; the clipboard continues to parse and import
+the entire source and rejects malformed later pages. Page-grid and background
+warnings remain excluded from fragments, and an omitted-page or frame loss
+still adds the generic `Other` warning to the public clipboard result.
+
+The change deliberately adjusts the public `DrawioPaste::warnings` behavior.
+First-page warnings are still page-level, not item-level: a warning can concern
+an omitted frame rather than a pasted item. An empty first page remains an
+error, even when later pages contain items. This improves the notice but does
+not preserve extra pages, containers, source styles or fixed attachments, and
+it does not remove existing parsing limits or make malformed later pages
+silently acceptable.
+
+Validation passed 255 IO library tests, 11 supplied-corpus tests, six
+deterministic fuzz-seed tests and 64 selected draw.io application tests. The
+multi-page paste and folded-note paste/copy/undo journeys passed in Chromium,
+Firefox and WebKit against a production build; the warning screenshots were
+inspected. Two older app tests initially expected warnings from omitted pages;
+they now check both first-page warnings and their absence for later pages.
+Workspace and fuzz formatting and native, WebAssembly and fuzz Clippy passed
+with warnings denied. A 21-second Linux AddressSanitizer smoke completed 8,086
+executions without a reported failure or reproducer. It does not satisfy the
+separate 30-minute-per-target fuzz campaign; real system clipboard,
+physical-device and accessibility acceptance also remain open.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

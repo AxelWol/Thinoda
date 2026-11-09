@@ -838,6 +838,40 @@ test("folded draw.io notes paste as editable cards with copy and paste warnings"
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io multipage paste reports omitted pages without unrelated appearance warnings", async ({ page }, testInfo) => {
+    const text = [
+        '<mxfile><diagram name="First"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" value="First page" style="shape=rectangle;">',
+        '<mxGeometry width="120" height="60" as="geometry"/></mxCell>',
+        '</root></mxGraphModel></diagram>',
+        '<diagram name="Later"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="note" vertex="1" parent="1" value="Later note" style="shape=note2;">',
+        '<mxGeometry width="120" height="60" as="geometry"/></mxCell>',
+        '<mxCell id="unknown" vertex="1" parent="1" value="Later shape" style="shape=unknown;">',
+        '<mxGeometry x="150" width="120" height="60" as="geometry"/></mxCell>',
+        '</root></mxGraphModel></diagram></mxfile>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-multipage-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-multipage-warning.png") });
+    const after = archive(await saveAs(page, "drawio-multipage-after.thinoda"));
+    const sheet = after.content.sheets[after.content.active_sheet];
+    expect(sheet.canvas?.objects).toHaveLength(1);
+    expect(sheet.canvas?.objects[0].kind.shape?.label).toBe("First page");
+    expect(Object.values(sheet.topics).some((topic) => topic.title === "Later note")).toBe(false);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-multipage-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("draw.io process paste warns and copies its square approximation", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',

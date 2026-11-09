@@ -58,7 +58,9 @@ adaptive colors, and nonfinite hue through the same paths. A page-background
 seed covers a fixed adaptive pair, a finite page, a gradient
 and an image, and checks that page-only warnings do not leak into clipboard
 fragments. A folded-notes seed checks editable card conversion, connector
-attachment, and document and clipboard warnings. A double-ellipse seed checks
+attachment, and document and clipboard warnings. A multi-page warning seed
+checks that file warnings cover all pages while clipboard appearance warnings
+refer to the pasted first page. A double-ellipse seed checks
 that the missing inner outline is reported on document and clipboard import.
 A flowchart-annotation seed exercises the transparent,
 open-sided bracket conversion. A flowchart-process seed covers both the
