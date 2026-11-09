@@ -279,7 +279,7 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_acceptance_campaigns_keep_sanitizers_and_failure_evidence(self):
         source = (WORKFLOWS / "importer-campaign.yml").read_text(encoding="utf-8")
-        self.assertIn("target: [xmind, freemind, opml]", source)
+        self.assertIn("target: [xmind, freemind, opml, drawio_import]", source)
         self.assertIn("permissions:\n  contents: read", source)
         self.assertNotIn("secrets.", source)
         self.assertIn("persist-credentials: false", source)
