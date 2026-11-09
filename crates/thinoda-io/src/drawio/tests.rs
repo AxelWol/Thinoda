@@ -1121,6 +1121,166 @@ fn double_ellipse_reports_unsupported_label_layout() {
 }
 
 #[test]
+fn html_label_text_retains_visible_entities_and_block_boundaries() {
+    for (source, expected, warned) in [
+        ("A<div>B</div>C", "A\nB\nC", false),
+        ("A<DIV>B</DIV>C", "A\nB\nC", false),
+        ("<div>A</div><div><br></div><div>B</div>", "A\n\nB", false),
+        ("<div>A<br></div><div>B</div>", "A\nB", false),
+        ("A<br><div>B</div>", "A\nB", false),
+        ("A<div><br></div>B", "A\n\nB", false),
+        ("<p>A</p><p>B</p>", "A\n\nB", true),
+        ("A<!-- hidden > comment -->B", "AB", false),
+        (
+            r#"<span title="2 > 1">Hello &copy;</span>"#,
+            "Hello \u{a9}",
+            true,
+        ),
+        (
+            "&#x1f642; &NotEqualTilde; &CounterClockwiseContourIntegral; &amp;lt; &nbsp;",
+            "\u{1f642} \u{2242}\u{338} \u{2233} &lt; \u{a0}",
+            false,
+        ),
+        ("&#128; &#x91; &#x97;", "\u{20ac} \u{2018} \u{2014}", false),
+        ("&#0; &#xD800;", "\u{fffd} \u{fffd}", true),
+        (
+            "A&lt;img src=x onerror=alert(1)&gt;B",
+            "A<img src=x onerror=alert(1)>B",
+            false,
+        ),
+        (
+            "A<script>not visible</script><style>.x { color: red }</style>B",
+            "AB",
+            true,
+        ),
+        ("A<span hidden>not visible</span>B", "AB", true),
+        ("<xmp>A &copy;</xmp>", "A &copy;", true),
+        ("<div>not closed", "not closed", true),
+        ("&amp", "&amp", true),
+        ("&notit;", "&notit;", true),
+        ("&unknown;", "&unknown;", false),
+        ("1 < 2", "1 < 2", false),
+    ] {
+        let mut warnings = BTreeSet::new();
+        assert_eq!(strip_html(source, &mut warnings), expected, "{source}");
+        assert_eq!(
+            warnings.contains(&ImportWarning::Formatting),
+            warned,
+            "{source}: {warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn html_label_entities_remain_intact_across_parser_chunks() {
+    let source = format!(
+        "<span>{}&NotEqualTilde;{}</span>",
+        "a".repeat(32_760),
+        "b".repeat(32_760)
+    );
+    let mut warnings = BTreeSet::new();
+    assert_eq!(
+        strip_html(&source, &mut warnings),
+        format!(
+            "{}\u{2242}\u{338}{}",
+            "a".repeat(32_760),
+            "b".repeat(32_760)
+        )
+    );
+    assert!(warnings.is_empty());
+
+    let source = format!("<span>{}\u{1f642}</span>", "a".repeat(16_377));
+    assert_eq!(
+        strip_html(&source, &mut warnings),
+        format!("{}\u{1f642}", "a".repeat(16_377))
+    );
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn non_html_labels_remain_literal() {
+    let source = "A &copy;<div>B</div>";
+    let xml = page(&format!(
+        r##"<mxCell id="a" value="{}" style="shape=rectangle;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+        esc(source)
+    ));
+    let report = load(&xml);
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), source);
+}
+
+#[test]
+fn decoded_html_labels_obey_the_board_text_limit() {
+    let source = format!("{}&copy;", "a".repeat(MAX_BOARD_TEXT_CHARS));
+    let xml = page(&format!(
+        r##"<mxCell id="a" value="{}" style="shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+        esc(&source)
+    ));
+    let report = load(&xml);
+    assert_eq!(
+        shapes(&report.workbook.sheets[0])[0].label(),
+        "a".repeat(MAX_BOARD_TEXT_CHARS)
+    );
+    assert!(report.warnings.contains(&ImportWarning::Other));
+}
+
+#[test]
+fn html_labels_survive_file_link_clipboard_and_drawio_round_trip() {
+    let shape = r#"Before<div title="2 > 1">A &copy;</div>After"#;
+    let edge = "Line 1<div>Line 2 &NotEqualTilde;</div>Tail";
+    let card = "<div>Note &nbsp; one</div><div>Note two</div>";
+    let xml = format!(
+        r##"<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+        <mxCell id="s" value="{}" style="shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="120" height="60" as="geometry"/></mxCell>
+        <mxCell id="e" value="{}" style="html=1;endArrow=none;fontSize=12;strokeColor=#000;fontColor=#000;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="100" as="sourcePoint"/><mxPoint x="120" y="100" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="c" value="{}" style="shape=note;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry x="160" width="120" height="80" as="geometry"/></mxCell>
+        </root></mxGraphModel>"##,
+        esc(shape),
+        esc(edge),
+        esc(card),
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(shapes(sheet)[0].label(), "Before\nA \u{a9}\nAfter");
+    assert_eq!(
+        connectors(sheet)[0].label,
+        "Line 1\nLine 2 \u{2242}\u{338}\nTail"
+    );
+    assert!(
+        sheet
+            .topics
+            .values()
+            .any(|topic| topic.title == "Note \u{a0} one\nNote two")
+    );
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(_))
+    ));
+
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert_eq!(pasted.warnings, report.warnings);
+    let linked = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&linked).unwrap();
+    assert_eq!(linked.warnings, report.warnings);
+    assert_eq!(linked.workbook, report.workbook);
+
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let sheet = &restored.sheets[0];
+    assert_eq!(shapes(sheet)[0].label(), "Before\nA \u{a9}\nAfter");
+    assert_eq!(
+        connectors(sheet)[0].label,
+        "Line 1\nLine 2 \u{2242}\u{338}\nTail"
+    );
+    assert!(
+        sheet
+            .topics
+            .values()
+            .any(|topic| topic.title == "Note \u{a0} one\nNote two")
+    );
+}
+
+#[test]
 fn vertex_label_font_size_loss_is_reported_for_shapes_and_text() {
     for (shape, prefix, font, label, warned) in [
         ("rectangle", "", "", "Label", false),

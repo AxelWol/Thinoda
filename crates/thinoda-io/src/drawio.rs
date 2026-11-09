@@ -35,6 +35,9 @@ use thinoda_core::{
 };
 
 mod html;
+mod label_html;
+
+use label_html::strip_html;
 
 /// Largest accepted input and inflated diagram text.
 const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -1068,91 +1071,6 @@ impl Style {
                         .any(|key| differs_from(key, 0.0))
                     || PORT_KEYS.iter().any(|key| self.get(key).is_some())))
     }
-}
-
-fn html_entity(name: &str) -> Option<char> {
-    if let Some(number) = name.strip_prefix('#') {
-        let value = match number.strip_prefix(['x', 'X']) {
-            Some(hex) => u32::from_str_radix(hex, 16).ok()?,
-            None => number.parse().ok()?,
-        };
-        return char::from_u32(value).filter(|c| *c != '\0');
-    }
-    Some(match name {
-        "amp" => '&',
-        "lt" => '<',
-        "gt" => '>',
-        "quot" => '"',
-        "apos" => '\'',
-        "nbsp" => ' ',
-        _ => return None,
-    })
-}
-
-/// Plain text of an HTML label; markup beyond line structure is reported.
-fn strip_html(text: &str, warnings: &mut BTreeSet<ImportWarning>) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(pos) = rest.find(['<', '&']) {
-        out.push_str(&rest[..pos]);
-        let tail = &rest[pos..];
-        if let Some(after) = tail.strip_prefix('<') {
-            let is_tag =
-                after.starts_with(|c: char| c.is_ascii_alphabetic() || c == '/' || c == '!');
-            if is_tag && let Some(end) = tail.find('>') {
-                let tag = &tail[1..end];
-                let closing = tag.starts_with('/');
-                let body = tag.trim_start_matches('/');
-                let name = body
-                    .split(|c: char| c.is_whitespace() || c == '/')
-                    .next()
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                let has_attributes = body
-                    .trim_end_matches('/')
-                    .trim()
-                    .contains(char::is_whitespace);
-                match name.as_str() {
-                    "br" => out.push('\n'),
-                    "div" | "p" | "li" | "span" => {
-                        if has_attributes {
-                            warnings.insert(ImportWarning::Formatting);
-                        }
-                        if !closing && name != "span" && !out.is_empty() && !out.ends_with('\n') {
-                            out.push('\n');
-                        }
-                    }
-                    _ if name.starts_with("!--") => {}
-                    _ => {
-                        warnings.insert(ImportWarning::Formatting);
-                    }
-                }
-                rest = &tail[end + 1..];
-                continue;
-            }
-            out.push('<');
-            rest = &tail[1..];
-        } else {
-            let entity = tail
-                .as_bytes()
-                .iter()
-                .take(12)
-                .position(|&b| b == b';')
-                .and_then(|end| html_entity(&tail[1..end]).map(|ch| (ch, end)));
-            match entity {
-                Some((ch, end)) => {
-                    out.push(ch);
-                    rest = &tail[end + 1..];
-                }
-                None => {
-                    out.push('&');
-                    rest = &tail[1..];
-                }
-            }
-        }
-    }
-    out.push_str(rest);
-    out
 }
 
 fn truncate_chars(text: String, max: usize, warnings: &mut BTreeSet<ImportWarning>) -> String {

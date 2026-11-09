@@ -2851,6 +2851,45 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_html_label_paste_copy_and_undo_preserve_text() {
+        use crate::app::Cmd;
+
+        let text = concat!(
+            r#"<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r##"<mxCell id="shape" vertex="1" parent="1" value="Before&lt;div title=&quot;2 &gt; 1&quot;&gt;A &amp;copy;&lt;/div&gt;After" style="shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;"><mxGeometry width="120" height="60" as="geometry"/></mxCell>"##,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        assert_eq!(
+            app.doc().unwrap().doc.sheet().canvas.objects[0].label(),
+            "Before\nA \u{a9}\nAfter"
+        );
+        assert!(app.toasts.texts().any(|text| text
+            == crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
+
+        app.toasts.tick(60.0);
+        app.exec(&ctx, Cmd::CopyAsDrawio);
+        let copied = clipboard.borrow().text.clone();
+        let restored = thinoda_io::drawio_clipboard::decode(&copied).unwrap();
+        let mut sheet = Sheet::new("Restored", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        clipboard::paste_board_selection(&mut sheet, &restored.payload, Vec2::ZERO).unwrap();
+        assert_eq!(sheet.canvas.objects[0].label(), "Before\nA \u{a9}\nAfter");
+        app.exec(&ctx, Cmd::MenuPaste);
+        assert_eq!(app.doc().unwrap().doc.sheet().canvas.objects.len(), 2);
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_connector_label_size_warning_and_copy_are_undoable() {
         use crate::app::Cmd;
         use thinoda_core::CanvasObjectKind;

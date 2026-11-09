@@ -67,6 +67,8 @@ open-sided bracket conversion. A flowchart-process seed covers both the
 rounded stencil warning and Thinoda's square-rectangle interchange marker.
 A label-sizes seed exercises named-style font and alignment changes and folded
 connector labels through document and clipboard imports.
+An HTML-label seed exercises quoted attributes, named entities, hidden script
+content and block boundaries through the same imports.
 The target's PNG seed is the original editor-exported fixture already used by
 the importer tests.
 On successful imports, including reports with conversion

@@ -785,6 +785,58 @@ test("draw.io paste warns about unresolved shape appearance", async ({ page }, t
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io HTML labels keep readable text through paste, edit, copy and undo", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" ',
+        'value="Before&lt;div title=&quot;2 &gt; 1&quot;&gt;A &amp;copy;&lt;/div&gt;After" ',
+        'style="shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;">',
+        '<mxGeometry width="120" height="60" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-html-label-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await expectWarningToast(page, testInfo.outputPath("drawio-html-label-warning.png"));
+    const after = archive(await saveAs(page, "drawio-html-label-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape?.label).toBe("Before\nA \u00a9\nAfter");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("F2");
+    await frames(page);
+    const label = page.locator("input[type='text']:focus, textarea:focus");
+    await expect(label).toBeFocused();
+    await label.fill("Edited \u00a9");
+    await page.keyboard.press("Enter");
+    await frames(page);
+
+    const previous = await page.evaluate(() => window.__thinodaTestClipboard.plainWrites);
+    await command(page, "Copy as draw.io");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites))
+        .toBe(previous + 1);
+    const copied = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    expect(decodeURIComponent(copied)).toContain('value="Edited \u00a9"');
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const restored = archive(await saveAs(page, "drawio-html-label-edit-undo.thinoda"));
+    expect(restored.content.sheets[restored.content.active_sheet].canvas?.objects?.[0]
+        .kind.shape?.label).toBe("Before\nA \u00a9\nAfter");
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-html-label-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("draw.io connector label size is disclosed and copy matches the canvas", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',

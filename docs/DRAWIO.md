@@ -1772,6 +1772,44 @@ Clippy passed with warnings denied. A 22-second Linux AddressSanitizer smoke
 completed 7,913 executions without a reported failure; it is not the separate
 30-minute-per-target acceptance campaign.
 
+**HTML-label plain-text conversion (partial Phases 6, 9 and 11).** HTML labels
+on shapes, connectors and cards now use the existing bounded HTML tokenizer
+instead of searching for the next `>` character. Semicolon-terminated named and
+numeric character references, including multi-code-point names, nonbreaking
+spaces and HTML's Windows-1252 numeric replacements, are retained as editable
+text. Text after block elements and common `<br>` boundaries is separated into
+lines; comments and script/style/template content are not displayed. Decoding
+happens once, after tokenization, so encoded markup stays literal text. Non-HTML
+labels are unchanged. Discarded formatting and hidden content report a Formatting warning.
+If the tokenizer rejects the label or exceeds its memory budget, import retains
+the raw label as inert text and reports both Formatting and Other; the normal
+board text-length limit still applies.
+
+**Rubber-duck self-critique.** The browser's `innerText` alone overcounts some
+line breaks beside `<br>` and block elements. Measuring the published app's
+browser layout exposed that discrepancy, so adjacent explicit and block
+boundaries share a line break instead. HTML text arrives in chunks that can
+split character references; conversion buffers each text node before decoding.
+The existing entity decoder does not handle C1 numeric replacements or legacy
+semicolonless references: the former are mapped explicitly, while ambiguous
+unresolved references remain literal and report a conservative warning. Zero,
+surrogate and out-of-range numeric code points use the browser replacement
+character and warn. This is not rich-text import or an HTML/CSS renderer:
+inline links, list markers, styling, CSS visibility and whitespace, malformed
+implicit closures and some layouts can still differ. Attribute-bearing and
+unsupported elements warn, but warnings cannot identify each affected label.
+Keep the original file; full styling, independent labels and source-preserving
+save-back remain open.
+
+Validation passed 537 I/O tests (10 ignored), including deterministic mutations
+and parser limits, and 908 app library tests (two ignored). All 88 supplied
+diagrams passed the corpus round-trip and rendering check. Three production-web
+paste, warning, edit, copy and undo journeys passed in Chromium, Firefox and
+WebKit; the warning screenshots were inspected. Native, WebAssembly and fuzz
+Clippy passed with warnings denied. A 22-second Linux AddressSanitizer smoke
+completed 7,090 executions without a reported failure; it is not the separate
+30-minute-per-target acceptance campaign.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop

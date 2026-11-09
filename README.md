@@ -758,6 +758,11 @@ those system-owned controls. WinGet publishing remains paused.
   cannot be preserved. Separate connector-label cells are joined into the
   connector text with a warning because their individual styles and positions
   are not retained.
+  HTML labels are converted to editable plain text, including common block
+  breaks and semicolon-terminated character references. Rich formatting and
+  inline links are not retained. Unsupported markup and unresolved references
+  trigger warnings, but some HTML layout differences remain unreported; the
+  source HTML is never executed. Keep the original file.
   Export and **Copy as draw.io** write size 12 for labeled board connectors;
   flattened relationship labels use size 12 as well. Text styling and wrapping
   can still differ.
