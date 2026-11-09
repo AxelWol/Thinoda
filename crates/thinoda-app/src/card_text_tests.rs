@@ -79,6 +79,8 @@ fn open_toolbar_from_context(h: &mut Harness<'_, ThinodaApp>) {
         h.run_steps(1);
     }
     h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "Styles").hover();
+    h.run_steps(6);
     scroll_and_click(h, Role::Button, card_text_label());
 }
 
@@ -1283,6 +1285,168 @@ fn selected_sticky_and_text_controls_edit_whole_card_and_round_trip() {
 }
 
 #[test]
+fn whole_card_alignment_controls_move_the_visible_single_line() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let (app, id) = app_with_card(kind);
+        let mut h = harness(app, vec2(1200.0, 700.0));
+        open_toolbar(&mut h);
+        let card = {
+            let doc = h.state().doc().unwrap();
+            doc.view.selected_topic_rect(&doc.doc).unwrap()
+        };
+        let mut positions = Vec::new();
+        for (align, label) in [
+            (TextAlign::Left, "Align Left"),
+            (TextAlign::Center, "Align Center"),
+            (TextAlign::Right, "Align Right"),
+        ] {
+            h.get_by_role_and_label(Role::Button, label).click();
+            h.run_steps(4);
+            assert_eq!(style(&h, id).align, Some(align));
+            let text = h
+                .output()
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+                .expect("card title should be painted");
+            assert!(
+                card.contains_rect(text),
+                "{kind:?} {align:?}: {text:?} {card:?}"
+            );
+            positions.push(text.center().x);
+        }
+        assert!(
+            positions[0] + 10.0 < positions[1] && positions[1] + 10.0 < positions[2],
+            "{kind:?}: card text did not move between alignments: {positions:?}"
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        h.run_steps(3);
+        assert_eq!(style(&h, id).align, Some(TextAlign::Center));
+        assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+        h.run_steps(3);
+        assert_eq!(style(&h, id).align, Some(TextAlign::Right));
+    }
+}
+
+#[test]
+fn rotated_card_alignment_moves_the_visible_title_along_the_card() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        for dark in [false, true] {
+            let (mut app, id) = app_with_card(kind);
+            app.settings.theme = if dark {
+                thinoda_platform::settings::ThemeMode::Dark
+            } else {
+                thinoda_platform::settings::ThemeMode::Light
+            };
+            let mut card = app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(id)
+                .unwrap()
+                .card
+                .unwrap();
+            card.rotation = 90.0;
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .set_topic_card(id, Some(card))
+                .unwrap();
+            let mut h = harness(app, vec2(1200.0, 700.0));
+            open_toolbar(&mut h);
+            let mut positions = Vec::new();
+            for label in ["Align Left", "Align Center", "Align Right"] {
+                h.get_by_role_and_label(Role::Button, label).click();
+                h.run_steps(4);
+                let text = h
+                    .output()
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                            Some(text.visual_bounding_rect())
+                        }
+                        _ => None,
+                    })
+                    .expect("rotated card title should be painted");
+                positions.push(text.center().y);
+            }
+            assert!(
+                positions[0] + 10.0 < positions[1] && positions[1] + 10.0 < positions[2],
+                "{kind:?} dark={dark}: {positions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn active_card_title_alignment_matches_the_saved_title() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let (app, id) = app_with_card(kind);
+        let mut h = harness(app, vec2(1200.0, 700.0));
+        open_toolbar(&mut h);
+        {
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.begin_edit(doc.doc.sheet(), id, false);
+        }
+        h.run_steps(5);
+        let mut editing_positions = Vec::new();
+        for (align, label) in [
+            (TextAlign::Left, "Align Left"),
+            (TextAlign::Center, "Align Center"),
+            (TextAlign::Right, "Align Right"),
+        ] {
+            h.get_by_role_and_label(Role::Button, label).click();
+            h.run_steps(4);
+            assert_eq!(style(&h, id).align, Some(align));
+            let doc = h.state().doc().unwrap();
+            assert_eq!(doc.view.editing_text(), Some("Card title"));
+            assert_eq!(doc.doc.sheet().topic(id).unwrap().title, "Card title");
+            let text = h
+                .output()
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+                .expect("editing title should be painted");
+            editing_positions.push(text.center().x);
+        }
+        assert!(
+            editing_positions[0] + 10.0 < editing_positions[1]
+                && editing_positions[1] + 10.0 < editing_positions[2],
+            "{kind:?}: {editing_positions:?}"
+        );
+        h.state_mut().doc_mut().unwrap().view.cancel_edit();
+        h.run_steps(4);
+        let saved = h
+            .output()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Card title" => {
+                    Some(text.visual_bounding_rect())
+                }
+                _ => None,
+            })
+            .expect("saved title should be painted");
+        assert!(
+            (saved.center().x - editing_positions[2]).abs() < 3.0,
+            "{kind:?}: editing={editing_positions:?}, saved={saved:?}"
+        );
+    }
+}
+
+#[test]
 fn keyboard_controls_use_theme_state_and_close_without_changing_selection() {
     let (mut app, id) = app_with_card(CardKind::Sticky);
     app.doc_mut()
@@ -1373,7 +1537,7 @@ fn keyboard_can_choose_and_reset_color_and_choose_a_font() {
 }
 
 #[test]
-fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_windows() {
+fn formatting_overlays_a_stationary_canvas_and_scrolls_in_compact_windows() {
     for dark in [false, true] {
         for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(960.0, 540.0)] {
             let (mut app, id) = app_with_card(CardKind::Text);
@@ -1383,6 +1547,10 @@ fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_window
                 SettingsTheme::Light
             };
             let mut h = harness(app, size);
+            let canvas_before = h.state().doc().unwrap().view.canvas_rect();
+            let board_before = h
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")));
             if h.query_by_role_and_label(Role::Button, card_text_label())
                 .is_some()
             {
@@ -1392,12 +1560,14 @@ fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_window
             }
             let canvas = h.state().doc().unwrap().view.canvas_rect();
             let bold = h.get_by_role_and_label(Role::Button, "Bold").rect();
-            assert!(bold.bottom() <= canvas.top() + 0.5, "{bold:?} {canvas:?}");
+            assert_eq!(canvas, canvas_before, "opening formatting moved the canvas");
+            assert!(canvas.contains_rect(bold), "{bold:?} {canvas:?}");
             assert!(h.ctx.content_rect().contains_rect(bold));
             let board = h
                 .ctx
                 .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")));
             assert!(!board.unwrap().intersects(bold));
+            assert_eq!(board, board_before, "opening formatting moved the toolbox");
 
             h.get_by_role_and_label(Role::ComboBox, "Font Family")
                 .focus();
@@ -1420,11 +1590,87 @@ fn formatting_stays_docked_and_keyboard_scrolls_in_compact_light_and_dark_window
                 .get_by_role_and_label(Role::ColorWell, "Text Color #FFFFFF")
                 .rect();
             assert!(h.ctx.content_rect().contains_rect(rect), "{rect:?}");
-            assert!(rect.bottom() <= h.state().doc().unwrap().view.canvas_rect().top());
+            assert!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .canvas_rect()
+                    .contains_rect(rect)
+            );
             h.key_press(Key::Space);
             h.run_steps(3);
             assert_eq!(style(&h, id).text_color, Some(Color::WHITE));
         }
+    }
+}
+
+#[test]
+fn formatting_and_ink_options_share_a_stationary_canvas() {
+    for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(1000.0, 700.0)] {
+        let (app, id) = app_with_card(CardKind::Text);
+        let mut h = harness(app, size);
+        if h.query_by_role_and_label(Role::Button, card_text_label())
+            .is_some()
+        {
+            open_toolbar(&mut h);
+        } else {
+            open_toolbar_from_context(&mut h);
+        }
+        let canvas = h.state().doc().unwrap().view.canvas_rect();
+        let board_id = egui::Id::unique("thinoda_board_toolbar");
+        let board = h.ctx.memory(|memory| memory.area_rect(board_id));
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Pen);
+        h.run_steps(8);
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert_eq!(h.ctx.memory(|memory| memory.area_rect(board_id)), board);
+        let (card, ink) = h.ctx.memory(|memory| {
+            (
+                memory.area_rect(egui::Id::unique((
+                    "thinoda_card_text_toolbar",
+                    egui::ViewportId::ROOT,
+                ))),
+                memory.area_rect(egui::Id::unique((
+                    "thinoda_ink_options",
+                    egui::ViewportId::ROOT,
+                ))),
+            )
+        });
+        let (card, ink) = (card.unwrap(), ink.unwrap());
+        assert!(canvas.contains_rect(card) && canvas.contains_rect(ink));
+        assert!(!card.intersects(ink), "{size:?}: {card:?} {ink:?}");
+        assert!(!board.unwrap().intersects(card));
+        assert!(!board.unwrap().intersects(ink));
+
+        h.get_by_role_and_label(Role::Button, "Bold").focus();
+        h.run_steps(6);
+        h.key_press(Key::Space);
+        h.run_steps(4);
+        assert_eq!(style(&h, id).bold, Some(true));
+        h.get_by_role_and_label(Role::Button, "Ink width")
+            .scroll_to_me();
+        h.run_steps(6);
+        h.get_by_role_and_label(Role::Button, "Ink width").click();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Button, "Ink width: 8")
+            .click();
+        h.run_steps(4);
+        assert_eq!(h.state().doc().unwrap().view.ink_settings.width, 8.0);
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .objects
+                .is_empty()
+        );
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
     }
 }
 
@@ -1446,7 +1692,7 @@ fn compact_formatting_keeps_insert_actions_without_covering_the_card() {
     );
     let action = h.get_by_role_and_label(Role::Button, "More insert actions");
     let canvas = h.state().doc().unwrap().view.canvas_rect();
-    assert!(action.rect().bottom() <= canvas.top());
+    assert!(canvas.contains_rect(action.rect()));
     action.click();
     h.run_steps(4);
     h.get_by_role_and_label(Role::Button, "Subtopic").click();
@@ -3705,17 +3951,14 @@ fn canvas_context_menu_opens_the_toolbar_even_when_topic_toolbar_is_disabled() {
 }
 
 #[test]
-fn canvas_tools_submenu_remains_scrollable_in_a_short_viewport() {
+fn blank_canvas_tools_submenu_remains_scrollable_in_a_short_viewport() {
     let mut app = ThinodaApp::headless();
     app.settings.ai.enabled = false;
     app.new_doc(Workbook::new(Sheet::new("Board", "Root")));
     let root = app.doc().unwrap().doc.sheet().root;
     app.doc_mut().unwrap().view.select_only(root);
     let mut h = harness(app, vec2(520.0, 320.0));
-    let pos = {
-        let doc = h.state().doc().unwrap();
-        doc.view.selected_topic_rect(&doc.doc).unwrap().center()
-    };
+    let pos = h.state().doc().unwrap().view.canvas_rect().right_bottom() - vec2(8.0, 8.0);
     h.event(egui::Event::PointerMoved(pos));
     for pressed in [true, false] {
         h.event(egui::Event::PointerButton {
@@ -3740,7 +3983,7 @@ fn canvas_tools_submenu_remains_scrollable_in_a_short_viewport() {
     assert_eq!(
         h.query_all_by_role_and_label(Role::Button, "Pen").count(),
         2,
-        "the submenu and toolbox both expose Pen"
+        "the Tools submenu and toolbox both expose Pen"
     );
     h.query_all_by_role_and_label(Role::Button, "Pen")
         .next()
@@ -4318,7 +4561,7 @@ fn logical_viewports_keep_independent_toolbar_owners() {
                     ..Default::default()
                 },
                 |ui| {
-                    app.card_text_toolbar(ui);
+                    app.card_text_toolbar(ui, false);
                 },
             );
             output.textures_delta.clear();

@@ -157,6 +157,22 @@ impl Drawing {
             self.line(color, width, dashed, arrow)));
     }
 
+    fn quadratic(&mut self, name: &str, points: [Vec2; 5], color: Color, width: f32) {
+        let id = self.id();
+        let path = format!(
+            "<a:moveTo>{}</a:moveTo><a:quadBezTo>{}{}</a:quadBezTo><a:quadBezTo>{}{}</a:quadBezTo>",
+            self.point(points[0]),
+            self.point(points[1]),
+            self.point(points[2]),
+            self.point(points[3]),
+            self.point(points[4])
+        );
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{}" h="{}" fill="none">{path}</a:path></a:pathLst></a:custGeom><a:noFill/>{}</p:spPr></p:sp>"#,
+            esc(name), self.width, self.height, self.width, self.height,
+            self.line(color, width, false, false)));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn text(
         &mut self,
@@ -245,6 +261,39 @@ impl Drawing {
             fill(color)));
     }
 
+    fn rectangle_sides(
+        &mut self,
+        name: &str,
+        paths: &[thinoda_core::board::RectangleSidePath],
+        color: Color,
+        width: f32,
+    ) {
+        let mut path = String::new();
+        for side_path in paths {
+            let Some(first) = side_path.points.first() else {
+                continue;
+            };
+            path.push_str(&format!("<a:moveTo>{}</a:moveTo>", self.point(*first)));
+            for point in &side_path.points[1..] {
+                path.push_str(&format!("<a:lnTo>{}</a:lnTo>", self.point(*point)));
+            }
+        }
+        if path.is_empty() {
+            return;
+        }
+        let id = self.id();
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{}" h="{}" fill="none">{path}</a:path></a:pathLst></a:custGeom><a:noFill/><a:ln w="{}" cap="sq">{}<a:miter/></a:ln></p:spPr></p:sp>"#,
+            esc(name),
+            self.width,
+            self.height,
+            self.width,
+            self.height,
+            self.emu(width).clamp(0, 20_116_800),
+            fill(Some(color)),
+        ));
+    }
+
     fn board_object(
         &mut self,
         item: &thinoda_core::SceneItem,
@@ -268,6 +317,47 @@ impl Drawing {
                     fill,
                     stroke,
                 ),
+                super::board::Prim::RectangleSides {
+                    paths,
+                    stroke,
+                    width,
+                } => self.rectangle_sides(
+                    &format!("Canvas object {}", object.id),
+                    &paths,
+                    stroke,
+                    width,
+                ),
+                super::board::Prim::Circle {
+                    center,
+                    radius,
+                    fill,
+                    stroke,
+                    width,
+                } => {
+                    if radius > 0.0 {
+                        let id = self.id();
+                        self.shape(
+                            id,
+                            &format!("Canvas object {}", object.id),
+                            Rect::from_center_size(center, Vec2::new(radius * 2.0, radius * 2.0)),
+                            "ellipse",
+                            fill,
+                            stroke,
+                            width,
+                            false,
+                        );
+                    }
+                }
+                super::board::Prim::Quadratic {
+                    points,
+                    stroke,
+                    width,
+                } => self.quadratic(
+                    &format!("Canvas object {}", object.id),
+                    points,
+                    stroke,
+                    width,
+                ),
                 super::board::Prim::Text {
                     rect,
                     pivot,
@@ -276,6 +366,7 @@ impl Drawing {
                     size,
                     color,
                     backdrop,
+                    group_backdrop: _,
                 } => {
                     let previous_rotation = self.rotation;
                     self.rotation = (rotation != 0.0).then_some(Rotation {

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use egui::{Color32, Event, Key, Painter, PointerButton, Pos2, Rect, Shape, Stroke, TouchPhase};
+use serde::{Deserialize, Serialize};
 use thinoda_core::board::{
     BoardMember, MAX_BOARD_COORDINATE, MAX_CANVAS_OBJECTS, MAX_TOTAL_INK_POINTS, points_bounds,
 };
@@ -19,10 +20,13 @@ use crate::ink_input::{
     PixelEraseError, PixelEraseOptions, PixelEraseResult, RejectedSample, StrokeFinishOptions,
     eraser_hits, lasso_hits, pixel_erase_stroke,
 };
+use crate::pen_input::{PenFrameData, PenInputIssue, PenSample};
 use crate::render::{Xf, color32};
+use crate::touch_input::TouchPointerIssue;
 
 /// Ink modes are separate from the board's shape/selection tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InkMode {
     Pen,
     Highlighter,
@@ -56,6 +60,107 @@ impl Default for InkSettings {
     }
 }
 
+/// Process-independent description of the pointer that owned a captured gesture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RecoveredPointer {
+    Mouse,
+    Pen { id: i32 },
+    Touch { device: u64, id: u64 },
+}
+
+/// Float bit patterns avoid JSON's loss of non-finite values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveredInkSample {
+    pub x_bits: u32,
+    pub y_bits: u32,
+    pub pressure_bits: Option<u32>,
+}
+
+impl From<InkSample> for RecoveredInkSample {
+    fn from(sample: InkSample) -> Self {
+        Self {
+            x_bits: sample.position.x.to_bits(),
+            y_bits: sample.position.y.to_bits(),
+            pressure_bits: sample.pressure.map(f32::to_bits),
+        }
+    }
+}
+
+impl From<RecoveredInkSample> for InkSample {
+    fn from(sample: RecoveredInkSample) -> Self {
+        Self {
+            position: Vec2::new(f32::from_bits(sample.x_bits), f32::from_bits(sample.y_bits)),
+            pressure: sample.pressure_bits.map(f32::from_bits),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveredInkSettings {
+    pub color: Color,
+    pub width_bits: u32,
+    pub opacity_bits: u32,
+    pub band: Band,
+    pub eraser_radius_bits: u32,
+    pub tolerance_bits: u32,
+    pub smooth: bool,
+}
+
+impl From<InkSettings> for RecoveredInkSettings {
+    fn from(settings: InkSettings) -> Self {
+        Self {
+            color: settings.color,
+            width_bits: settings.width.to_bits(),
+            opacity_bits: settings.opacity.to_bits(),
+            band: settings.band,
+            eraser_radius_bits: settings.eraser_radius.to_bits(),
+            tolerance_bits: settings.finish.tolerance.to_bits(),
+            smooth: settings.finish.smooth,
+        }
+    }
+}
+
+impl From<RecoveredInkSettings> for InkSettings {
+    fn from(settings: RecoveredInkSettings) -> Self {
+        Self {
+            color: settings.color,
+            width: f32::from_bits(settings.width_bits),
+            opacity: f32::from_bits(settings.opacity_bits),
+            band: settings.band,
+            eraser_radius: f32::from_bits(settings.eraser_radius_bits),
+            finish: StrokeFinishOptions {
+                tolerance: f32::from_bits(settings.tolerance_bits),
+                smooth: settings.smooth,
+            },
+        }
+    }
+}
+
+/// Accepted input and its original ownership, without process-local addresses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveredInkGesture {
+    pub mode: InkMode,
+    pub settings: RecoveredInkSettings,
+    pub pointer: RecoveredPointer,
+    pub sheet: usize,
+    pub was_held: bool,
+    pub rejected: bool,
+    pub source_current: bool,
+    pub additive: bool,
+    pub samples: Vec<RecoveredInkSample>,
+}
+
+/// Reasons a recovered gesture must remain available for review only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InkRecoveryBlock {
+    StaleDocument,
+    SceneDependent,
+}
+
 /// Events and ownership supplied by the containing canvas for one frame.
 pub struct InkFrameInput<'a> {
     pub events: &'a [Event],
@@ -76,6 +181,7 @@ pub enum InkCancelReason {
     Escape,
     FocusLost,
     PointerGone,
+    PointerSourceChanged,
     TouchCanceled,
     Multitouch,
 }
@@ -117,6 +223,14 @@ pub enum InkControllerError {
     GesturePending,
     /// Input ownership was interrupted; the samples are retained for review.
     Interrupted(InkCancelReason),
+    UncorrelatedPenInput {
+        issue: PenInputIssue,
+        position: Pos2,
+    },
+    UncorrelatedTouchInput {
+        issue: TouchPointerIssue,
+        position: Pos2,
+    },
     StartWhilePending {
         position: Pos2,
         pressure: Option<f32>,
@@ -143,6 +257,7 @@ pub enum InkControllerError {
         limit: usize,
     },
     RejectedInputPending,
+    RecoveryNeedsReview,
     StaleDocument {
         sample: Option<InkSample>,
     },
@@ -176,6 +291,14 @@ impl fmt::Display for InkControllerError {
                     "ink gesture interrupted ({reason:?}); retry or discard it"
                 )
             }
+            Self::UncorrelatedPenInput { issue, position } => write!(
+                f,
+                "pen input at {position:?} could not be correlated ({issue:?}); no gesture was started"
+            ),
+            Self::UncorrelatedTouchInput { issue, position } => write!(
+                f,
+                "touch pointer input at {position:?} could not be correlated ({issue:?})"
+            ),
             Self::StartWhilePending { .. } => {
                 write!(
                     f,
@@ -195,6 +318,12 @@ impl fmt::Display for InkControllerError {
             }
             Self::TooManyPathSamples { limit, .. } => write!(f, "gesture exceeds {limit} samples"),
             Self::RejectedInputPending => write!(f, "gesture contains rejected input; cancel it"),
+            Self::RecoveryNeedsReview => {
+                write!(
+                    f,
+                    "the recovered gesture needs its original scene and selection"
+                )
+            }
             Self::StaleDocument { .. } => write!(f, "the document changed during the gesture"),
             Self::CameraChanged { .. } => write!(f, "the camera changed during the gesture"),
             Self::StaleScene(id) => write!(f, "the scene is stale for ink object {id}"),
@@ -235,7 +364,12 @@ struct TouchKey(egui::TouchDeviceId, egui::TouchId);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerOwner {
     Mouse,
+    Pen(i32),
     Touch(TouchKey),
+}
+
+fn pointer_owner(pen: Option<PenSample>) -> PointerOwner {
+    pen.map_or(PointerOwner::Mouse, |sample| PointerOwner::Pen(sample.id))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -286,6 +420,9 @@ struct Gesture {
     additive: bool,
     held: bool,
     rejected: bool,
+    recovery_origin: Option<(RecoveredPointer, bool)>,
+    recovery_block: Option<InkRecoveryBlock>,
+    preview_sheet: usize,
     buffer: GestureBuffer,
 }
 
@@ -321,14 +458,38 @@ impl Gesture {
         }
         result
     }
+
+    fn ensure_retryable(&self, document: &Document) -> Result<(), InkControllerError> {
+        if self.held {
+            return Err(InkControllerError::GesturePending);
+        }
+        if self.rejected {
+            return Err(InkControllerError::RejectedInputPending);
+        }
+        match self.recovery_block {
+            Some(InkRecoveryBlock::StaleDocument) => {
+                return Err(InkControllerError::StaleDocument { sample: None });
+            }
+            Some(InkRecoveryBlock::SceneDependent) => {
+                return Err(InkControllerError::RecoveryNeedsReview);
+            }
+            None => {}
+        }
+        if !self.stamp.matches(document) {
+            return Err(InkControllerError::StaleDocument { sample: None });
+        }
+        Ok(())
+    }
 }
 
 /// Retained outside `Document`; one successful release is one undoable edit.
 #[derive(Default)]
 pub struct InkController {
     gesture: Option<Gesture>,
+    recovery_revision: u64,
     touches: Vec<TouchKey>,
     block_touch: bool,
+    pen_touch_lock: bool,
     suppress_mouse: bool,
     mouse_down: bool,
     // Touch de-duplication alone does not mean ink owns the mouse press.
@@ -353,6 +514,23 @@ impl InkController {
         self.gesture.as_ref().map(|gesture| gesture.settings)
     }
 
+    /// The pointer identity recognized by the host for the retained gesture.
+    pub fn pending_pointer(&self) -> Option<RecoveredPointer> {
+        self.gesture.as_ref().map(|gesture| {
+            gesture.recovery_origin.map_or_else(
+                || match gesture.owner {
+                    PointerOwner::Mouse => RecoveredPointer::Mouse,
+                    PointerOwner::Pen(id) => RecoveredPointer::Pen { id },
+                    PointerOwner::Touch(TouchKey(device, id)) => RecoveredPointer::Touch {
+                        device: device.0,
+                        id: id.0,
+                    },
+                },
+                |(pointer, _)| pointer,
+            )
+        })
+    }
+
     pub fn pending_samples(&self) -> &[InkSample] {
         self.gesture.as_ref().map_or(&[], Gesture::samples)
     }
@@ -364,13 +542,155 @@ impl InkController {
             .is_some_and(|gesture| gesture.rejected)
     }
 
-    pub(crate) fn accepts_start_event(&self, event: &Event, frame_has_touch: bool) -> bool {
+    /// Monotonic in-process revision of the retained gesture.
+    pub fn recovery_revision(&self) -> u64 {
+        self.recovery_revision
+    }
+
+    pub fn pending_recovery_block(&self) -> Option<InkRecoveryBlock> {
+        self.gesture
+            .as_ref()
+            .and_then(|gesture| gesture.recovery_block)
+    }
+
+    pub fn pending_was_recovered(&self) -> bool {
+        self.gesture
+            .as_ref()
+            .is_some_and(|gesture| gesture.recovery_origin.is_some())
+    }
+
+    pub fn pending_preview_sheet(&self) -> Option<usize> {
+        self.gesture.as_ref().map(|gesture| gesture.preview_sheet)
+    }
+
+    pub fn pending_source_is_current(&self, document: &Document) -> bool {
+        self.gesture.as_ref().is_some_and(|gesture| {
+            gesture.recovery_block != Some(InkRecoveryBlock::StaleDocument)
+                && gesture.stamp.matches(document)
+        })
+    }
+
+    /// Capture accepted samples and settings without reviving the original pointer.
+    pub fn pending_for_recovery(
+        &self,
+        document: &Document,
+        has_other_drafts: bool,
+    ) -> Option<RecoveredInkGesture> {
+        let gesture = self.gesture.as_ref()?;
+        let pointer = self.pending_pointer()?;
+        let was_held = gesture
+            .recovery_origin
+            .map_or(gesture.held, |(_, held)| held);
+        Some(RecoveredInkGesture {
+            mode: gesture.mode,
+            settings: gesture.settings.into(),
+            pointer,
+            sheet: gesture.preview_sheet,
+            was_held,
+            rejected: gesture.rejected,
+            source_current: self.pending_source_is_current(document) && !has_other_drafts,
+            additive: gesture.additive,
+            samples: gesture.samples().iter().copied().map(Into::into).collect(),
+        })
+    }
+
+    /// Restore a detached, released gesture; only matching pen strokes can be retried.
+    pub fn restore_recovered_ink(
+        &mut self,
+        document: &Document,
+        recovered: &RecoveredInkGesture,
+    ) -> Result<(), String> {
+        if self.needs_input_tracking() {
+            return Err("ink input is already active".into());
+        }
+        if recovered.samples.is_empty() || recovered.samples.len() > MAX_INPUT_SAMPLES {
+            return Err("invalid recovered ink sample count".into());
+        }
+        if recovered.source_current && recovered.sheet != document.active_index() {
+            return Err("recovered ink sheet does not match its workbook".into());
+        }
+        let settings: InkSettings = recovered.settings.into();
+        if !settings.opacity.is_finite() || !(0.0..=1.0).contains(&settings.opacity) {
+            return Err("invalid recovered ink opacity".into());
+        }
+        let samples = recovered.samples.iter().copied().map(InkSample::from);
+        let buffer = match recovered.mode {
+            InkMode::Pen | InkMode::Highlighter => {
+                let tool = if recovered.mode == InkMode::Pen {
+                    InkTool::Pen
+                } else {
+                    InkTool::Highlighter
+                };
+                let mut input = InkInput::new(tool, settings.color, settings.width)
+                    .map_err(|error| error.to_string())?;
+                for sample in samples {
+                    input.push(sample).map_err(|error| error.to_string())?;
+                }
+                GestureBuffer::Draw(input)
+            }
+            InkMode::ObjectEraser | InkMode::PixelEraser | InkMode::Lasso => {
+                if recovered.mode != InkMode::Lasso
+                    && (!settings.eraser_radius.is_finite()
+                        || !(0.0..=MAX_BOARD_COORDINATE).contains(&settings.eraser_radius))
+                {
+                    return Err("invalid recovered eraser radius".into());
+                }
+                let samples: Vec<_> = samples.collect();
+                if samples
+                    .iter()
+                    .copied()
+                    .any(|sample| !valid_path_sample(sample))
+                {
+                    return Err("invalid recovered gesture sample".into());
+                }
+                GestureBuffer::Path(samples)
+            }
+        };
+        let recovery_block = if !recovered.source_current {
+            Some(InkRecoveryBlock::StaleDocument)
+        } else if !matches!(recovered.mode, InkMode::Pen | InkMode::Highlighter) {
+            Some(InkRecoveryBlock::SceneDependent)
+        } else {
+            None
+        };
+        self.gesture = Some(Gesture {
+            mode: recovered.mode,
+            settings,
+            owner: PointerOwner::Mouse,
+            stamp: DocumentStamp::capture(document),
+            transform: Xf {
+                origin: Pos2::ZERO,
+                zoom: 1.0,
+            },
+            canvas: Rect::from_min_size(Pos2::ZERO, egui::Vec2::ZERO),
+            additive: recovered.additive,
+            held: false,
+            rejected: recovered.rejected,
+            recovery_origin: Some((recovered.pointer, recovered.was_held)),
+            recovery_block,
+            preview_sheet: recovered.sheet,
+            buffer,
+        });
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn accepts_start_event(
+        &self,
+        event: &Event,
+        frame_has_touch: bool,
+        confirmed_pen: bool,
+    ) -> bool {
         match event {
             Event::PointerButton {
                 button: PointerButton::Primary,
                 pressed: true,
                 ..
-            } => !frame_has_touch && self.touches.is_empty() && !self.suppress_mouse,
+            } => {
+                (!frame_has_touch || confirmed_pen)
+                    && self.touches.is_empty()
+                    && !self.suppress_mouse
+            }
             Event::Touch {
                 device_id,
                 id,
@@ -378,7 +698,7 @@ impl InkController {
                 ..
             } => {
                 !self.block_touch
-                    && !self.owns(PointerOwner::Mouse)
+                    && !self.owns_pointer()
                     && (self.touches.is_empty()
                         || self.touches.as_slice() == [TouchKey(*device_id, *id)])
             }
@@ -439,6 +759,9 @@ impl InkController {
     /// until the current mouse button or all active touches are released.
     pub fn cancel(&mut self) -> bool {
         let had_gesture = self.gesture.take().is_some();
+        if had_gesture {
+            self.recovery_revision = self.recovery_revision.wrapping_add(1);
+        }
         if self.mouse_down {
             self.suppress_mouse = true;
         }
@@ -456,6 +779,7 @@ impl InkController {
             return false;
         };
         gesture.held = false;
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         if self.mouse_down {
             self.suppress_mouse = true;
         }
@@ -479,6 +803,16 @@ impl InkController {
         transform: Xf,
         events: &[Event],
     ) -> InkFrameOutput {
+        self.suspend_with_pen(document, transform, events, &PenFrameData::default())
+    }
+
+    pub(crate) fn suspend_with_pen(
+        &mut self,
+        document: &Document,
+        transform: Xf,
+        events: &[Event],
+        pen: &PenFrameData,
+    ) -> InkFrameOutput {
         let mut output = InkFrameOutput::default();
         if let Some(gesture) = self.gesture.as_ref().filter(|gesture| gesture.held) {
             let input = InkFrameInput {
@@ -489,10 +823,15 @@ impl InkController {
                 can_start: false,
                 modifiers: egui::Modifiers::NONE,
             };
-            self.sample_before_interruption(document, &input, &mut output);
+            if pen.issue.is_none() && pen.touch_issue.is_none() {
+                self.sample_before_interruption(document, &input, pen, &mut output);
+            }
             self.interrupt_with(InkCancelReason::Disabled, &mut output);
         }
-        for event in events {
+        for (index, event) in events.iter().enumerate() {
+            if pen.touch_pointer(index) {
+                continue;
+            }
             match event {
                 Event::PointerButton {
                     button: PointerButton::Primary,
@@ -535,11 +874,12 @@ impl InkController {
         }
         if self.touches.is_empty() {
             self.block_touch = false;
+            self.pen_touch_lock = false;
             if !self.mouse_down {
                 self.suppress_mouse = false;
             }
         }
-        output.captured |= self.gesture.is_some();
+        output.captured |= self.gesture.is_some() || self.pen_touch_lock;
         output
     }
 
@@ -551,17 +891,10 @@ impl InkController {
         scene: &Scene,
     ) -> Result<InkOutcome, InkControllerError> {
         let gesture = self.gesture.as_ref().ok_or(InkControllerError::NoGesture)?;
-        if gesture.held {
-            return Err(InkControllerError::GesturePending);
-        }
-        if gesture.rejected {
-            return Err(InkControllerError::RejectedInputPending);
-        }
-        if !gesture.stamp.matches(document) {
-            return Err(InkControllerError::StaleDocument { sample: None });
-        }
+        gesture.ensure_retryable(document)?;
         let outcome = finish_gesture(gesture, document, scene)?;
         self.gesture = None;
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         Ok(outcome)
     }
 
@@ -574,19 +907,12 @@ impl InkController {
         options: StrokeFinishOptions,
     ) -> Result<InkOutcome, InkControllerError> {
         let gesture = self.gesture.as_mut().ok_or(InkControllerError::NoGesture)?;
-        if gesture.held {
-            return Err(InkControllerError::GesturePending);
-        }
-        if gesture.rejected {
-            return Err(InkControllerError::RejectedInputPending);
-        }
-        if !gesture.stamp.matches(document) {
-            return Err(InkControllerError::StaleDocument { sample: None });
-        }
+        gesture.ensure_retryable(document)?;
         if !matches!(&gesture.buffer, GestureBuffer::Draw(_)) {
             return Err(InkControllerError::NotDrawingGesture);
         }
         gesture.settings.finish = options;
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         self.retry(document, scene)
     }
 
@@ -600,12 +926,36 @@ impl InkController {
         settings: InkSettings,
         input: InkFrameInput<'_>,
     ) -> InkFrameOutput {
+        self.process_frame_with_pen(
+            document,
+            scene,
+            mode,
+            settings,
+            input,
+            &PenFrameData::default(),
+        )
+    }
+
+    pub(crate) fn process_frame_with_pen(
+        &mut self,
+        document: &mut Document,
+        scene: &Scene,
+        mode: Option<InkMode>,
+        settings: InkSettings,
+        input: InkFrameInput<'_>,
+        pen: &PenFrameData,
+    ) -> InkFrameOutput {
         let mut output = InkFrameOutput::default();
+        if (pen.issue.is_some() || pen.touch_issue.is_some())
+            && self.gesture.as_ref().is_some_and(|gesture| gesture.held)
+        {
+            self.interrupt_with(InkCancelReason::PointerSourceChanged, &mut output);
+        }
         let changed_tool = self.gesture.as_ref().is_some_and(|g| Some(g.mode) != mode);
         if self.gesture.as_ref().is_some_and(|gesture| gesture.held)
             && (!input.enabled || changed_tool)
         {
-            self.sample_before_interruption(document, &input, &mut output);
+            self.sample_before_interruption(document, &input, pen, &mut output);
             self.interrupt_with(
                 if changed_tool {
                     InkCancelReason::ToolChanged
@@ -621,7 +971,10 @@ impl InkController {
             .iter()
             .any(|event| matches!(event, Event::Touch { .. }));
         let mut focus_lost = false;
-        for event in input.events {
+        let mut reported_input_issue = false;
+        for (index, event) in input.events.iter().enumerate() {
+            let pen_sample = pen.sample(index);
+            let owner = pointer_owner(pen_sample);
             match event {
                 Event::PointerButton {
                     pos,
@@ -629,11 +982,50 @@ impl InkController {
                     pressed,
                     modifiers,
                 } => {
+                    if pen.touch_pointer(index) {
+                        if *pressed && self.owns_pointer() && !self.owns_pen() {
+                            self.interrupt_with(InkCancelReason::PointerSourceChanged, &mut output);
+                        }
+                        if *pressed
+                            && let Some(issue) = pen.touch_issue
+                            && mode.is_some()
+                            && input.enabled
+                            && !focus_lost
+                            && input.can_start
+                            && can_start_at(input.canvas, *pos)
+                        {
+                            output
+                                .errors
+                                .push(InkControllerError::UncorrelatedTouchInput {
+                                    issue,
+                                    position: *pos,
+                                });
+                            reported_input_issue = true;
+                        }
+                        output.captured |= self.pen_touch_lock
+                            || (mode.is_some() && input.enabled && input.can_start);
+                        continue;
+                    }
+                    if !frame_has_touch
+                        && self.touches.is_empty()
+                        && self.conflicting_pointer(owner)
+                    {
+                        self.interrupt_with(InkCancelReason::PointerSourceChanged, &mut output);
+                        continue;
+                    }
+                    let owned_pen = matches!(owner, PointerOwner::Pen(_)) && self.owns(owner);
+                    let starting_pen = *pressed
+                        && matches!(owner, PointerOwner::Pen(_))
+                        && self.gesture.is_none()
+                        && self.touches.is_empty()
+                        && !self.suppress_mouse;
                     let suppressing_owned_mouse =
                         self.suppress_mouse && self.mouse_down && self.mouse_owned;
                     let ignore_mouse =
-                        frame_has_touch || !self.touches.is_empty() || self.suppress_mouse;
-                    if !frame_has_touch && self.touches.is_empty() {
+                        (frame_has_touch || !self.touches.is_empty() || self.suppress_mouse)
+                            && !owned_pen
+                            && !starting_pen;
+                    if (!frame_has_touch && self.touches.is_empty()) || owned_pen || starting_pen {
                         self.mouse_down = *pressed;
                     } else if !pressed {
                         self.mouse_down = false;
@@ -649,6 +1041,25 @@ impl InkController {
                         continue;
                     }
                     if *pressed {
+                        if let Some(issue) = pen.issue
+                            && mode.is_some()
+                            && input.enabled
+                            && !focus_lost
+                            && input.can_start
+                            && can_start_at(input.canvas, *pos)
+                        {
+                            self.mouse_owned = true;
+                            self.suppress_mouse = true;
+                            output.captured = true;
+                            output
+                                .errors
+                                .push(InkControllerError::UncorrelatedPenInput {
+                                    issue,
+                                    position: *pos,
+                                });
+                            reported_input_issue = true;
+                            continue;
+                        }
                         if let Some(mode) = mode.filter(|_| {
                             input.enabled
                                 && !focus_lost
@@ -662,9 +1073,9 @@ impl InkController {
                                 mode,
                                 settings,
                                 PointerSample {
-                                    owner: PointerOwner::Mouse,
+                                    owner,
                                     position: *pos,
-                                    pressure: None,
+                                    pressure: pen_sample.map(|sample| sample.pressure),
                                 },
                                 *modifiers,
                                 &input,
@@ -673,15 +1084,15 @@ impl InkController {
                                 output.errors.push(error);
                             }
                         }
-                    } else if self.owns(PointerOwner::Mouse) {
+                    } else if self.owns(owner) {
                         output.captured = true;
                         self.release(
                             document,
                             scene,
                             PointerSample {
-                                owner: PointerOwner::Mouse,
+                                owner,
                                 position: *pos,
-                                pressure: None,
+                                pressure: pen_sample.map(|sample| sample.pressure),
                             },
                             &input,
                             &mut output,
@@ -691,17 +1102,23 @@ impl InkController {
                         self.mouse_owned = false;
                     }
                 }
-                Event::PointerMoved(pos) if !frame_has_touch && self.touches.is_empty() => {
-                    if self.suppress_mouse && self.mouse_down && self.mouse_owned {
+                Event::PointerMoved(pos)
+                    if !pen.touch_pointer(index)
+                        && ((!frame_has_touch && self.touches.is_empty())
+                            || (matches!(owner, PointerOwner::Pen(_)) && self.owns(owner))) =>
+                {
+                    if self.conflicting_pointer(owner) {
+                        self.interrupt_with(InkCancelReason::PointerSourceChanged, &mut output);
+                    } else if self.suppress_mouse && self.mouse_down && self.mouse_owned {
                         output.captured = true;
-                    } else if !self.suppress_mouse && self.owns(PointerOwner::Mouse) {
+                    } else if !self.suppress_mouse && self.owns(owner) {
                         output.captured = true;
                         self.sample(
                             document,
                             PointerSample {
-                                owner: PointerOwner::Mouse,
+                                owner,
                                 position: *pos,
-                                pressure: None,
+                                pressure: pen_sample.map(|sample| sample.pressure),
                             },
                             &input,
                             &mut output,
@@ -716,13 +1133,47 @@ impl InkController {
                     force,
                 } => {
                     let key = TouchKey(*device_id, *id);
+                    output.captured |= self.pen_touch_lock;
                     match phase {
                         TouchPhase::Start => {
-                            self.suppress_mouse = true;
                             if !self.touches.contains(&key) {
                                 self.touches.push(key);
                             }
-                            if self.touches.len() > 1 || self.owns(PointerOwner::Mouse) {
+                            let input_issue = pen
+                                .touch_issue
+                                .map(|issue| InkControllerError::UncorrelatedTouchInput {
+                                    issue,
+                                    position: *pos,
+                                })
+                                .or_else(|| {
+                                    pen.issue.map(|issue| {
+                                        InkControllerError::UncorrelatedPenInput {
+                                            issue,
+                                            position: *pos,
+                                        }
+                                    })
+                                });
+                            if let Some(error) = input_issue {
+                                self.suppress_mouse = true;
+                                self.block_touch = true;
+                                if mode.is_some()
+                                    && input.enabled
+                                    && !focus_lost
+                                    && input.can_start
+                                    && can_start_at(input.canvas, *pos)
+                                {
+                                    output.captured = true;
+                                    if !reported_input_issue {
+                                        output.errors.push(error);
+                                        reported_input_issue = true;
+                                    }
+                                }
+                            } else if self.owns_pen() {
+                                self.pen_touch_lock = true;
+                                self.block_touch = true;
+                                output.captured = true;
+                            } else if self.touches.len() > 1 || self.owns_pointer() {
+                                self.suppress_mouse = true;
                                 self.block_touch = true;
                                 self.interrupt_with(InkCancelReason::Multitouch, &mut output);
                             } else if !self.block_touch
@@ -733,6 +1184,7 @@ impl InkController {
                                         && can_start_at(input.canvas, *pos)
                                 })
                             {
+                                self.suppress_mouse = true;
                                 output.captured = true;
                                 if let Err(error) = self.start(
                                     document,
@@ -749,6 +1201,8 @@ impl InkController {
                                     self.block_touch = true;
                                     output.errors.push(error);
                                 }
+                            } else {
+                                self.suppress_mouse = true;
                             }
                         }
                         TouchPhase::Move
@@ -784,6 +1238,10 @@ impl InkController {
                             self.touches.retain(|touch| *touch != key);
                             if self.touches.is_empty() {
                                 self.block_touch = false;
+                                if self.pen_touch_lock && !self.mouse_down {
+                                    self.suppress_mouse = false;
+                                }
+                                self.pen_touch_lock = false;
                             }
                         }
                         TouchPhase::Cancel => {
@@ -802,6 +1260,12 @@ impl InkController {
                             }
                             self.touches.retain(|touch| *touch != key);
                             self.block_touch = !self.touches.is_empty();
+                            if self.touches.is_empty() {
+                                if self.pen_touch_lock && !self.mouse_down {
+                                    self.suppress_mouse = false;
+                                }
+                                self.pen_touch_lock = false;
+                            }
                         }
                         _ => {}
                     }
@@ -820,13 +1284,19 @@ impl InkController {
                     }
                     self.touches.clear();
                     self.block_touch = false;
+                    self.pen_touch_lock = false;
                     self.suppress_mouse = false;
                     self.mouse_down = false;
                     self.mouse_owned = false;
                     focus_lost = true;
                 }
                 Event::PointerGone => {
-                    if self.owns(PointerOwner::Mouse)
+                    if pen.touch_issue.is_none()
+                        && pen.touch_pointers.get(index).copied().unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    if self.owns_pointer()
                         || (self.suppress_mouse && self.mouse_down && self.mouse_owned)
                     {
                         output.captured = true;
@@ -841,10 +1311,23 @@ impl InkController {
                 _ => {}
             }
         }
+        if let Some(id) = pen.canceled
+            && self
+                .gesture
+                .as_ref()
+                .is_some_and(|gesture| gesture.owner == PointerOwner::Pen(id))
+        {
+            self.interrupt_with(InkCancelReason::PointerGone, &mut output);
+            self.mouse_down = false;
+            self.mouse_owned = false;
+            if self.touches.is_empty() {
+                self.suppress_mouse = false;
+            }
+        }
         if self.touches.is_empty() && !self.mouse_down {
             self.suppress_mouse = false;
         }
-        output.captured |= self.gesture.is_some();
+        output.captured |= self.gesture.is_some() || self.pen_touch_lock;
         output
     }
 
@@ -866,22 +1349,29 @@ impl InkController {
         &mut self,
         document: &Document,
         input: &InkFrameInput<'_>,
+        pen: &PenFrameData,
         output: &mut InkFrameOutput,
     ) {
         let frame_has_touch = input
             .events
             .iter()
             .any(|event| matches!(event, Event::Touch { .. }));
-        for event in input.events {
+        for (index, event) in input.events.iter().enumerate() {
+            if pen.touch_pointer(index) {
+                continue;
+            }
+            let pen_sample = pen.sample(index);
+            let owner = pointer_owner(pen_sample);
             let (pointer, released) = match event {
                 Event::PointerMoved(position)
-                    if !frame_has_touch && self.owns(PointerOwner::Mouse) =>
+                    if self.owns(owner)
+                        && (!frame_has_touch || matches!(owner, PointerOwner::Pen(_))) =>
                 {
                     (
                         PointerSample {
-                            owner: PointerOwner::Mouse,
+                            owner,
                             position: *position,
-                            pressure: None,
+                            pressure: pen_sample.map(|sample| sample.pressure),
                         },
                         false,
                     )
@@ -891,14 +1381,18 @@ impl InkController {
                     button: PointerButton::Primary,
                     pressed: false,
                     ..
-                } if !frame_has_touch && self.owns(PointerOwner::Mouse) => (
-                    PointerSample {
-                        owner: PointerOwner::Mouse,
-                        position: *pos,
-                        pressure: None,
-                    },
-                    true,
-                ),
+                } if self.owns(owner)
+                    && (!frame_has_touch || matches!(owner, PointerOwner::Pen(_))) =>
+                {
+                    (
+                        PointerSample {
+                            owner,
+                            position: *pos,
+                            pressure: pen_sample.map(|sample| sample.pressure),
+                        },
+                        true,
+                    )
+                }
                 Event::Touch {
                     device_id,
                     id,
@@ -914,13 +1408,17 @@ impl InkController {
                     *phase != TouchPhase::Move,
                 ),
                 Event::WindowFocused(false) => break,
-                Event::PointerGone if self.owns(PointerOwner::Mouse) => break,
+                Event::PointerGone if self.owns_pointer() => break,
                 Event::Touch {
                     device_id,
                     id,
                     phase: TouchPhase::Start,
                     ..
-                } if !self.owns(PointerOwner::Touch(TouchKey(*device_id, *id))) => break,
+                } if !self.owns_pen()
+                    && !self.owns(PointerOwner::Touch(TouchKey(*device_id, *id))) =>
+                {
+                    break;
+                }
                 _ => continue,
             };
             self.sample(document, pointer, input, output);
@@ -934,6 +1432,26 @@ impl InkController {
         self.gesture
             .as_ref()
             .is_some_and(|gesture| gesture.owner == owner && gesture.held)
+    }
+
+    fn owns_pointer(&self) -> bool {
+        self.gesture.as_ref().is_some_and(|gesture| {
+            gesture.held && matches!(gesture.owner, PointerOwner::Mouse | PointerOwner::Pen(_))
+        })
+    }
+
+    fn owns_pen(&self) -> bool {
+        self.gesture
+            .as_ref()
+            .is_some_and(|gesture| gesture.held && matches!(gesture.owner, PointerOwner::Pen(_)))
+    }
+
+    pub(crate) fn blocks_touch_navigation(&self) -> bool {
+        self.owns_pen() || self.pen_touch_lock
+    }
+
+    fn conflicting_pointer(&self, owner: PointerOwner) -> bool {
+        self.owns_pointer() && !self.owns(owner)
     }
 
     fn start(
@@ -1003,8 +1521,12 @@ impl InkController {
             additive: modifiers.shift || modifiers.command || modifiers.ctrl,
             held: true,
             rejected: false,
+            recovery_origin: None,
+            recovery_block: None,
+            preview_sheet: document.active_index(),
             buffer,
         });
+        self.recovery_revision = self.recovery_revision.wrapping_add(1);
         Ok(())
     }
 
@@ -1022,11 +1544,13 @@ impl InkController {
             Ok(sample) => sample,
             Err(error) => {
                 self.gesture.as_mut().expect("owned").rejected = true;
+                self.recovery_revision = self.recovery_revision.wrapping_add(1);
                 output.errors.push(error);
                 return;
             }
         };
         let gesture = self.gesture.as_mut().expect("owned");
+        let mut changed = true;
         if !gesture.stamp.matches(document) {
             gesture.rejected = true;
             output.errors.push(InkControllerError::StaleDocument {
@@ -1037,10 +1561,15 @@ impl InkController {
             output.errors.push(InkControllerError::CameraChanged {
                 sample: Some(sample),
             });
-        } else if gesture.samples().last() != Some(&sample)
-            && let Err(error) = gesture.push(sample)
-        {
-            output.errors.push(error);
+        } else if gesture.samples().last() != Some(&sample) {
+            if let Err(error) = gesture.push(sample) {
+                output.errors.push(error);
+            }
+        } else {
+            changed = false;
+        }
+        if changed {
+            self.recovery_revision = self.recovery_revision.wrapping_add(1);
         }
     }
 
@@ -1055,6 +1584,7 @@ impl InkController {
         self.sample(document, pointer, input, output);
         if let Some(gesture) = &mut self.gesture {
             gesture.held = false;
+            self.recovery_revision = self.recovery_revision.wrapping_add(1);
         }
         match self.retry(document, scene) {
             Ok(outcome) => output.outcomes.push(outcome),
@@ -1520,6 +2050,70 @@ mod tests {
         )
     }
 
+    fn pen_frame(
+        controller: &mut InkController,
+        document: &mut Document,
+        scene: &Scene,
+        events: &[Event],
+        samples: Vec<Option<PenSample>>,
+        canceled: Option<i32>,
+    ) -> InkFrameOutput {
+        controller.process_frame_with_pen(
+            document,
+            scene,
+            Some(InkMode::Pen),
+            InkSettings {
+                finish: StrokeFinishOptions {
+                    tolerance: 0.0,
+                    smooth: false,
+                },
+                ..InkSettings::default()
+            },
+            InkFrameInput {
+                events,
+                canvas: Rect::from_min_max(pos2(-2_000.0, -2_000.0), pos2(2_000.0, 2_000.0)),
+                transform: xf(),
+                enabled: true,
+                can_start: true,
+                modifiers: Modifiers::NONE,
+            },
+            &PenFrameData {
+                samples,
+                canceled,
+                ..PenFrameData::default()
+            },
+        )
+    }
+
+    fn touch_pointer_frame(
+        controller: &mut InkController,
+        document: &mut Document,
+        scene: &Scene,
+        events: &[Event],
+        pointers: Vec<bool>,
+        issue: Option<TouchPointerIssue>,
+    ) -> InkFrameOutput {
+        controller.process_frame_with_pen(
+            document,
+            scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            InkFrameInput {
+                events,
+                canvas: Rect::from_min_max(pos2(-2_000.0, -2_000.0), pos2(2_000.0, 2_000.0)),
+                transform: xf(),
+                enabled: true,
+                can_start: true,
+                modifiers: Modifiers::NONE,
+            },
+            &PenFrameData {
+                touch_pointers: pointers,
+                touch_issue: issue,
+                ..PenFrameData::default()
+            },
+        )
+    }
+
     fn button(pos: Pos2, pressed: bool) -> Event {
         Event::PointerButton {
             pos,
@@ -1655,6 +2249,1299 @@ mod tests {
         assert!(!document.can_undo());
         assert!(document.redo());
         assert_eq!(document.sheet().canvas.objects.len(), 1);
+    }
+
+    #[test]
+    fn recovered_pen_is_detached_reviewable_and_undoable() {
+        let mut document = Document::default();
+        let original_scene = scene(&document);
+        let mut controller = InkController::default();
+        let settings = InkSettings {
+            color: Color::rgb(10, 20, 30),
+            width: 4.0,
+            opacity: 0.6,
+            band: Band::Below,
+            finish: StrokeFinishOptions {
+                tolerance: 0.0,
+                smooth: false,
+            },
+            ..InkSettings::default()
+        };
+        let revision = controller.recovery_revision();
+        frame(
+            &mut controller,
+            &mut document,
+            &original_scene,
+            Some(InkMode::Pen),
+            settings,
+            xf(),
+            &[button(pos2(10.0, 10.0), true)],
+        );
+        assert!(controller.recovery_revision() > revision);
+        let revision = controller.recovery_revision();
+        frame(
+            &mut controller,
+            &mut document,
+            &original_scene,
+            Some(InkMode::Pen),
+            settings,
+            xf(),
+            &[Event::PointerMoved(pos2(30.0, 20.0))],
+        );
+        assert!(controller.recovery_revision() > revision);
+        let recovered = controller.pending_for_recovery(&document, false).unwrap();
+        assert!(recovered.was_held);
+        assert!(recovered.source_current);
+        assert_eq!(recovered.pointer, RecoveredPointer::Mouse);
+        assert_eq!(recovered.samples.len(), 2);
+
+        let mut restarted = Document::new(document.workbook().clone());
+        restarted.mark_dirty();
+        let mut restored = InkController::default();
+        restored
+            .restore_recovered_ink(&restarted, &recovered)
+            .unwrap();
+        assert!(restored.pending_was_recovered());
+        assert!(restored.has_released_gesture());
+        assert_eq!(restored.pending_settings(), Some(settings));
+        assert_eq!(restored.pending_samples(), controller.pending_samples());
+        assert_eq!(
+            restored
+                .pending_for_recovery(&restarted, false)
+                .unwrap()
+                .pointer,
+            recovered.pointer
+        );
+        assert!(restarted.sheet().canvas.objects.is_empty());
+        let restarted_scene = scene(&restarted);
+        assert!(matches!(
+            restored.retry(&mut restarted, &restarted_scene),
+            Ok(InkOutcome::Drawn(_))
+        ));
+        let object = &restarted.sheet().canvas.objects[0];
+        assert_eq!(object.band, Band::Below);
+        assert_eq!(object.style.opacity, 0.6);
+        assert!(restarted.undo());
+        assert!(restarted.sheet().canvas.objects.is_empty());
+        assert!(restarted.redo());
+        assert_eq!(restarted.sheet().canvas.objects.len(), 1);
+    }
+
+    #[test]
+    fn recovered_stale_rejected_and_scene_dependent_input_cannot_retry() {
+        let mut document = Document::default();
+        let original_scene = scene(&document);
+        let mut controller = InkController::default();
+        frame(
+            &mut controller,
+            &mut document,
+            &original_scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[button(pos2(10.0, 10.0), true)],
+        );
+        let current = controller.pending_for_recovery(&document, false).unwrap();
+        assert!(
+            !controller
+                .pending_for_recovery(&document, true)
+                .unwrap()
+                .source_current
+        );
+        let root = document.sheet().root;
+        document
+            .edit_sheet("Concurrent", |sheet| sheet.set_title(root, "Changed"))
+            .unwrap();
+        let stale = controller.pending_for_recovery(&document, false).unwrap();
+        assert!(!stale.source_current);
+        let mut restored = InkController::default();
+        restored.restore_recovered_ink(&document, &stale).unwrap();
+        let updated_scene = scene(&document);
+        assert_eq!(
+            restored.pending_recovery_block(),
+            Some(InkRecoveryBlock::StaleDocument)
+        );
+        assert!(matches!(
+            restored.retry(&mut document, &updated_scene),
+            Err(InkControllerError::StaleDocument { .. })
+        ));
+        assert!(restored.pending_samples().len() == 1);
+        restored.cancel();
+
+        let mut rejected = current.clone();
+        rejected.rejected = true;
+        restored
+            .restore_recovered_ink(&document, &rejected)
+            .unwrap();
+        assert!(matches!(
+            restored.retry(&mut document, &updated_scene),
+            Err(InkControllerError::RejectedInputPending)
+        ));
+        restored.cancel();
+
+        for mode in [InkMode::ObjectEraser, InkMode::PixelEraser, InkMode::Lasso] {
+            let mut path = current.clone();
+            path.mode = mode;
+            restored.restore_recovered_ink(&document, &path).unwrap();
+            assert_eq!(
+                restored.pending_recovery_block(),
+                Some(InkRecoveryBlock::SceneDependent)
+            );
+            assert!(matches!(
+                restored.retry(&mut document, &updated_scene),
+                Err(InkControllerError::RecoveryNeedsReview)
+            ));
+            assert_eq!(restored.pending_samples().len(), 1);
+            restored.cancel();
+        }
+    }
+
+    #[test]
+    fn malformed_recovered_ink_is_rejected_without_replacing_input() {
+        let document = Document::default();
+        let valid = RecoveredInkGesture {
+            mode: InkMode::Pen,
+            settings: InkSettings::default().into(),
+            pointer: RecoveredPointer::Pen { id: 7 },
+            sheet: document.active_index(),
+            was_held: true,
+            rejected: false,
+            source_current: true,
+            additive: false,
+            samples: vec![InkSample::new(Vec2::ZERO, Some(0.7)).into()],
+        };
+        let mut cases = Vec::new();
+        let mut empty = valid.clone();
+        empty.samples.clear();
+        cases.push(empty);
+        let mut too_many = valid.clone();
+        too_many.samples = vec![valid.samples[0]; MAX_INPUT_SAMPLES + 1];
+        cases.push(too_many);
+        let mut nonfinite = valid.clone();
+        nonfinite.samples[0].x_bits = f32::NAN.to_bits();
+        cases.push(nonfinite);
+        let mut pressure = valid.clone();
+        pressure.samples[0].pressure_bits = Some(f32::INFINITY.to_bits());
+        cases.push(pressure);
+        let mut width = valid.clone();
+        width.settings.width_bits = f32::NAN.to_bits();
+        cases.push(width);
+        let mut opacity = valid.clone();
+        opacity.settings.opacity_bits = f32::NAN.to_bits();
+        cases.push(opacity);
+        let mut sheet = valid.clone();
+        sheet.sheet += 1;
+        cases.push(sheet);
+        let mut controller = InkController::default();
+        for case in cases {
+            assert!(controller.restore_recovered_ink(&document, &case).is_err());
+            assert!(!controller.has_pending_gesture());
+        }
+        let mut invalid_tolerance = valid.clone();
+        invalid_tolerance.settings.tolerance_bits = f32::NAN.to_bits();
+        controller
+            .restore_recovered_ink(&document, &invalid_tolerance)
+            .unwrap();
+        assert!(
+            controller
+                .pending_settings()
+                .unwrap()
+                .finish
+                .tolerance
+                .is_nan()
+        );
+        assert_eq!(
+            controller
+                .pending_for_recovery(&document, false)
+                .unwrap()
+                .pointer,
+            RecoveredPointer::Pen { id: 7 }
+        );
+        assert!(controller.restore_recovered_ink(&document, &valid).is_err());
+        assert_eq!(controller.pending_samples().len(), 1);
+    }
+
+    #[test]
+    fn pen_pressure_is_owned_and_committed_with_its_positions() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let points = [pos2(10.0, 10.0), pos2(20.0, 15.0), pos2(30.0, 10.0)];
+        for (event, pressure) in [
+            (button(points[0], true), 0.2),
+            (Event::PointerMoved(points[1]), 0.6),
+            (button(points[2], false), 0.1),
+        ] {
+            let result = pen_frame(
+                &mut controller,
+                &mut document,
+                &scene,
+                &[event],
+                vec![Some(PenSample { id: 7, pressure })],
+                None,
+            );
+            assert!(result.errors.is_empty());
+        }
+        let CanvasObjectKind::Ink(ink) = &document.sheet().canvas.objects[0].kind else {
+            panic!("expected ink")
+        };
+        assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.2, 0.6, 0.1]);
+        assert_eq!(ink.points.len(), 3);
+        assert!(document.undo());
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn touch_pointer_buttons_in_separate_frames_do_not_start_or_end_mouse_ink() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let end = start + vec2(20.0, 10.0);
+        let down = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start, true)],
+            vec![true],
+            None,
+        );
+        assert!(down.captured && down.errors.is_empty());
+        assert!(!controller.has_pending_gesture());
+        let touch_start = frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[touch(1, TouchPhase::Start, start, Some(0.3))],
+        );
+        assert!(touch_start.errors.is_empty());
+        assert!(controller.has_pending_gesture());
+        let up = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(end, false)],
+            vec![true],
+            None,
+        );
+        assert!(up.errors.is_empty());
+        assert!(!controller.has_released_gesture());
+        let touch_end = frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[touch(1, TouchPhase::End, end, Some(0.7))],
+        );
+        assert!(touch_end.errors.is_empty());
+        assert!(matches!(
+            touch_end.outcomes.as_slice(),
+            [InkOutcome::Drawn(_)]
+        ));
+        let CanvasObjectKind::Ink(ink) = &document.sheet().canvas.objects[0].kind else {
+            panic!("expected touch ink");
+        };
+        assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.3, 0.7]);
+        let mouse = mouse_gesture(
+            &mut controller,
+            &mut document,
+            &scene,
+            InkMode::Pen,
+            InkSettings::default(),
+            &[start, end],
+        );
+        assert!(mouse.errors.is_empty());
+        assert_eq!(document.sheet().canvas.objects.len(), 2);
+        let CanvasObjectKind::Ink(mouse_ink) = &document.sheet().canvas.objects[1].kind else {
+            panic!("expected mouse ink");
+        };
+        assert!(mouse_ink.pressure.is_none());
+    }
+
+    #[test]
+    fn ambiguous_touch_pointer_start_is_reported_without_creating_mouse_ink() {
+        for issue in [
+            TouchPointerIssue::EventMismatch,
+            TouchPointerIssue::QueueOverflow,
+            TouchPointerIssue::FrameTooLarge,
+        ] {
+            let mut document = Document::default();
+            let scene = scene(&document);
+            let mut controller = InkController::default();
+            let start = pos2(10.0, 10.0);
+            let events = [
+                button(start, true),
+                Event::PointerMoved(start + vec2(10.0, 0.0)),
+                button(start + vec2(20.0, 0.0), false),
+            ];
+            let result = touch_pointer_frame(
+                &mut controller,
+                &mut document,
+                &scene,
+                &events,
+                vec![true, false, true],
+                Some(issue),
+            );
+            assert_eq!(
+                result.errors,
+                [InkControllerError::UncorrelatedTouchInput {
+                    issue,
+                    position: start
+                }]
+            );
+            assert!(result.captured);
+            assert!(!controller.has_pending_gesture());
+            assert!(document.sheet().canvas.objects.is_empty());
+        }
+    }
+
+    #[test]
+    fn ambiguous_touch_pointer_batch_cannot_create_a_touch_stroke() {
+        for issue in [
+            TouchPointerIssue::EventMismatch,
+            TouchPointerIssue::QueueOverflow,
+            TouchPointerIssue::FrameTooLarge,
+        ] {
+            let mut document = Document::default();
+            let scene = scene(&document);
+            let mut controller = InkController::default();
+            let start = pos2(10.0, 10.0);
+            let end = start + vec2(20.0, 10.0);
+            let events = [
+                button(start, true),
+                touch(1, TouchPhase::Start, start, Some(0.3)),
+                touch(1, TouchPhase::Move, end, Some(0.6)),
+                button(end, false),
+                Event::PointerGone,
+                touch(1, TouchPhase::End, end, Some(0.7)),
+            ];
+            let result = touch_pointer_frame(
+                &mut controller,
+                &mut document,
+                &scene,
+                &events,
+                Vec::new(),
+                Some(issue),
+            );
+            assert_eq!(
+                result.errors,
+                [InkControllerError::UncorrelatedTouchInput {
+                    issue,
+                    position: start
+                }]
+            );
+            assert!(result.captured);
+            assert!(!controller.has_pending_gesture());
+            assert!(document.sheet().canvas.objects.is_empty());
+        }
+    }
+
+    #[test]
+    fn ambiguous_touch_only_start_stays_blocked_until_release() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let end = start + vec2(20.0, 10.0);
+        let issue = TouchPointerIssue::QueueOverflow;
+        let result = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[touch(1, TouchPhase::Start, start, Some(0.3))],
+            Vec::new(),
+            Some(issue),
+        );
+        assert_eq!(
+            result.errors,
+            [InkControllerError::UncorrelatedTouchInput {
+                issue,
+                position: start
+            }]
+        );
+        assert!(!controller.has_pending_gesture());
+        let release = frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[
+                touch(1, TouchPhase::Move, end, Some(0.6)),
+                touch(1, TouchPhase::End, end, Some(0.7)),
+            ],
+        );
+        assert!(release.errors.is_empty());
+        assert!(document.sheet().canvas.objects.is_empty());
+        let fresh = frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[
+                touch(2, TouchPhase::Start, start, Some(0.3)),
+                touch(2, TouchPhase::End, end, Some(0.7)),
+            ],
+        );
+        assert!(fresh.errors.is_empty());
+        assert!(matches!(fresh.outcomes.as_slice(), [InkOutcome::Drawn(_)]));
+        assert_eq!(document.sheet().canvas.objects.len(), 1);
+    }
+
+    #[test]
+    fn ambiguous_touch_frame_retains_only_previously_accepted_samples() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let end = start + vec2(20.0, 10.0);
+        frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[touch(1, TouchPhase::Start, start, Some(0.3))],
+        );
+        let accepted = controller.pending_samples().to_vec();
+        let result = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[
+                touch(1, TouchPhase::Move, end, Some(0.6)),
+                touch(1, TouchPhase::End, end, Some(0.7)),
+            ],
+            Vec::new(),
+            Some(TouchPointerIssue::EventMismatch),
+        );
+        assert_eq!(
+            result.errors,
+            [InkControllerError::Interrupted(
+                InkCancelReason::PointerSourceChanged
+            )]
+        );
+        assert!(controller.has_released_gesture());
+        assert_eq!(controller.pending_samples(), accepted);
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn ambiguous_pen_frame_cannot_start_touch_ink() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let issue = PenInputIssue::PointerMismatch;
+        let events = [
+            touch(1, TouchPhase::Start, start, Some(0.3)),
+            touch(1, TouchPhase::End, start + vec2(20.0, 10.0), Some(0.7)),
+        ];
+        let result = controller.process_frame_with_pen(
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            InkFrameInput {
+                events: &events,
+                canvas: Rect::from_min_max(pos2(-2_000.0, -2_000.0), pos2(2_000.0, 2_000.0)),
+                transform: xf(),
+                enabled: true,
+                can_start: true,
+                modifiers: Modifiers::NONE,
+            },
+            &PenFrameData {
+                issue: Some(issue),
+                ..PenFrameData::default()
+            },
+        );
+        assert_eq!(
+            result.errors,
+            [InkControllerError::UncorrelatedPenInput {
+                issue,
+                position: start
+            }]
+        );
+        assert!(result.captured);
+        assert!(!controller.has_pending_gesture());
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn touch_pointer_interrupts_an_unidentified_mouse_and_preserves_its_samples() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[button(start, true)],
+        );
+        let up = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start + vec2(20.0, 0.0), false)],
+            vec![true],
+            None,
+        );
+        assert!(up.errors.is_empty());
+        assert!(!controller.has_released_gesture());
+        let down = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start + vec2(20.0, 0.0), true)],
+            vec![true],
+            None,
+        );
+        assert_eq!(
+            down.errors,
+            [InkControllerError::Interrupted(
+                InkCancelReason::PointerSourceChanged
+            )]
+        );
+        assert!(controller.has_released_gesture());
+        assert_eq!(controller.pending_samples().len(), 1);
+        assert_eq!(controller.pending_samples()[0].pressure, None);
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn confirmed_pen_owns_its_stroke_while_a_touch_contact_is_active() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let touch_pos = pos2(90.0, 90.0);
+        let first = PenSample {
+            id: 7,
+            pressure: 0.2,
+        };
+        let last = PenSample {
+            id: 7,
+            pressure: 0.8,
+        };
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start, true)],
+            vec![Some(first)],
+            None,
+        );
+        let pointer = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(touch_pos, true)],
+            vec![true],
+            None,
+        );
+        assert!(pointer.errors.is_empty(), "{:?}", pointer.errors);
+        let contact = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[
+                button(touch_pos, true),
+                touch(1, TouchPhase::Start, touch_pos, Some(0.4)),
+            ],
+            vec![true, false],
+            None,
+        );
+        assert!(contact.errors.is_empty(), "{:?}", contact.errors);
+        let pen_move = pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[Event::PointerMoved(start + vec2(20.0, 10.0))],
+            vec![Some(last)],
+            None,
+        );
+        assert!(pen_move.errors.is_empty(), "{:?}", pen_move.errors);
+        let release_touch = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[
+                button(touch_pos, false),
+                Event::PointerGone,
+                touch(1, TouchPhase::End, touch_pos, Some(0.4)),
+            ],
+            vec![true, true, false],
+            None,
+        );
+        assert!(
+            release_touch.errors.is_empty(),
+            "{:?}",
+            release_touch.errors
+        );
+        let release_pen = pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start + vec2(40.0, 20.0), false)],
+            vec![Some(last)],
+            None,
+        );
+        assert!(release_pen.errors.is_empty(), "{:?}", release_pen.errors);
+        assert!(!controller.has_pending_gesture());
+        let CanvasObjectKind::Ink(ink) = &document.sheet().canvas.objects[0].kind else {
+            panic!("expected pen ink");
+        };
+        assert_eq!(ink.points.len(), 3);
+        assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.2, 0.8, 0.8]);
+    }
+
+    #[test]
+    fn a_confirmed_pen_can_start_before_touch_in_the_same_frame() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let touch_pos = pos2(90.0, 90.0);
+        let pen = PenSample {
+            id: 7,
+            pressure: 0.5,
+        };
+        let output = pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[
+                button(start, true),
+                touch(1, TouchPhase::Start, touch_pos, Some(0.4)),
+                Event::PointerMoved(start + vec2(20.0, 10.0)),
+                touch(1, TouchPhase::End, touch_pos, Some(0.4)),
+                button(start + vec2(40.0, 20.0), false),
+            ],
+            vec![Some(pen), None, Some(pen), None, Some(pen)],
+            None,
+        );
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert!(!controller.has_pending_gesture());
+        assert_eq!(document.sheet().canvas.objects.len(), 1);
+        let CanvasObjectKind::Ink(ink) = &document.sheet().canvas.objects[0].kind else {
+            panic!("expected pen ink");
+        };
+        assert_eq!(ink.points.len(), 3);
+        assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn a_pen_does_not_take_over_a_touch_that_started_first() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let touch_start = pos2(10.0, 10.0);
+        let pen_start = pos2(100.0, 100.0);
+        let pen = PenSample {
+            id: 7,
+            pressure: 0.8,
+        };
+        let output = pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[
+                touch(1, TouchPhase::Start, touch_start, Some(0.4)),
+                button(pen_start, true),
+                Event::PointerMoved(pen_start + vec2(20.0, 20.0)),
+                button(pen_start + vec2(40.0, 40.0), false),
+                touch(
+                    1,
+                    TouchPhase::End,
+                    touch_start + vec2(30.0, 10.0),
+                    Some(0.4),
+                ),
+            ],
+            vec![None, Some(pen), Some(pen), Some(pen), None],
+            None,
+        );
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(document.sheet().canvas.objects.len(), 1);
+        let CanvasObjectKind::Ink(ink) = &document.sheet().canvas.objects[0].kind else {
+            panic!("expected touch ink");
+        };
+        assert_eq!(ink.points.len(), 2);
+        assert_eq!(&**ink.pressure.as_ref().unwrap(), &[0.4, 0.4]);
+    }
+
+    #[test]
+    fn a_touch_outliving_the_pen_cannot_start_a_ghost_stroke() {
+        let mut document = Document::default();
+        let initial_scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let touch_pos = pos2(90.0, 90.0);
+        let pen = PenSample {
+            id: 7,
+            pressure: 0.5,
+        };
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[button(start, true)],
+            vec![Some(pen)],
+            None,
+        );
+        touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[touch(1, TouchPhase::Start, touch_pos, Some(0.4))],
+            vec![false],
+            None,
+        );
+        let release = pen_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[button(start + vec2(30.0, 10.0), false)],
+            vec![Some(pen)],
+            None,
+        );
+        assert!(release.errors.is_empty());
+        assert_eq!(document.sheet().canvas.objects.len(), 1);
+        assert!(controller.blocks_touch_navigation());
+        let touch_end = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[
+                touch(1, TouchPhase::Move, touch_pos + vec2(5.0, 5.0), Some(0.4)),
+                touch(1, TouchPhase::End, touch_pos + vec2(5.0, 5.0), Some(0.4)),
+            ],
+            vec![false, false],
+            None,
+        );
+        assert!(touch_end.captured);
+        assert!(touch_end.errors.is_empty());
+        assert!(!controller.blocks_touch_navigation());
+        assert_eq!(document.sheet().canvas.objects.len(), 1);
+
+        let new_scene = scene(&document);
+        let touch_stroke = frame(
+            &mut controller,
+            &mut document,
+            &new_scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[
+                touch(2, TouchPhase::Start, touch_pos, Some(0.2)),
+                touch(2, TouchPhase::End, touch_pos + vec2(30.0, 10.0), Some(0.6)),
+            ],
+        );
+        assert!(touch_stroke.errors.is_empty(), "{:?}", touch_stroke.errors);
+        assert_eq!(document.sheet().canvas.objects.len(), 2);
+    }
+
+    #[test]
+    fn focus_loss_still_interrupts_a_pen_with_touch_contacts() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start, true)],
+            vec![Some(PenSample {
+                id: 7,
+                pressure: 0.2,
+            })],
+            None,
+        );
+        touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[touch(1, TouchPhase::Start, pos2(90.0, 90.0), Some(0.4))],
+            vec![false],
+            None,
+        );
+        let focus = pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[
+                touch(1, TouchPhase::Move, pos2(95.0, 95.0), Some(0.4)),
+                Event::PointerMoved(start + vec2(20.0, 10.0)),
+                Event::WindowFocused(false),
+            ],
+            vec![
+                None,
+                Some(PenSample {
+                    id: 7,
+                    pressure: 0.6,
+                }),
+                None,
+            ],
+            None,
+        );
+        assert_eq!(
+            focus.errors,
+            [InkControllerError::Interrupted(InkCancelReason::FocusLost)]
+        );
+        assert!(controller.has_released_gesture());
+        assert_eq!(controller.pending_samples().len(), 2);
+        assert!(!controller.blocks_touch_navigation());
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn multiple_suppressed_contacts_can_cancel_without_swallowing_the_next_mouse_stroke() {
+        let mut document = Document::default();
+        let initial_scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        let pen = PenSample {
+            id: 7,
+            pressure: 0.5,
+        };
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[button(start, true)],
+            vec![Some(pen)],
+            None,
+        );
+        touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[touch(1, TouchPhase::Start, pos2(90.0, 90.0), Some(0.4))],
+            vec![false],
+            None,
+        );
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[button(start + vec2(30.0, 10.0), false)],
+            vec![Some(pen)],
+            None,
+        );
+        let contacts = touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &initial_scene,
+            &[
+                touch(2, TouchPhase::Start, pos2(120.0, 90.0), Some(0.4)),
+                touch(1, TouchPhase::Cancel, pos2(90.0, 90.0), Some(0.4)),
+                touch(2, TouchPhase::Cancel, pos2(120.0, 90.0), Some(0.4)),
+            ],
+            vec![false, false, false],
+            None,
+        );
+        assert!(contacts.captured);
+        assert!(contacts.errors.is_empty(), "{:?}", contacts.errors);
+        assert!(!controller.blocks_touch_navigation());
+        assert_eq!(document.sheet().canvas.objects.len(), 1);
+
+        let new_scene = scene(&document);
+        let mouse = frame(
+            &mut controller,
+            &mut document,
+            &new_scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[
+                button(pos2(200.0, 200.0), true),
+                Event::PointerMoved(pos2(220.0, 210.0)),
+                button(pos2(230.0, 210.0), false),
+            ],
+        );
+        assert!(mouse.errors.is_empty(), "{:?}", mouse.errors);
+        assert_eq!(document.sheet().canvas.objects.len(), 2);
+    }
+
+    #[test]
+    fn tool_change_retains_confirmed_pen_movement_batched_with_touch() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start, true)],
+            vec![Some(PenSample {
+                id: 7,
+                pressure: 0.2,
+            })],
+            None,
+        );
+        touch_pointer_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[touch(1, TouchPhase::Start, pos2(90.0, 90.0), Some(0.4))],
+            vec![false],
+            None,
+        );
+        let events = [
+            touch(1, TouchPhase::Move, pos2(95.0, 95.0), Some(0.4)),
+            Event::PointerMoved(start + vec2(20.0, 10.0)),
+        ];
+        let changed = controller.process_frame_with_pen(
+            &mut document,
+            &scene,
+            Some(InkMode::Highlighter),
+            InkSettings::default(),
+            InkFrameInput {
+                events: &events,
+                canvas: Rect::from_min_max(pos2(-2_000.0, -2_000.0), pos2(2_000.0, 2_000.0)),
+                transform: xf(),
+                enabled: true,
+                can_start: true,
+                modifiers: Modifiers::NONE,
+            },
+            &PenFrameData {
+                samples: vec![
+                    None,
+                    Some(PenSample {
+                        id: 7,
+                        pressure: 0.6,
+                    }),
+                ],
+                ..PenFrameData::default()
+            },
+        );
+        assert_eq!(
+            changed.errors,
+            [InkControllerError::Interrupted(
+                InkCancelReason::ToolChanged
+            )]
+        );
+        assert_eq!(controller.pending_samples().len(), 2);
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn suspending_ink_does_not_sample_or_release_a_touch_pointer_as_mouse_input() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            xf(),
+            &[button(start, true)],
+        );
+        let release = [button(start + vec2(30.0, 0.0), false)];
+        let output = controller.suspend_with_pen(
+            &document,
+            xf(),
+            &release,
+            &PenFrameData {
+                touch_pointers: vec![true],
+                ..PenFrameData::default()
+            },
+        );
+        assert_eq!(
+            output.errors,
+            [InkControllerError::Interrupted(InkCancelReason::Disabled)]
+        );
+        assert_eq!(controller.pending_samples().len(), 1);
+        assert!(controller.mouse_down);
+        controller.suspend(&document, xf(), &release);
+        assert!(!controller.mouse_down);
+    }
+
+    #[test]
+    fn unmatched_initial_pen_input_is_rejected_without_creating_mouse_ink() {
+        for issue in [
+            PenInputIssue::PointerMismatch,
+            PenInputIssue::QueueOverflow,
+            PenInputIssue::FrameTooLarge,
+        ] {
+            let mut document = Document::default();
+            let scene = scene(&document);
+            let mut controller = InkController::default();
+            let start = pos2(10.0, 10.0);
+            let end = start + vec2(20.0, 10.0);
+            let events = [
+                button(start, true),
+                Event::PointerMoved(end),
+                button(end, false),
+            ];
+            let rejected = controller.process_frame_with_pen(
+                &mut document,
+                &scene,
+                Some(InkMode::Pen),
+                InkSettings::default(),
+                InkFrameInput {
+                    events: &events,
+                    canvas: Rect::from_min_max(pos2(-100.0, -100.0), pos2(100.0, 100.0)),
+                    transform: xf(),
+                    enabled: true,
+                    can_start: true,
+                    modifiers: Modifiers::NONE,
+                },
+                &PenFrameData {
+                    issue: Some(issue),
+                    ..PenFrameData::default()
+                },
+            );
+            assert!(rejected.captured);
+            assert_eq!(
+                rejected.errors,
+                [InkControllerError::UncorrelatedPenInput {
+                    issue,
+                    position: start
+                }]
+            );
+            assert!(document.sheet().canvas.objects.is_empty());
+            assert!(!controller.has_pending_gesture());
+
+            let mouse = mouse_gesture(
+                &mut controller,
+                &mut document,
+                &scene,
+                InkMode::Pen,
+                InkSettings::default(),
+                &[start, end],
+            );
+            assert!(mouse.errors.is_empty());
+            let CanvasObjectKind::Ink(ink) = &document.sheet().canvas.objects[0].kind else {
+                panic!("expected mouse ink");
+            };
+            assert!(ink.pressure.is_none());
+        }
+    }
+
+    #[test]
+    fn unmatched_pen_release_retains_only_the_previously_correlated_samples() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start, true)],
+            vec![Some(PenSample {
+                id: 7,
+                pressure: 0.2,
+            })],
+            None,
+        );
+        let events = [button(start + vec2(20.0, 10.0), false)];
+        let result = controller.process_frame_with_pen(
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            InkSettings::default(),
+            InkFrameInput {
+                events: &events,
+                canvas: Rect::from_min_max(pos2(-100.0, -100.0), pos2(100.0, 100.0)),
+                transform: xf(),
+                enabled: true,
+                can_start: true,
+                modifiers: Modifiers::NONE,
+            },
+            &PenFrameData {
+                canceled: Some(7),
+                issue: Some(PenInputIssue::PointerMismatch),
+                ..PenFrameData::default()
+            },
+        );
+        assert_eq!(
+            result.errors,
+            [InkControllerError::Interrupted(
+                InkCancelReason::PointerSourceChanged
+            )]
+        );
+        assert!(controller.has_released_gesture());
+        assert_eq!(controller.pending_samples().len(), 1);
+        assert_eq!(controller.pending_samples()[0].pressure, Some(0.2));
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn conflicting_or_canceled_pen_input_retains_the_original_samples() {
+        for other in [
+            None,
+            Some(PenSample {
+                id: 8,
+                pressure: 0.8,
+            }),
+        ] {
+            let mut document = Document::default();
+            let scene = scene(&document);
+            let mut controller = InkController::default();
+            let start = pos2(10.0, 10.0);
+            pen_frame(
+                &mut controller,
+                &mut document,
+                &scene,
+                &[button(start, true)],
+                vec![Some(PenSample {
+                    id: 7,
+                    pressure: 0.2,
+                })],
+                None,
+            );
+            let result = pen_frame(
+                &mut controller,
+                &mut document,
+                &scene,
+                &[Event::PointerMoved(start + vec2(5.0, 0.0))],
+                vec![other],
+                Some(7),
+            );
+            assert_eq!(
+                result.errors,
+                [InkControllerError::Interrupted(
+                    InkCancelReason::PointerSourceChanged
+                )]
+            );
+            assert_eq!(controller.pending_samples().len(), 1);
+            assert_eq!(controller.pending_samples()[0].pressure, Some(0.2));
+            assert!(document.sheet().canvas.objects.is_empty());
+            assert!(controller.cancel());
+            let mouse = mouse_gesture(
+                &mut controller,
+                &mut document,
+                &scene,
+                InkMode::Pen,
+                InkSettings::default(),
+                &[start, start + vec2(10.0, 0.0)],
+            );
+            assert!(mouse.errors.is_empty());
+            let CanvasObjectKind::Ink(ink) = &document.sheet().canvas.objects[0].kind else {
+                panic!("expected mouse ink")
+            };
+            assert!(ink.pressure.is_none());
+        }
+    }
+
+    #[test]
+    fn pen_cancellation_and_invalid_pressure_never_commit_partial_input() {
+        let start = pos2(10.0, 10.0);
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start, true)],
+            vec![Some(PenSample {
+                id: 7,
+                pressure: 0.2,
+            })],
+            None,
+        );
+        let invalid = pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[Event::PointerMoved(start + vec2(5.0, 0.0))],
+            vec![Some(PenSample {
+                id: 7,
+                pressure: 1.5,
+            })],
+            None,
+        );
+        assert!(matches!(
+            invalid.errors.as_slice(),
+            [InkControllerError::InvalidSample(RejectedSample {
+                reason: crate::ink_input::SampleRejection::InvalidPressure,
+                ..
+            })]
+        ));
+        let canceled = pen_frame(&mut controller, &mut document, &scene, &[], vec![], Some(7));
+        assert_eq!(
+            canceled.errors,
+            [InkControllerError::Interrupted(
+                InkCancelReason::PointerGone
+            )]
+        );
+        assert_eq!(controller.pending_samples().len(), 1);
+        assert!(controller.pending_has_rejected_input());
+        assert!(document.sheet().canvas.objects.is_empty());
+    }
+
+    #[test]
+    fn suspension_retains_matched_pen_samples_before_interrupting() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let start = pos2(10.0, 10.0);
+        pen_frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            &[button(start, true)],
+            vec![Some(PenSample {
+                id: 7,
+                pressure: 0.2,
+            })],
+            None,
+        );
+        let events = [
+            Event::PointerMoved(start + vec2(5.0, 0.0)),
+            button(start + vec2(10.0, 0.0), false),
+        ];
+        let output = controller.suspend_with_pen(
+            &document,
+            xf(),
+            &events,
+            &PenFrameData {
+                samples: vec![
+                    Some(PenSample {
+                        id: 7,
+                        pressure: 0.6,
+                    }),
+                    Some(PenSample {
+                        id: 7,
+                        pressure: 0.9,
+                    }),
+                ],
+                ..PenFrameData::default()
+            },
+        );
+        assert_eq!(
+            output.errors,
+            [InkControllerError::Interrupted(InkCancelReason::Disabled)]
+        );
+        assert_eq!(
+            controller
+                .pending_samples()
+                .iter()
+                .map(|sample| sample.pressure)
+                .collect::<Vec<_>>(),
+            [Some(0.2), Some(0.6), Some(0.9)]
+        );
+        assert!(document.sheet().canvas.objects.is_empty());
     }
 
     #[test]

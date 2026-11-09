@@ -62,6 +62,13 @@ as its icon font.
 
 {FONT_LICENSES}
 
+## Embedded GitHub mark
+
+The "Thinoda on GitHub" status-bar link embeds the `mark-github` path from
+GitHub Primer Octicons (<https://github.com/primer/octicons>), MIT License,
+Copyright (c) GitHub Inc. The GitHub logo is a trademark of GitHub, Inc. and
+is used only to link to Thinoda's GitHub repository.
+
 ## Embedded W3C schemas
 
 The `xsd-schema` dependency includes unmodified W3C `xml.xsd` and `xlink.xsd`
@@ -123,8 +130,9 @@ holders.
 
 ## Notable licenses
 
-- **MPL-2.0** (`option-ext`): file-level copyleft. The unmodified source is
-  available from the linked repository.
+- **MPL-2.0** (`option-ext`, `cssparser`, `cssparser-color`, `cssparser-macros`,
+  `dtoa-short`, `selectors`): file-level copyleft. The unmodified source is
+  available from the linked repositories.
 - **CDLA-Permissive-2.0** (`webpki-roots`): data license for the bundled
   Mozilla root certificate list.
 - **Unicode-3.0** (ICU4X crates): Unicode data and software license.

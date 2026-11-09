@@ -192,8 +192,40 @@ fn annotated_central_map() -> Workbook {
 fn sheet_tab_switch_commits_a_pending_board_label() {
     let _guard = lock_ui();
     let mut h = harness(app(board_with_other_sheet(), Language::English));
+    let tab_position = h
+        .get_by_role_and_label(Role::Button, "Other sheet")
+        .rect()
+        .center();
     let id = edit_shape_label(&mut h, "Saved before switching");
-    click(&mut h, "Other sheet");
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "Other sheet")
+            .rect()
+            .center(),
+        tab_position,
+        "label guidance must not move sheet tabs"
+    );
+    h.event(egui::Event::PointerMoved(tab_position));
+    h.event(egui::Event::PointerButton {
+        pos: tab_position,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(1);
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "Other sheet")
+            .rect()
+            .center(),
+        tab_position,
+        "finishing the draft on press must not move the pressed tab"
+    );
+    h.event(egui::Event::PointerButton {
+        pos: tab_position,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(3);
 
     let doc = h.state().doc().unwrap();
     assert_eq!(doc.doc.active_index(), 1);
@@ -206,6 +238,166 @@ fn sheet_tab_switch_commits_a_pending_board_label() {
         "Saved before switching"
     );
     assert!(doc.view.board_label_draft().is_none());
+}
+
+#[test]
+fn batched_sheet_click_commits_a_pending_board_label() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board_with_other_sheet(), Language::English));
+    let id = edit_shape_label(&mut h, "Saved before batched click");
+    let position = h
+        .get_by_role_and_label(Role::Button, "Other sheet")
+        .rect()
+        .center();
+    let button = |pressed| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        button(true),
+        button(false),
+    ]);
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.active_index(), 1);
+    assert_eq!(
+        doc.doc.workbook().sheets[0]
+            .canvas
+            .object(id)
+            .unwrap()
+            .label(),
+        "Saved before batched click"
+    );
+}
+
+#[test]
+fn sheet_touch_commits_a_pending_board_label() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board_with_other_sheet(), Language::English));
+    let id = edit_shape_label(&mut h, "Saved before tapping");
+    let position = h
+        .get_by_role_and_label(Role::Button, "Other sheet")
+        .rect()
+        .center();
+    for (phase, pressed) in [
+        (egui::TouchPhase::Start, true),
+        (egui::TouchPhase::End, false),
+    ] {
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(position),
+            egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(1),
+                phase,
+                pos: position,
+                force: None,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(1);
+    }
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.active_index(), 1);
+    assert_eq!(
+        doc.doc.workbook().sheets[0]
+            .canvas
+            .object(id)
+            .unwrap()
+            .label(),
+        "Saved before tapping"
+    );
+}
+
+#[test]
+fn status_control_click_commits_a_pending_board_label() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board(), Language::English));
+    let zoom = h.state().doc().unwrap().view.zoom;
+    let id = edit_shape_label(&mut h, "Saved before zooming");
+    click(&mut h, "Zoom In");
+    let doc = h.state().doc().unwrap();
+    assert!(doc.view.zoom > zoom);
+    assert_eq!(
+        doc.doc.sheet().canvas.object(id).unwrap().label(),
+        "Saved before zooming"
+    );
+}
+
+#[test]
+fn label_guidance_keeps_the_github_badge_in_place() {
+    let _guard = lock_ui();
+    for show_status_bar in [false, true] {
+        let mut app = app(board(), Language::English);
+        app.settings.show_status_bar = show_status_bar;
+        let mut h = harness(app);
+        let badge_before = h
+            .get_by_role_and_label(Role::Button, "Thinoda on GitHub")
+            .rect();
+        edit_shape_label(&mut h, "Label");
+        let badge_after = h
+            .get_by_role_and_label(Role::Button, "Thinoda on GitHub")
+            .rect();
+        let guidance = h.get_by_label("Editing label · Enter: finish · Esc: cancel");
+        assert_eq!(badge_after, badge_before);
+        assert!(guidance.rect().right() <= badge_after.left());
+    }
+}
+
+#[test]
+fn label_guidance_waits_for_an_in_flight_status_click() {
+    let _guard = lock_ui();
+    let mut h = harness(app(board(), Language::English));
+    let position = h
+        .get_by_role_and_label(Role::Button, "Zoom In")
+        .rect()
+        .center();
+    let zoom = h.state().doc().unwrap().view.zoom;
+    h.event(egui::Event::PointerMoved(position));
+    h.event(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(1);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        let id = doc
+            .doc
+            .sheet()
+            .canvas
+            .objects
+            .iter()
+            .find(|object| matches!(object.kind, thinoda_core::CanvasObjectKind::Shape { .. }))
+            .unwrap()
+            .id;
+        doc.view.select_board_object(id);
+        assert!(doc.view.begin_board_label(&doc.doc, id));
+    }
+    h.run_steps(2);
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "Zoom In")
+            .rect()
+            .center(),
+        position
+    );
+    h.event(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(4);
+    assert!(h.state().doc().unwrap().view.zoom > zoom);
 }
 
 #[test]
@@ -543,6 +735,9 @@ fn all_catalogs_preserve_preflight_keys_and_placeholders() {
     let _guard = lock_ui();
     let keys = [
         "Board export changes",
+        "Editable image export",
+        "Only the current sheet is included; other sheets are not exported.",
+        "This image contains the editable diagram, including content outside the visible preview. It is not redacted.",
         "The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.",
         "Shapes omitted",
         "Ink strokes omitted",
@@ -561,6 +756,7 @@ fn all_catalogs_preserve_preflight_keys_and_placeholders() {
         "Relationships omitted",
         "Boundaries omitted",
         "Board grid and snapping settings omitted",
+        "Grid or snapping may differ in draw.io",
         "Sheet {sheet}: a root named “{title}” will be created.",
         "Sheet {sheet}: hidden root mode omitted.",
         "Autosave skipped because this format cannot preserve board content. Save as Thinoda to keep it.",
@@ -603,7 +799,24 @@ fn export_menu_preflights_every_lossy_format_before_opening_a_picker() {
         if matches!(format, Format::MindManager | Format::PowerPoint) {
             click(&mut h, t("Export"));
         }
-        has_label(&h, t("Board export changes"));
+        let title = if format.is_drawio_image() {
+            "Editable image export"
+        } else {
+            "Board export changes"
+        };
+        has_label(&h, t(title));
+        if format.is_drawio_image() {
+            has_label(
+                &h,
+                t("Only the current sheet is included; other sheets are not exported."),
+            );
+            has_label(
+                &h,
+                t(
+                    "This image contains the editable diagram, including content outside the visible preview. It is not redacted.",
+                ),
+            );
+        }
         if matches!(
             format,
             Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
@@ -623,11 +836,291 @@ fn export_menu_preflights_every_lossy_format_before_opening_a_picker() {
                 );
             }
             assert!(lacks_label(&h, &format!("1 — {}", t("Shapes omitted"))));
+        } else if format.is_drawio() {
+            // draw.io keeps cards, shapes, ink, connectors and frames editable.
+            has_label(
+                &h,
+                &format!("1 — {}", t("Grid or snapping may differ in draw.io")),
+            );
+            has_label(&h, &format!("1 — {}", t("Presentation slides omitted")));
+            assert!(lacks_label(&h, &format!("1 — {}", t("Shapes omitted"))));
         } else {
             has_label(&h, &format!("1 — {}", t("Shapes omitted")));
         }
         click(&mut h, t("Cancel"));
         assert_eq!(h.state().doc().unwrap().doc.workbook(), &book, "{format:?}");
+    }
+}
+
+#[test]
+fn editable_image_disclosure_is_localized_and_mandatory_without_losses() {
+    let _guard = lock_ui();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = true;
+    sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 50.0)),
+        ))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        assert!(thinoda_io::export_losses(&book, format, &ExportOptions::default()).is_empty());
+        for language in Language::ALL {
+            let mut h = harness(app(book.clone(), language));
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Export(format));
+            h.run_steps(3);
+            has_label(&h, t("Editable image export"));
+            has_label(&h, t(format.label()));
+            has_label(
+                &h,
+                t("Only the current sheet is included; other sheets are not exported."),
+            );
+            has_label(
+                &h,
+                t(
+                    "This image contains the editable diagram, including content outside the visible preview. It is not redacted.",
+                ),
+            );
+            for label in ["Confirm", "Cancel"] {
+                assert!(
+                    h.query_all(By::new().role(Role::Button).label(t(label)))
+                        .any(|node| !node.accesskit_node().is_disabled()),
+                    "{format:?}, {language:?}: missing enabled {label}"
+                );
+            }
+            h.key_press(Key::Escape);
+            h.run_steps(3);
+            assert!(lacks_label(&h, t("Editable image export")));
+            assert!(h.state().file_activity().is_empty());
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+    }
+}
+
+#[test]
+fn drawio_grid_loss_preflight_is_localized_and_cancelable() {
+    let _guard = lock_ui();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = false;
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        for language in Language::ALL {
+            let mut h = harness(app(book.clone(), language));
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Export(format));
+            h.run_steps(3);
+            has_label(
+                &h,
+                &format!("1 — {}", t("Grid or snapping may differ in draw.io")),
+            );
+            click(&mut h, t("Cancel"));
+            assert!(
+                h.state().file_activity().is_empty(),
+                "{format:?}, {language:?}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+    }
+}
+
+#[test]
+fn drawio_background_loss_preflight_is_localized_and_cancelable() {
+    let _guard = lock_ui();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = true;
+    sheet.theme.background = Some(Color::rgba(17, 34, 51, 128));
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        for language in Language::ALL {
+            let mut h = harness(app(book.clone(), language));
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Export(format));
+            h.run_steps(3);
+            has_label(
+                &h,
+                &format!("1 — {}", t("Page background may differ in draw.io")),
+            );
+            click(&mut h, t("Cancel"));
+            assert!(
+                h.state().file_activity().is_empty(),
+                "{format:?}, {language:?}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+    }
+}
+
+#[test]
+fn drawio_folded_card_loss_preflight_is_localized_and_cancelable() {
+    let _guard = lock_ui();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = true;
+    sheet
+        .add_card(
+            "Sticky",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        for language in Language::ALL {
+            let mut h = harness(app(book.clone(), language));
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Export(format));
+            h.run_steps(3);
+            has_label(
+                &h,
+                &format!("1 — {}", t("Cards may show folded corners in draw.io")),
+            );
+            click(&mut h, t("Cancel"));
+            assert!(
+                h.state().file_activity().is_empty(),
+                "{format:?}, {language:?}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+    }
+}
+
+#[test]
+fn editable_image_disclosure_rejects_a_changed_document_or_active_sheet() {
+    let _guard = lock_ui();
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        for change_sheet in [false, true] {
+            let mut book = board_with_other_sheet();
+            let directory = tempfile::tempdir().unwrap();
+            let source = directory.path().join("source.drawio");
+            std::fs::write(&source, b"source diagram").unwrap();
+            let mut app = app(book.clone(), Language::English);
+            app.doc_mut().unwrap().import_source = Some(source.clone());
+            let mut h = harness(app);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Export(format));
+            h.run_steps(3);
+            has_label(&h, t("Editable image export"));
+            if change_sheet {
+                h.state_mut().doc_mut().unwrap().doc.set_active(1);
+                book.active_sheet = 1;
+            } else {
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("Change board", |sheet| {
+                        sheet.board.snap = !sheet.board.snap;
+                        Ok(())
+                    })
+                    .unwrap();
+                book.active_mut().board.snap = !book.active().board.snap;
+            }
+            h.run_steps(3);
+            assert!(lacks_label(&h, t("Editable image export")));
+            assert!(h.state().file_activity().is_empty());
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+            assert_eq!(std::fs::read(&source).unwrap(), b"source diagram");
+            assert!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .ensure_export_destination(&source)
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[test]
+fn editable_image_disclosure_includes_connector_losses() {
+    let _guard = lock_ui();
+    let mut book = board();
+    let target = book
+        .active()
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(object.kind, thinoda_core::CanvasObjectKind::Connector(_)))
+        .unwrap()
+        .id;
+    book.active_mut()
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(400.0, 100.0)),
+        )))
+        .unwrap();
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        let mut h = harness(app(book.clone(), Language::English));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Export(format));
+        h.run_steps(3);
+        has_label(&h, t("Editable image export"));
+        has_label(
+            &h,
+            &format!("1 — {}", t("Connector-to-connector attachments detached")),
+        );
+        click(&mut h, t("Cancel"));
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+    }
+}
+
+#[test]
+fn editable_image_disclosure_actions_fit_small_scaled_windows() {
+    let _guard = lock_ui();
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        for language in Language::ALL {
+            for (size, scale) in [
+                (egui::vec2(480.0, 360.0), 1.0),
+                (egui::vec2(600.0, 450.0), 1.5),
+            ] {
+                let mut app = app(board(), language);
+                app.settings.ui_scale = scale;
+                let mut h = Harness::builder()
+                    .with_size(size)
+                    .allow_missing_glyphs()
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                let ctx = h.ctx.clone();
+                h.state_mut().exec(&ctx, Cmd::Export(format));
+                h.run_steps(5);
+                let rect = ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("board_export_preflight")))
+                    .unwrap();
+                assert!(
+                    ctx.content_rect().expand(1.0).contains_rect(rect),
+                    "{format:?}, {language:?}, scale {scale}: {rect:?}"
+                );
+                for label in ["Confirm", "Cancel"] {
+                    let button = h
+                        .query_all(By::new().role(Role::Button).label(t(label)))
+                        .find(|button| rect.contains_rect(button.rect()))
+                        .unwrap_or_else(|| {
+                            panic!("{format:?}, {language:?}, scale {scale}: {label}")
+                        });
+                    assert!(
+                        ctx.content_rect().contains_rect(button.rect()),
+                        "{format:?}, {language:?}, scale {scale}: {label}"
+                    );
+                }
+                click(&mut h, t("Cancel"));
+            }
+        }
     }
 }
 
@@ -1438,6 +1931,236 @@ fn cli_requires_loss_consent_and_preserves_existing_destination() {
     assert!(!log.contains("TEST_PRIVATE_SHEET_TITLE"), "{log}");
     assert_ne!(std::fs::read(&output).unwrap(), b"existing");
     assert_eq!(std::fs::read(&input).unwrap(), source);
+}
+
+#[test]
+fn cli_drawio_grid_approximation_requires_loss_consent() {
+    let _guard = lock_ui();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("board.thinoda");
+    let output = directory.path().join("board.drawio");
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.grid_size = 10.0;
+    sheet.board.snap = false;
+    let book = Workbook::new(sheet);
+    let source = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    std::fs::write(&input, &source).unwrap();
+    std::fs::write(&output, b"existing").unwrap();
+
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(error.contains("--allow-lossy"), "{error}");
+    assert!(
+        Lang::ALL
+            .iter()
+            .any(|&lang| error.contains(t_in(lang, "Grid or snapping may differ in draw.io"))),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"existing");
+
+    let accepted = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .arg("--allow-lossy")
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let reopened = import_bytes(Format::DrawIo, &std::fs::read(&output).unwrap()).unwrap();
+    assert_eq!(reopened.active().board, book.active().board);
+    assert_eq!(std::fs::read(&input).unwrap(), source);
+}
+
+#[test]
+fn cli_drawio_background_approximation_requires_loss_consent() {
+    let _guard = lock_ui();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("background.thinoda");
+    let output = directory.path().join("background.drawio");
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = true;
+    sheet.theme.background = Some(Color::rgba(17, 34, 51, 128));
+    let book = Workbook::new(sheet);
+    let source = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    std::fs::write(&input, &source).unwrap();
+    std::fs::write(&output, b"existing").unwrap();
+
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(error.contains("--allow-lossy"), "{error}");
+    assert!(
+        Lang::ALL
+            .iter()
+            .any(|&lang| error.contains(t_in(lang, "Page background may differ in draw.io"))),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"existing");
+
+    let accepted = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .arg("--allow-lossy")
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let reopened =
+        thinoda_io::import_bytes_with_report(Format::DrawIo, &std::fs::read(&output).unwrap())
+            .unwrap();
+    assert_eq!(
+        reopened.workbook.active().theme.background,
+        book.active().theme.background
+    );
+    assert!(
+        reopened
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioBackgroundAdjusted)
+    );
+    assert_eq!(std::fs::read(&input).unwrap(), source);
+}
+
+#[test]
+fn cli_drawio_folded_card_approximation_requires_loss_consent() {
+    let _guard = lock_ui();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("card.thinoda");
+    let output = directory.path().join("card.drawio");
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = true;
+    sheet
+        .add_card(
+            "Sticky",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let source = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    std::fs::write(&input, &source).unwrap();
+    std::fs::write(&output, b"existing").unwrap();
+
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(error.contains("--allow-lossy"), "{error}");
+    assert!(
+        Lang::ALL
+            .iter()
+            .any(|&lang| error.contains(t_in(lang, "Cards may show folded corners in draw.io"))),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"existing");
+
+    let accepted = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .arg("--allow-lossy")
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let reopened =
+        thinoda_io::import_bytes_with_report(Format::DrawIo, &std::fs::read(&output).unwrap())
+            .unwrap();
+    assert!(
+        reopened
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioFoldedNotesApproximated)
+    );
+    assert_eq!(std::fs::read(&input).unwrap(), source);
+}
+
+#[test]
+fn cli_editable_image_exports_disclose_embedded_data_and_keep_only_the_active_sheet() {
+    let _guard = lock_ui();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("board.thinoda");
+    let mut first = Sheet::new("Not exported", "");
+    first.root_mode = SheetRootMode::Hidden;
+    first.board.grid = thinoda_core::GridKind::Lines;
+    first.board.snap = true;
+    let mut second = first.clone();
+    second.title = "Selected".into();
+    second
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 50.0)),
+        ))
+        .unwrap();
+    let mut book = Workbook::new(first);
+    book.sheets.push(second);
+    book.active_sheet = 1;
+    let source = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    std::fs::write(&input, &source).unwrap();
+    for (name, format) in [
+        ("board.drawio.svg", Format::DrawIoSvg),
+        ("board.drawio.png", Format::DrawIoPng),
+    ] {
+        let output = directory.path().join(name);
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+            .arg("--convert")
+            .arg(&input)
+            .arg(&output)
+            .env("RUST_LOG", "warn")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(result.status.success(), "{format:?}: {stderr}");
+        assert!(
+            Lang::ALL.iter().any(|&lang| stderr.contains(t_in(
+                lang,
+                "This image contains the editable diagram, including content outside the visible preview. It is not redacted."
+            ))),
+            "{format:?}: {stderr}"
+        );
+        assert!(
+            Lang::ALL.iter().any(|&lang| stderr.contains(t_in(
+                lang,
+                "Only the current sheet is included; other sheets are not exported."
+            ))),
+            "{format:?}: {stderr}"
+        );
+        let image = std::fs::read(&output).unwrap();
+        let restored = import_bytes(format, &image).unwrap();
+        assert_eq!(restored.sheets.len(), 1);
+        assert_eq!(restored.active().title, "Selected");
+        assert_eq!(std::fs::read(&input).unwrap(), source);
+    }
 }
 
 #[test]

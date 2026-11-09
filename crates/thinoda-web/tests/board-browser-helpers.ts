@@ -53,15 +53,35 @@ export async function drag(
 
 export async function touchEvents(
     page: Page,
-    events: { type: "touchstart" | "touchmove" | "touchend" | "touchcancel"; x: number; y: number }[],
+    events: {
+        type: "touchstart" | "touchmove" | "touchend" | "touchcancel";
+        x: number;
+        y: number;
+        force?: number | "missing" | "invalid";
+    }[],
+    options: { mismatchedPointer?: boolean } = {},
 ) {
-    await page.evaluate((events) => {
+    await page.evaluate(({ events, mismatchedPointer }) => {
         const canvas = document.querySelector("#thinoda_canvas");
         if (!(canvas instanceof HTMLCanvasElement)) throw new Error("Missing board canvas");
         const createTouch = Reflect.get(document, "createTouch");
         const createTouchList = Reflect.get(document, "createTouchList");
         const legacy = typeof createTouch === "function" && typeof createTouchList === "function";
-        for (const { type, x, y } of events) {
+        if (mismatchedPointer) {
+            const start = events[0];
+            if (!start) throw new Error("Missing touch gesture");
+            const down = new PointerEvent("pointerdown", {
+                bubbles: true, pointerId: 21, pointerType: "touch", isPrimary: true,
+                clientX: start.x, clientY: start.y, button: 0, buttons: 1,
+            });
+            document.addEventListener("pointerdown", event => {
+                if (event === down) {
+                    Object.defineProperty(event, "clientX", { value: start.x + 1 });
+                }
+            }, { capture: true, once: true });
+            canvas.dispatchEvent(down);
+        }
+        for (const { type, x, y, force } of events) {
             const touch: Touch = legacy
                 ? createTouch.call(document, window, canvas, 1, x, y, x, y, x, y)
                 : new Touch({
@@ -71,17 +91,42 @@ export async function touchEvents(
             if (touch.clientX !== x || touch.clientY !== y) {
                 throw new Error("Synthetic touch has incorrect client coordinates");
             }
+            if (force !== undefined) {
+                Object.defineProperty(touch, "force", {
+                    configurable: true,
+                    value: force === "missing" ? undefined : force === "invalid" ? Number.NaN : force,
+                });
+            }
             const active = type === "touchend" || type === "touchcancel" ? [] : [touch];
             const list = (items: Touch[]) => legacy ? createTouchList.call(document, ...items) : items;
-            canvas.dispatchEvent(new TouchEvent(type, {
+            const event = new TouchEvent(type, {
                 bubbles: true,
                 cancelable: true,
                 touches: list(active),
                 targetTouches: list(active),
                 changedTouches: list([touch]),
+            });
+            if (force !== undefined) {
+                const exactList = (items: Touch[]) => {
+                    const touches = [...items];
+                    return Object.assign(touches, { item: (index: number) => touches[index] ?? null });
+                };
+                Object.defineProperties(event, {
+                    touches: { value: exactList(active) },
+                    targetTouches: { value: exactList(active) },
+                    changedTouches: { value: exactList([touch]) },
+                });
+            }
+            canvas.dispatchEvent(event);
+        }
+        if (mismatchedPointer) {
+            const end = events.at(-1)!;
+            canvas.dispatchEvent(new PointerEvent("pointerup", {
+                bubbles: true, pointerId: 21, pointerType: "touch", isPrimary: true,
+                clientX: end.x, clientY: end.y, button: 0, buttons: 0,
             }));
         }
-    }, events);
+    }, { events, mismatchedPointer: options.mismatchedPointer ?? false });
 }
 
 export async function command(page: Page, name: string) {

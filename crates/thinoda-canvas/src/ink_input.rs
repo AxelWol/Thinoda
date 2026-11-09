@@ -14,7 +14,7 @@ use thinoda_core::board::{
     MAX_TOTAL_INK_POINTS, MIN_STROKE_WIDTH, distance_to_segment, point_in_polygon, rotate_around,
     rotated_corners, validate_object,
 };
-use thinoda_core::scene::SceneGeometry;
+use thinoda_core::scene::{SceneGeometry, connector_stroke_path};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, InkStroke, InkTool, Rect, Scene,
     SceneHit, SceneId, SceneItem, Vec2,
@@ -845,14 +845,64 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                 polygon,
                 &mut budget,
             )?,
-            SceneGeometry::Polyline { points, width } => path_touches_lasso(
+            SceneGeometry::Polyline {
                 points,
-                false,
-                |point| point,
-                f64::from(*width) / 2.0,
-                polygon,
-                &mut budget,
-            )?,
+                width,
+                markers,
+            } => {
+                let trimmed;
+                let stroke = if markers.iter().any(Option::is_some) {
+                    trimmed = connector_stroke_path(points, markers);
+                    trimmed.as_slice()
+                } else {
+                    points.as_slice()
+                };
+                let mut intersects = path_touches_lasso(
+                    stroke,
+                    false,
+                    |point| point,
+                    f64::from(*width) / 2.0,
+                    polygon,
+                    &mut budget,
+                )?;
+                for marker in markers.iter().flatten() {
+                    if intersects {
+                        break;
+                    }
+                    intersects = if let Some((center, radius)) = marker.circle() {
+                        circle_touches_lasso(
+                            center,
+                            radius,
+                            marker.filled,
+                            f64::from(*width) / 2.0,
+                            polygon,
+                            &mut budget,
+                        )?
+                    } else if let Some((path, error)) = marker.flattened_curve(*width) {
+                        budget.charge(path.len())?;
+                        path_touches_lasso(
+                            &path,
+                            false,
+                            |point| point,
+                            f64::from(*width) / 2.0 + f64::from(error),
+                            polygon,
+                            &mut budget,
+                        )?
+                    } else {
+                        (marker.filled
+                            && polygon_touches_lasso(marker.points(), polygon, &mut budget)?)
+                            || path_touches_lasso(
+                                marker.points(),
+                                marker.closed,
+                                |point| point,
+                                f64::from(*width) / 2.0,
+                                polygon,
+                                &mut budget,
+                            )?
+                    };
+                }
+                intersects
+            }
         };
         if intersects {
             seen.insert(hit);
@@ -973,13 +1023,39 @@ fn validate_scene_geometry(
                 return Err(invalid());
             }
         }
-        SceneGeometry::Polyline { points, width } => {
+        SceneGeometry::Polyline {
+            points,
+            width,
+            markers,
+        } => {
             if points.is_empty() || points.len() > MAX_INPUT_SAMPLES || !valid_width(*width) {
                 return Err(invalid());
             }
             budget.charge(points.len())?;
             if points.iter().any(|&point| !finite_point(point)) {
                 return Err(invalid());
+            }
+            for marker in markers.iter().flatten() {
+                budget.charge(marker.points().len())?;
+                let invalid_circle = marker.circle().is_some_and(|(center, radius)| {
+                    !finite_point(center)
+                        || !radius.is_finite()
+                        || radius < 0.0
+                        || !(center.x + radius).is_finite()
+                        || !(center.x - radius).is_finite()
+                        || !(center.y + radius).is_finite()
+                        || !(center.y - radius).is_finite()
+                });
+                if invalid_circle
+                    || marker
+                        .curve()
+                        .is_some_and(|curve| curve.iter().any(|&point| !finite_point(point)))
+                    || marker.points().iter().any(|&point| !finite_point(point))
+                    || !marker.line_inset.is_finite()
+                    || marker.line_inset < 0.0
+                {
+                    return Err(invalid());
+                }
             }
         }
     }
@@ -1348,6 +1424,42 @@ fn capsule_interval(a: Vec2, b: Vec2, c: Vec2, d: Vec2, radius: f64) -> Option<(
         result = union_interval(result, Some(strip));
     }
     result
+}
+
+fn circle_touches_lasso(
+    center: Vec2,
+    radius: f32,
+    filled: bool,
+    stroke_radius: f64,
+    lasso: &[Vec2],
+    budget: &mut GeometryBudget,
+) -> Result<bool, GeometryError> {
+    if radius <= 0.0 {
+        return Ok(false);
+    }
+    budget.charge(lasso.len())?;
+    let outer = f64::from(radius) + stroke_radius;
+    let inner = (f64::from(radius) - stroke_radius).max(0.0);
+    let distance_squared = |point: Vec2| {
+        let dx = f64::from(point.x) - f64::from(center.x);
+        let dy = f64::from(point.y) - f64::from(center.y);
+        dx * dx + dy * dy
+    };
+    if (filled && distance_squared(lasso[0]) <= outer * outer)
+        || point_in_polygon(Vec2::new(center.x + radius, center.y), lasso)
+    {
+        return Ok(true);
+    }
+    for index in 0..segment_count(lasso, true) {
+        budget.charge(1)?;
+        let (a, b) = segment(lasso, true, index);
+        if point_segment_distance_squared(center, a, b) <= outer * outer
+            && (filled || distance_squared(a).max(distance_squared(b)) >= inner * inner)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn polygon_touches_lasso(
@@ -2486,6 +2598,347 @@ mod tests {
         assert_eq!(
             lasso_hits(&scene, &rectangle(1440.0, -2.0, 20.0, 4.0)).unwrap(),
             vec![SceneHit::Object(connector)]
+        );
+    }
+
+    #[test]
+    fn lasso_selects_connector_marker_wings() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(89.0, 3.5, 1.5, 1.5)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
+    fn lasso_selects_sized_connector_marker_wings() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Sized markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        connector.end_marker_size = Some(12.5);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(83.0, 7.0, 1.5, 1.5)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
+    fn lasso_uses_the_closed_outline_not_the_empty_hollow_marker_interior() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Hollow markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert!(
+            lasso_hits(&scene, &rectangle(94.8, -0.2, 0.4, 0.4))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(88.8, 3.1, 0.2, 0.2)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
+    fn lasso_respects_hollow_diamond_marker_interiors_and_outlines() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        for kind in [
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+        ] {
+            let mut sheet = Sheet::new("Hollow diamond", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.width = 0.1;
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = true;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let scene = scene(&sheet);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let points = markers[1].unwrap();
+            let interior = (points.points()[0] + points.points()[2]) * 0.5;
+            let outline = (points.points()[3] + points.points()[0]) * 0.5;
+            assert!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(interior.x - 0.1, interior.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap()
+                .is_empty(),
+                "{kind:?}"
+            );
+            assert_eq!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(outline.x - 0.1, outline.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap(),
+                vec![SceneHit::Object(id)],
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lasso_respects_half_circle_marker_outline_and_open_interior() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Half-circle marker", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(12.5);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert!(
+            lasso_hits(&scene, &rectangle(99.9, 0.9, 0.2, 0.2))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(89.7, 10.1, 0.2, 0.2)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(80.0, -20.0, 30.0, 40.0)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+    }
+
+    #[test]
+    fn lasso_selects_bar_marker_strokes_without_filling_their_bounds() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+            let mut sheet = Sheet::new("Bar marker", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.width = 0.1;
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_size = Some(12.5);
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let scene = scene(&sheet);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let points = markers[1].unwrap();
+            let on_marker = points.points()[0] * 0.8 + points.points()[1] * 0.2;
+            let off_marker = Vec2::new(100.0, 10.0);
+            assert_eq!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(on_marker.x - 0.1, on_marker.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap(),
+                vec![SceneHit::Object(id)],
+                "{kind:?}"
+            );
+            assert!(
+                lasso_hits(
+                    &scene,
+                    &rectangle(off_marker.x - 0.1, off_marker.y - 0.1, 0.2, 0.2),
+                )
+                .unwrap()
+                .is_empty(),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn half_circle_lasso_work_is_budgeted() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Half-circle marker budget", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-2000.0, 0.0)),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(999.0);
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        let mut polygon = vec![Vec2::new(99.0, 10.0); 4096];
+        polygon.extend([
+            Vec2::new(99.1, 10.0),
+            Vec2::new(99.1, 10.1),
+            Vec2::new(99.0, 10.1),
+        ]);
+        assert_eq!(
+            lasso_hits(&scene, &polygon),
+            Err(GeometryError::TooComplex {
+                limit: MAX_GEOMETRY_CHECKS,
+            })
+        );
+    }
+
+    #[test]
+    fn lasso_respects_oval_marker_interiors_outlines_and_enclosure() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        for filled in [false, true] {
+            let mut sheet = Sheet::new("Oval marker", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.width = 0.1;
+            connector.end_marker = Some(ConnectorMarker {
+                kind: ConnectorMarkerKind::Oval,
+            });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = !filled;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let scene = scene(&sheet);
+            let interior = lasso_hits(&scene, &rectangle(99.9, 0.9, 0.2, 0.2)).unwrap();
+            assert_eq!(
+                interior,
+                if filled {
+                    vec![SceneHit::Object(id)]
+                } else {
+                    vec![]
+                }
+            );
+            assert_eq!(
+                lasso_hits(&scene, &rectangle(99.9, 6.15, 0.2, 0.2)).unwrap(),
+                vec![SceneHit::Object(id)]
+            );
+        }
+
+        let center = Vec2::new(100.0, 0.0);
+        for (lasso, filled, expected) in [
+            (rectangle(93.0, -7.0, 14.0, 14.0), false, true),
+            (rectangle(99.9, 0.9, 0.2, 0.2), false, false),
+            (rectangle(99.9, 0.9, 0.2, 0.2), true, true),
+            (rectangle(110.0, 10.0, 1.0, 1.0), true, false),
+        ] {
+            assert_eq!(
+                circle_touches_lasso(
+                    center,
+                    6.25,
+                    filled,
+                    0.05,
+                    &lasso,
+                    &mut GeometryBudget::new()
+                )
+                .unwrap(),
+                expected
+            );
+        }
+        assert!(
+            !circle_touches_lasso(
+                center,
+                0.0,
+                true,
+                0.05,
+                &rectangle(99.0, -1.0, 2.0, 2.0),
+                &mut GeometryBudget::new(),
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn lasso_respects_the_classic_arrow_notch() {
+        use thinoda_core::{ConnectorMarker, ConnectorMarkerKind, SheetRootMode};
+
+        let mut sheet = Sheet::new("Markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 0.1;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let scene = scene(&sheet);
+        assert_eq!(
+            lasso_hits(&scene, &rectangle(93.7, 2.9, 0.2, 0.2)).unwrap(),
+            vec![SceneHit::Object(id)]
+        );
+        assert!(
+            lasso_hits(&scene, &rectangle(94.1, 0.8, 0.2, 0.2))
+                .unwrap()
+                .is_empty()
         );
     }
 

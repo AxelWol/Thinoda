@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [xmind, freemind, opml]
+        target: [xmind, freemind, opml, drawio_import]
     env:
       CARGO_BUILD_JOBS: 2
     steps:
@@ -37,6 +37,8 @@ jobs:
           key: importer-${{ matrix.target }}
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Verify fuzz workspace lockfile
+        run: cargo metadata --locked --manifest-path fuzz/Cargo.toml --no-deps --format-version 1 > /dev/null
       - name: Run bounded sanitized campaign
         env:
           FUZZ_TARGET: ${{ matrix.target }}

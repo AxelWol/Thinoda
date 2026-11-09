@@ -32,7 +32,357 @@ fn board() -> (Sheet, TopicId, TopicId, TopicId) {
     (s, a, b, card)
 }
 
+#[test]
+fn board_positions_match_object_point_validation() {
+    for (point, valid) in [
+        (Vec2::new(-MAX_BOARD_COORDINATE, MAX_BOARD_COORDINATE), true),
+        (Vec2::new(MAX_BOARD_COORDINATE + 1.0, 0.0), false),
+        (Vec2::new(0.0, -MAX_BOARD_COORDINATE - 1.0), false),
+        (Vec2::new(f32::NAN, 0.0), false),
+        (Vec2::new(0.0, f32::INFINITY), false),
+    ] {
+        assert_eq!(valid_board_position(point), valid);
+        let object =
+            CanvasObject::ink(InkStroke::new(InkTool::Pen, Color::BLACK, 1.0, vec![point]));
+        assert_eq!(validate_object(&object).is_ok(), valid);
+    }
+}
+
 // ---- serde ------------------------------------------------------------------------------
+
+#[test]
+fn connector_markers_preserve_legacy_json_and_reject_conflicting_flags() {
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let legacy = serde_json::to_string(&connector).unwrap();
+    assert_eq!(
+        legacy,
+        r#"{"from":{"point":{"x":0.0,"y":0.0}},"to":{"point":{"x":100.0,"y":0.0}},"route":"straight","arrow_end":true,"width":2.0}"#
+    );
+    assert!(!legacy.contains("start_marker"));
+    assert!(!legacy.contains("end_marker"));
+    assert_eq!(
+        serde_json::from_str::<CanvasConnector>(&legacy).unwrap(),
+        connector
+    );
+
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    let encoded = serde_json::to_value(&connector).unwrap();
+    assert_eq!(
+        serde_json::from_value::<CanvasConnector>(encoded.clone()).unwrap(),
+        connector
+    );
+    validate_object(&CanvasObject::connector(connector.clone())).unwrap();
+    for (flag, marker) in [("arrow_start", "start_marker"), ("arrow_end", "end_marker")] {
+        let mut forged = encoded.clone();
+        forged[flag] = serde_json::json!(false);
+        assert!(
+            serde_json::from_value::<CanvasConnector>(forged)
+                .unwrap_err()
+                .to_string()
+                .contains("marker conflicts")
+        );
+        let mut forged = encoded.clone();
+        forged[marker]["unknown"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<CanvasConnector>(forged).is_err());
+    }
+
+    connector.set_arrow_start(false);
+    connector.set_arrow_end(false);
+    assert!(connector.start_marker.is_none());
+    assert!(connector.end_marker.is_none());
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    assert!(
+        validate_object(&CanvasObject::connector(connector))
+            .unwrap_err()
+            .contains("marker conflicts")
+    );
+}
+
+#[test]
+fn connector_marker_sizes_are_bounded_and_require_explicit_markers() {
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.start_marker_size = Some(0.0);
+    connector.end_marker_size = Some(MAX_CONNECTOR_MARKER_SIZE);
+    let encoded = serde_json::to_value(&connector).unwrap();
+    assert_eq!(
+        serde_json::from_value::<CanvasConnector>(encoded.clone()).unwrap(),
+        connector
+    );
+    validate_object(&CanvasObject::connector(connector.clone())).unwrap();
+
+    for (field, invalid) in [
+        ("start_marker_size", -0.01),
+        ("end_marker_size", MAX_CONNECTOR_MARKER_SIZE + 1.0),
+    ] {
+        let mut forged = encoded.clone();
+        forged[field] = serde_json::json!(invalid);
+        assert!(
+            serde_json::from_value::<CanvasConnector>(forged)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid connector marker size")
+        );
+    }
+    for invalid in [f32::NAN, f32::INFINITY, -1.0, 1000.0] {
+        let mut forged = connector.clone();
+        forged.end_marker_size = Some(invalid);
+        assert!(
+            validate_object(&CanvasObject::connector(forged))
+                .unwrap_err()
+                .contains("invalid marker size")
+        );
+    }
+    let mut forged = encoded;
+    forged["end_marker"] = serde_json::Value::Null;
+    assert!(
+        serde_json::from_value::<CanvasConnector>(forged)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid connector marker size")
+    );
+    connector.set_arrow_start(false);
+    connector.set_arrow_end(false);
+    assert!(connector.start_marker_size.is_none() && connector.end_marker_size.is_none());
+}
+
+#[test]
+fn connector_marker_fill_requires_explicit_markers_and_clears_with_arrows() {
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    assert!(
+        !serde_json::to_string(&connector)
+            .unwrap()
+            .contains("unfilled")
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.start_marker_unfilled = true;
+    connector.end_marker_unfilled = true;
+    let encoded = serde_json::to_value(&connector).unwrap();
+    assert_eq!(
+        serde_json::from_value::<CanvasConnector>(encoded.clone()).unwrap(),
+        connector
+    );
+    validate_object(&CanvasObject::connector(connector.clone())).unwrap();
+    for (marker, fill) in [
+        ("start_marker", "start_marker_unfilled"),
+        ("end_marker", "end_marker_unfilled"),
+    ] {
+        let mut forged = encoded.clone();
+        forged[marker] = serde_json::Value::Null;
+        assert!(
+            serde_json::from_value::<CanvasConnector>(forged)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid connector marker fill")
+        );
+        let mut forged = encoded.clone();
+        forged[fill] = serde_json::json!("false");
+        assert!(serde_json::from_value::<CanvasConnector>(forged).is_err());
+    }
+    let mut invalid = connector.clone();
+    invalid.end_marker = None;
+    assert!(
+        validate_object(&CanvasObject::connector(invalid))
+            .unwrap_err()
+            .contains("invalid marker fill")
+    );
+    connector.set_arrow_start(false);
+    connector.set_arrow_end(false);
+    assert!(!connector.start_marker_unfilled && !connector.end_marker_unfilled);
+}
+
+#[test]
+fn connector_waypoint_limits_and_edits_are_atomic() {
+    let mut connector =
+        CanvasConnector::new(Endpoint::Point(Vec2::ZERO), Endpoint::Point(Vec2::ZERO));
+    let default_json = serde_json::to_string(&connector).unwrap();
+    assert!(!default_json.contains("waypoints"));
+
+    connector.waypoints = vec![Vec2::ZERO; MAX_CONNECTOR_WAYPOINTS].into();
+    validate_object(&CanvasObject::connector(connector.clone())).unwrap();
+    connector.waypoints = vec![Vec2::ZERO; MAX_CONNECTOR_WAYPOINTS + 1].into();
+    assert!(
+        validate_object(&CanvasObject::connector(connector.clone()))
+            .unwrap_err()
+            .contains("waypoints")
+    );
+    connector.waypoints = vec![Vec2::new(f32::NAN, 0.0)].into();
+    assert!(
+        validate_object(&CanvasObject::connector(connector.clone()))
+            .unwrap_err()
+            .contains("invalid waypoint")
+    );
+
+    let mut sheet = Sheet::new("Limits", "Root");
+    connector.waypoints = vec![Vec2::ZERO; MAX_CONNECTOR_WAYPOINTS].into();
+    for _ in 0..MAX_TOTAL_CONNECTOR_WAYPOINTS / MAX_CONNECTOR_WAYPOINTS {
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector.clone()))
+            .unwrap();
+    }
+    connector.waypoints =
+        vec![Vec2::ZERO; MAX_TOTAL_CONNECTOR_WAYPOINTS % MAX_CONNECTOR_WAYPOINTS].into();
+    let last = sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    assert_eq!(
+        sheet.canvas.connector_waypoint_count(),
+        MAX_TOTAL_CONNECTOR_WAYPOINTS
+    );
+    sheet.validate().unwrap();
+    let before = sheet.canvas.clone();
+    connector.waypoints = vec![Vec2::ZERO].into();
+    assert!(
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap_err()
+            .contains("waypoints per sheet")
+    );
+    assert!(
+        sheet
+            .update_canvas_object(last, |object| {
+                if let CanvasObjectKind::Connector(c) = &mut object.kind {
+                    let mut points = c.waypoints.to_vec();
+                    points.push(Vec2::ZERO);
+                    c.waypoints = points.into();
+                }
+            })
+            .unwrap_err()
+            .contains("waypoints per sheet")
+    );
+    assert_eq!(sheet.canvas, before);
+}
+
+#[test]
+fn connector_waypoints_follow_move_rotation_and_undo() {
+    let mut sheet = Sheet::new("Waypoints", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 0.0)),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.waypoints = vec![Vec2::new(20.0, 50.0), Vec2::new(80.0, 50.0)].into();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    let mut doc = Document::new(crate::Workbook::new(sheet));
+    doc.move_canvas_objects(&[id], Vec2::new(10.0, 30.0))
+        .unwrap();
+    let CanvasObjectKind::Connector(moved) = &doc.sheet().canvas.object(id).unwrap().kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(
+        moved.waypoints.as_ref(),
+        &[Vec2::new(30.0, 80.0), Vec2::new(90.0, 80.0)]
+    );
+    assert_eq!(moved.from, Endpoint::Point(Vec2::new(10.0, 30.0)));
+    assert!(doc.undo());
+    assert_eq!(
+        doc.sheet().canvas.object(id).unwrap().kind,
+        CanvasObjectKind::Connector(connector)
+    );
+
+    doc.edit_sheet("Rotate connector", |sheet| {
+        sheet
+            .rotate_board_members(&[BoardMember::Object(id)], Vec2::ZERO, 90.0)
+            .map_err(crate::EditError::Invalid)
+    })
+    .unwrap();
+    let CanvasObjectKind::Connector(rotated) = &doc.sheet().canvas.object(id).unwrap().kind else {
+        panic!("expected connector");
+    };
+    assert!((rotated.waypoints[0] - Vec2::new(-50.0, 20.0)).length() < 0.001);
+    assert!((rotated.waypoints[1] - Vec2::new(-50.0, 80.0)).length() < 0.001);
+    assert!(doc.undo());
+
+    let mut near_limit =
+        CanvasConnector::new(Endpoint::Point(Vec2::ZERO), Endpoint::Point(Vec2::ZERO));
+    near_limit.waypoints = vec![Vec2::new(MAX_BOARD_COORDINATE, 0.0)].into();
+    let mut sheet = Sheet::new("Limit", "Root");
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(near_limit))
+        .unwrap();
+    let before = sheet.canvas.clone();
+    assert!(
+        sheet
+            .move_canvas_objects(&[id], Vec2::new(1.0, 0.0))
+            .is_err()
+    );
+    assert_eq!(sheet.canvas, before);
+}
+
+#[test]
+fn deleting_a_waypoint_connector_keeps_edge_attachments_on_its_path() {
+    let mut sheet = Sheet::new("Attachments", "");
+    let mut target = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(250.0, 100.0)),
+    );
+    target.waypoints = vec![Vec2::new(200.0, 0.0), Vec2::new(200.0, 100.0)].into();
+    let target = sheet
+        .add_canvas_object(CanvasObject::connector(target))
+        .unwrap();
+    let attached = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(300.0, 200.0)),
+        )))
+        .unwrap();
+    let expected = Endpoint::Point(Vec2::new(175.0, 0.0));
+
+    let before = sheet.clone();
+    sheet.canvas.objects.retain(|object| object.id != target);
+    assert_eq!(sheet.fix_dangling_endpoints(&before), Ok(1));
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(attached).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, expected);
+
+    let mut document = Document::new(crate::Workbook::new(before));
+    document.remove_canvas_objects(&[target]).unwrap();
+    let CanvasObjectKind::Connector(connector) =
+        &document.sheet().canvas.object(attached).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, expected);
+    assert!(document.undo());
+    let CanvasObjectKind::Connector(connector) =
+        &document.sheet().canvas.object(attached).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, Endpoint::Object(target));
+}
 
 #[test]
 fn zone_membership_transfers_mixed_members_and_retains_empty_zones_with_undo() {
@@ -412,6 +762,244 @@ fn every_shape_kind_round_trips_and_has_geometry() {
     }
 }
 
+#[test]
+fn double_ellipse_uses_absolute_insets_for_outline_and_label() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    for (stroke, margin, expected) in [(2.0, None, 5.0), (7.0, None, 10.0), (2.0, Some(8.5), 8.5)] {
+        let geometry =
+            shape_geometry_with_style(ShapeKind::DoubleEllipse, frame, 0.0, None, stroke, margin);
+        assert_eq!(geometry.details.len(), 1);
+        assert_eq!(geometry.details[0].first(), geometry.details[0].last());
+        let bounds = points_bounds(&geometry.details[0]).unwrap();
+        let expected_rect = rect(
+            10.0 + expected,
+            20.0 + expected,
+            100.0 - 2.0 * expected,
+            60.0 - 2.0 * expected,
+        );
+        assert!((bounds.min - expected_rect.min).length() < 0.001);
+        assert!((bounds.size - expected_rect.size).length() < 0.001);
+        assert_eq!(
+            shape_label_rect_with_style(ShapeKind::DoubleEllipse, frame, stroke, margin),
+            expected_rect
+        );
+
+        let rotated =
+            shape_geometry_with_style(ShapeKind::DoubleEllipse, frame, 90.0, None, stroke, margin);
+        for (original, actual) in geometry.details[0].iter().zip(&rotated.details[0]) {
+            assert!((*actual - rotate_around(*original, frame.center(), 90.0)).length() < 0.001);
+        }
+    }
+
+    let small = rect(0.0, 0.0, 10.0, 5.0);
+    assert_eq!(double_ellipse_inset(small, 2.0, None), 1.0);
+    let collapsed =
+        shape_geometry_with_style(ShapeKind::DoubleEllipse, frame, 0.0, None, 2.0, Some(30.0));
+    assert!(collapsed.details.is_empty());
+    assert_eq!(
+        shape_label_rect_with_style(ShapeKind::DoubleEllipse, frame, 2.0, Some(30.0)).center(),
+        frame.center()
+    );
+}
+
+#[test]
+fn double_ellipse_inset_is_optional_and_validated() {
+    let mut object = CanvasObject::shape(ShapeKind::DoubleEllipse, rect(0.0, 0.0, 100.0, 60.0));
+    assert!(
+        !serde_json::to_string(&object)
+            .unwrap()
+            .contains("double_ellipse_margin")
+    );
+    object.double_ellipse_margin = Some(8.5);
+    validate_object(&object).unwrap();
+    assert_eq!(
+        serde_json::from_str::<CanvasObject>(&serde_json::to_string(&object).unwrap()).unwrap(),
+        object
+    );
+    for margin in [-1.0, f32::NAN, f32::INFINITY, MAX_BOARD_COORDINATE + 1.0] {
+        object.double_ellipse_margin = Some(margin);
+        assert!(validate_object(&object).is_err(), "{margin}");
+    }
+    object.double_ellipse_margin = Some(8.5);
+    object.kind = CanvasObjectKind::Shape {
+        shape: ShapeKind::Ellipse,
+        label: String::new(),
+    };
+    assert!(validate_object(&object).is_err());
+}
+
+#[test]
+fn adjustable_rectangle_rounding_is_absolute_and_validated() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    let rounding = ShapeRounding {
+        radius: 10.0,
+        stencil: DrawioRectangleStencil::Forms,
+    };
+    let outline = shape_geometry_with_rounding(ShapeKind::Rectangle, frame, 0.0, Some(rounding));
+    assert!((outline.outline[0] - Vec2::new(100.0, 20.0)).length() < 0.001);
+    assert!((outline.outline[8] - Vec2::new(110.0, 30.0)).length() < 0.001);
+
+    let resized = rect(10.0, 20.0, 200.0, 60.0);
+    let outline = shape_geometry_with_rounding(ShapeKind::Rectangle, resized, 0.0, Some(rounding));
+    assert!((outline.outline[0] - Vec2::new(200.0, 20.0)).length() < 0.001);
+    assert!((outline.outline[8] - Vec2::new(210.0, 30.0)).length() < 0.001);
+
+    let clamped = ShapeRounding {
+        radius: 80.0,
+        ..rounding
+    };
+    let outline = shape_geometry_with_rounding(ShapeKind::Rectangle, frame, 0.0, Some(clamped));
+    assert!((outline.outline[0] - Vec2::new(60.0, 20.0)).length() < 0.001);
+    assert!((outline.outline[8] - Vec2::new(110.0, 50.0)).length() < 0.001);
+    let square = ShapeRounding {
+        radius: 0.0,
+        ..rounding
+    };
+    assert_eq!(
+        shape_geometry_with_rounding(ShapeKind::RoundedRectangle, frame, 0.0, Some(square)),
+        shape_geometry(ShapeKind::Rectangle, frame, 0.0)
+    );
+
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    assert!(!serde_json::to_string(&object).unwrap().contains("rounding"));
+    object.rounding = Some(rounding);
+    validate_object(&object).unwrap();
+    assert_eq!(
+        serde_json::from_str::<CanvasObject>(&serde_json::to_string(&object).unwrap()).unwrap(),
+        object
+    );
+    for radius in [
+        -1.0,
+        0.5,
+        f32::NAN,
+        f32::INFINITY,
+        MAX_BOARD_COORDINATE + 1.0,
+    ] {
+        object.rounding = Some(ShapeRounding { radius, ..rounding });
+        assert!(validate_object(&object).is_err(), "{radius}");
+    }
+    object.rounding = Some(rounding);
+    object.kind = CanvasObjectKind::Shape {
+        shape: ShapeKind::Ellipse,
+        label: String::new(),
+    };
+    assert!(validate_object(&object).is_err());
+}
+
+#[test]
+fn rectangle_sides_are_optional_and_restricted_to_square_rectangles() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+    assert!(
+        !serde_json::to_string(&object)
+            .unwrap()
+            .contains("rectangle_sides")
+    );
+    let sides = RectangleSides {
+        top: true,
+        right: false,
+        bottom: true,
+        left: false,
+    };
+    object.rectangle_sides = Some(sides);
+    validate_object(&object).unwrap();
+    assert_eq!(
+        serde_json::from_str::<CanvasObject>(&serde_json::to_string(&object).unwrap()).unwrap(),
+        object
+    );
+
+    let mut malformed = serde_json::to_value(&object).unwrap();
+    malformed["rectangle_sides"]["top"] = serde_json::json!("true");
+    assert!(serde_json::from_value::<CanvasObject>(malformed).is_err());
+    let mut missing = serde_json::to_value(&object).unwrap();
+    missing["rectangle_sides"]
+        .as_object_mut()
+        .unwrap()
+        .remove("top");
+    assert!(serde_json::from_value::<CanvasObject>(missing).is_err());
+
+    object.rounding = Some(ShapeRounding {
+        radius: 0.0,
+        stencil: DrawioRectangleStencil::Mockup,
+    });
+    assert!(validate_object(&object).is_err());
+    object.rounding = None;
+    object.kind = CanvasObjectKind::Shape {
+        shape: ShapeKind::Ellipse,
+        label: String::new(),
+    };
+    assert!(validate_object(&object).is_err());
+}
+
+#[test]
+fn rectangle_side_paths_cover_each_visible_edge_once_at_any_rotation() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    for rotation in [0.0, 90.0, 37.0] {
+        let corners = rotated_corners(frame, rotation);
+        for mask in 0..16 {
+            let sides = RectangleSides {
+                top: mask & 1 != 0,
+                right: mask & 2 != 0,
+                bottom: mask & 4 != 0,
+                left: mask & 8 != 0,
+            };
+            let paths = rectangle_side_paths(frame, rotation, sides);
+            let mut observed = [0; 4];
+            for path in &paths {
+                assert!(path.points.len() >= 2);
+                for segment in path.points.windows(2) {
+                    let index = (0..4)
+                        .find(|&index| {
+                            segment[0] == corners[index] && segment[1] == corners[(index + 1) % 4]
+                        })
+                        .unwrap();
+                    observed[index] += 1;
+                }
+            }
+            assert_eq!(
+                observed,
+                [sides.top, sides.right, sides.bottom, sides.left].map(u32::from),
+                "mask {mask:04b}, rotation {rotation}"
+            );
+            if mask == 15 {
+                assert_eq!(
+                    paths[0].points,
+                    vec![corners[0], corners[1], corners[2], corners[3], corners[0]]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn rectangle_side_paths_keep_drawio_start_and_end_separate_on_collapsed_frames() {
+    for frame in [
+        rect(10.0, 20.0, 0.0, 60.0),
+        rect(10.0, 20.0, 100.0, 0.0),
+        rect(10.0, 20.0, 0.0, 0.0),
+    ] {
+        let corners = rotated_corners(frame, 0.0);
+        let paths = rectangle_side_paths(frame, 0.0, RectangleSides::default());
+        assert_eq!(
+            paths[0].points,
+            vec![corners[0], corners[1], corners[2], corners[3], corners[0]]
+        );
+        let paths = rectangle_side_paths(
+            frame,
+            0.0,
+            RectangleSides {
+                top: true,
+                right: false,
+                bottom: false,
+                left: true,
+            },
+        );
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0].points, vec![corners[0], corners[1]]);
+        assert_eq!(paths[1].points, vec![corners[3], corners[0]]);
+    }
+}
+
 // ---- ids --------------------------------------------------------------------------------
 
 #[test]
@@ -564,7 +1152,11 @@ fn legacy_hidden_anchor_title_is_preserved_but_not_editable_or_content() {
     let content = sheet.add_floating("Visible", Vec2::ZERO);
     sheet.validate().unwrap();
     assert_eq!(sheet.content_ids_ordered(), vec![content]);
-    assert!(crate::clipboard::copy_topics(&sheet, &[anchor]).is_none());
+    assert!(
+        crate::clipboard::copy_topics(&sheet, &[anchor])
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         sheet.set_title(anchor, "Changed"),
         Err(crate::EditError::RootNotAllowed)
@@ -1832,7 +2424,9 @@ fn allocator_recovers_from_maximum_deserialized_ids_without_collisions() {
 #[test]
 fn raw_detach_reparent_and_clipboard_do_not_leave_card_memberships() {
     let (mut sheet, card, object, group) = mixed_group();
-    let payload = crate::clipboard::copy_topics(&sheet, &[card]).unwrap();
+    let payload = crate::clipboard::copy_topics(&sheet, &[card])
+        .unwrap()
+        .unwrap();
     let mut copied = payload.subtrees[0].clone();
     copied.reassign_ids(&mut sheet);
     let duplicate = sheet.attach_floating(Vec2::new(600.0, 0.0), copied);
@@ -1986,4 +2580,148 @@ fn hidden_root_is_rejected_for_imported_fim_sheets() {
     let json = serde_json::to_string(&crate::Workbook::new(sheet)).unwrap();
     let restored: crate::Workbook = serde_json::from_str(&json).unwrap();
     assert!(restored.validate().unwrap_err().contains("FIM"));
+}
+#[test]
+fn fixed_connector_ports_validate_targets_and_preserve_the_visible_end_on_deletion() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let shape = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(100.0, 100.0), Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let port = ConnectorPort {
+        position: Vec2::new(1.0, 0.25),
+        offset: Vec2::ZERO,
+        perimeter: false,
+    };
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(shape),
+        Endpoint::Point(Vec2::new(300.0, 100.0)),
+    );
+    connector.from_port = Some(port);
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    sheet.validate().unwrap();
+
+    for bad in [
+        ConnectorPort {
+            position: Vec2::new(-0.1, 0.5),
+            ..port
+        },
+        ConnectorPort {
+            position: Vec2::new(f32::NAN, 0.5),
+            ..port
+        },
+        ConnectorPort {
+            offset: Vec2::new(MAX_BOARD_COORDINATE + 1.0, 0.0),
+            ..port
+        },
+    ] {
+        let mut invalid = connector.clone();
+        invalid.from_port = Some(bad);
+        assert!(
+            sheet
+                .add_canvas_object(CanvasObject::connector(invalid))
+                .is_err()
+        );
+    }
+    let mut detached = connector.clone();
+    detached.from = Endpoint::Point(Vec2::ZERO);
+    assert!(
+        sheet
+            .add_canvas_object(CanvasObject::connector(detached))
+            .is_err()
+    );
+    let mut attached_to_edge = connector;
+    attached_to_edge.from = Endpoint::Object(edge);
+    assert!(
+        sheet
+            .add_canvas_object(CanvasObject::connector(attached_to_edge))
+            .is_err()
+    );
+    let mut malformed = sheet.clone();
+    let other_edge = malformed
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(50.0, 0.0)),
+        )))
+        .unwrap();
+    if let CanvasObjectKind::Connector(connector) =
+        &mut malformed.canvas.object_mut(other_edge).unwrap().kind
+    {
+        connector.from = Endpoint::Object(edge);
+        connector.from_port = Some(port);
+    }
+    assert!(malformed.validate().unwrap_err().contains("not a shape"));
+
+    sheet.remove_canvas_objects(&[shape]).unwrap();
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(edge).unwrap().kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(200.0, 115.0)));
+    assert_eq!(connector.from_port, None);
+    sheet.validate().unwrap();
+}
+
+#[test]
+fn deleting_an_out_of_range_fixed_port_is_atomic() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let shape = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(
+                Vec2::new(MAX_BOARD_COORDINATE - 100.0, 0.0),
+                Vec2::new(100.0, 60.0),
+            ),
+        ))
+        .unwrap();
+    let mut connector = CanvasConnector::new(Endpoint::Object(shape), Endpoint::Point(Vec2::ZERO));
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.5),
+        offset: Vec2::new(1.0, 0.0),
+        perimeter: false,
+    });
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let before = sheet.clone();
+    assert!(sheet.remove_canvas_objects(&[shape]).is_err());
+    assert_eq!(sheet, before);
+}
+
+#[test]
+fn deleting_a_topic_with_an_out_of_range_fixed_port_is_atomic() {
+    let mut sheet = Sheet::new("Ports", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let card = sheet
+        .add_card(
+            "Target",
+            Vec2::new(MAX_BOARD_COORDINATE - 50.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(100.0, 60.0)),
+        )
+        .unwrap();
+    let mut connector = CanvasConnector::new(Endpoint::Topic(card), Endpoint::Point(Vec2::ZERO));
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.5),
+        offset: Vec2::new(1.0, 0.0),
+        perimeter: false,
+    });
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    sheet.validate().unwrap();
+    let before = sheet.clone();
+    assert!(sheet.remove_topics(&[card]).is_err());
+    assert_eq!(sheet, before);
+
+    let workbook = crate::Workbook::new(before);
+    let mut doc = crate::Document::new(workbook.clone());
+    assert!(
+        doc.edit_sheet("Delete", |sheet| sheet.remove_topics(&[card]))
+            .is_err()
+    );
+    assert_eq!(doc.workbook(), &workbook);
+    assert!(!doc.can_undo());
 }

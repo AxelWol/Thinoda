@@ -5,7 +5,11 @@ use crate::{
     fs::{self, EntryKind, Lock, atomic_write},
     unix_seconds,
 };
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer},
+    ser::SerializeTuple,
+};
 use std::{
     collections::BTreeMap,
     io,
@@ -29,21 +33,530 @@ pub struct SnapshotMeta {
 }
 
 /// On-disk envelope; callers can serialize off the UI thread and queue the bytes.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Snapshot {
     pub meta: SnapshotMeta,
     pub workbook: Workbook,
+    /// Application-owned, versioned pending-ink data, if present.
+    pub pending_ink: Option<String>,
+}
+
+const INLINE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INLINE-1";
+const WAYPOINT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-WAYPOINTS-1";
+const INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-1";
+const MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-1";
+const MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-1";
+const EXTENDED_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-2";
+const EXTENDED_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-2";
+const SIZED_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-3";
+const SIZED_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-3";
+const FILLED_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-4";
+const FILLED_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-4";
+const DIAMOND_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-5";
+const DIAMOND_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-5";
+const OVAL_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-6";
+const OVAL_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-6";
+const HALF_CIRCLE_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-7";
+const HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-7";
+const BAR_MARKER_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKERS-8";
+const BAR_MARKER_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKERS-8";
+const ROUNDING_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-ROUNDING-1";
+const ROUNDING_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-ROUNDING-1";
+const RECTANGLE_SIDES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-RECTANGLE-SIDES-1";
+const RECTANGLE_SIDES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-RECTANGLE-SIDES-1";
+const DOUBLE_ELLIPSE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DOUBLE-ELLIPSE-1";
+const DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DOUBLE-ELLIPSE-1";
+const FIXED_PORT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-FIXED-PORTS-1";
+const FIXED_PORT_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-FIXED-PORTS-1";
+
+/// Bound the transient input envelope separately from the workbook.
+pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
+
+struct BorrowedWorkbook<'a> {
+    workbook: &'a Workbook,
+    pending_ink: Option<&'a str>,
+}
+
+impl Serialize for BorrowedWorkbook<'_> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(pending_ink) = self.pending_ink else {
+            return serialize_workbook(self.workbook, serializer);
+        };
+        if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
+            return Err(serde::ser::Error::custom("invalid pending ink size"));
+        }
+        let mut tuple = serializer.serialize_tuple(3)?;
+        tuple.serialize_element(if self.workbook.has_fixed_connector_ports() {
+            FIXED_PORT_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_double_ellipses() {
+            DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rectangle_sides() {
+            RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_shape_rounding() {
+            ROUNDING_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_bar_connector_markers() {
+            BAR_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_half_circle_connector_markers() {
+            HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_oval_connector_markers() {
+            OVAL_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_diamond_connector_markers() {
+            DIAMOND_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_marker_fills() {
+            FILLED_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_marker_sizes() {
+            SIZED_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_extended_connector_markers() {
+            EXTENDED_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_markers() {
+            MARKER_INK_WORKBOOK_VERSION
+        } else {
+            INK_WORKBOOK_VERSION
+        })?;
+        tuple.serialize_element(self.workbook)?;
+        tuple.serialize_element(pending_ink)?;
+        tuple.end()
+    }
+}
+
+#[derive(Serialize)]
+struct BorrowedSnapshot<'a> {
+    meta: &'a SnapshotMeta,
+    workbook: BorrowedWorkbook<'a>,
+}
+
+impl Serialize for Snapshot {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        BorrowedSnapshot {
+            meta: &self.meta,
+            workbook: BorrowedWorkbook {
+                workbook: &self.workbook,
+                pending_ink: self.pending_ink.as_deref(),
+            },
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Snapshot {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct StoredSnapshot {
+            meta: SnapshotMeta,
+            #[serde(deserialize_with = "deserialize_workbook")]
+            workbook: SnapshotWorkbook,
+        }
+
+        let stored = StoredSnapshot::deserialize(deserializer)?;
+        Ok(Self {
+            meta: stored.meta,
+            workbook: stored.workbook.workbook,
+            pending_ink: stored.workbook.pending_ink,
+        })
+    }
+}
+
+struct SnapshotWorkbook {
+    workbook: Workbook,
+    pending_ink: Option<String>,
+}
+
+fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let version = if workbook.has_fixed_connector_ports() {
+        FIXED_PORT_WORKBOOK_VERSION
+    } else if workbook.has_double_ellipses() {
+        DOUBLE_ELLIPSE_WORKBOOK_VERSION
+    } else if workbook.has_rectangle_sides() {
+        RECTANGLE_SIDES_WORKBOOK_VERSION
+    } else if workbook.has_shape_rounding() {
+        ROUNDING_WORKBOOK_VERSION
+    } else if workbook.has_bar_connector_markers() {
+        BAR_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_half_circle_connector_markers() {
+        HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_oval_connector_markers() {
+        OVAL_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_diamond_connector_markers() {
+        DIAMOND_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_connector_marker_fills() {
+        FILLED_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_connector_marker_sizes() {
+        SIZED_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_extended_connector_markers() {
+        EXTENDED_MARKER_WORKBOOK_VERSION
+    } else if workbook.has_connector_markers() {
+        MARKER_WORKBOOK_VERSION
+    } else if workbook.has_connector_waypoints() {
+        WAYPOINT_WORKBOOK_VERSION
+    } else if workbook.has_inline_text() {
+        INLINE_WORKBOOK_VERSION
+    } else {
+        return workbook.serialize(serializer);
+    };
+    let mut tuple = serializer.serialize_tuple(2)?;
+    tuple.serialize_element(version)?;
+    tuple.serialize_element(workbook)?;
+    tuple.end()
+}
+
+fn deserialize_workbook<'de, D>(deserializer: D) -> std::result::Result<SnapshotWorkbook, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct WorkbookVisitor;
+    impl<'de> Visitor<'de> for WorkbookVisitor {
+        type Value = SnapshotWorkbook;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a legacy workbook or a versioned recovery workbook")
+        }
+
+        fn visit_map<A>(self, map: A) -> std::result::Result<SnapshotWorkbook, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_fixed_connector_ports() {
+                return Err(A::Error::custom(
+                    "fixed connector ports require a versioned recovery workbook",
+                ));
+            }
+            if workbook.has_double_ellipses() {
+                return Err(A::Error::custom(
+                    "double ellipses require a versioned recovery workbook",
+                ));
+            }
+            if workbook.has_rectangle_sides() {
+                return Err(A::Error::custom(
+                    "rectangle outline sides require a versioned recovery workbook",
+                ));
+            }
+            if workbook.has_shape_rounding() {
+                return Err(A::Error::custom(
+                    "shape rounding requires a versioned recovery workbook",
+                ));
+            }
+            if workbook.has_connector_markers() {
+                return Err(A::Error::custom(
+                    "connector markers require a versioned recovery workbook",
+                ));
+            }
+            if workbook.has_connector_waypoints() {
+                return Err(A::Error::custom(
+                    "connector waypoints require a versioned recovery workbook",
+                ));
+            }
+            Ok(SnapshotWorkbook {
+                workbook,
+                pending_ink: None,
+            })
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<SnapshotWorkbook, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let version: String = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::custom("missing recovery workbook version"))?;
+            if version != INLINE_WORKBOOK_VERSION
+                && version != WAYPOINT_WORKBOOK_VERSION
+                && version != INK_WORKBOOK_VERSION
+                && version != MARKER_WORKBOOK_VERSION
+                && version != MARKER_INK_WORKBOOK_VERSION
+                && version != EXTENDED_MARKER_WORKBOOK_VERSION
+                && version != EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                && version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
+                && version != FILLED_MARKER_WORKBOOK_VERSION
+                && version != FILLED_MARKER_INK_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                && version != OVAL_MARKER_WORKBOOK_VERSION
+                && version != OVAL_MARKER_INK_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && version != RECTANGLE_SIDES_WORKBOOK_VERSION
+                && version != RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+                && version != DOUBLE_ELLIPSE_WORKBOOK_VERSION
+                && version != DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+                && version != FIXED_PORT_WORKBOOK_VERSION
+                && version != FIXED_PORT_INK_WORKBOOK_VERSION
+            {
+                return Err(A::Error::custom(format!(
+                    "unsupported recovery workbook version {version}"
+                )));
+            }
+            let workbook: Workbook = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != FIXED_PORT_WORKBOOK_VERSION
+                && version != FIXED_PORT_INK_WORKBOOK_VERSION
+                && workbook.has_fixed_connector_ports()
+            {
+                return Err(A::Error::custom(
+                    "fixed connector ports require a port-aware recovery workbook",
+                ));
+            }
+            let version = match version.as_str() {
+                FIXED_PORT_WORKBOOK_VERSION => DOUBLE_ELLIPSE_WORKBOOK_VERSION,
+                FIXED_PORT_INK_WORKBOOK_VERSION => DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION,
+                version => version,
+            };
+            if version != DOUBLE_ELLIPSE_WORKBOOK_VERSION
+                && version != DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+                && workbook.has_double_ellipses()
+            {
+                return Err(A::Error::custom(
+                    "double ellipses require a double-ellipse-aware recovery workbook",
+                ));
+            }
+            let version = match version {
+                DOUBLE_ELLIPSE_WORKBOOK_VERSION => RECTANGLE_SIDES_WORKBOOK_VERSION,
+                DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION => RECTANGLE_SIDES_INK_WORKBOOK_VERSION,
+                version => version,
+            };
+            if version != RECTANGLE_SIDES_WORKBOOK_VERSION
+                && version != RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+                && workbook.has_rectangle_sides()
+            {
+                return Err(A::Error::custom(
+                    "rectangle outline sides require a partial-rectangle-aware recovery workbook",
+                ));
+            }
+            // These envelopes also support every earlier rounding-era feature.
+            let version = match version {
+                RECTANGLE_SIDES_WORKBOOK_VERSION => ROUNDING_WORKBOOK_VERSION,
+                RECTANGLE_SIDES_INK_WORKBOOK_VERSION => ROUNDING_INK_WORKBOOK_VERSION,
+                version => version,
+            };
+            if version != MARKER_WORKBOOK_VERSION
+                && version != MARKER_INK_WORKBOOK_VERSION
+                && version != EXTENDED_MARKER_WORKBOOK_VERSION
+                && version != EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                && version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
+                && version != FILLED_MARKER_WORKBOOK_VERSION
+                && version != FILLED_MARKER_INK_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                && version != OVAL_MARKER_WORKBOOK_VERSION
+                && version != OVAL_MARKER_INK_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "connector markers require a marker-aware recovery workbook",
+                ));
+            }
+            if version != EXTENDED_MARKER_WORKBOOK_VERSION
+                && version != EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                && version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
+                && version != FILLED_MARKER_WORKBOOK_VERSION
+                && version != FILLED_MARKER_INK_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                && version != OVAL_MARKER_WORKBOOK_VERSION
+                && version != OVAL_MARKER_INK_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_extended_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "classic and thin connector markers require an extended-marker recovery workbook",
+                ));
+            }
+            if version != SIZED_MARKER_WORKBOOK_VERSION
+                && version != SIZED_MARKER_INK_WORKBOOK_VERSION
+                && version != FILLED_MARKER_WORKBOOK_VERSION
+                && version != FILLED_MARKER_INK_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                && version != OVAL_MARKER_WORKBOOK_VERSION
+                && version != OVAL_MARKER_INK_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_connector_marker_sizes()
+            {
+                return Err(A::Error::custom(
+                    "connector marker sizes require a size-aware recovery workbook",
+                ));
+            }
+            if version != FILLED_MARKER_WORKBOOK_VERSION
+                && version != FILLED_MARKER_INK_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                && version != OVAL_MARKER_WORKBOOK_VERSION
+                && version != OVAL_MARKER_INK_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_connector_marker_fills()
+            {
+                return Err(A::Error::custom(
+                    "connector marker fills require a fill-aware recovery workbook",
+                ));
+            }
+            if version != DIAMOND_MARKER_WORKBOOK_VERSION
+                && version != DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                && version != OVAL_MARKER_WORKBOOK_VERSION
+                && version != OVAL_MARKER_INK_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_diamond_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "diamond connector markers require a diamond-aware recovery workbook",
+                ));
+            }
+            if version != OVAL_MARKER_WORKBOOK_VERSION
+                && version != OVAL_MARKER_INK_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_oval_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "oval connector markers require an oval-aware recovery workbook",
+                ));
+            }
+            if version != HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                && version != HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                && version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_half_circle_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "half-circle connector markers require a half-circle-aware recovery workbook",
+                ));
+            }
+            if version != BAR_MARKER_WORKBOOK_VERSION
+                && version != BAR_MARKER_INK_WORKBOOK_VERSION
+                && version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_bar_connector_markers()
+            {
+                return Err(A::Error::custom(
+                    "bar connector markers require a bar-aware recovery workbook",
+                ));
+            }
+            if version != ROUNDING_WORKBOOK_VERSION
+                && version != ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_shape_rounding()
+            {
+                return Err(A::Error::custom(
+                    "shape rounding requires a rounding-aware recovery workbook",
+                ));
+            }
+            if version == INLINE_WORKBOOK_VERSION && workbook.has_connector_waypoints() {
+                return Err(A::Error::custom(
+                    "connector waypoints require a waypoint-aware recovery workbook",
+                ));
+            }
+            let pending_ink = if version == INK_WORKBOOK_VERSION
+                || version == MARKER_INK_WORKBOOK_VERSION
+                || version == EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                || version == SIZED_MARKER_INK_WORKBOOK_VERSION
+                || version == FILLED_MARKER_INK_WORKBOOK_VERSION
+                || version == DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                || version == OVAL_MARKER_INK_WORKBOOK_VERSION
+                || version == HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                || version == BAR_MARKER_INK_WORKBOOK_VERSION
+                || version == ROUNDING_INK_WORKBOOK_VERSION
+            {
+                let pending_ink: String = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing pending ink"))?;
+                if pending_ink.is_empty() || pending_ink.len() > MAX_PENDING_INK_BYTES {
+                    return Err(A::Error::custom("invalid pending ink size"));
+                }
+                Some(pending_ink)
+            } else {
+                None
+            };
+            if seq.next_element::<IgnoredAny>()?.is_some() {
+                return Err(A::Error::custom("unexpected recovery workbook data"));
+            }
+            Ok(SnapshotWorkbook {
+                workbook,
+                pending_ink,
+            })
+        }
+    }
+
+    deserializer.deserialize_any(WorkbookVisitor)
 }
 
 impl Snapshot {
     /// Serialize a recovery envelope, without writing or taking a recovery lock.
     pub fn to_bytes(meta: SnapshotMeta, workbook: &Workbook) -> Result<Vec<u8>> {
-        #[derive(Serialize)]
-        struct Borrowed<'a> {
-            meta: SnapshotMeta,
-            workbook: &'a Workbook,
-        }
-        Ok(serde_json::to_vec(&Borrowed { meta, workbook })?)
+        Self::to_bytes_with_optional_ink(meta, workbook, None)
+    }
+
+    /// Serialize a snapshot whose application-owned ink data must not be discarded
+    /// by readers that understand only older workbook versions.
+    pub fn to_bytes_with_pending_ink(
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+        pending_ink: &str,
+    ) -> Result<Vec<u8>> {
+        Self::to_bytes_with_optional_ink(meta, workbook, Some(pending_ink))
+    }
+
+    fn to_bytes_with_optional_ink(
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+        pending_ink: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        Ok(serde_json::to_vec(&BorrowedSnapshot {
+            meta: &meta,
+            workbook: BorrowedWorkbook {
+                workbook,
+                pending_ink,
+            },
+        })?)
     }
 }
 
@@ -196,8 +709,24 @@ impl RecoveryManager {
         meta: SnapshotMeta,
         workbook: &Workbook,
     ) -> Result<()> {
-        check_key(doc_key)?;
         let bytes = Snapshot::to_bytes(meta, workbook)?;
+        self.persist_snapshot_bytes(doc_key, &bytes)
+    }
+
+    /// Persist a complete ink-aware handoff without queuing an abandoned write.
+    pub fn persist_snapshot_with_pending_ink(
+        &self,
+        doc_key: &str,
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+        pending_ink: &str,
+    ) -> Result<()> {
+        let bytes = Snapshot::to_bytes_with_pending_ink(meta, workbook, pending_ink)?;
+        self.persist_snapshot_bytes(doc_key, &bytes)
+    }
+
+    fn persist_snapshot_bytes(&self, doc_key: &str, bytes: &[u8]) -> Result<()> {
+        check_key(doc_key)?;
         let state = self.state.lock().map_err(|_| Error::Poisoned)?;
         if state.finished {
             return Err(Error::Finished);
@@ -209,7 +738,7 @@ impl RecoveryManager {
             self.session_dir
                 .join("docs")
                 .join(format!("{doc_key}.json")),
-            &bytes,
+            bytes,
             false,
         )?;
         pending.remove(doc_key);
@@ -622,6 +1151,17 @@ pub struct OrphanDoc {
 impl OrphanDoc {
     /// Deserialize and validate before exposing a workbook to application code.
     pub fn load(&self) -> Result<Workbook> {
+        let snapshot = self.load_snapshot()?;
+        if snapshot.pending_ink.is_some() {
+            return Err(Error::InvalidRecovery(
+                "pending ink requires an ink-aware recovery consumer".into(),
+            ));
+        }
+        Ok(snapshot.workbook)
+    }
+
+    /// Load the complete envelope without silently discarding pending ink.
+    pub fn load_snapshot(&self) -> Result<Snapshot> {
         let guard = self.lease.lock.lock().map_err(|_| Error::Poisoned)?;
         guard.as_ref().ok_or(Error::Finished)?.refresh()?;
         let snapshot: Snapshot = serde_json::from_slice(&fs::read(&self.path)?)?;
@@ -629,7 +1169,7 @@ impl OrphanDoc {
             .workbook
             .validate()
             .map_err(Error::InvalidWorkbook)?;
-        Ok(snapshot.workbook)
+        Ok(snapshot)
     }
 
     /// Copy the raw browser storage record while this session is still claimed.
@@ -661,6 +1201,1114 @@ const _: fn() = || {
 #[cfg(test)]
 mod lock_tests {
     use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    struct LegacySnapshot {
+        meta: SnapshotMeta,
+        workbook: Workbook,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct PreviousVersionedSnapshot {
+        #[serde(rename = "workbook", deserialize_with = "previous_versioned_workbook")]
+        _workbook: (),
+    }
+
+    fn previous_versioned_workbook<'de, D>(deserializer: D) -> std::result::Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PreviousVisitor;
+        impl<'de> Visitor<'de> for PreviousVisitor {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a previously supported recovery workbook")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> std::result::Result<(), A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let version: String = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing version"))?;
+                if version != INLINE_WORKBOOK_VERSION && version != WAYPOINT_WORKBOOK_VERSION {
+                    return Err(A::Error::custom(format!(
+                        "unsupported recovery workbook version {version}"
+                    )));
+                }
+                let _: IgnoredAny = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing workbook"))?;
+                if seq.next_element::<IgnoredAny>()?.is_some() {
+                    return Err(A::Error::custom("unexpected recovery workbook data"));
+                }
+                Ok(())
+            }
+        }
+        deserializer.deserialize_any(PreviousVisitor)
+    }
+
+    fn formatted_workbook(kind: thinoda_core::CardKind) -> Workbook {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let title = "A🦀é\n第二";
+        let card = sheet
+            .add_card(
+                title,
+                thinoda_core::Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(kind, thinoda_core::Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let topic = sheet.topic_mut(card).unwrap();
+        topic
+            .inline_text
+            .update_range(title, 0..3, |style| {
+                style.bold = Some(true);
+                style.font_family = Some("Sans".into());
+            })
+            .unwrap();
+        topic
+            .inline_text
+            .paragraphs
+            .push(thinoda_core::InlineParagraph {
+                index: 1,
+                list: thinoda_core::ListKind::Numbered,
+            });
+        book.validate().unwrap();
+        book
+    }
+
+    #[test]
+    fn recovery_workbook_versions_protect_rich_data_and_keep_legacy_snapshots() {
+        let meta = SnapshotMeta {
+            title: "Recovery".into(),
+            dirty: true,
+            ..SnapshotMeta::default()
+        };
+        let plain = Workbook::default();
+        let legacy_plain = LegacySnapshot {
+            meta: meta.clone(),
+            workbook: plain.clone(),
+        };
+        let plain_bytes = Snapshot::to_bytes(meta.clone(), &plain).unwrap();
+        assert_eq!(plain_bytes, serde_json::to_vec(&legacy_plain).unwrap());
+        assert_eq!(
+            serde_json::from_slice::<LegacySnapshot>(&plain_bytes)
+                .unwrap()
+                .workbook,
+            plain
+        );
+
+        for kind in [thinoda_core::CardKind::Sticky, thinoda_core::CardKind::Text] {
+            let book = formatted_workbook(kind);
+            let bytes = Snapshot::to_bytes(meta.clone(), &book).unwrap();
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.meta, meta);
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+            assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+
+            let historical = serde_json::to_vec(&LegacySnapshot {
+                meta: meta.clone(),
+                workbook: book.clone(),
+            })
+            .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Snapshot>(&historical)
+                    .unwrap()
+                    .workbook,
+                book
+            );
+
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            value["workbook"][0] = serde_json::json!("THINODA-RECOVERY-INLINE-999");
+            assert!(serde_json::from_value::<Snapshot>(value).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            value["workbook"].as_array_mut().unwrap().pop();
+            assert!(serde_json::from_value::<Snapshot>(value).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            value["workbook"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!(null));
+            assert!(serde_json::from_value::<Snapshot>(value).is_err());
+        }
+    }
+
+    #[test]
+    fn recovery_workbook_versions_protect_waypoints_on_inactive_sheets() {
+        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint, Sheet, Vec2};
+
+        let mut sheet = Sheet::new("Routes", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.waypoints = vec![Vec2::new(50.0, 50.0)].into();
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let meta = SnapshotMeta::default();
+        for mut book in [
+            Workbook::default(),
+            formatted_workbook(thinoda_core::CardKind::Text),
+        ] {
+            book.sheets.push(sheet.clone());
+            book.validate().unwrap();
+            let bytes = Snapshot::to_bytes(meta.clone(), &book).unwrap();
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+            assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["workbook"][0], WAYPOINT_WORKBOOK_VERSION);
+            let mut inline_only = value.clone();
+            inline_only["workbook"][0] = serde_json::json!(INLINE_WORKBOOK_VERSION);
+            assert!(
+                serde_json::from_value::<Snapshot>(inline_only)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector waypoints require a waypoint-aware recovery workbook")
+            );
+            let mut unversioned = value.clone();
+            unversioned["workbook"] = value["workbook"][1].clone();
+            assert!(
+                serde_json::from_value::<Snapshot>(unversioned)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector waypoints require a versioned recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn connector_markers_require_marker_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Sheet,
+            Vec2,
+        };
+
+        let mut sheet = Sheet::new("Markers", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        connector.waypoints = vec![Vec2::new(50.0, 20.0)].into();
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        book.sheets.push(sheet);
+        book.validate().unwrap();
+        let meta = SnapshotMeta::default();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => Snapshot::to_bytes_with_pending_ink(meta.clone(), &book, ink).unwrap(),
+                None => Snapshot::to_bytes(meta.clone(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+            assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    MARKER_WORKBOOK_VERSION
+                }
+            );
+            for old_version in [
+                INLINE_WORKBOOK_VERSION,
+                WAYPOINT_WORKBOOK_VERSION,
+                INK_WORKBOOK_VERSION,
+            ] {
+                let mut forged = value.clone();
+                forged["workbook"][0] = serde_json::json!(old_version);
+                assert!(
+                    serde_json::from_value::<Snapshot>(forged)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("connector markers require a marker-aware recovery workbook")
+                );
+            }
+            let mut unversioned = value.clone();
+            unversioned["workbook"] = value["workbook"][1].clone();
+            assert!(
+                serde_json::from_value::<Snapshot>(unversioned)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector markers require a versioned recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn classic_and_thin_markers_require_extended_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Classic,
+            ConnectorMarkerKind::ClassicThin,
+            ConnectorMarkerKind::OpenThin,
+            ConnectorMarkerKind::BlockThin,
+        ] {
+            let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+                let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    value["workbook"][0],
+                    if ink.is_some() {
+                        EXTENDED_MARKER_INK_WORKBOOK_VERSION
+                    } else {
+                        EXTENDED_MARKER_WORKBOOK_VERSION
+                    }
+                );
+                value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    MARKER_WORKBOOK_VERSION
+                });
+                assert!(
+                    serde_json::from_value::<Snapshot>(value)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("classic and thin connector markers require an extended-marker recovery workbook")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn marker_sizes_require_size_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        connector.end_marker_size = Some(12.5);
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    SIZED_MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    SIZED_MARKER_WORKBOOK_VERSION
+                }
+            );
+            value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                EXTENDED_MARKER_INK_WORKBOOK_VERSION
+            } else {
+                EXTENDED_MARKER_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector marker sizes require a size-aware recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn marker_fills_require_fill_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    FILLED_MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    FILLED_MARKER_WORKBOOK_VERSION
+                }
+            );
+            value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                SIZED_MARKER_INK_WORKBOOK_VERSION
+            } else {
+                SIZED_MARKER_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("connector marker fills require a fill-aware recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn diamond_markers_require_diamond_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+        ] {
+            let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = true;
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+                let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    value["workbook"][0],
+                    if ink.is_some() {
+                        DIAMOND_MARKER_INK_WORKBOOK_VERSION
+                    } else {
+                        DIAMOND_MARKER_WORKBOOK_VERSION
+                    }
+                );
+                value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    FILLED_MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    FILLED_MARKER_WORKBOOK_VERSION
+                });
+                assert!(
+                    serde_json::from_value::<Snapshot>(value)
+                        .unwrap_err()
+                        .to_string()
+                        .contains(
+                            "diamond connector markers require a diamond-aware recovery workbook"
+                        )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oval_markers_require_oval_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Diamond,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    OVAL_MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    OVAL_MARKER_WORKBOOK_VERSION
+                }
+            );
+            value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                DIAMOND_MARKER_INK_WORKBOOK_VERSION
+            } else {
+                DIAMOND_MARKER_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("oval connector markers require an oval-aware recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn half_circle_markers_require_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                } else {
+                    HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                }
+            );
+            value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                OVAL_MARKER_INK_WORKBOOK_VERSION
+            } else {
+                OVAL_MARKER_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("half-circle connector markers require a half-circle-aware recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn bar_markers_require_aware_recovery_envelopes() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+            for bar_at_start in [false, true] {
+                let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                connector.arrow_start = true;
+                let bar = Some(ConnectorMarker { kind });
+                let half_circle = Some(ConnectorMarker {
+                    kind: ConnectorMarkerKind::HalfCircle,
+                });
+                (connector.start_marker, connector.end_marker) = if bar_at_start {
+                    (bar, half_circle)
+                } else {
+                    (half_circle, bar)
+                };
+                connector.start_marker_size = Some(0.0);
+                connector.end_marker_size = Some(12.5);
+                connector.start_marker_unfilled = true;
+                connector.end_marker_unfilled = true;
+                book.active_mut()
+                    .add_canvas_object(CanvasObject::connector(connector))
+                    .unwrap();
+                for ink in [None, Some("pending ink")] {
+                    let bytes = match ink {
+                        Some(ink) => {
+                            Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                                .unwrap()
+                        }
+                        None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                    };
+                    let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(snapshot.workbook, book);
+                    assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                    assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+                    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(
+                        value["workbook"][0],
+                        if ink.is_some() {
+                            BAR_MARKER_INK_WORKBOOK_VERSION
+                        } else {
+                            BAR_MARKER_WORKBOOK_VERSION
+                        }
+                    );
+                    value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                        HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+                    } else {
+                        HALF_CIRCLE_MARKER_WORKBOOK_VERSION
+                    });
+                    assert!(
+                        serde_json::from_value::<Snapshot>(value)
+                            .unwrap_err()
+                            .to_string()
+                            .contains(
+                                "bar connector markers require a bar-aware recovery workbook"
+                            )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shape_rounding_requires_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind,
+            DrawioRectangleStencil, Endpoint, Rect, ShapeKind, ShapeRounding, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 16.0,
+            stencil: DrawioRectangleStencil::Ios,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Dash,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    ROUNDING_INK_WORKBOOK_VERSION
+                } else {
+                    ROUNDING_WORKBOOK_VERSION
+                }
+            );
+            let mut older = value.clone();
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                BAR_MARKER_INK_WORKBOOK_VERSION
+            } else {
+                BAR_MARKER_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(older)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("shape rounding requires a rounding-aware recovery workbook")
+            );
+            let mut unversioned = value;
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(
+                serde_json::from_value::<Snapshot>(unversioned)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("shape rounding requires a versioned recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn rectangle_sides_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasObject, DrawioRectangleStencil, Rect, RectangleSides, ShapeKind, ShapeRounding,
+            Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rectangle_sides = Some(RectangleSides {
+            top: false,
+            right: true,
+            bottom: true,
+            left: false,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let mut rounded = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::new(110.0, 0.0), Vec2::new(100.0, 60.0)),
+        );
+        rounded.rounding = Some(ShapeRounding {
+            radius: 16.0,
+            stencil: DrawioRectangleStencil::Ios,
+        });
+        book.active_mut().add_canvas_object(rounded).unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+                } else {
+                    RECTANGLE_SIDES_WORKBOOK_VERSION
+                }
+            );
+            let mut older = value.clone();
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                ROUNDING_INK_WORKBOOK_VERSION
+            } else {
+                ROUNDING_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(older)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("rectangle outline sides require a partial-rectangle-aware")
+            );
+            let mut unversioned = value;
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(
+                serde_json::from_value::<Snapshot>(unversioned)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("rectangle outline sides require a versioned recovery workbook")
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_connector_ports_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorPort, Endpoint, Rect, ShapeKind, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let shape = book
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Object(shape),
+            Endpoint::Point(Vec2::new(200.0, 0.0)),
+        );
+        connector.from_port = Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.25),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    FIXED_PORT_INK_WORKBOOK_VERSION
+                } else {
+                    FIXED_PORT_WORKBOOK_VERSION
+                }
+            );
+            let mut older = value.clone();
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+            } else {
+                DOUBLE_ELLIPSE_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(older)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("fixed connector ports require a port-aware")
+            );
+            let mut unversioned = value;
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn double_ellipses_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasObject, DrawioRectangleStencil, Rect, RectangleSides, ShapeKind, ShapeRounding,
+            Vec2,
+        };
+
+        for margin in [None, Some(8.5)] {
+            let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+            let mut ellipse = CanvasObject::shape(
+                ShapeKind::DoubleEllipse,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            );
+            ellipse.double_ellipse_margin = margin;
+            book.active_mut().add_canvas_object(ellipse).unwrap();
+            let mut rectangle = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rectangle.rectangle_sides = Some(RectangleSides::default());
+            book.active_mut().add_canvas_object(rectangle).unwrap();
+            let mut rounded = CanvasObject::shape(
+                ShapeKind::RoundedRectangle,
+                Rect::from_min_size(Vec2::new(240.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rounded.rounding = Some(ShapeRounding {
+                radius: 15.0,
+                stencil: DrawioRectangleStencil::Forms,
+            });
+            book.active_mut().add_canvas_object(rounded).unwrap();
+
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+                let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    value["workbook"][0],
+                    if ink.is_some() {
+                        DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+                    } else {
+                        DOUBLE_ELLIPSE_WORKBOOK_VERSION
+                    }
+                );
+                let mut older = value.clone();
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+                } else {
+                    RECTANGLE_SIDES_WORKBOOK_VERSION
+                });
+                assert!(
+                    serde_json::from_value::<Snapshot>(older)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("double ellipses require a double-ellipse-aware")
+                );
+                let mut unversioned = value.clone();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(
+                    serde_json::from_value::<Snapshot>(unversioned)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("double ellipses require a versioned recovery workbook")
+                );
+                let mut malformed = value;
+                malformed["workbook"][1]["sheets"][0]["canvas"]["objects"][0]["double_ellipse_margin"] =
+                    serde_json::json!("invalid");
+                assert!(serde_json::from_value::<Snapshot>(malformed).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn pending_ink_envelope_round_trips_and_rejects_old_readers() {
+        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint, Vec2};
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.waypoints = vec![Vec2::new(50.0, 50.0)].into();
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        book.validate().unwrap();
+        assert!(book.has_inline_text());
+        assert!(book.has_connector_waypoints());
+        let meta = SnapshotMeta {
+            title: "Pending ink".into(),
+            dirty: true,
+            ..SnapshotMeta::default()
+        };
+        let payload = r#"{"version":1,"samples":[[0,4294967295]],"feedback":"NaN"}"#;
+        let bytes = Snapshot::to_bytes_with_pending_ink(meta.clone(), &book, payload).unwrap();
+        let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(snapshot.meta, meta);
+        assert_eq!(snapshot.workbook, book);
+        assert_eq!(snapshot.pending_ink.as_deref(), Some(payload));
+        assert_eq!(serde_json::to_vec(&snapshot).unwrap(), bytes);
+        assert!(serde_json::from_slice::<LegacySnapshot>(&bytes).is_err());
+        let old_error = serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes)
+            .unwrap_err()
+            .to_string();
+        assert!(old_error.contains("unsupported recovery workbook version"));
+
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["workbook"][0], INK_WORKBOOK_VERSION);
+        let mut future = value.clone();
+        future["workbook"][0] = serde_json::json!("THINODA-RECOVERY-INK-999");
+        assert!(serde_json::from_value::<Snapshot>(future).is_err());
+        let mut missing = value.clone();
+        missing["workbook"].as_array_mut().unwrap().pop();
+        assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+        let mut extra = value.clone();
+        extra["workbook"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!(null));
+        assert!(serde_json::from_value::<Snapshot>(extra).is_err());
+        let mut empty = value.clone();
+        empty["workbook"][2] = serde_json::json!("");
+        assert!(serde_json::from_value::<Snapshot>(empty).is_err());
+        let mut wrong_type = value;
+        wrong_type["workbook"][2] = serde_json::json!({});
+        assert!(serde_json::from_value::<Snapshot>(wrong_type).is_err());
+        assert!(Snapshot::to_bytes_with_pending_ink(meta, &book, "").is_err());
+    }
+
+    #[test]
+    fn pending_ink_size_limit_is_enforced_on_read_and_write() {
+        let book = Workbook::default();
+        let payload = "a".repeat(MAX_PENDING_INK_BYTES);
+        let bytes =
+            Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, &payload).unwrap();
+        let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(snapshot.pending_ink.as_deref(), Some(payload.as_str()));
+
+        let oversized = "a".repeat(MAX_PENDING_INK_BYTES + 1);
+        assert!(
+            Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, &oversized)
+                .is_err()
+        );
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["workbook"][2] = serde_json::json!(oversized);
+        assert!(serde_json::from_value::<Snapshot>(value).is_err());
+    }
+
+    #[test]
+    fn pending_ink_orphan_requires_a_complete_consumer_and_survives_handoff() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let source = RecoveryManager::start(&paths).unwrap();
+        let book = Workbook::default();
+        let meta = SnapshotMeta {
+            title: "Interrupted".into(),
+            dirty: true,
+            ..SnapshotMeta::default()
+        };
+        source
+            .persist_snapshot_with_pending_ink("doc", meta.clone(), &book, "pending")
+            .unwrap();
+        let path = source.session_dir().join("docs").join("doc.json");
+        let original = std::fs::read(&path).unwrap();
+        assert!(
+            source
+                .persist_snapshot_with_pending_ink("doc", meta.clone(), &book, "")
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(source.try_flush_for_crash());
+        source.suspend().unwrap();
+        drop(source);
+
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans.len(), 1);
+        let document = &orphans[0].docs[0];
+        assert!(matches!(document.load(), Err(Error::InvalidRecovery(_))));
+        let snapshot = document.load_snapshot().unwrap();
+        assert_eq!(snapshot.workbook, book);
+        assert_eq!(snapshot.pending_ink.as_deref(), Some("pending"));
+
+        let replacement = RecoveryManager::start(&paths).unwrap();
+        replacement
+            .persist_snapshot_with_pending_ink(
+                "replacement",
+                snapshot.meta,
+                &snapshot.workbook,
+                snapshot.pending_ink.as_deref().unwrap(),
+            )
+            .unwrap();
+        orphans[0].discard().unwrap();
+        drop(orphans);
+        assert!(replacement.try_flush_for_crash());
+        replacement.suspend().unwrap();
+        drop(replacement);
+        let recovered = RecoveryManager::find_orphans(&paths);
+        assert_eq!(recovered.len(), 1);
+        let snapshot = recovered[0].docs[0].load_snapshot().unwrap();
+        assert_eq!(snapshot.workbook, book);
+        assert_eq!(snapshot.pending_ink.as_deref(), Some("pending"));
+        recovered[0].discard().unwrap();
+        drop(recovered);
+    }
+
+    #[test]
+    fn recovery_load_restores_formatted_cards_and_rejects_malformed_runs() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let manager = RecoveryManager::start(&paths).unwrap();
+        let mut book = formatted_workbook(thinoda_core::CardKind::Sticky);
+        manager
+            .snapshot("rich", SnapshotMeta::default(), &book)
+            .unwrap();
+        manager.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans[0].docs[0].load().unwrap(), book);
+        drop(orphans);
+        manager.resume().unwrap();
+        let sheet = book.active_mut();
+        let card = sheet.floating[0];
+        sheet.topic_mut(card).unwrap().inline_text.runs[0].end = 100;
+        manager
+            .snapshot("rich", SnapshotMeta::default(), &book)
+            .unwrap();
+        manager.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert!(orphans[0].docs[0].load().is_err());
+        drop(orphans);
+        manager.resume().unwrap();
+        manager.finish().unwrap();
+    }
 
     #[test]
     fn recovery_restores_embedded_bytes_and_rejects_missing_resources() {

@@ -1,8 +1,8 @@
 //! [`Document`]: a workbook plus snapshot based undo/redo and dirty tracking.
 
 use crate::board::{
-    Band, BoardMember, BoardSettings, CanvasGroupId, CanvasObject, CanvasObjectId,
-    CanvasObjectKind, Card, ZOrder,
+    Band, BoardMember, BoardSettings, CanvasConnector, CanvasGroupId, CanvasObject, CanvasObjectId,
+    CanvasObjectKind, Card, Endpoint, ZOrder,
 };
 use crate::edit::{EditError, EditResult};
 use crate::model::TopicId;
@@ -20,8 +20,8 @@ use std::{
 };
 
 const MAX_HISTORY: usize = 300;
-/// Approximate memory budget for retained undo and redo snapshots. Shared ink
-/// and embedded resource allocations are counted once across both stacks.
+/// Approximate memory budget for retained undo and redo snapshots. Shared ink,
+/// connector points and embedded resources are counted once across both stacks.
 pub const MAX_HISTORY_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -63,17 +63,26 @@ impl Snapshot {
     fn visit_shared_buffers(&self, visit: &mut impl FnMut(usize, usize)) {
         fn visit_sheet(sheet: &Sheet, visit: &mut impl FnMut(usize, usize)) {
             for object in &sheet.canvas.objects {
-                if let crate::board::CanvasObjectKind::Ink(ink) = &object.kind {
-                    visit(
-                        Arc::as_ptr(&ink.points) as *const () as usize,
-                        ink.points.len() * std::mem::size_of::<Vec2>(),
-                    );
-                    if let Some(pressure) = &ink.pressure {
+                match &object.kind {
+                    CanvasObjectKind::Ink(ink) => {
                         visit(
-                            Arc::as_ptr(pressure) as *const () as usize,
-                            pressure.len() * std::mem::size_of::<f32>(),
+                            Arc::as_ptr(&ink.points) as *const () as usize,
+                            ink.points.len() * std::mem::size_of::<Vec2>(),
+                        );
+                        if let Some(pressure) = &ink.pressure {
+                            visit(
+                                Arc::as_ptr(pressure) as *const () as usize,
+                                pressure.len() * std::mem::size_of::<f32>(),
+                            );
+                        }
+                    }
+                    CanvasObjectKind::Connector(connector) if !connector.waypoints.is_empty() => {
+                        visit(
+                            Arc::as_ptr(&connector.waypoints) as *const () as usize,
+                            connector.waypoints.len() * std::mem::size_of::<Vec2>(),
                         );
                     }
+                    _ => {}
                 }
             }
             for resource in sheet.resources.entries.values() {
@@ -159,8 +168,8 @@ impl HistoryAccounting {
 }
 
 /// Rough heap estimate of a sheet snapshot for the undo budget. Shared (`Arc`) data such
-/// as ink points and resource bytes is excluded here; unique shared buffers are
-/// accounted once across the complete undo and redo history.
+/// as ink points, connector points and resource bytes is excluded here; unique
+/// shared buffers are accounted once across the complete undo and redo history.
 pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
     use std::mem::size_of;
     let topics: usize = sheet
@@ -197,6 +206,9 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
                     crate::board::CanvasObjectKind::Ink(s) => {
                         // Point buffers are counted once across both history stacks.
                         2 * size_of::<usize>() * (1 + s.pressure.is_some() as usize)
+                    }
+                    crate::board::CanvasObjectKind::Connector(c) if !c.waypoints.is_empty() => {
+                        2 * size_of::<usize>()
                     }
                     _ => 0,
                 }
@@ -457,7 +469,10 @@ impl Document {
                 }
                 // Deleting a connector target converts the end to a point in this edit.
                 let sheet = &mut self.workbook.sheets[index];
-                sheet.fix_dangling_endpoints(&before);
+                if let Err(error) = sheet.fix_dangling_endpoints(&before) {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
                 if let Err(error) = crate::board::validate_board(sheet) {
                     self.workbook.sheets[index] = before;
                     return Err(EditError::Invalid(error));
@@ -537,8 +552,12 @@ impl Document {
                     return Err(EditError::Invalid(error));
                 }
                 for (index, sheet) in self.workbook.sheets.iter_mut().enumerate() {
-                    if let Some(old) = sheets.get(index) {
-                        sheet.fix_dangling_endpoints(old);
+                    if let Some(old) = sheets.get(index)
+                        && let Err(error) = sheet.fix_dangling_endpoints(old)
+                    {
+                        self.workbook.sheets = sheets;
+                        self.workbook.active_sheet = active;
+                        return Err(EditError::Invalid(error));
                     }
                     if let Err(error) = crate::board::validate_board(sheet) {
                         self.workbook.sheets = sheets;
@@ -930,6 +949,25 @@ impl Document {
         })
     }
 
+    /// Adds `object` plus `connector` ending at it, as one undoable edit
+    /// (draw.io's clone-and-connect). `connector.to` is replaced by the new object.
+    pub fn add_connected_canvas_object(
+        &mut self,
+        object: CanvasObject,
+        mut connector: CanvasConnector,
+    ) -> EditResult<(CanvasObjectId, CanvasObjectId)> {
+        self.edit_sheet("Add connected shape", |sheet| {
+            let id = sheet
+                .add_canvas_object(object)
+                .map_err(EditError::Invalid)?;
+            connector.to = Endpoint::Object(id);
+            let edge = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .map_err(EditError::Invalid)?;
+            Ok((id, edge))
+        })
+    }
+
     pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> EditResult<()> {
         self.edit_sheet("Delete objects", |sheet| {
             sheet.remove_canvas_objects(ids).map_err(EditError::Invalid)
@@ -1089,6 +1127,50 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connected_object_is_one_undoable_edit_and_rolls_back_on_failure() {
+        use crate::board::ShapeKind;
+        let mut document = Document::default();
+        let source = document
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Ellipse,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let before = document.workbook().clone();
+        let clone = CanvasObject::shape(
+            ShapeKind::Ellipse,
+            Rect::from_min_size(Vec2::new(200.0, 0.0), Vec2::new(100.0, 60.0)),
+        );
+        let (id, edge) = document
+            .add_connected_canvas_object(
+                clone,
+                CanvasConnector::new(Endpoint::Object(source), Endpoint::Point(Vec2::ZERO)),
+            )
+            .unwrap();
+        let CanvasObjectKind::Connector(connector) =
+            &document.sheet().canvas.object(edge).unwrap().kind
+        else {
+            panic!("expected a connector");
+        };
+        assert_eq!(connector.from, Endpoint::Object(source));
+        assert_eq!(connector.to, Endpoint::Object(id));
+        assert!(document.undo());
+        assert_eq!(document.workbook(), &before);
+
+        let mut invalid = CanvasObject::shape(ShapeKind::Ellipse, Rect::default());
+        invalid.rotation = f32::NAN;
+        assert!(
+            document
+                .add_connected_canvas_object(
+                    invalid,
+                    CanvasConnector::new(Endpoint::Object(source), Endpoint::Point(Vec2::ZERO)),
+                )
+                .is_err()
+        );
+        assert_eq!(document.workbook(), &before);
+    }
 
     #[test]
     fn document_instance_identity_is_stable_and_distinct_for_copies_and_replacement() {
@@ -1378,6 +1460,48 @@ mod tests {
             ink_bytes
         );
         assert!(approx_sheet_bytes(d.sheet()) < 64 * 1024);
+    }
+
+    #[test]
+    fn shared_connector_waypoints_are_counted_once_in_history() {
+        let mut document = Document::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.waypoints = vec![Vec2::new(30.0, 40.0); 1_024].into();
+        let pointer = Arc::as_ptr(&connector.waypoints) as *const () as usize;
+        let bytes = connector.waypoints.len() * std::mem::size_of::<Vec2>();
+        let id = document
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for index in 0..5 {
+            document
+                .update_canvas_object("Edit", id, |object| object.alt_text = index.to_string())
+                .unwrap();
+        }
+        assert_eq!(document.history.buffers.get(&pointer), Some(&(5, bytes)));
+        assert_eq!(document.history.shared_bytes, bytes);
+
+        document
+            .move_canvas_objects(&[id], Vec2::new(10.0, 0.0))
+            .unwrap();
+        document
+            .update_canvas_object("Edit", id, |object| object.alt_text = "Moved".into())
+            .unwrap();
+        assert_eq!(document.history.shared_bytes, bytes * 2);
+        assert!(document.undo());
+        assert!(document.undo());
+        let CanvasObjectKind::Connector(connector) =
+            &document.sheet().canvas.object(id).unwrap().kind
+        else {
+            panic!("expected connector");
+        };
+        assert_eq!(connector.waypoints[0], Vec2::new(30.0, 40.0));
+        assert_eq!(
+            Arc::as_ptr(&connector.waypoints) as *const () as usize,
+            pointer
+        );
     }
 
     #[test]

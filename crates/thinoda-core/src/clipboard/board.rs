@@ -3,7 +3,7 @@
 //! The OS clipboard still receives plain text. The private fragment is a small
 //! rootless sheet, with a new empty anchor rather than the source sheet's root.
 
-use super::{ClipboardPayload, normalize, resolve_paste};
+use super::{ClipboardPayload, MAX_TOPIC_CLIPBOARD_DEPTH, resolve_paste, same_normalized};
 use crate::board::{
     BoardMember, CanvasGroupId, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_OBJECTS,
     SheetRootMode,
@@ -12,11 +12,26 @@ use crate::geometry::Vec2;
 use crate::layout::Layout;
 use crate::model::{Sheet, Subtree, Topic, TopicId, valid_position};
 use crate::scene::{SceneGeometry, SceneId, build_scene, topic_anchor_rect};
+use crate::schedule::Weekday;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
 
 const BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-1\n";
+const INLINE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-2\n";
+const WAYPOINT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-3\n";
+const MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-4\n";
+const EXTENDED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-5\n";
+const SIZED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-6\n";
+const FILLED_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-7\n";
+const DIAMOND_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-8\n";
+const OVAL_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-9\n";
+const HALF_CIRCLE_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-10\n";
+const BAR_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-11\n";
+const ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-12\n";
+const RECTANGLE_SIDES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-13\n";
+const DOUBLE_ELLIPSE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-14\n";
+const FIXED_PORT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-15\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -34,10 +49,53 @@ pub struct BoardClipboardPayload {
 }
 
 impl BoardClipboardPayload {
+    fn prefix(&self) -> &'static str {
+        if self.fragment.has_fixed_connector_ports() {
+            FIXED_PORT_BOARD_PREFIX
+        } else if self.fragment.has_double_ellipses() {
+            DOUBLE_ELLIPSE_BOARD_PREFIX
+        } else if self.fragment.has_rectangle_sides() {
+            RECTANGLE_SIDES_BOARD_PREFIX
+        } else if self.fragment.has_shape_rounding() {
+            ROUNDING_BOARD_PREFIX
+        } else if self.fragment.has_bar_connector_markers() {
+            BAR_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_half_circle_connector_markers() {
+            HALF_CIRCLE_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_oval_connector_markers() {
+            OVAL_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_diamond_connector_markers() {
+            DIAMOND_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_connector_marker_fills() {
+            FILLED_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_connector_marker_sizes() {
+            SIZED_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_extended_connector_markers() {
+            EXTENDED_MARKER_BOARD_PREFIX
+        } else if self.fragment.has_connector_markers() {
+            MARKER_BOARD_PREFIX
+        } else if self.fragment.has_connector_waypoints() {
+            WAYPOINT_BOARD_PREFIX
+        } else if self.fragment.has_inline_text() {
+            INLINE_BOARD_PREFIX
+        } else {
+            BOARD_PREFIX
+        }
+    }
+
     /// Source topic roots after deduplication and group expansion. Useful when
     /// preparing a cut; the caller must still check locks before deleting.
     pub fn source_topic_roots(&self) -> &[TopicId] {
         &self.fragment.floating
+    }
+
+    /// Source topics, including descendants and summary topics.
+    pub fn source_topic_ids(&self) -> impl Iterator<Item = TopicId> + '_ {
+        self.fragment
+            .topics
+            .keys()
+            .copied()
+            .filter(|id| *id != self.fragment.root)
     }
 
     /// Source objects after group expansion, in their original paint order.
@@ -45,7 +103,8 @@ impl BoardClipboardPayload {
         self.fragment.canvas.objects.iter().map(|object| object.id)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    /// Validates the current payload, including any changes to its public text.
+    pub fn validate(&self) -> Result<(), String> {
         if self.text.trim().is_empty() {
             return Err("board clipboard text must not be empty".into());
         }
@@ -92,8 +151,13 @@ impl BoardClipboardPayload {
                 .push(summary.topic);
         }
         let mut visited = HashSet::new();
-        let mut pending = sheet.floating.clone();
-        while let Some(id) = pending.pop() {
+        let mut pending: Vec<_> = sheet.floating.iter().map(|id| (*id, 0usize)).collect();
+        while let Some((id, depth)) = pending.pop() {
+            if depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+                return Err(format!(
+                    "board clipboard topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+                ));
+            }
             if id == sheet.root || !visited.insert(id) {
                 return Err("invalid or repeated board clipboard topic ownership".into());
             }
@@ -108,9 +172,9 @@ impl BoardClipboardPayload {
                     "board clipboard topic {id} has an invalid position"
                 ));
             }
-            pending.extend(topic.children.iter().copied());
+            pending.extend(topic.children.iter().map(|child| (*child, depth + 1)));
             if let Some(summaries) = summary_children.get(&id) {
-                pending.extend(summaries.iter().copied());
+                pending.extend(summaries.iter().map(|child| (*child, depth + 1)));
             }
         }
         if visited.len() + 1 != sheet.topics.len() {
@@ -135,7 +199,7 @@ impl BoardClipboardPayload {
         }
 
         // Bound serialized input before the more expensive model validation.
-        let mut counter = SizeCounter::new(MAX_BOARD_CLIPBOARD_BYTES - BOARD_PREFIX.len());
+        let mut counter = SizeCounter::new(MAX_BOARD_CLIPBOARD_BYTES - self.prefix().len());
         if let Err(error) = serde_json::to_writer(&mut counter, self) {
             if counter.exceeded {
                 return Err("board clipboard payload exceeds 16 MiB".into());
@@ -187,7 +251,7 @@ impl Write for SizeCounter {
 pub fn encode_board_payload(payload: &BoardClipboardPayload) -> Result<String, String> {
     payload.validate()?;
     let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
-    Ok(format!("{BOARD_PREFIX}{json}"))
+    Ok(format!("{}{json}", payload.prefix()))
 }
 
 /// Decodes and validates a versioned board payload. Both LF and Windows CRLF
@@ -196,12 +260,125 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     if text.len() > MAX_BOARD_CLIPBOARD_BYTES {
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
-    let json = text
-        .strip_prefix(BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-1\r\n"))
+    let (version, json) = text
+        .strip_prefix(FIXED_PORT_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-15\r\n"))
+        .map(|json| (15, json))
+        .or_else(|| {
+            text.strip_prefix(DOUBLE_ELLIPSE_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-14\r\n"))
+                .map(|json| (14, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(RECTANGLE_SIDES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-13\r\n"))
+                .map(|json| (13, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(ROUNDING_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-12\r\n"))
+                .map(|json| (12, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(BAR_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-11\r\n"))
+                .map(|json| (11, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(HALF_CIRCLE_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-10\r\n"))
+                .map(|json| (10, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(OVAL_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-9\r\n"))
+                .map(|json| (9, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(DIAMOND_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-8\r\n"))
+                .map(|json| (8, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(FILLED_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-7\r\n"))
+                .map(|json| (7, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SIZED_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-6\r\n"))
+                .map(|json| (6, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(EXTENDED_MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-5\r\n"))
+                .map(|json| (5, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(MARKER_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-4\r\n"))
+                .map(|json| (4, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(WAYPOINT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-3\r\n"))
+                .map(|json| (3, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(INLINE_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-2\r\n"))
+                .map(|json| (2, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-1\r\n"))
+                .map(|json| (1, json))
+        })
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 4 && payload.fragment.has_connector_markers() {
+        return Err("connector markers require board clipboard version 4".into());
+    }
+    if version < 5 && payload.fragment.has_extended_connector_markers() {
+        return Err("classic and thin connector markers require board clipboard version 5".into());
+    }
+    if version < 6 && payload.fragment.has_connector_marker_sizes() {
+        return Err("connector marker sizes require board clipboard version 6".into());
+    }
+    if version < 7 && payload.fragment.has_connector_marker_fills() {
+        return Err("connector marker fills require board clipboard version 7".into());
+    }
+    if version < 8 && payload.fragment.has_diamond_connector_markers() {
+        return Err("diamond connector markers require board clipboard version 8".into());
+    }
+    if version < 9 && payload.fragment.has_oval_connector_markers() {
+        return Err("oval connector markers require board clipboard version 9".into());
+    }
+    if version < 10 && payload.fragment.has_half_circle_connector_markers() {
+        return Err("half-circle connector markers require board clipboard version 10".into());
+    }
+    if version < 11 && payload.fragment.has_bar_connector_markers() {
+        return Err("bar connector markers require board clipboard version 11".into());
+    }
+    if version < 12 && payload.fragment.has_shape_rounding() {
+        return Err("shape rounding requires board clipboard version 12".into());
+    }
+    if version < 13 && payload.fragment.has_rectangle_sides() {
+        return Err("rectangle outline sides require board clipboard version 13".into());
+    }
+    if version < 14 && payload.fragment.has_double_ellipses() {
+        return Err("double ellipses require board clipboard version 14".into());
+    }
+    if version < 15 && payload.fragment.has_fixed_connector_ports() {
+        return Err("fixed connector ports require board clipboard version 15".into());
+    }
+    if version < 3 && payload.fragment.has_connector_waypoints() {
+        return Err("connector waypoints require board clipboard version 3".into());
+    }
+    if version < 2 && payload.fragment.has_inline_text() {
+        return Err("inline card text requires board clipboard version 2".into());
+    }
     payload.validate()?;
     Ok(payload)
 }
@@ -226,13 +403,17 @@ pub fn resolve_board_paste<'a>(
     board: Option<&'a BoardClipboardPayload>,
     legacy: Option<&ClipboardPayload>,
     os_text: Option<&str>,
-) -> ResolvedBoardPaste<'a> {
-    if let Some(board) = board
-        && os_text.is_none_or(|text| normalize(text) == normalize(&board.text))
-    {
-        return ResolvedBoardPaste::Board(board);
+) -> Result<ResolvedBoardPaste<'a>, String> {
+    if os_text.is_some_and(|text| text.len() > MAX_BOARD_CLIPBOARD_BYTES) {
+        return Err("clipboard text exceeds 16 MiB".into());
     }
-    ResolvedBoardPaste::Topics(resolve_paste(legacy, os_text))
+    if let Some(board) = board
+        && os_text.is_none_or(|text| same_normalized(text, &board.text))
+    {
+        board.validate()?;
+        return Ok(ResolvedBoardPaste::Board(board));
+    }
+    Ok(ResolvedBoardPaste::Topics(resolve_paste(legacy, os_text)?))
 }
 
 /// Copies selected topics and canvas objects into a standalone board fragment.
@@ -247,12 +428,35 @@ pub fn resolve_board_paste<'a>(
 /// their direct/group locks are retained. For a cut, the caller must reject
 /// locked members before publishing or deleting anything. Hidden anchors are
 /// ignored, just as in [`super::copy_topics`].
+///
+/// Hosts that would otherwise compute a layout for the copy should call
+/// [`prepare_board_selection`] first, so excessive depth is rejected before
+/// recursive layout runs.
 pub fn copy_board_selection(
     sheet: &Sheet,
     layout: &Layout,
     topic_ids: &[TopicId],
     object_ids: &[CanvasObjectId],
 ) -> Result<Option<BoardClipboardPayload>, String> {
+    prepare_board_selection(sheet, topic_ids, object_ids)?
+        .map(|selection| selection.copy(layout))
+        .transpose()
+}
+
+/// A checked board selection tied to its unchanged source sheet.
+pub struct PreparedBoardSelection<'a> {
+    sheet: &'a Sheet,
+    roots: Vec<TopicId>,
+    owned: HashSet<TopicId>,
+    objects: HashSet<CanvasObjectId>,
+}
+
+/// Resolves groups and checks topic ownership and depth without building a layout.
+pub fn prepare_board_selection<'a>(
+    sheet: &'a Sheet,
+    topic_ids: &[TopicId],
+    object_ids: &[CanvasObjectId],
+) -> Result<Option<PreparedBoardSelection<'a>>, String> {
     if sheet.fim.is_some() {
         return Err("FIM selections cannot be copied as board fragments".into());
     }
@@ -342,10 +546,15 @@ pub fn copy_board_selection(
     }
 
     let mut owned = HashSet::new();
-    let mut pending = roots.clone();
-    while let Some(id) = pending.pop() {
+    let mut pending: Vec<_> = roots.iter().map(|id| (*id, 0usize)).collect();
+    while let Some((id, depth)) = pending.pop() {
+        if depth > MAX_TOPIC_CLIPBOARD_DEPTH {
+            return Err(format!(
+                "board clipboard topic depth exceeds {MAX_TOPIC_CLIPBOARD_DEPTH}"
+            ));
+        }
         if !owned.insert(id) {
-            continue;
+            return Err("invalid or repeated board clipboard topic ownership".into());
         }
         if owned.len() > MAX_BOARD_CLIPBOARD_TOPICS {
             return Err(format!(
@@ -355,12 +564,38 @@ pub fn copy_board_selection(
         let topic = sheet
             .topic(id)
             .ok_or_else(|| format!("topic {id} not found"))?;
-        pending.extend(topic.children.iter().copied());
+        pending.extend(topic.children.iter().map(|child| (*child, depth + 1)));
         if let Some(summaries) = summary_children.get(&id) {
-            pending.extend(summaries.iter().copied());
+            pending.extend(summaries.iter().map(|child| (*child, depth + 1)));
         }
     }
 
+    Ok(Some(PreparedBoardSelection {
+        sheet,
+        roots,
+        owned,
+        objects,
+    }))
+}
+
+impl PreparedBoardSelection<'_> {
+    /// Builds the fragment using a layout of the prepared source sheet.
+    pub fn copy(self, layout: &Layout) -> Result<BoardClipboardPayload, String> {
+        copy_prepared_board_selection(self, layout)
+    }
+}
+
+fn copy_prepared_board_selection(
+    selection: PreparedBoardSelection<'_>,
+    layout: &Layout,
+) -> Result<BoardClipboardPayload, String> {
+    let PreparedBoardSelection {
+        sheet,
+        roots,
+        owned,
+        objects,
+    } = selection;
+    let floating: HashSet<_> = sheet.floating.iter().copied().collect();
     let mut fragment = Sheet::new("", "");
     // Choose an anchor that cannot be mistaken for any copied topic. It is
     // never written as a selected root, text, or a connector target.
@@ -425,6 +660,10 @@ pub fn copy_board_selection(
         .filter(|(id, _)| owned.contains(id))
         .map(|(id, task)| (*id, task.clone()))
         .collect();
+    if !fragment.scheduling.tasks.is_empty() {
+        // The source calendar is not copied; the destination is checked on paste.
+        fragment.scheduling.calendar.working_weekdays = Weekday::ALL.into();
+    }
     fragment.scheduling.dependencies = sheet
         .scheduling
         .dependencies
@@ -499,9 +738,11 @@ pub fn copy_board_selection(
                     .ok_or_else(|| format!("cannot resolve connector {}", object.id))?;
                 if from_external {
                     connector.from = Endpoint::Point(path[0]);
+                    connector.from_port = None;
                 }
                 if to_external {
                     connector.to = Endpoint::Point(*path.last().expect("path is nonempty"));
+                    connector.to_port = None;
                 }
             }
         }
@@ -538,7 +779,7 @@ pub fn copy_board_selection(
     let text = plain_text(sheet, &roots, &fragment.canvas.objects)?;
     let payload = BoardClipboardPayload { text, fragment };
     payload.validate()?;
-    Ok(Some(payload))
+    Ok(payload)
 }
 
 fn is_external(
@@ -649,6 +890,7 @@ pub fn paste_floating_subtrees(
         .ok_or("board clipboard exhausts available IDs")?;
     let mut fragment = Sheet::new("", "");
     fragment.root_mode = SheetRootMode::Hidden;
+    fragment.scheduling.calendar.working_weekdays = Weekday::ALL.into();
     let mut previous_height = 0.0;
     let mut y = origin.y;
     for (index, subtree) in subtrees.iter().enumerate() {
@@ -975,6 +1217,15 @@ pub fn paste_board_selection(
                 };
                 connector.from = remap(connector.from)?;
                 connector.to = remap(connector.to)?;
+                if !connector.waypoints.is_empty() {
+                    connector.waypoints = connector
+                        .waypoints
+                        .iter()
+                        .copied()
+                        .map(&translate)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into();
+                }
             }
             CanvasObjectKind::Shape { .. } => {}
         }

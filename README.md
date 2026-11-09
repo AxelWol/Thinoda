@@ -359,9 +359,20 @@ those system-owned controls. WinGet publishing remains paused.
   expose color, width, opacity and stroke type controls, while erasers expose
   their radius. Selected-topic actions move to avoid visible cards, frame
   titles and toolbars. If they cannot fit, use the main menu or the topic's
-  context menu instead. **Board** is a first-level main-menu category; the
-  canvas context menu also has Board and a Styles submenu. Board commands
-  provide grid, snapping, grouping, locking, arrangement and a minimap. Native
+  context menu instead. **Board** is a first-level main-menu category. Board
+  commands provide grid, snapping, grouping, locking, arrangement and a minimap.
+- The canvas context menu adapts to what you right-click. Topics show
+  Topic/Subtopic/Parent Topic, the clipboard and Collapse/Expand first, then the
+  Add, Structure, Format, Arrange, Select, Zones, AI and View submenus,
+  **Command Palette…** and Delete last. Board objects show the clipboard, Format,
+  Group/Ungroup and Lock/Unlock directly, plus Arrange, Layers, Zones and View.
+  Blank canvas offers Floating Topic (at the clicked point), Paste, Add, Draw,
+  Select, View and AI: Generate Map. Unavailable actions stay visible but
+  disabled so items keep their place. The main menu and command palette list
+  every command unchanged.
+- Settings > Editor > **Menu usage** can optionally count context-menu use on
+  desktop. It is off by default; counts stay in the local `menu_usage.json`,
+  are never uploaded and never reorder menus. Show or clear them there. Native
   files use version 6 when board
   features are present; other formats may show an itemized warning before
   exporting content they cannot retain. Frame clipping is visual, not secure
@@ -711,6 +722,116 @@ those system-owned controls. WinGet publishing remains paused.
 - XMind reopening honors edits made by other applications rather than silently
   restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
+  If public content or embedded images changed, or an unreadable older snapshot
+  is ignored, reopening can omit private-only board objects and their connector
+  markers.
+- draw.io diagrams can be imported as converted copies and exported as `.drawio`
+  or editable `.drawio.svg` / `.drawio.png` images. The editable image exports
+  contain **only the current sheet**, both in the preview and in the embedded
+  diagram. Their embedded data can include content outside the visible preview:
+  the image is **not redacted**. Conversion may simplify or omit features; review
+  the warnings and retain the original file and a `.thinoda` copy. Classic,
+  open and block arrows, diamonds, ovals, half-circles and bar connector markers,
+  including thin variants where available, support independent start and end
+  sizes from 0 to 999. Classic and block arrows, diamonds and ovals can be
+  filled or hollow independently; open arrows, half-circles and bars remain
+  open and retain their fill setting when changed directly to a fillable draw.io marker.
+  Unsupported marker shapes, sizes outside
+  that range, and unsupported fill values trigger a formatting warning.
+  Supported fixed connector points, offsets and perimeter settings are retained
+  for attached shapes and topics. Hover a rectangle, rounded rectangle, ellipse,
+  double ellipse, diamond or rectangular topic to reveal connection crosses;
+  drag from or drop onto a cross to fix an attachment. Hold Shift while connecting
+  to fix an arbitrary point, Alt to leave a free point without grid snapping, or
+  Alt+Shift to attach without fixing. Enter or Space toggles a focused endpoint,
+  and Home/End cycle visible default points. Unsupported constraints and
+  possible position differences are reported. Export requires consent if a
+  fixed point may move or if an unexported collapsed topic detaches it.
+  Existing Thinoda triangle arrows retain
+  their appearance in native files; exporting them for draw.io warns that their
+  appearance is approximated.
+  Import converts supported CSS named, RGB/RGBA, HSL/HSLA, HWB and hex colors
+  into editable sRGB colors. It warns about explicit unresolved or
+  theme-dependent colors and invalid or out-of-range opacity and stroke-width
+  values. Adaptive colors can be flattened and inherited colors can fall back
+  to Thinoda defaults; the warning does not imply that all unsupported
+  appearance is detected.
+  Unrecognized draw.io shapes or standalone named styles become editable
+  rectangle placeholders and are identified in the import or paste warning.
+  Named styles combined with an explicit shape can also lose formatting.
+  The original stencil and style data are not retained; keep the source file.
+  Shape and connector labels use a fixed 12-unit canvas font at normal zoom.
+  Import warns when a nonempty label's source size differs or cannot be
+  determined; draw.io's default connector-label size is 11. Named text and
+  label styles also warn when their inherited alignment or other effects
+  cannot be preserved. Separate connector-label cells are joined into the
+  connector text with a warning because their individual styles and positions
+  are not retained.
+  HTML labels are converted to editable plain text, including common block
+  breaks and semicolon-terminated character references. Rich formatting and
+  inline links are not retained. Unsupported markup, unresolved references,
+  and common whitespace that HTML may collapse trigger warnings, but some
+  layout differences remain unreported; the source HTML is never executed.
+  Keep the original file.
+  Export and **Copy as draw.io** write size 12 for labeled board connectors;
+  flattened relationship labels use size 12 as well. Text styling and wrapping
+  can still differ.
+  Import follows draw.io's grid visibility and size, enabling snapping when the
+  grid is enabled. Unsupported grid sizes are adjusted with a warning. A direct
+  Thinoda export and reimport preserves its independent grid and snapping
+  settings, but draw.io may discard those Thinoda-specific settings when saving.
+  Export warns when dot grids or independent snapping can differ; keep a
+  `.thinoda` copy. Line-grid appearance is approximate.
+  An explicit draw.io page color is imported as the sheet's canvas background.
+  Import warns when a finite page, adaptive or translucent color, gradient, or
+  background image cannot be represented faithfully. Export uses matching
+  `light-dark` color alternatives so the current draw.io editor keeps explicit
+  colors in both themes; older viewers may not support that syntax.
+  Translucent backgrounds require export confirmation because the editors can
+  blend them over different colors.
+  Ordinary folded draw.io notes import as editable flat sticky cards with a
+  warning; notes used as containers or images can be simplified differently.
+  Export and **Copy as draw.io** report that flat cards can gain folded corners.
+  Standalone double ellipses retain their editable inner outline and automatic
+  or custom inset. Invalid insets and unresolved or adaptive colors are
+  reported; **Export** and **Copy as draw.io** warn that appearance can differ.
+  Import warns when a connected double ellipse uses a different perimeter.
+  Existing fixed perimeter attachments on double ellipses may move slightly
+  because they now follow the analytic ellipse rather than its flattened outline.
+  Shape-label wrapping and full draw.io text styling are not yet preserved, and
+  double ellipses used as containers still become frames with a warning.
+  Flowchart annotation brackets import as editable open-sided rectangles with
+  a formatting warning; their original stencil identity and exact appearance
+  are not preserved.
+  Flowchart process stencils import as editable square-cornered processes with
+  a formatting warning; their rounded corners are not preserved. Native
+  processes export as square rectangles with a Thinoda identity marker, which
+  other editors may remove. Export and **Copy as draw.io** warn when a visible
+  zero-width or zero-height process outline may disappear in draw.io.
+  Unsupported content can prevent export. Editable image export is not Save As
+  or lossless save-back.
+  Import also recognizes legacy URI- or base64-encoded SVG diagrams and older
+  PNG diagram metadata.
+  HTML exports with one embedded draw.io viewer, including older compressed or
+  URI-encoded viewers, can also be opened or dropped as converted copies;
+  Thinoda never runs their scripts or loads remote URLs.
+  Remote-only viewers and HTML containing multiple diagrams are not imported.
+  **File > Import draw.io link…** also accepts self-contained published `#R`
+  links or fragments, decodes them locally without contacting the URL, and
+  opens an unsaved converted copy. Remote-reference links such as `#U` are not
+  supported; ordinary paste does not invoke this import.
+  Pasting draw.io diagram text inserts the first page as one undoable edit.
+  A persistent warning reports possible omissions and counts omitted container
+  frames and additional pages; content-conversion warnings describe the first
+  page, and pasted container children become free items.
+  Connector attachments that cannot be retained are also reported. Malformed
+  or out-of-range connector and ink points are discarded instead of being
+  replaced with invented coordinates; a shape with malformed geometry and its
+  children are omitted with a warning. If the first page has no pasteable
+  items, the paste is rejected and later pages are not pasted. Formatting-only
+  paste warnings are temporary; omission and detachment warnings remain visible
+  until dismissed, subject to the normal notification queue limit.
+  See [draw.io support and limitations](docs/DRAWIO.md).
 - Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
   subset. PowerPoint export previews the first saved Pitch slide, reuses all

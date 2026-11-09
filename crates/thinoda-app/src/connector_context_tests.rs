@@ -75,6 +75,180 @@ fn close_popup(h: &mut Harness<'_, ThinodaApp>) {
 }
 
 #[test]
+fn keyboard_undo_redo_works_from_connector_options() {
+    let (app, id) = app_with_connector();
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    click(&mut h, Role::Button, "Arrow at start");
+    h.get_by_role_and_label(Role::Button, "Arrow at start")
+        .focus();
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_start);
+
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(3);
+    assert!(!connector(h.state(), id).arrow_start);
+
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_start);
+}
+
+#[test]
+fn selected_connector_properties_overlay_above_stationary_toolbox() {
+    for size in [vec2(320.0, 240.0), vec2(1000.0, 700.0)] {
+        let (mut app, id) = app_with_connector();
+        app.doc_mut().unwrap().view.board_selection.clear();
+        let mut h = harness(app, size);
+        let canvas = h.state().doc().unwrap().view.canvas_rect();
+        let rail_id = egui::Id::unique("thinoda_board_toolbar");
+        let rail = h.ctx.memory(|memory| memory.area_rect(rail_id)).unwrap();
+
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .select_board_object(id);
+        h.run_steps(8);
+
+        let strip = h
+            .ctx
+            .memory(|memory| {
+                memory.area_rect(egui::Id::unique((
+                    "thinoda_connector_options",
+                    egui::ViewportId::ROOT,
+                )))
+            })
+            .expect("selected connector has its own options strip");
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert_eq!(h.ctx.memory(|memory| memory.area_rect(rail_id)), Some(rail));
+        assert!(canvas.contains_rect(strip), "{size:?}: {strip:?}");
+        assert!(!rail.intersects(strip), "{size:?}: {rail:?} {strip:?}");
+        let route = h
+            .get_by_role_and_label(Role::Button, "Connector route")
+            .rect();
+        assert!(strip.contains_rect(route), "{size:?}: {route:?}");
+
+        click(&mut h, Role::Button, "Arrow at start");
+        assert!(connector(h.state(), id).arrow_start);
+        assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
+        assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let blank = egui::pos2(strip.right() - 8.0, strip.top() + 5.0);
+        h.event(egui::Event::PointerMoved(blank));
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: blank,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(1);
+        }
+        h.run_steps(2);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
+    }
+}
+
+#[test]
+fn armed_shape_tool_can_edit_a_selected_connector() {
+    let (mut app, id) = app_with_connector();
+    let tool = BoardTool::Shape(ShapeKind::Rectangle);
+    app.doc_mut().unwrap().view.set_board_tool(tool);
+    let mut h = harness(app, vec2(1000.0, 700.0));
+
+    click(&mut h, Role::Button, "Arrow at start");
+    assert!(connector(h.state(), id).arrow_start);
+    assert_eq!(h.state().doc().unwrap().view.board_selection, [id]);
+    assert_eq!(h.state().doc().unwrap().view.board_tool, tool);
+    assert_eq!(h.state().doc().unwrap().doc.sheet().canvas.objects.len(), 1);
+}
+
+#[test]
+fn connector_options_keep_their_popup_on_a_tiny_canvas() {
+    let (app, id) = app_with_connector();
+    let mut h = harness(app, vec2(320.0, 170.0));
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    assert!(!board_toolbar_fits_below_context(canvas), "{canvas:?}");
+    let rail_id = egui::Id::unique("thinoda_board_toolbar");
+    let rail_visible = |h: &Harness<'_, ThinodaApp>| {
+        h.ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .any(|layer| layer.id == rail_id)
+        })
+    };
+    assert!(!rail_visible(&h));
+    click(&mut h, Role::Button, "Connector route");
+    assert!(h.query_by_role_and_label(Role::Button, "Curve").is_some());
+    click(&mut h, Role::Button, "Curve");
+    assert_eq!(connector(h.state(), id).route, ConnectorRoute::Curve);
+    assert_eq!(h.state().doc().unwrap().view.canvas_rect(), canvas);
+
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .view
+        .board_selection
+        .clear();
+    h.run_steps(6);
+    assert!(rail_visible(&h));
+    assert!(h.query_by_role_and_label(Role::Button, "Curve").is_none());
+}
+
+#[test]
+fn connector_options_label_is_translated_in_every_supported_language() {
+    for language in i18n::Lang::ALL {
+        let translation = i18n::t_in(language, "Connector options");
+        assert!(!translation.is_empty(), "{language:?}");
+        if language != i18n::Lang::En {
+            assert_ne!(translation, "Connector options", "{language:?}");
+        }
+    }
+}
+
+#[test]
+fn arrow_toggle_clears_custom_marker_and_undo_restores_it() {
+    let (mut app, id) = app_with_connector();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Set marker", id, |object| {
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                panic!("expected connector");
+            };
+            connector.end_marker = Some(ConnectorMarker {
+                kind: ConnectorMarkerKind::Open,
+            });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = true;
+        })
+        .unwrap();
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    click(&mut h, Role::Button, "Arrow at end");
+    let current = connector(h.state(), id);
+    assert!(!current.arrow_end);
+    assert_eq!(current.end_marker, None);
+    assert_eq!(current.end_marker_size, None);
+    assert!(!current.end_marker_unfilled);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    let restored = connector(h.state(), id);
+    assert!(restored.arrow_end);
+    assert_eq!(restored.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+    assert_eq!(restored.end_marker_size, Some(12.5));
+    assert!(restored.end_marker_unfilled);
+    assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+    let redone = connector(h.state(), id);
+    assert_eq!(redone.end_marker, None);
+    assert_eq!(redone.end_marker_size, None);
+    assert!(!redone.end_marker_unfilled);
+}
+
+#[test]
 fn selected_connector_controls_change_only_existing_properties_and_round_trip() {
     for expanded in [false, true] {
         let (app, id) = app_with_connector();
@@ -215,6 +389,78 @@ fn selected_connector_controls_change_only_existing_properties_and_round_trip() 
 }
 
 #[test]
+fn clear_connector_waypoints_is_guarded_undoable_and_disabled_when_empty() {
+    let (mut app, id) = app_with_connector();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Add waypoints", id, |object| {
+            if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                connector.waypoints = vec![Vec2::new(-20.0, 80.0), Vec2::new(50.0, 70.0)].into();
+            }
+        })
+        .unwrap();
+    let original = connector(&app, id);
+    let stale = app.connector_context().unwrap().target;
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Change description", id, |object| {
+            object.alt_text = "New description".into();
+        })
+        .unwrap();
+    assert!(
+        app.apply_connector_change(&stale, ConnectorChange::ClearWaypoints)
+            .is_err()
+    );
+    assert_eq!(connector(&app, id), original);
+
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    click(&mut h, Role::Button, "Connector route");
+    let clear = h.get_by_role_and_label(Role::Button, "Clear connector waypoints");
+    assert!(!clear.accesskit_node().is_disabled());
+    click(&mut h, Role::Button, "Clear connector waypoints");
+    let mut expected = original.clone();
+    expected.waypoints = Default::default();
+    assert_eq!(connector(h.state(), id), expected);
+    close_popup(&mut h);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+    h.run_steps(4);
+    click(&mut h, Role::Button, "Connector route");
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Clear connector waypoints")
+            .accesskit_node()
+            .is_disabled()
+    );
+}
+
+#[test]
+fn inspector_clears_connector_waypoints_without_changing_other_fields() {
+    let (mut app, id) = app_with_connector();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Add waypoint", id, |object| {
+            if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                connector.waypoints = vec![Vec2::new(0.0, 90.0)].into();
+            }
+        })
+        .unwrap();
+    let original = connector(&app, id);
+    let mut h = harness(app, vec2(1200.0, 800.0));
+    click(&mut h, Role::Button, "More formatting options");
+    click(&mut h, Role::Button, "Clear connector waypoints");
+    let mut expected = original.clone();
+    expected.waypoints = Default::default();
+    assert_eq!(connector(h.state(), id), expected);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(connector(h.state(), id), original);
+}
+
+#[test]
 fn controls_support_keyboard_focus_and_exact_width() {
     let (app, id) = app_with_connector();
     let mut h = harness(app, vec2(900.0, 700.0));
@@ -300,7 +546,14 @@ fn escape_cancels_the_width_editor_without_changing_the_connector() {
 
 #[test]
 fn closing_a_stale_width_editor_releases_its_focus_and_draft() {
-    for reason in ["selection", "revision", "mode", "modal"] {
+    for reason in [
+        "selection",
+        "revision",
+        "mode",
+        "shape-tool",
+        "connector-tool",
+        "modal",
+    ] {
         let (mut app, first) = app_with_connector();
         let second = app
             .doc_mut()
@@ -344,6 +597,18 @@ fn closing_a_stale_width_editor_releases_its_focus_and_draft() {
                 })
                 .unwrap(),
             "mode" => h.state_mut().mode = CenterMode::Outliner,
+            "shape-tool" => h
+                .state_mut()
+                .doc_mut()
+                .unwrap()
+                .view
+                .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle)),
+            "connector-tool" => h
+                .state_mut()
+                .doc_mut()
+                .unwrap()
+                .view
+                .set_board_tool(BoardTool::Connector),
             "modal" => h.state_mut().dialogs.settings = true,
             _ => unreachable!(),
         }
@@ -355,6 +620,12 @@ fn closing_a_stale_width_editor_releases_its_focus_and_draft() {
             "{reason}"
         );
         assert!(!h.ctx.text_edit_focused(), "{reason}");
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), before, "{reason}");
+        if reason == "connector-tool" {
+            // Enter creates a connector in this tool; disarm it before retrying the draft key.
+            h.key_press(Key::Escape);
+            h.run_steps(3);
+        }
         h.key_press(Key::Enter);
         h.run_steps(3);
         assert_eq!(h.state().doc().unwrap().doc.state_id(), before, "{reason}");
@@ -434,6 +705,71 @@ fn expanding_custom_connector_color_reveals_its_editor_in_a_compact_window() {
         popup.bottom() - header.bottom() >= 40.0,
         "custom color editor is hidden below its header: {header:?} in {popup:?}"
     );
+}
+
+#[test]
+fn expanded_connector_color_mixer_fits_when_roomy_and_scrolls_when_short() {
+    for size in [vec2(1200.0, 900.0), vec2(320.0, 240.0)] {
+        let (app, id) = app_with_connector();
+        let mut h = harness(app, size);
+        let before = connector(h.state(), id);
+        let revision = h.state().doc().unwrap().doc.state_id();
+        click(&mut h, Role::Button, "Connector color");
+        let popup_id = h
+            .ctx
+            .data(|data| {
+                data.get_temp::<ConnectorPopups>(connector_popup_slot(egui::ViewportId::ROOT))
+            })
+            .unwrap()
+            .ids[1];
+        h.get_by_label("Custom color").scroll_to_me();
+        h.run_steps(5);
+        h.get_by_label("Custom color").click();
+        h.run_steps(20);
+        let popup = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+        let alpha = h
+            .query_all_by_role(Role::SpinButton)
+            .find(|control| control.value().is_some_and(|value| value.starts_with("A ")))
+            .expect("custom color alpha channel");
+        if size.y >= 900.0 {
+            let first = h
+                .get_by_role_and_label(Role::Button, "Connector color · Auto")
+                .rect();
+            let header = h.get_by_label("Custom color").rect();
+            assert!(
+                popup.contains_rect(first),
+                "{size:?}: {first:?} in {popup:?}"
+            );
+            assert!(
+                popup.contains_rect(header),
+                "{size:?}: {header:?} in {popup:?}"
+            );
+            assert!(
+                popup.contains_rect(alpha.rect()),
+                "{size:?}: {:?} in {popup:?}",
+                alpha.rect()
+            );
+        } else {
+            alpha.focus();
+            h.run_steps(8);
+            let popup = h.ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+            let alpha = h
+                .query_all_by_role(Role::SpinButton)
+                .find(|control| control.is_focused())
+                .expect("focused alpha channel");
+            assert!(
+                popup.contains_rect(alpha.rect()),
+                "{size:?}: {:?} in {popup:?}",
+                alpha.rect()
+            );
+        }
+        assert!(
+            h.ctx.content_rect().contains_rect(popup),
+            "{size:?}: {popup:?}"
+        );
+        assert_eq!(connector(h.state(), id), before);
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
 }
 
 #[cfg(feature = "gpu-tests")]

@@ -12,19 +12,22 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use thinoda_core::{
-    CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, SceneBand, SceneId,
-    ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
-    board::{rotate_around, rotated_bounds, rotated_corners, shape_label_rect},
+    CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, RectangleSides,
+    SceneBand, SceneId, ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
+    board::{
+        CANVAS_LABEL_FONT_SIZE, polyline_midpoint, rectangle_side_paths, rotate_around,
+        rotated_bounds, rotated_corners, shape_label_rect_with_style,
+    },
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
-    scene::{Scene, SceneGeometry, build_scene, topic_clip_zone},
+    scene::{Scene, SceneGeometry, build_scene, connector_stroke_path, topic_clip_zone},
     theme::Theme,
 };
 
 pub(crate) const RELATIONSHIP_SEGMENTS: usize = 32;
 
-fn shape_label_font_size(zoom: f32) -> f32 {
-    (12.0 * zoom).max(7.0)
+pub(crate) fn shape_label_font_size(zoom: f32) -> f32 {
+    (CANVAS_LABEL_FONT_SIZE * zoom).max(7.0)
 }
 
 /// Converts a core color into an egui color.
@@ -83,6 +86,12 @@ pub(crate) struct GhostClip {
     pub moving_zone: Option<ZoneId>,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PaintSceneExtras {
+    pub ghost_clip: Option<GhostClip>,
+    pub editing_board_object: Option<CanvasObjectId>,
+}
+
 /// Background color of the sheet.
 pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
     color32(Theme::for_settings(&sheet.theme).background(&sheet.theme, dark))
@@ -135,7 +144,7 @@ pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: 
             ..Default::default()
         },
         &scene,
-        None,
+        PaintSceneExtras::default(),
     );
 }
 
@@ -148,7 +157,15 @@ pub fn paint_map(
     opts: &PaintOptions<'_>,
 ) {
     let scene = build_scene(sheet, layout);
-    paint_map_scene(painter, sheet, layout, xf, opts, &scene, None);
+    paint_map_scene(
+        painter,
+        sheet,
+        layout,
+        xf,
+        opts,
+        &scene,
+        PaintSceneExtras::default(),
+    );
 }
 
 pub(crate) fn paint_map_scene(
@@ -158,7 +175,7 @@ pub(crate) fn paint_map_scene(
     xf: Xf,
     opts: &PaintOptions<'_>,
     scene: &Scene,
-    ghost_clip: Option<GhostClip>,
+    extras: PaintSceneExtras,
 ) {
     let z = xf.zoom;
     let bg = sheet_background(sheet, opts.dark);
@@ -168,7 +185,7 @@ pub(crate) fn paint_map_scene(
     };
     // Ghost geometry already uses a translated transform; stationary clips cancel it.
     let topic_clip = |id| {
-        topic_clip_zone(sheet, id).map(|(zone, frame)| match ghost_clip {
+        topic_clip_zone(sheet, id).map(|(zone, frame)| match extras.ghost_clip {
             Some(ghost) if ghost.moving_zone != Some(zone) => frame.translate(ghost.delta * -1.0),
             _ => frame,
         })
@@ -256,6 +273,7 @@ pub(crate) fn paint_map_scene(
         SceneBand::BelowMap,
         xf,
         opts,
+        extras.editing_board_object,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -462,7 +480,7 @@ pub(crate) fn paint_map_scene(
             }
         }
         if let Some(title) = rel.map(|x| x.title.as_str()).filter(|t| !t.is_empty()) {
-            let font = FontId::proportional(12.0 * z);
+            let font = FontId::proportional(CANVAS_LABEL_FONT_SIZE * z);
             let g = painter.layout_no_wrap(title.to_owned(), font, color);
             let m = xf.pos(r.mid);
             let rr = Rect::from_center_size(m, g.size() + vec2(8.0, 4.0) * z);
@@ -479,6 +497,7 @@ pub(crate) fn paint_map_scene(
         SceneBand::AboveMap,
         xf,
         opts,
+        extras.editing_board_object,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -625,6 +644,7 @@ fn paint_objects_in_band(
     band: SceneBand,
     xf: Xf,
     opts: &PaintOptions<'_>,
+    editing_board_object: Option<CanvasObjectId>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
 ) {
@@ -647,6 +667,7 @@ fn paint_objects_in_band(
             item,
             xf,
             opts,
+            editing_board_object,
             ink_cache,
             ink_tessellation,
         );
@@ -704,7 +725,8 @@ fn object_visible_bounds(
             let label_margin = if connector.label.is_empty() {
                 0.0
             } else {
-                connector.label.chars().count() as f32 * 12.0 * zoom_scale + 8.0 * zoom_scale
+                connector.label.chars().count() as f32 * CANVAS_LABEL_FONT_SIZE * zoom_scale
+                    + 8.0 * zoom_scale
             };
             arrow_margin.max(label_margin)
         }
@@ -736,7 +758,13 @@ fn shape_label_visible_bounds(
     let font_size = shape_label_font_size(zoom) / zoom.max(f32::EPSILON);
     let size = Vec2::new(longest as f32, line_count as f32) * (font_size * 2.0);
     let center = rotate_around(
-        shape_label_rect(*shape, object.rect).center(),
+        shape_label_rect_with_style(
+            *shape,
+            object.rect,
+            object.style.effective_shape_stroke_width(),
+            object.double_ellipse_margin,
+        )
+        .center(),
         object.rect.center(),
         object.rotation,
     );
@@ -1046,6 +1074,33 @@ fn ink_tessellated_mesh(
     Some(mesh)
 }
 
+/// Resolve a board label's text colour and the opaque backdrop it is judged against.
+pub fn board_label_colors(
+    sheet: &Sheet,
+    style: &thinoda_core::board::ObjectStyle,
+    dark: bool,
+) -> (Color32, Color32) {
+    let page = core_color32(sheet_background(sheet, dark));
+    let background = style.fill.map_or(page, |fill| fill.over(page));
+    let text = style
+        .text_color
+        .map(color32)
+        .unwrap_or_else(|| color32(Color::highest_contrast_on(background)));
+    (text, color32(background))
+}
+
+pub(crate) fn shape_label_editor_background(
+    sheet: &Sheet,
+    style: &thinoda_core::board::ObjectStyle,
+    dark: bool,
+) -> Color32 {
+    let page = core_color32(sheet_background(sheet, dark));
+    let background = style.fill.map_or(page, |fill| {
+        core_color32(opacity_color(color32(fill), style.opacity)).over(page)
+    });
+    color32(background)
+}
+
 fn opacity_color(color: Color32, opacity: f32) -> Color32 {
     color.gamma_multiply(opacity.clamp(0.0, 1.0))
 }
@@ -1111,6 +1166,174 @@ fn shape_fill(kind: ShapeKind) -> &'static ShapeFill {
         .expect("every shape has a fill")
 }
 
+/// Tessellates the union of square-capped sides when thick strokes overlap.
+fn rectangle_side_union_mesh(
+    object: &CanvasObject,
+    sides: RectangleSides,
+    xf: Xf,
+    stroke: Stroke,
+    pixels_per_point: f32,
+) -> egui::Mesh {
+    let half = stroke.width / 2.0;
+    let width = object.rect.size.x * xf.zoom;
+    let height = object.rect.size.y * xf.zoom;
+    // A collapsed draw.io path can reverse at its far end without a cap.
+    let right = if height == 0.0 && width > 0.0 && sides.top && sides.right && sides.bottom {
+        width
+    } else {
+        width + half
+    };
+    let bottom = if width == 0.0 && height > 0.0 && sides.right && sides.bottom && sides.left {
+        height
+    } else {
+        height + half
+    };
+    let mut xs = vec![-half, half, width - half, right];
+    let mut ys = vec![-half, half, height - half, bottom];
+    xs.retain(|x| *x <= right);
+    ys.retain(|y| *y <= bottom);
+    xs.sort_by(f32::total_cmp);
+    ys.sort_by(f32::total_cmp);
+    xs.dedup();
+    ys.dedup();
+    let cols = xs.len() - 1;
+    let rows = ys.len() - 1;
+    let occupied = |x: f32, y: f32| {
+        sides.top && y <= half
+            || sides.right && x >= width - half
+            || sides.bottom && y >= height - half
+            || sides.left && x <= half
+    };
+    let mut cells = vec![false; cols * rows];
+    for row in 0..rows {
+        for col in 0..cols {
+            cells[row * cols + col] =
+                occupied((xs[col] + xs[col + 1]) / 2.0, (ys[row] + ys[row + 1]) / 2.0);
+        }
+    }
+    let angle = object.rotation.to_radians();
+    let (sin, cos) = angle.sin_cos();
+    let origin = xf.pos(rotate_around(
+        object.rect.min,
+        object.rect.center(),
+        object.rotation,
+    ));
+    let point =
+        |col: usize, row: usize| origin + vec2(cos, sin) * xs[col] + vec2(-sin, cos) * ys[row];
+    let mut mesh = egui::Mesh::default();
+    let mut edges = Vec::new();
+    let vertex = |col: usize, row: usize| row * xs.len() + col;
+    for row in 0..rows {
+        for col in 0..cols {
+            if !cells[row * cols + col] {
+                continue;
+            }
+            let base = mesh.vertices.len() as u32;
+            for position in [
+                point(col, row),
+                point(col + 1, row),
+                point(col + 1, row + 1),
+                point(col, row + 1),
+            ] {
+                mesh.colored_vertex(position, stroke.color);
+            }
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+            if row == 0 || !cells[(row - 1) * cols + col] {
+                edges.push((vertex(col, row), vertex(col + 1, row)));
+            }
+            if col + 1 == cols || !cells[row * cols + col + 1] {
+                edges.push((vertex(col + 1, row), vertex(col + 1, row + 1)));
+            }
+            if row + 1 == rows || !cells[(row + 1) * cols + col] {
+                edges.push((vertex(col + 1, row + 1), vertex(col, row + 1)));
+            }
+            if col == 0 || !cells[row * cols + col - 1] {
+                edges.push((vertex(col, row + 1), vertex(col, row)));
+            }
+        }
+    }
+
+    let feather = 1.0 / pixels_per_point;
+    while let Some((start, mut end)) = edges.pop() {
+        let mut boundary = vec![start];
+        while end != start {
+            boundary.push(end);
+            let next = edges
+                .iter()
+                .position(|(from, _)| *from == end)
+                .expect("rectangle stroke union has a closed boundary");
+            end = edges.swap_remove(next).1;
+        }
+        let positions: Vec<_> = boundary
+            .iter()
+            .map(|&index| point(index % xs.len(), index / xs.len()))
+            .collect();
+        let normals: Vec<_> = (0..positions.len())
+            .map(|index| {
+                let prev =
+                    positions[index] - positions[(index + positions.len() - 1) % positions.len()];
+                let next = positions[(index + 1) % positions.len()] - positions[index];
+                let prev = prev.normalized();
+                let next = next.normalized();
+                let a = vec2(prev.y, -prev.x);
+                let b = vec2(next.y, -next.x);
+                (a + b) / (1.0 + a.dot(b))
+            })
+            .collect();
+        for index in 0..positions.len() {
+            let next = (index + 1) % positions.len();
+            let base = mesh.vertices.len() as u32;
+            mesh.colored_vertex(positions[index], stroke.color);
+            mesh.colored_vertex(positions[next], stroke.color);
+            mesh.colored_vertex(
+                positions[next] + normals[next] * feather,
+                Color32::TRANSPARENT,
+            );
+            mesh.colored_vertex(
+                positions[index] + normals[index] * feather,
+                Color32::TRANSPARENT,
+            );
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+        }
+    }
+    mesh
+}
+
+fn paint_rectangle_sides(
+    painter: &Painter,
+    object: &CanvasObject,
+    sides: RectangleSides,
+    xf: Xf,
+    stroke: Stroke,
+) {
+    if stroke == Stroke::NONE {
+        return;
+    }
+    if sides.top && sides.left
+        || stroke.width >= object.rect.size.x.min(object.rect.size.y) * xf.zoom
+    {
+        painter.add(Shape::mesh(rectangle_side_union_mesh(
+            object,
+            sides,
+            xf,
+            stroke,
+            painter.ctx().pixels_per_point(),
+        )));
+        return;
+    }
+    for path in rectangle_side_paths(object.rect, object.rotation, sides) {
+        let mut points: Vec<_> = path.points.into_iter().map(|point| xf.pos(point)).collect();
+        let last = points.len() - 1;
+        let start_direction = (points[1] - points[0]).normalized();
+        let end_direction = (points[last] - points[last - 1]).normalized();
+        points[0] -= start_direction * (stroke.width / 2.0);
+        points[last] += end_direction * (stroke.width / 2.0);
+        painter.add(Shape::line(points, stroke));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_canvas_object(
     painter: &Painter,
@@ -1119,6 +1342,7 @@ fn paint_canvas_object(
     item: &thinoda_core::SceneItem,
     xf: Xf,
     opts: &PaintOptions<'_>,
+    editing_board_object: Option<CanvasObjectId>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
 ) {
@@ -1151,7 +1375,10 @@ fn paint_canvas_object(
             };
             let points: Vec<_> = outline.iter().copied().map(|p| xf.pos(p)).collect();
             let triangulation = shape_fill(*shape);
-            if triangulation.convex {
+            if let Some(sides) = object.rectangle_sides {
+                painter.add(Shape::convex_polygon(points, fill, Stroke::NONE));
+                paint_rectangle_sides(painter, object, sides, xf, stroke);
+            } else if triangulation.convex {
                 painter.add(Shape::convex_polygon(points, fill, stroke));
             } else {
                 if fill != Color32::TRANSPARENT {
@@ -1174,14 +1401,15 @@ fn paint_canvas_object(
                     stroke,
                 ));
             }
-            if !label.is_empty() {
-                let text_rect = shape_label_rect(*shape, object.rect);
+            if !label.is_empty() && editing_board_object != Some(object.id) {
+                let text_rect = shape_label_rect_with_style(
+                    *shape,
+                    object.rect,
+                    object.style.effective_shape_stroke_width(),
+                    object.double_ellipse_margin,
+                );
                 let font = FontId::proportional(shape_label_font_size(z));
-                let text_color = object.style.text_color.map(color32).unwrap_or_else(|| {
-                    let page = core_color32(sheet_background(sheet, opts.dark));
-                    let background = object.style.fill.map_or(page, |fill| fill.over(page));
-                    color32(Color::highest_contrast_on(background))
-                });
+                let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
                 let text_color = opacity_color(text_color, object.style.opacity);
                 let galley = painter.layout_no_wrap(label.clone(), font, text_color);
                 let center = xf.pos(rotate_around(
@@ -1239,41 +1467,72 @@ fn paint_canvas_object(
                 }
             }
         }
-        (CanvasObjectKind::Connector(connector), SceneGeometry::Polyline { points, .. }) => {
+        (
+            CanvasObjectKind::Connector(connector),
+            SceneGeometry::Polyline {
+                points, markers, ..
+            },
+        ) => {
             let color = connector
                 .color
                 .map(color32)
                 .or(object.style.stroke.map(color32))
                 .unwrap_or_else(|| default_object_stroke(opts));
             let color = opacity_color(color, object.style.opacity);
-            let points: Vec<Pos2> = points.iter().copied().map(|point| xf.pos(point)).collect();
+            let label_center = polyline_midpoint(points);
             let stroke = Stroke::new((connector.width * z).max(0.5), color);
-            painter.add(Shape::line(points.clone(), stroke));
+            let line = connector_stroke_path(points, markers)
+                .into_iter()
+                .map(|point| xf.pos(point))
+                .collect();
+            painter.add(Shape::line(line, stroke));
             if points.len() >= 2 {
                 if connector.arrow_start {
-                    arrow_head(painter, points[1], points[0], (9.0 * z).max(4.0), color);
+                    if let Some(marker) = markers[0] {
+                        paint_connector_marker(painter, marker, xf, color, stroke);
+                    } else if connector.start_marker.is_none() {
+                        arrow_head(
+                            painter,
+                            xf.pos(points[1]),
+                            xf.pos(points[0]),
+                            (9.0 * z).max(4.0),
+                            color,
+                        );
+                    }
                 }
                 if connector.arrow_end {
                     let n = points.len();
-                    arrow_head(
-                        painter,
-                        points[n - 2],
-                        points[n - 1],
-                        (9.0 * z).max(4.0),
-                        color,
-                    );
+                    if let Some(marker) = markers[1] {
+                        paint_connector_marker(painter, marker, xf, color, stroke);
+                    } else if connector.end_marker.is_none() {
+                        arrow_head(
+                            painter,
+                            xf.pos(points[n - 2]),
+                            xf.pos(points[n - 1]),
+                            (9.0 * z).max(4.0),
+                            color,
+                        );
+                    }
                 }
-                if !connector.label.is_empty() {
-                    let mid = points[points.len() / 2];
-                    let font = FontId::proportional((12.0 * z).max(7.0));
-                    let galley = painter.layout_no_wrap(connector.label.clone(), font, color);
+                if !connector.label.is_empty() && editing_board_object != Some(object.id) {
+                    let mid = xf.pos(label_center.expect("a connector path has points"));
+                    let font = FontId::proportional(shape_label_font_size(z));
+                    let text_color = object
+                        .style
+                        .text_color
+                        .map(color32)
+                        .map(|color| opacity_color(color, object.style.opacity))
+                        .unwrap_or(color);
+                    let background = sheet_background(sheet, opts.dark);
+                    let backdrop = if object.style.text_color.is_some() {
+                        opacity_color(background, f32::from(text_color.a()) / 255.0)
+                    } else {
+                        background
+                    };
+                    let galley = painter.layout_no_wrap(connector.label.clone(), font, text_color);
                     let rect = Rect::from_center_size(mid, galley.size() + vec2(8.0, 4.0) * z);
-                    painter.rect_filled(
-                        rect,
-                        CornerRadius::same((4.0 * z) as u8),
-                        sheet_background(sheet, opts.dark),
-                    );
-                    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, color);
+                    painter.rect_filled(rect, CornerRadius::same((4.0 * z) as u8), backdrop);
+                    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
                 }
             }
         }
@@ -1645,7 +1904,7 @@ fn paint_topic(
     if let Some((label, nr)) = &t.number {
         let nr = xf.rect(*nr);
         let font = FontId::new(
-            st.font_size * z,
+            crate::measure::render_font_size(st.font_size * z),
             crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
         );
         let pos = pos2(nr.left(), nr.center().y);
@@ -1671,7 +1930,7 @@ fn paint_topic(
     if !editing && let Some(topic) = topic {
         let tr = xf.rect(t.title_rect);
         let font = FontId::new(
-            st.font_size * z,
+            crate::measure::render_font_size(st.font_size * z),
             crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
         );
         let mut job = LayoutJob::default();
@@ -1718,7 +1977,7 @@ fn paint_topic(
             ir.center(),
             egui::Align2::CENTER_CENTER,
             glyph,
-            FontId::proportional(ir.height() * 0.9),
+            FontId::proportional(crate::measure::render_font_size(ir.height() * 0.9)),
             text_color.gamma_multiply(0.8),
         );
     }
@@ -1782,7 +2041,7 @@ pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, col
                 c,
                 egui::Align2::CENTER_CENTER,
                 rest,
-                FontId::proportional(rad * 1.3),
+                FontId::proportional(crate::measure::render_font_size(rad * 1.3)),
                 a(detail),
             );
         }
@@ -1850,17 +2109,10 @@ pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, col
         }
         _ => {
             let glyph = thinoda_core::markers::glyph(id);
-            let has = painter
-                .ctx()
-                .fonts_mut(|f| f.has_glyphs(&FontId::proportional(rad * 1.6), glyph));
+            let font = FontId::proportional(crate::measure::render_font_size(rad * 1.6));
+            let has = painter.ctx().fonts_mut(|f| f.has_glyphs(&font, glyph));
             if has && !glyph.is_empty() {
-                painter.text(
-                    c,
-                    egui::Align2::CENTER_CENTER,
-                    glyph,
-                    FontId::proportional(rad * 1.6),
-                    a(foreground),
-                );
+                painter.text(c, egui::Align2::CENTER_CENTER, glyph, font, a(foreground));
             } else {
                 painter.circle_filled(
                     c,
@@ -1874,7 +2126,7 @@ pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, col
                     c,
                     egui::Align2::CENTER_CENTER,
                     initial,
-                    FontId::proportional(rad * 1.2),
+                    FontId::proportional(crate::measure::render_font_size(rad * 1.2)),
                     a(detail),
                 );
             }
@@ -2006,6 +2258,54 @@ fn tapered_line(painter: &Painter, pts: &[Pos2], w0: f32, w1: f32, color: Color3
     }
 }
 
+fn paint_connector_marker(
+    painter: &Painter,
+    marker: thinoda_core::scene::ConnectorMarkerGeometry,
+    xf: Xf,
+    color: Color32,
+    stroke: Stroke,
+) {
+    if let Some((center, radius)) = marker.circle() {
+        if radius > 0.0 {
+            painter.circle(
+                xf.pos(center),
+                radius * xf.zoom,
+                if marker.filled {
+                    color
+                } else {
+                    Color32::TRANSPARENT
+                },
+                stroke,
+            );
+        }
+        return;
+    }
+    if let Some((points, _)) = marker.flattened_curve(stroke.width / xf.zoom) {
+        painter.add(Shape::line(
+            points.into_iter().map(|point| xf.pos(point)).collect(),
+            stroke,
+        ));
+        return;
+    }
+    let points: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+    if marker.filled && points.len() == 4 {
+        let mut mesh = egui::Mesh::default();
+        for point in &points {
+            mesh.colored_vertex(*point, color);
+        }
+        mesh.add_triangle(0, 1, 3);
+        mesh.add_triangle(1, 2, 3);
+        painter.add(Shape::mesh(mesh));
+        painter.add(Shape::closed_line(points, stroke));
+    } else if marker.filled {
+        painter.add(Shape::convex_polygon(points, color, stroke));
+    } else if marker.closed {
+        painter.add(Shape::closed_line(points, stroke));
+    } else {
+        painter.add(Shape::line(points, stroke));
+    }
+}
+
 fn arrow_head(painter: &Painter, from: Pos2, to: Pos2, size: f32, color: Color32) {
     let d = (to - from).normalized();
     if !d.x.is_finite() {
@@ -2036,6 +2336,139 @@ fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rectangle_side_mesh_has_finite_nonoverlapping_coverage_for_all_masks() {
+        let stroke = Stroke::new(8.0, Color32::from_rgba_unmultiplied(30, 60, 120, 128));
+        let cross = |a: Pos2, b: Pos2, p: Pos2| {
+            let ab = b - a;
+            let ap = p - a;
+            ab.x * ap.y - ab.y * ap.x
+        };
+        for zoom in [0.1, 0.75, 1.0, 1.25, 4.0] {
+            let xf = Xf {
+                origin: pos2(20.0, 30.0),
+                zoom,
+            };
+            for (width, height) in [
+                (40, 30),
+                (2, 3),
+                (8, 8),
+                (8, 2),
+                (2, 8),
+                (8, 30),
+                (40, 8),
+                (0, 40),
+                (40, 0),
+                (0, 0),
+            ] {
+                for rotation in [0.0, 37.0, 90.0] {
+                    for mask in 0..16 {
+                        let sides = RectangleSides {
+                            top: mask & 1 != 0,
+                            right: mask & 2 != 0,
+                            bottom: mask & 4 != 0,
+                            left: mask & 8 != 0,
+                        };
+                        let mut object = CanvasObject::shape(
+                            ShapeKind::Rectangle,
+                            thinoda_core::Rect::from_min_size(
+                                Vec2::new(100.0, 100.0),
+                                Vec2::new(width as f32 / zoom, height as f32 / zoom),
+                            ),
+                        );
+                        object.rotation = rotation;
+                        let mesh = rectangle_side_union_mesh(&object, sides, xf, stroke, 1.5);
+                        assert!(
+                            mesh.vertices
+                                .iter()
+                                .all(|v| v.pos.x.is_finite() && v.pos.y.is_finite()),
+                            "{width}x{height}, zoom {zoom}, {rotation}, mask {mask:04b}"
+                        );
+                        assert!(
+                            mesh.indices
+                                .iter()
+                                .all(|index| (*index as usize) < mesh.vertices.len())
+                        );
+                        let (triangles, remainder) = mesh.indices.as_chunks::<3>();
+                        assert!(remainder.is_empty());
+                        let opaque: Vec<_> = triangles
+                            .iter()
+                            .filter_map(|indices| {
+                                let vertices = [
+                                    mesh.vertices[indices[0] as usize],
+                                    mesh.vertices[indices[1] as usize],
+                                    mesh.vertices[indices[2] as usize],
+                                ];
+                                vertices
+                                    .iter()
+                                    .all(|vertex| vertex.color == stroke.color)
+                                    .then_some(vertices.map(|vertex| vertex.pos))
+                            })
+                            .collect();
+                        let half = stroke.width / 2.0;
+                        for y in -4..height + 4 {
+                            for x in -4..width + 4 {
+                                let local = Vec2::new(x as f32 + 0.371, y as f32 + 0.613);
+                                let mut expected = sides.top && local.y < half
+                                    || sides.right && local.x >= width as f32 - half
+                                    || sides.bottom && local.y >= height as f32 - half
+                                    || sides.left && local.x < half;
+                                if width == 0
+                                    && height > 0
+                                    && sides.right
+                                    && sides.bottom
+                                    && sides.left
+                                    && local.y >= height as f32
+                                {
+                                    expected = false;
+                                }
+                                if height == 0
+                                    && width > 0
+                                    && sides.top
+                                    && sides.right
+                                    && sides.bottom
+                                    && local.x >= width as f32
+                                {
+                                    expected = false;
+                                }
+                                let position = xf.pos(rotate_around(
+                                    object.rect.min + local * (1.0 / zoom),
+                                    object.rect.center(),
+                                    rotation,
+                                ));
+                                let mut coverage = 0;
+                                let mut on_edge = false;
+                                for triangle in &opaque {
+                                    let signs = [
+                                        cross(triangle[0], triangle[1], position),
+                                        cross(triangle[1], triangle[2], position),
+                                        cross(triangle[2], triangle[0], position),
+                                    ];
+                                    if signs.iter().all(|value| *value >= -0.001)
+                                        || signs.iter().all(|value| *value <= 0.001)
+                                    {
+                                        if signs.iter().any(|value| value.abs() <= 0.001) {
+                                            on_edge = true;
+                                        } else {
+                                            coverage += 1;
+                                        }
+                                    }
+                                }
+                                if !on_edge {
+                                    assert_eq!(
+                                        coverage,
+                                        usize::from(expected),
+                                        "{width}x{height}, zoom {zoom}, {rotation}, mask {mask:04b}, ({x}, {y})"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn object_opacity_preserves_premultiplied_color() {
@@ -2219,6 +2652,263 @@ mod tests {
     }
 
     #[test]
+    fn connector_labels_use_explicit_text_color_without_changing_the_line() {
+        use thinoda_core::board::{CanvasConnector, Endpoint};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(10.0, 20.0)),
+            Endpoint::Point(Vec2::new(110.0, 20.0)),
+        );
+        connector.label = "Edge label".into();
+        connector.color = Some(Color::rgba(200, 30, 40, 128));
+        connector.arrow_end = false;
+        let mut object = CanvasObject::connector(connector);
+        object.style.opacity = 0.5;
+        let id = sheet.add_canvas_object(object).unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let xf = Xf {
+            origin: pos2(100.0, 100.0),
+            zoom: 1.0,
+        };
+        let line_color = opacity_color(color32(Color::rgba(200, 30, 40, 128)), 0.5);
+        for dark in [false, true] {
+            for explicit in [
+                None,
+                Some(Color::rgb(0, 0, 255)),
+                Some(Color::rgba(0, 0, 255, 128)),
+                Some(Color::TRANSPARENT),
+            ] {
+                sheet.canvas.object_mut(id).unwrap().style.text_color = explicit;
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_pass(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        paint_map(
+                            &ctx.layer_painter(egui::LayerId::background()),
+                            &sheet,
+                            &layout,
+                            xf,
+                            &PaintOptions {
+                                dark,
+                                ..Default::default()
+                            },
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                let label = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        Shape::Text(text) if text.galley.job.text == "Edge label" => Some(text),
+                        _ => None,
+                    });
+                let expected = explicit
+                    .map(color32)
+                    .map(|color| opacity_color(color, 0.5))
+                    .unwrap_or(line_color);
+                assert_eq!(label.unwrap().fallback_color, expected, "{explicit:?}");
+                let backdrop = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        Shape::Rect(rect)
+                            if rect.rect.contains(xf.pos(Vec2::new(60.0, 20.0)))
+                                && rect.rect.width() < 200.0 =>
+                        {
+                            Some(rect)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                let background = sheet_background(&sheet, dark);
+                let expected_backdrop = if explicit.is_some() {
+                    opacity_color(background, f32::from(expected.a()) / 255.0)
+                } else {
+                    background
+                };
+                assert_eq!(backdrop.fill, expected_backdrop, "{explicit:?}");
+                let line = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        Shape::Path(path)
+                            if path.points
+                                == [
+                                    xf.pos(Vec2::new(10.0, 20.0)),
+                                    xf.pos(Vec2::new(110.0, 20.0)),
+                                ] =>
+                        {
+                            Some(path)
+                        }
+                        _ => None,
+                    });
+                assert!(matches!(
+                    line.unwrap().stroke.color,
+                    egui::epaint::ColorMode::Solid(color) if color == line_color
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn transparent_anchor_proxy_paints_only_its_label() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_min_size(Vec2::new(10.0, 20.0), Vec2::new(100.0, 60.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "Anchor label".into();
+        }
+        shape.style.fill = Some(Color::TRANSPARENT);
+        shape.style.stroke = Some(Color::TRANSPARENT);
+        shape.style.text_color = Some(Color::rgb(0, 0, 255));
+        sheet.add_canvas_object(shape).unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let xf = Xf {
+            origin: pos2(100.0, 100.0),
+            zoom: 1.0,
+        };
+        let expected = [
+            xf.pos(Vec2::new(10.0, 20.0)),
+            xf.pos(Vec2::new(110.0, 20.0)),
+            xf.pos(Vec2::new(110.0, 80.0)),
+            xf.pos(Vec2::new(10.0, 80.0)),
+        ];
+        for dark in [false, true] {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &sheet,
+                        &layout,
+                        xf,
+                        &PaintOptions {
+                            dark,
+                            ..Default::default()
+                        },
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            let path = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Path(path) if path.points == expected => Some(path),
+                    _ => None,
+                })
+                .expect("anchor proxy should retain its geometry");
+            assert_eq!(path.fill, Color32::TRANSPARENT);
+            assert!(matches!(
+                path.stroke.color,
+                egui::epaint::ColorMode::Solid(Color32::TRANSPARENT)
+            ));
+            assert!(output.shapes.iter().any(|clipped| matches!(
+                &clipped.shape,
+                Shape::Text(text)
+                    if text.galley.job.text == "Anchor label"
+                        && text.fallback_color == Color32::BLUE
+            )));
+        }
+    }
+
+    #[test]
+    fn interactive_edit_hides_only_the_active_board_label() {
+        use thinoda_core::{
+            SheetRootMode,
+            board::{CanvasConnector, Endpoint},
+        };
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let add_shape = |sheet: &mut Sheet, x, text: &str| {
+            let mut shape = CanvasObject::shape(
+                ShapeKind::RoundedRectangle,
+                thinoda_core::Rect::from_center_size(Vec2::new(x, 0.0), Vec2::new(120.0, 80.0)),
+            );
+            if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+                *label = text.into();
+            }
+            sheet.add_canvas_object(shape).unwrap()
+        };
+        let first = add_shape(&mut sheet, -140.0, "First shape");
+        add_shape(&mut sheet, 140.0, "Second shape");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-80.0, 80.0)),
+            Endpoint::Point(Vec2::new(80.0, 80.0)),
+        );
+        connector.label = "Connector label".into();
+        let connector = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let ctx = egui::Context::default();
+        let rendered_labels = |editing_board_object| {
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map_scene(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &sheet,
+                        &layout,
+                        Xf {
+                            origin: pos2(400.0, 300.0),
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                        &scene,
+                        PaintSceneExtras {
+                            editing_board_object,
+                            ..Default::default()
+                        },
+                    );
+                },
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect();
+            output.textures_delta.clear();
+            labels
+        };
+        let all = rendered_labels(None);
+        assert!(all.contains(&"First shape".into()));
+        assert!(all.contains(&"Second shape".into()));
+        assert!(all.contains(&"Connector label".into()));
+
+        let shape_edit = rendered_labels(Some(first));
+        assert!(!shape_edit.contains(&"First shape".into()));
+        assert!(shape_edit.contains(&"Second shape".into()));
+        assert!(shape_edit.contains(&"Connector label".into()));
+
+        let connector_edit = rendered_labels(Some(connector));
+        assert!(connector_edit.contains(&"First shape".into()));
+        assert!(connector_edit.contains(&"Second shape".into()));
+        assert!(!connector_edit.contains(&"Connector label".into()));
+    }
+
+    #[test]
     fn shape_labels_rotate_about_the_shape_center_at_any_zoom() {
         let mut sheet = Sheet::new("S", "Root");
         let mut shape = CanvasObject::shape(
@@ -2239,7 +2929,8 @@ mod tests {
             for angle in [0.0_f32, 45.0, 90.0, -90.0] {
                 let shape = &mut sheet.canvas.objects[0];
                 shape.rotation = angle;
-                let label_center = shape_label_rect(ShapeKind::Triangle, shape.rect).center();
+                let label_center =
+                    thinoda_core::board::shape_label_rect(ShapeKind::Triangle, shape.rect).center();
                 let expected = xf.pos(rotate_around(label_center, shape.rect.center(), angle));
                 let mut output = ctx.run_pass(
                     egui::RawInput {
@@ -4085,6 +4776,456 @@ mod tests {
             &shape.shape,
             Shape::Path(path) if path.fill == color32(Color::rgb(240, 200, 80))
         )));
+    }
+
+    #[test]
+    fn connector_markers_paint_the_shared_scene_geometry() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        let mut sheet = Sheet::new("Markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        connector.color = Some(Color::rgb(20, 40, 60));
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let SceneGeometry::Polyline {
+            points, markers, ..
+        } = &scene.item(SceneId::Object(id)).unwrap().geometry
+        else {
+            panic!("expected connector");
+        };
+        let xf = Xf {
+            origin: pos2(100.0, 100.0),
+            zoom: 2.0,
+        };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 400.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_map(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &sheet,
+                    &layout,
+                    xf,
+                    &PaintOptions::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        for marker in markers.iter().flatten() {
+            let expected: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+            let path = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    Shape::Path(path) if path.points.as_slice() == expected => Some(path),
+                    _ => None,
+                })
+                .expect("marker must use the scene's geometry");
+            assert_eq!(path.closed, marker.closed);
+            assert_eq!(
+                path.fill,
+                if marker.filled {
+                    color32(Color::rgb(20, 40, 60))
+                } else {
+                    Color32::TRANSPARENT
+                }
+            );
+        }
+        let expected: Vec<_> = connector_stroke_path(points, markers)
+            .into_iter()
+            .map(|point| xf.pos(point))
+            .collect();
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            Shape::Path(path) if path.points == expected && !path.closed
+        )));
+    }
+
+    #[test]
+    fn half_circle_markers_paint_one_open_curve() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        let mut sheet = Sheet::new("Half-circle marker", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.width = 2.0;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(12.5);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let SceneGeometry::Polyline { markers, .. } =
+            &scene.item(SceneId::Object(id)).unwrap().geometry
+        else {
+            panic!("expected connector");
+        };
+        let xf = Xf {
+            origin: pos2(100.0, 100.0),
+            zoom: 2.0,
+        };
+        let color = Color32::from_rgba_unmultiplied(20, 40, 60, 120);
+        let stroke = Stroke::new(4.0, color);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            paint_connector_marker(
+                &ctx.layer_painter(egui::LayerId::background()),
+                markers[1].unwrap(),
+                xf,
+                color,
+                stroke,
+            );
+        });
+        output.textures_delta.clear();
+        let paths: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::Path(path) => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths.len(), 1);
+        assert!(!paths[0].closed);
+        assert_eq!(paths[0].fill, Color32::TRANSPARENT);
+        assert_eq!(paths[0].points.first(), Some(&pos2(300.0, 131.0)));
+        assert_eq!(paths[0].points.last(), Some(&pos2(300.0, 69.0)));
+    }
+
+    #[test]
+    fn bar_markers_paint_open_unfilled_segments() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for (kind, at_start, size, expected) in [
+            (
+                ConnectorMarkerKind::BaseDash,
+                true,
+                12.5,
+                [pos2(100.0, 84.5), pos2(100.0, 115.5)],
+            ),
+            (
+                ConnectorMarkerKind::Dash,
+                false,
+                8.0,
+                [pos2(289.0, 111.0), pos2(267.0, 89.0)],
+            ),
+            (
+                ConnectorMarkerKind::BaseDash,
+                false,
+                0.0,
+                [pos2(300.0, 103.0), pos2(300.0, 97.0)],
+            ),
+            (
+                ConnectorMarkerKind::Dash,
+                true,
+                12.5,
+                [pos2(115.5, 84.5), pos2(146.5, 115.5)],
+            ),
+        ] {
+            for unfilled in [false, true] {
+                let mut sheet = Sheet::new("Bar marker", "");
+                sheet.root_mode = SheetRootMode::Hidden;
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                connector.width = 2.0;
+                connector.arrow_start = at_start;
+                if at_start {
+                    connector.start_marker = Some(ConnectorMarker { kind });
+                    connector.start_marker_size = Some(size);
+                    connector.start_marker_unfilled = unfilled;
+                } else {
+                    connector.end_marker = Some(ConnectorMarker { kind });
+                    connector.end_marker_size = Some(size);
+                    connector.end_marker_unfilled = unfilled;
+                }
+                let id = sheet
+                    .add_canvas_object(CanvasObject::connector(connector))
+                    .unwrap();
+                let layout =
+                    thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+                let scene = build_scene(&sheet, &layout);
+                let SceneGeometry::Polyline { markers, .. } =
+                    &scene.item(SceneId::Object(id)).unwrap().geometry
+                else {
+                    panic!("expected connector");
+                };
+                let xf = Xf {
+                    origin: pos2(100.0, 100.0),
+                    zoom: 2.0,
+                };
+                let color = Color32::from_rgba_unmultiplied(20, 40, 60, 120);
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                    paint_connector_marker(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        markers[usize::from(!at_start)].unwrap(),
+                        xf,
+                        color,
+                        Stroke::new(4.0, color),
+                    );
+                });
+                output.textures_delta.clear();
+                let paths: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        Shape::Path(path) => Some(path),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(paths.len(), 1);
+                assert_eq!(paths[0].points, expected);
+                assert!(!paths[0].closed);
+                assert_eq!(paths[0].fill, Color32::TRANSPARENT);
+            }
+        }
+    }
+
+    #[test]
+    fn oval_markers_paint_filled_or_hollow_circles() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for (size, filled) in [(12.5, false), (12.5, true), (0.0, true)] {
+            let mut sheet = Sheet::new("Oval marker", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker {
+                kind: ConnectorMarkerKind::Oval,
+            });
+            connector.end_marker_size = Some(size);
+            connector.end_marker_unfilled = !filled;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let scene = build_scene(&sheet, &layout);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let xf = Xf {
+                origin: pos2(100.0, 100.0),
+                zoom: 2.0,
+            };
+            let color = Color32::from_rgb(20, 40, 60);
+            let stroke = Stroke::new(4.0, color);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 400.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_connector_marker(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        markers[1].unwrap(),
+                        xf,
+                        color,
+                        stroke,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            let circles: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Circle(circle) => Some(circle),
+                    _ => None,
+                })
+                .collect();
+            if size == 0.0 {
+                assert!(circles.is_empty());
+            } else {
+                assert_eq!(circles.len(), 1);
+                assert_eq!(circles[0].center, xf.pos(Vec2::new(100.0, 0.0)));
+                assert_eq!(circles[0].radius, 12.5);
+                assert_eq!(
+                    circles[0].fill,
+                    if filled { color } else { Color32::TRANSPARENT }
+                );
+                assert_eq!(circles[0].stroke, stroke);
+            }
+        }
+    }
+
+    #[test]
+    fn four_point_markers_paint_their_entire_triangulated_outline() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Classic,
+            ConnectorMarkerKind::ClassicThin,
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+        ] {
+            let mut sheet = Sheet::new("Markers", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let scene = build_scene(&sheet, &layout);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let marker = markers[1].unwrap();
+            let xf = Xf {
+                origin: pos2(100.0, 100.0),
+                zoom: 2.0,
+            };
+            let expected: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+            let triangle_area = |a: Pos2, b: Pos2, c: Pos2| {
+                ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() * 0.5
+            };
+            let polygon_area = (0..expected.len())
+                .map(|index| {
+                    let a = expected[index];
+                    let b = expected[(index + 1) % expected.len()];
+                    a.x * b.y - a.y * b.x
+                })
+                .sum::<f32>()
+                .abs()
+                * 0.5;
+            let mesh_area = triangle_area(expected[0], expected[1], expected[3])
+                + triangle_area(expected[1], expected[2], expected[3]);
+            assert!(polygon_area > 0.0);
+            assert!((mesh_area - polygon_area).abs() < 0.01, "{kind:?}");
+            let color = Color32::from_rgb(20, 40, 60);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                paint_connector_marker(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    marker,
+                    xf,
+                    color,
+                    Stroke::new(2.0, color),
+                );
+            });
+            output.textures_delta.clear();
+            assert!(output.shapes.iter().any(|shape| match &shape.shape {
+                Shape::Mesh(mesh) => {
+                    mesh.indices == [0, 1, 3, 1, 2, 3]
+                        && mesh
+                            .vertices
+                            .iter()
+                            .map(|vertex| vertex.pos)
+                            .eq(expected.iter().copied())
+                }
+                _ => false,
+            }));
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                Shape::Path(path) if path.closed && path.points == expected
+            )));
+        }
+    }
+
+    #[test]
+    fn hollow_connector_marker_paints_a_closed_unfilled_outline() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Classic,
+            ConnectorMarkerKind::Block,
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+        ] {
+            let mut sheet = Sheet::new("Hollow markers", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_unfilled = true;
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let scene = build_scene(&sheet, &layout);
+            let SceneGeometry::Polyline { markers, .. } =
+                &scene.item(SceneId::Object(id)).unwrap().geometry
+            else {
+                panic!("expected connector");
+            };
+            let marker = markers[1].unwrap();
+            let xf = Xf {
+                origin: pos2(100.0, 100.0),
+                zoom: 2.0,
+            };
+            let expected: Vec<_> = marker.points().iter().map(|point| xf.pos(*point)).collect();
+            let color = Color32::from_rgb(20, 40, 60);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                paint_connector_marker(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    marker,
+                    xf,
+                    color,
+                    Stroke::new(2.0, color),
+                );
+            });
+            output.textures_delta.clear();
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                Shape::Path(path) if path.closed && path.points == expected && path.fill == Color32::TRANSPARENT
+            )));
+            assert!(
+                !output
+                    .shapes
+                    .iter()
+                    .any(|shape| matches!(&shape.shape, Shape::Mesh(_)))
+            );
+        }
     }
 
     #[test]

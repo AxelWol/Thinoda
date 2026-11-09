@@ -24,6 +24,7 @@ impl Cmd {
             Self::MoveToNewWindow => "window.move-to-new-window",
             Self::NextDoc => "view.next-document",
             Self::Import => "file.import",
+            Self::ImportDrawioLink => "file.import-drawio-link",
             Self::MergeFiles => "file.merge",
             Self::MaskedCopy => "file.masked-copy",
             Self::MapShot => "tools.map-shot",
@@ -83,6 +84,7 @@ impl Cmd {
             Self::OpenLink => "topic.open-link",
             Self::ShowInFolder => "file.show-in-folder",
             Self::MenuPaste => "edit.paste",
+            Self::CopyAsDrawio => "edit.copy-drawio",
             Self::SetTheme(ThemeMode::System) => "appearance.system",
             Self::SetTheme(ThemeMode::Light) => "appearance.light",
             Self::SetTheme(ThemeMode::Dark) => "appearance.dark",
@@ -165,6 +167,10 @@ impl Cmd {
                 Format::MindManager => "export.mindmanager",
                 Format::MindManagerXml => return None,
                 Format::TextBundle => "export.textbundle",
+                Format::DrawIo => "export.drawio",
+                Format::DrawIoSvg => "export.drawio-svg",
+                Format::DrawIoPng => "export.drawio-png",
+                Format::DrawIoHtml => return None,
                 Format::Svg => "export.svg",
                 Format::Png => "export.png",
                 Format::Jpeg => "export.jpeg",
@@ -280,6 +286,7 @@ impl ThinodaApp {
             Cmd::Canvas(Action::Copy),
             Cmd::Canvas(Action::Cut),
             Cmd::MenuPaste,
+            Cmd::CopyAsDrawio,
         ]);
         commands.extend(Format::EXPORTABLE.iter().copied().map(Cmd::Export));
         let mut registry = Vec::new();

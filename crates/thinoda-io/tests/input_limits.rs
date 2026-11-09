@@ -15,6 +15,8 @@ fn import_limits_cover_format_hints_without_restricting_native_formats() {
         "map.textbundle",
         "map.textpack",
         "map.docx",
+        "diagram.html",
+        "diagram.HTM",
         "map.xml",
         "map.unknown",
         "map",
@@ -71,6 +73,8 @@ fn named_import_boundaries_keep_existing_error_variants() {
         "map.xmmap",
         "map.textbundle",
         "map.docx",
+        "diagram.html",
+        "diagram.htm",
         "map.xml",
     ] {
         assert!(

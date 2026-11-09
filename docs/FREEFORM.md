@@ -33,6 +33,83 @@ Moving a Zone expands rigid board groups and rejects locked or invalid moves
 without changing any contents. Explicit object membership requires native format
 v9 so older applications refuse the file rather than silently dropping ownership.
 
+### Connector waypoint foundation
+
+Connector bends and curve controls imported from draw.io are retained in sheet
+coordinates and participate in rendering, hit-testing, visual export, undo,
+copy/paste and connector transforms. Explicit points require native format v10;
+documents without them keep their previous version. Waypoint-bearing sheet and
+mixed-board clipboard payloads use versions 6 and 3, and recovery and private
+XMind snapshots use waypoint-aware envelopes. The model limits points to 1,024
+per connector and 200,000 per sheet. Selected, unlocked connectors expose
+undoable waypoint insertion, movement, deletion and clearing for their
+existing straight, elbow and curve routes. Exact draw.io orthogonal routing
+and segment dragging are not yet available; see
+[DRAWIO.md](DRAWIO.md) for conversion warnings and remaining work.
+
+### Fixed connector attachments
+
+Hover a rectangle, rounded rectangle, ellipse, double ellipse, diamond or
+rectangular topic to reveal connection crosses. Drag from a cross to start a
+connector, or drop an endpoint, Connector-tool drag, direction arrow or outline
+drag on one to fix the attachment. The Connector tool also supports clicking a
+source and then a destination. Dropping on a body away from a cross leaves a
+floating attachment;
+holding Shift while connecting to a shape or topic fixes an arbitrary position.
+Hold Alt while dropping to ignore targets and grid snapping, leaving a free
+point; Alt+Shift ignores crosses but keeps a floating attachment to the body.
+These modifiers apply to endpoint handles, Connector-tool clicks and drags,
+direction arrows and outline drags. An Alt-drag started on a shape or its cross
+still duplicates the shape; press Alt after starting a connector to leave its
+destination free. Ctrl/Command+Alt-drag from an arrow clones only over empty
+space, not over an ignored target. A focused endpoint can be fixed or reset with
+Enter or Space; arrow keys adjust
+a fixed point, Ctrl+arrows (Command+arrows on macOS) cycle targets, and Home/End
+cycle visible default points on supported targets. Alt+arrows still duplicate
+the selection. Moving a projected point with an arrow pins its visible
+position without further perimeter projection. These edits are undoable and the
+endpoint control describes them to assistive technology.
+
+Supported draw.io fixed points use normalized positions, optional offsets and
+perimeter projection. Native files with fixed attachments require format v22;
+sheet and board clipboard use v18 and v15, with matching recovery and private
+XMind envelopes. Copying an endpoint without its target detaches it at its
+visible location. Import warns when a source perimeter, orientation or changed
+target geometry may alter that position. draw.io export requires consent if
+the position may differ or a fixed attachment points to a collapsed topic that
+cannot be exported; a detached endpoint remains at its visible location.
+Rectangle, ellipse, double-ellipse and diamond projections follow the tested
+draw.io subset; named ports, directional constraints, and exact perimeter and
+routing parity for every draw.io shape remain incomplete.
+
+Import warns when a connected double ellipse uses a different source perimeter.
+Previously saved fixed perimeter attachments on double ellipses can move
+slightly because they now use the analytic ellipse rather than its flattened
+outline; floating and non-perimeter attachments are unchanged.
+
+### Imported rectangle corners
+
+Supported draw.io mockup and iOS rectangles retain their absolute corner radius.
+Select one and use **Corner radius** in the inspector to change it; zero makes
+the corners square. Resizing retains the specified radius, while its visible
+extent is clamped to half the width and height. Rotation, attached connectors,
+copy/paste and visual exports follow the same geometry. Same-kind quick
+clones retain the radius; changing the shape kind removes it, and undo restores
+it. Native files containing this property require format v19; legacy shapes
+and documents keep their previous behavior and format version.
+
+### Rectangle outline sides
+
+Select an ordinary rectangle and use **Outline sides** in its inspector to
+show or hide each edge. The fill and the selection/connector perimeter remain
+the whole rectangle; the sides rotate with the shape. Changes are undoable.
+Imported draw.io partial rectangles retain these choices, as do same-kind quick
+clones. Changing the shape kind removes the side metadata; undo restores it.
+Native files containing side choices require format v20, while legacy
+rectangles without them keep their previous behavior and format version.
+Draw.io color adaptation is not yet preserved; see [DRAWIO.md](DRAWIO.md) for
+conversion warnings and remaining fidelity limits.
+
 ## 1. Goal
 
 Thinoda should also work as a **whiteboard**, not only as a tree-shaped mind map,
@@ -134,7 +211,7 @@ with the reason.
 | Freehand pen with mouse, touch, pen | Adapt | Implemented as canvas `Ink`; real input-device acceptance remains open |
 | Pen styles: pen, marker, pencil, fountain pen, watercolour, crayon | Adapt / Later | Pen and highlighter are implemented; textured brushes remain later |
 | Width, colour, opacity | Adapt | Implemented per stroke |
-| Pressure sensitivity | Later | egui reports `Touch.force` only; no pen type, tilt, eraser or hover. Optional, never required (5.5) |
+| Pressure sensitivity | Adapt / Later | Optional touch and correlated browser-pen pressure is stored, but does not affect stroke width; physical devices, tilt, eraser end and hover remain open (5.5) |
 | Object eraser | Adapt | Implemented; removes whole strokes |
 | Pixel eraser (split strokes) | Adapt | Implemented with atomic stroke splitting and undo |
 | Lasso selection | Adapt | Implemented with the shared selection model |
@@ -522,12 +599,19 @@ harness replaces device or assistive-technology testing.
 
 - Mouse and touch are supported drawing inputs, but real-device and
   cross-platform acceptance remain open. Pressure is **optional metadata**:
-  egui 0.37 delivers `Touch.force` but no pen identity, tilt, eraser end or
-  hover, so drawing must never depend on it.
-- Spike before promising pressure: Windows Ink, macOS tablet events, Linux
-  libinput, browser Pointer Events (`pressure`, `pointerType = "pen"`) through
-  winit/eframe. Palm rejection and "draw with pen only" are out until the spike
-  shows reliable pen identification.
+  egui 0.37 supplies `Touch.force` but no pen identity. The web host now
+  conservatively correlates browser pen Pointer Events with egui pointer input;
+  unmatched input is rejected or interrupted rather than attributed to a mouse.
+  Pressure is persisted, but does not yet affect the rendered stroke.
+- When a confirmed browser pen starts first, subsequent verified touch contacts
+  do not interrupt its stroke or navigate the canvas; those contacts remain
+  suppressed until they end. The copied ink diagnostic identifies the input
+  source recognized by the host separately from the selected ink tool. A touch
+  that starts first is not reclassified or discarded as a palm.
+- Native Windows Ink, macOS tablet and Linux libinput pen identity and pressure
+  still need platform investigation. Tilt, eraser end, hover, palm rejection
+  and "draw with pen only" remain unsupported; physical devices and browser
+  engines must be verified before promising their fidelity.
 
 ### 5.6 Scenes
 
@@ -547,11 +631,37 @@ semantics and require native v6.
   the toolbar to the available canvas height and scroll rather than hiding
   actions on short windows or at high UI scale. The toolbox starts collapsed
   to avoid obscuring canvas content; either state can be changed by the user.
-- Show contextual action icons for the active mode. For ink, expose colour,
-  width, opacity, and the supported pen/highlighter stroke types; erasers expose
-  their radius. These controls remain usable in either toolbar presentation.
+- Show contextual action icons for the active mode in a separate strip over the
+  canvas, above the lowered board toolbox. For ink, expose colour, width,
+  opacity, and the supported pen/highlighter stroke types; erasers expose their
+  radius. A selected connector gets a separate strip for its route, arrows,
+  colour, width, label editing, and formatting shortcut. A selected shape gets
+  the same style of strip for changing its shape, fill, outline, outline width,
+  label text colour, label editing, and further formatting. Text colour applies
+  to the whole label; Auto restores the canvas's contrast-based colour. The
+  canvas remains stationary and the strips scroll in compact windows.
+  The selected shape or connector remains editable while a shape tool is armed;
+  clicking an empty part of the canvas still places the armed shape.
+  An open picker consumes the first outside click to dismiss itself, so click
+  the canvas again to place a shape.
+  When Whole-card text is also open, the strips share the row without overlap.
+  On canvases too short for both the strip and toolbox, the toolbox is hidden
+  until the strip closes; the existing menus remain available.
+  These controls remain usable in either toolbar presentation.
   Colour swatches and graphical width presets complement the exact controls;
   swatches preserve colour alpha and do not change the independent opacity.
+- Double-click an unlocked shape or connector, use its **Edit label** action,
+  or press F2 to edit its label. An empty label shows a non-persistent prompt
+  and editing guidance. The status bar shows a compact editing summary; hover
+  for the complete instructions. When there is room, the instructions also
+  appear beside the shape without covering its outline or editor. Enter, Tab,
+  or an outside click/tap finishes editing; Shift+Enter inserts a line and
+  Escape cancels the draft. The upright editor uses the label colour, with a
+  contrasting edge for transparent shapes rather than an opaque rectangle
+  that hides their outline or items underneath.
+  The placement hint yields to these editing instructions while a shape tool is
+  armed and reappears after editing ends. In that mode, clicking empty canvas
+  finishes the label and also places the armed shape.
 - Inspector sections for card colour, shape fill/stroke, ink width/colour/
   opacity, rotation, lock, alt text.
 - Keep the working custom Fill-Color Picker and also reuse the existing quick
@@ -770,6 +880,188 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   permissions or sanitization, operating-system ownership, cross-application
   interchange, or screen-reader behavior; those host checks remain open.
 
+### Browser cut verification checkpoint: critique
+
+- Every structured browser cut now waits for a bounded readback of both the
+  plain text and the Thinoda rich HTML marker before deleting its source.
+  Line-ending differences and harmless HTML wrappers are accepted, but missing,
+  sanitized, changed, malformed or oversized data and denied or unavailable
+  reads cancel the cut. There is deliberately no text-only fallback. Copies
+  retain their previous behavior.
+- A single 30-second deadline covers the pending write and each readback step.
+  A late response cannot complete a timed-out cut; an additional elapsed-time
+  check protects against delayed timer execution. Document, selection, focus,
+  modal, pointer, newer-copy and pending-ink guards still apply. The original
+  content is retained and a translated cancellation message is shown when a
+  clipboard operation fails.
+- This is a conservative compatibility tradeoff, not proof of atomic clipboard
+  ownership. Some browsers or permission settings may refuse the readback or
+  strip HTML, making structured cuts unavailable even when copying works.
+  Browser promises cannot be cancelled: a write that finishes after timeout may
+  still change the system clipboard. Another application can also replace the
+  clipboard after verification but before deletion. Timer throttling can delay
+  feedback in a suspended tab. Real trusted-event, permission, sanitization and
+  system-clipboard tests remain acceptance gates.
+- The regressions use synthetic clipboard events and an isolated in-page
+  clipboard; they do not establish any of those real-host behaviors. All
+  eight clipboard cases passed in Chromium, and the four cut-verification cases
+  also passed in Firefox and WebKit. Oversized blob tests simulate reported
+  sizes without allocating oversized payloads. The focused clipboard and
+  localization suites passed 24 and 27 tests respectively; strict native and
+  Wasm app Clippy checks passed.
+
+### Native cut verification checkpoint: critique
+
+- Structured native cuts now verify both the plain text and the Thinoda rich
+  payload before deleting the selection. Two HTML reads bracket the text read;
+  changed, missing, sanitized, malformed, oversized or unavailable readback
+  cancels the cut and reports that the original remains. Line-ending
+  normalization matches the browser policy. Native copies retain their
+  existing HTML verification behavior.
+- These are separate synchronous OS calls, not an atomic clipboard lease or a
+  cancellable operation. Another application can replace the clipboard after
+  verification, and a slow native clipboard can still block the UI. If the
+  operation returns after 30 seconds, the original is retained, but this
+  elapsed-time check cannot interrupt a blocked call. Arboard reads allocate
+  before Thinoda can apply its size checks. Plain text expanded beyond the
+  limit by CRLF conversion is conservatively rejected. At this checkpoint,
+  ordinary topic payloads still used a session-only token; the later
+  [portable-topic continuation](#portable-topic-clipboard-checkpoint-critique)
+  replaces that token for new copies. Real Windows, macOS, X11 and Wayland
+  clipboard acceptance remains open.
+- Fake-transport regressions exercise changed text or rich data, missing,
+  sanitized and malformed HTML, read denial and an intervening clipboard change.
+  They also cover formatted-card cut/paste/undo and ordinary-topic token cuts.
+  The focused clipboard suite passed 27 tests, with strict native and Wasm app
+  Clippy checks. Five synthetic browser cut regressions also passed against the
+  current production-Wasm build in each of Chromium, Firefox and WebKit. These
+  checks do not claim real OS ownership, permissions or cross-process fidelity.
+
+### Portable topic clipboard checkpoint: critique
+
+- Ordinary topic selections now have a self-contained, versioned rich HTML
+  representation rather than an in-process token. It carries the selected
+  subtrees, styles, notes, tasks, internal task dependencies and referenced
+  embedded resources, subject to a 16 MiB serialized limit. Invalid or
+  unsupported rich data, or mismatched plain and rich text, is rejected rather
+  than reused from a previous internal clipboard. Blank titles remain valid.
+- The versioned decoder rejects unknown or duplicate JSON fields and validates
+  subtree ownership, resource references, scheduling and render-related style
+  dimensions. A selection is limited to 20,000 topics and 256 edges of depth;
+  app paste into a central map also counts the destination ancestry against the
+  depth limit. The canvas copy path checks those source limits before building
+  its recursive plain-text outline. Explicit font sizes must be positive and
+  at most 256, stroke widths at most 200, and widths and padding at most
+  1,000,000. These bounds
+  can reject unusual legacy styles or trees that the older document model
+  accepts; copy and cut report the error rather than changing the document.
+  Tiny positive imported font sizes remain stored unchanged, but canvas glyphs
+  use a 0.01-point minimum to prevent renderer underflow. At that subpixel size
+  the canvas may differ from exports or scaled layout.
+- A crafted topic-format card cannot be attached as an ordinary child with its
+  card presentation silently discarded; it must be pasted to a floating board.
+  Normal card copies use the board format. The existing floating-subtree
+  allocator can reject source topic IDs near the maximum `u64` value, even
+  though the topic codec and central-map paste support those IDs.
+- At this checkpoint, these depth checks did not cover the existing unbounded
+  `copy_topics` compatibility API, mixed-board payloads or external plain-text
+  outline parsing. Mixed-board handling was addressed in the later
+  [depth checkpoint](#mixed-board-clipboard-depth-checkpoint-critique), and the
+  later [plain-text checkpoint](#plain-text-clipboard-safety-checkpoint-critique)
+  bounds the other clipboard entry points. None of these checks is a general
+  document-depth limit.
+- Topic and board paste use the destination calendar for copied tasks. A
+  nonworking start date or an exceeded task/dependency limit rejects the
+  scheduled insertion atomically. The source calendar is not copied with a
+  selection. The app commits pending drafts before requesting clipboard data,
+  even if a later paste is rejected; the separate board-payload API validates
+  its input before committing a pending title draft.
+- This changes clipboard privacy: the HTML representation can expose copied
+  notes, task details and embedded file bytes to other clipboard readers, even
+  though the visible plain text does not show them. HTML sanitization can remove
+  the private marker, leaving only a lossy plain-text paste. Older Thinoda
+  versions may likewise paste only text from the new representation; new
+  versions warn when they encounter an older session-only token. No marker or
+  matching plain text proves the provenance or ownership of clipboard data.
+- The rich representation is hex-encoded in HTML, so its temporary memory use
+  exceeds the serialized payload limit. Native reads can allocate before the
+  application checks the size; browser and native readback are not atomic.
+  These limits and the cut-verification caveats above still apply, and real
+  cross-process, clipboard-permission and sanitization acceptance remains open.
+- The core library and 19 focused codec/scheduling integration tests passed;
+  the canvas library passed 378 tests with two ignored, and the app library
+  passed 723 with two ignored. Strict native workspace and Wasm lint checks,
+  including the optional cloud build, and the production Wasm build passed.
+  Ten clipboard, branch and cut regressions passed in each of Chromium,
+  Firefox and WebKit using synthetic clipboard events and isolated in-page data.
+  The separate browser pages are not independent OS processes sharing a real
+  clipboard; native-host and trusted-event acceptance remain open.
+
+### Mixed-board clipboard depth checkpoint: critique
+
+- Mixed selections now reject ownership paths longer than 256 edges, including
+  ordinary child edges and edges to detached summary topics. The source walk
+  follows expanded groups and runs before copy, cut and both item and frame
+  duplication request a layout. Portable board decode, encode and paste apply
+  the same bound before model mutation. A selection rooted at depth zero with
+  256 edges is accepted; 257 is rejected with a depth error.
+- This is deliberately conservative: a valid existing sheet may contain a
+  deeper tree or summary chain, but it cannot be copied as one board fragment.
+  Selecting a smaller descendant can still work. The prepared selection holds
+  an immutable reference to its source; callers supplying their own layout must
+  ensure it describes that source. This does not impose a document-wide depth
+  limit or protect a separately computed layout of an unrelated deep tree.
+- Tests cover exact boundaries, nested summary ownership, group expansion,
+  forged payloads, rejection without undo entries, successful paste undo/redo,
+  and copy/cut/duplication error propagation. These are native model and host
+  checks, not real system-clipboard or physical-device acceptance. The app can
+  still commit a valid pending text draft before a subsequent copy is rejected.
+
+### Plain-text clipboard safety checkpoint: critique
+
+- Plain clipboard text is limited to 16 MiB, 20,000 nonblank topics and 256
+  effective child edges from each pasted root. It is parsed directly into flat
+  subtrees without recursively building or dropping an outline. Indentation
+  jumps, bullets, numbered lines, Unicode and CRLF retain the previous parser's
+  semantics; a large indentation jump is not itself a deep tree.
+- Both map and rootless-board paste reject excessive input before document
+  mutation. Central-map paste also counts destination ancestry, including
+  summary ownership, so inserting a safe subtree cannot make that path deeper
+  than 256 edges. Rootless paste creates independent roots; its existing board
+  serialization limit can reject a plain-text payload below 16 MiB because the
+  resulting structured data also consumes space.
+- The legacy `copy_topics` entry point now performs the same source preflight
+  as `try_copy_topics`. Cached topic and board payloads are validated before
+  reuse; a mismatched external clipboard still resolves to its own plain text.
+  Clipboard equality uses a streaming comparison with the previous CRLF and
+  trailing-whitespace behavior, but it does not prove clipboard ownership.
+  Error toasts for the new size, count and depth limits are localized.
+- **Public Rust API change:** `copy_topics` now returns
+  `Result<Option<ClipboardPayload>, String>`, while `subtrees_from_text`,
+  `resolve_paste` and `resolve_board_paste` return `Result`. Library callers
+  must handle rejection instead of treating invalid data as an empty result.
+  Existing valid text and document behavior are retained.
+- Tests cover the exact byte, topic and effective-depth boundaries, 4,096
+  indentation patterns against a frozen copy of the previous parser, summary
+  destinations, malformed cached data, rejection feedback, and one-step
+  undo/redo. The core library passed 290 tests, the canvas library 415 with two
+  ignored, and the app library 743 with two ignored when serialized. Related
+  clipboard, scheduling, resource, FIM and equation integration tests passed,
+  as did strict native and Wasm Clippy and the production Wasm build. All 11
+  isolated clipboard browser cases passed in each of Chromium, Firefox and
+  WebKit; these synthetic events do not establish real OS clipboard ownership
+  or sanitization.
+- The default parallel app-library run had four English-label UI failures
+  while another test had set the shared process language to German. The same
+  suite passed with one test thread; process-wide language isolation remains
+  an unresolved test-suite limitation.
+- The limits apply to these clipboard paths, not all document imports or the
+  public general-purpose outline parser, which can still recurse. Platform
+  clipboard reads can allocate before the bound is checked, and validating a
+  cached rich topic payload currently serializes it again; neither is a hard
+  peak-memory guarantee. Existing pending editor drafts may be committed
+  before a later paste is rejected.
+
 ### Resource-union checkpoint: critique
 
 - Merging embedded resources previously revalidated and rehashed the growing
@@ -970,8 +1262,48 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   cover the slice; physical touch, screen readers and realistic performance
   remain separate acceptance gates.
 - Ink gestures commit atomically, and pending or rejected gestures are exposed
-  for retry or cancellation rather than silently discarded. Pending ink is not
-  crash-recoverable until it is committed.
+  for review, retry where safe, or cancellation rather than silently discarded.
+  The bounded [pending-ink recovery checkpoint](#pending-ink-recovery-checkpoint-critique)
+  records crash-recovery behavior and its limitations.
+- A touch-host regression checks captured style and pressure through one stroke,
+  undo/redo and native save/reopen; invalid pressure leaves accepted samples
+  pending. A browser bridge uses trusted pen pointer events and only pairs
+  movement with a compatible mouse event when timestamp, target, coordinates
+  and button state agree. Records and frame events are bounded, scoped to one
+  viewport/frame and consumed once. Matcher-detected mismatches and overflow
+  interrupt existing ink or reject a new start with localized feedback and
+  quarantine the ambiguous stream until release, cancellation or focus/pointer
+  loss. A later input-hook rewrite is rejected too, but cannot retroactively
+  quarantine the matcher. A native host regression checks matched pen metadata
+  through commit, history and save/reopen.
+- The web bridge also distinguishes captured touch pointer buttons from proven
+  eframe-synthesized touch buttons, using matching touch records and frame-local
+  event order; ambiguous ownership is rejected instead of becoming mouse ink.
+  Only a proven absent JavaScript `Touch.force` becomes optional. Invalid force
+  remains invalid and blocks a partial commit. A follow-up review found that
+  suppressing ambiguous pointer buttons alone still allowed a batched touch
+  start and end to draw. Both touch and pen correlation failures now block the
+  touch start until that contact ends, retain earlier accepted samples, and
+  report the rejection. Regressions include a rejected label draft and a fresh
+  gesture after release. Browser fault injection reproduced the unwanted stroke
+  on the earlier build and verified rejection followed by a valid gesture on
+  the rebuilt app. The focused production-browser matrix passed in Chromium,
+  Firefox and WebKit; two Chromium-DevTools-only pen cases were skipped in the
+  latter engines. These tests cover synthetic force values and trusted emulated
+  touchscreen taps, not physical devices. One earlier Chromium run showed a
+  generic bootstrap failure before reaching the canvas; 30 subsequent fresh
+  Chromium touch contexts started successfully, but the original cause remains
+  unestablished.
+- **Pressure-bridge critique:** the Chromium DevTools pen probe verifies
+  simulated input, not a physical stylus. Exact event pairing may vary by
+  browser, OS or device and can conservatively interrupt a stroke; Firefox and
+  WebKit cannot run the Chromium-specific pen synthesis. An interrupted stroke
+  retains earlier accepted samples for an explicit retry or discard, but
+  uncorrelated samples cannot be recovered and retry can produce an incomplete
+  stroke. Recovery can preserve accepted pending samples but cannot reconstruct
+  missing input. Pressure still does not affect rendering, and tilt, eraser-end
+  behavior, palm rejection, latency, screen readers and real-device acceptance
+  remain open.
 - Pixel erasing can split strokes while retaining their metadata and undo
   behavior. Sixteen focused canvas tests cover geometry, limits, atomicity,
   grouping and undo. A production-browser regression checks the saved
@@ -986,12 +1318,63 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   and subsequent clicks remain covered by automated regressions. Real touch
   device acceptance remains open.
 
+#### Pending-ink recovery checkpoint: critique
+
+- Recovery snapshots can include accepted samples, captured tool settings,
+  pointer kind, original sheet and bounded rejected-input details, including
+  non-finite values. Accepted floating-point data is stored as bits. Rejected
+  details are readable diagnostic text, not a reconstruction of the original
+  structured error. Overflow is counted and reported rather than silently
+  discarded.
+- Restored input is detached and released; it is never committed automatically.
+  A matching pen or highlighter gesture can be explicitly retried as one
+  undoable edit after review. Rejected or stale gestures remain copy/discard
+  only. Recovered eraser and lasso gestures also remain review-only because
+  their original scene or selection cannot safely be reconstructed. Concurrent
+  document or draft changes make the recovery conservative rather than
+  rebinding it to a different owner.
+- The versioned recovery envelope makes older readers reject ink-aware
+  snapshots instead of silently omitting the input. Handoff writes the complete
+  replacement before discarding the claimed original; failed or unsupported
+  recovery keeps the original available. Pending ink remains outside normal
+  saved files until explicitly resolved.
+- Ongoing input is snapshotted without waiting for document idle, with attempts
+  throttled to the smaller of the configured recovery interval and two seconds.
+  Ordinary edits retain the existing idle-based cadence with the same cap.
+  Resolved ink is removed from recovery on the short retry schedule. Failed
+  writes preserve the last successful copy and surface a warning.
+- **Not a zero-loss guarantee:** recent samples can be lost between snapshots,
+  after a serialization or storage failure, or on browser `pagehide`, which
+  flushes queued snapshots but does not itself capture newer in-memory input.
+  The ink payload is capped at 16 MiB and real browser storage quotas may be
+  smaller. A size or quota failure keeps the older snapshot, not the latest
+  samples. Physical pens and touch devices, real assistive technology,
+  non-Chromium input, and large-board latency/memory acceptance remain open.
+- Focused native regressions cover restoration, retry and undo/redo, stale and
+  rejected input, unsupported data, failed handoffs and writes, and the snapshot
+  cadence. Chromium browser tests exercise a synthesized held pen across two
+  reloads, a competing tab's claim, injected failures, and actual localStorage
+  exhaustion followed by retry. These tests use a debug web build and do not
+  establish physical-device, other-browser, or performance acceptance.
+
 ### F6 presentation checkpoint: critique
 
 - Viewport presentations and the mini-map reuse scene geometry. Visual clipping
   is not redaction, and editable PowerPoint output reports clipping it cannot
   preserve. Browser storage limits and realistic rendering performance still
   require integration acceptance.
+- Source-only editor, Pitch and export scenes now share object visibility.
+  Foreign Zone objects and connectors depending on hidden topics or excluded
+  objects are filtered, including reversed connector chains. Unassigned objects
+  remain visible when cropped into the frame but do not enlarge source auto-fit.
+  Hidden clipping frames retain their clip without painting their background.
+  Focused core, player and SVG/PNG/PDF/PowerPoint tests cover the policy; a
+  2,000-connector fixture checks iterative propagation, not a device performance
+  budget. A fixed-crop browser fixture checks source Zone, branch, context and
+  View slides in Pitch, PDF, slide images and PowerPoint, including dependent
+  connectors, unassigned objects, viewport pixels and source preservation.
+  Chromium, Firefox and WebKit generated the exports; PDF pixels were inspected
+  in Chromium's viewer. The presenter's Map still exposes the full map.
 - Editable branch/Zone PowerPoint slides now rotate card components and
   multiline shape labels around their owning card or shape, preserving image
   bytes and source data. The canvas rotates shape labels around the same pivot;
@@ -1171,12 +1554,19 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   before retry can leave a stale copy for the next launch. The warning can be
   dismissed. This is not a durable cleanup journal, a transactional browser
   lease, or a fix for localStorage quota and large-board recovery.
-- Board now shares its command list between the first-level main menu and the
-  canvas context menu. Styles groups the requested topic/style commands, Board
-  sits between Select and Arrange, and New Sheet from Topic is last. Native-menu
+- The earlier menu checkpoint shared Board commands between the first-level
+  main menu and the canvas context menu. Styles grouped the requested topic/style
+  commands, Board sat between Select and Arrange, and New Sheet from Topic was
+  last. Native-menu
   and ribbon snapshots now include the selected board objects, preventing a
   stale action from affecting a different board selection. The underlying
   command availability, shortcut bindings and edit transactions are reused.
+- The canvas context menu was later regrouped by target (topic, board object,
+  blank canvas, Zone, annotation). Its current layout puts drawing and card
+  creation under Tools, places Zones after Styles where applicable, and presents
+  Board, Grid and Align as separate consecutive groups. Command Palette… remains
+  an escape hatch and Delete remains last. Optional, local-only context-menu
+  usage counts can be enabled in Settings > Editor.
 - The localized menu matrix covers short windows and scaling, popup bounds,
   first/last command reachability, context submenu order and command dispatch.
   It exercises a selected board shape's lock action and verifies its resulting
@@ -1470,6 +1860,39 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   `open_path`/`request_open` calls do not participate in the UI event-ordering
   wrapper.
 
+### Card alignment and color mixer checkpoint and rubber-duck critique
+
+- Sticky-note and text-card titles now align their complete row within the
+  padded card frame. The setting is reflected in the canvas, title editor,
+  SVG-derived exports, editable PowerPoint, and scoped draw.io import/export
+  and clipboard round trips. It remains a whole-card style, not rich-text
+  paragraph formatting.
+- Duck check: aligning only the text would leave TODOs, markers and link/note
+  icons behind or wrap over them. Their widths are included in row positioning
+  and available wrap width. Ordinary topics and image cards retain their
+  previous layout; floating card roots do not receive sibling-number labels.
+  Oversized adornments or very narrow cards can still overflow, and rotated
+  card editors remain upright at the rotated title position.
+- Shape and connector color mixers now size to their contents when the
+  application viewport permits and scroll only when space is constrained.
+  Opening or closing a mixer does not create a color override or undo entry.
+  An intentional edit that chooses the current automatic color still creates
+  an explicit override; cancellation, focus reveal, stale owners and undo
+  remain covered.
+- Duck check: running the multilingual sizing test in the main test process
+  could change the process-wide locale underneath other tests. The language
+  loop runs in an isolated child process, including when tests are parallel.
+  Native regressions cover roomy, narrow and short viewports, repeated
+  expansion, shape and connector transactions, alignment, rotation and
+  persistence. Light/dark GPU previews were inspected at wide and compact
+  sizes; physical touch and screen-reader acceptance remain open.
+- The affected library suites passed 1,851 tests with four ignored, and export,
+  corpus and fuzz-seed integrations passed 61 with three ignored. After the
+  final picker change, the complete app library suite passed 868 tests with two
+  ignored and 27 focused color tests passed with eight test threads. Native and
+  WebAssembly Clippy passed with warnings denied, and the final production web
+  build passed nine Chromium card and toolbar journeys.
+
 ### Selected-range text and lists: bounded model foundation; controls disabled
 
 The title remains a `String`, with a separate bounded `InlineText` value for
@@ -1494,8 +1917,9 @@ Implementation contract and remaining work:
    in pre-v8 archives and legacy unversioned JSON. Non-native export preflight
    reports inline formatting/list loss. Until rich-aware editing is complete,
    plain title edits and search/replace reject affected cards without changing
-   the title or formatting. Clipboard/recovery propagation and external format
-   fidelity remain open.
+   the title or formatting. Internal clipboard and recovery propagation now
+   preserve this model with the version and compatibility limits below; external
+   format fidelity remains open.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,
@@ -1546,8 +1970,81 @@ runs. It refuses to change paragraph boundaries while list metadata exists.
 The bounded sparse-style/list model, range style updates, validation,
 history-memory accounting, and native/export loss gates are production code.
 Egui event/undo integration, empty-commit versus cancellation, grapheme
-behavior, paragraph-list editing, clipboard, rendering and accessibility are
-not production implementations.
+behavior, paragraph-list editing, external rich-text clipboard interoperability,
+rendering and accessibility are not production implementations.
+
+#### Internal clipboard and recovery checkpoint: critique
+
+- Sheet clipboard v5 and mixed-board clipboard v2 preserve inline style runs
+  and list metadata. Content without inline formatting keeps the older prefix.
+  Readers reject rich payloads with older prefixes, including rich payloads
+  produced by earlier experimental builds that did not version them. The
+  `data-thinoda-board-v1` HTML attribute identifies the wrapper, not the embedded
+  payload version; old readers reject a v2 payload rather than silently ignoring
+  its formatting. The 16 MiB limits count actual serialized bytes, including
+  the prefix; a Windows CRLF prefix consumes one more byte than LF. External
+  plain-text paste is not rich-text interoperability.
+- New recovery snapshots with inline formatting tag the workbook representation,
+  so older readers expecting the historical object-shaped workbook fail closed.
+  Plain snapshots retain that representation. Current readers also accept
+  historical unversioned rich snapshots, which cannot be retroactively protected
+  against an older application opening them. The public `Snapshot` deserializer
+  now relies on self-describing map/sequence input; this JSON recovery envelope
+  is not a compatibility guarantee for non-self-describing Serde formats.
+- Reparenting a formatted card beneath a topic and converting it to an image card
+  or ordinary topic are rejected before the guarded operation changes the sheet.
+  Mixed pastes and malformed subtrees containing formatted descendants are
+  preflighted before IDs or content are inserted, and rejected branch-to-sheet
+  operations leave the original intact. This is not a general validation guarantee
+  for arbitrary malformed public `Subtree` inputs. At that checkpoint, rootless
+  sheets for card branches were still unsupported; the follow-up below addresses
+  both formatted and plain cards.
+  `Sheet::attach_child` now returns `Result<TopicId, AttachChildError>` rather
+  than a bare ID; the error owns the unchanged subtree. This is a public Rust API
+  change, so downstream callers must handle rejection and retain or restore it.
+- Rich clipboard HTML can be removed or sanitized outside Thinoda; text-only
+  fallback cannot prove clipboard ownership and may discard formatting. Browser
+  clipboard event writes have not been verified against real OS sanitization,
+  permissions or trusted events. Explicit loss handling, safe real-host cut/paste,
+  cross-application interchange and native/browser acceptance remain open before
+  enabling selected-range controls. The internal round-trip tests are not evidence
+  for those host behaviors.
+- On Windows, the affected core, recovery, canvas, drag, clipboard, localization
+  and native-export suites passed 493 tests; two existing tests were ignored.
+  Native all-target and WebAssembly Clippy checks passed. This is not a completed
+  full-workspace test run or cross-platform host acceptance.
+
+#### Card branch to sheet checkpoint: critique
+
+- New Sheet from Topic now keeps a selected Sticky, Text or Image card as a
+  floating root on a new rootless sheet, with a fresh blank anchor. Card
+  presentation, position, inline runs and list metadata, descendants, owned
+  boundaries and summaries, internal relationships and task dependencies are
+  retained. Resource selection includes recursively summary-owned topics, not
+  just the ordinary child tree. Plain branches taken from rootless boards become
+  ordinary central-root sheets. Theme, structure and board settings carry over.
+- A branch is not a copy of the whole board: Zones, free objects and connectors,
+  group membership and presentation slides stay in the source. Relationships
+  and task dependencies crossing the branch boundary and enclosing annotations
+  also stay there. The command reports these omissions; the board-context
+  warning is conservative and can appear for unrelated objects elsewhere on
+  the source sheet. The original source is not modified by the extraction.
+  Existing locked-card and FIM extraction restrictions are unchanged.
+- Canvas and inspector drafts are checked and committed before extraction;
+  rejected drafts remain available instead of being discarded by the view reset.
+  These commits are separate undo steps, so an earlier valid draft may already
+  have been committed if a later draft or the new-sheet operation fails. The
+  extraction itself is one undoable workbook change.
+- Core regressions cover all three card kinds, an embedded PNG, formatted and
+  plain text, internal and external task dependencies, a rootless ordinary
+  branch, mixed board context, and missing and summary-owned resources.
+  Headless app tests cover draft conflicts, native save/reopen and undo/redo.
+  A production-Wasm browser workflow checks formatted-card extraction and
+  undo/redo in Chromium, Firefox and WebKit using a synthetic in-page clipboard.
+  On Windows, 284 core and 376 canvas tests passed (two canvas tests ignored),
+  along with focused app tests and strict native/Wasm app linting. This does
+  not enable rich text editing or establish physical-device, screen-reader or
+  real clipboard acceptance.
 
 Duck check: the replacement primitive is a pure candidate operation, so a
 failed range, style, or list-boundary check cannot partially change the source.

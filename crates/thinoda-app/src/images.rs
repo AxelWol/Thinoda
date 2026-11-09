@@ -412,6 +412,55 @@ mod tests {
         bytes.into_inner()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn encoded_drawio(extra_style: &str) -> Vec<u8> {
+        let xml = format!(
+            r#"<mxfile><diagram name="Embedded"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="Dropped diagram" style="ellipse;{extra_style}" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+        );
+        let mut text = b"mxfile\0".to_vec();
+        text.extend_from_slice(xml.as_bytes());
+        let mut chunk = u32::try_from(text.len()).unwrap().to_be_bytes().to_vec();
+        chunk.extend_from_slice(b"tEXt");
+        chunk.extend_from_slice(&text);
+        let mut crc = u32::MAX;
+        for byte in &chunk[4..] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+            }
+        }
+        chunk.extend_from_slice(&(!crc).to_be_bytes());
+        let mut png = encoded(123);
+        let end = png.split_off(png.len() - 12);
+        png.extend(chunk);
+        png.extend(end);
+        assert!(image::load_from_memory(&png).is_ok());
+        png
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn drop_path(app: &mut ThinodaApp, path: PathBuf) {
+        #[derive(Debug)]
+        struct TestDrop(PathBuf);
+        impl egui::DroppedFile for TestDrop {
+            fn path(&self) -> &Path {
+                &self.0
+            }
+
+            fn bytes(&self) -> Result<Vec<u8>, String> {
+                std::fs::read(&self.0).map_err(|error| error.to_string())
+            }
+        }
+
+        let mut input = egui::RawInput::default();
+        input
+            .dropped_files
+            .push(std::sync::Arc::new(TestDrop(path)));
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(input, |ui| app.global_shortcuts(ui.ctx()));
+        output.textures_delta.clear();
+    }
+
     fn large_jpeg() -> Vec<u8> {
         let mut encoded = std::io::Cursor::new(Vec::new());
         image::DynamicImage::new_rgb8(40, 20)
@@ -1659,6 +1708,168 @@ mod tests {
         app.complete_image_pick(request, std::slice::from_ref(&valid));
         assert!(app.image_request.is_none());
         assert_eq!(app.doc().unwrap().doc.sheet().floating.len(), 1);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dropped_drawio_png_opens_as_a_diagram_without_changing_image_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let diagram = dir.path().join("embedded.DRAWIO.PNG");
+        let plain_image = dir.path().join("picture.png");
+        let invalid_diagram = dir.path().join("plain.drawio.png");
+        let embedded = encoded_drawio("");
+        std::fs::write(&diagram, &embedded).unwrap();
+        std::fs::write(&plain_image, &embedded).unwrap();
+        std::fs::write(&invalid_diagram, encoded(130)).unwrap();
+
+        let mut app = ThinodaApp::headless();
+        let root = app.doc().unwrap().doc.sheet().root;
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Title", |sheet| sheet.set_title(root, "Existing document"))
+            .unwrap();
+        let previous = app.active;
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let count = app.docs.len();
+        assert!(!files::is_dropped_image_path(&diagram));
+        let (_, warnings) = crate::doc::OpenDoc::open_with_report(&diagram).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        drop_path(&mut app, diagram.clone());
+        assert_eq!(
+            app.docs.len(),
+            count + 1,
+            "imports: {}, toasts: {:?}, file activity: {:?}",
+            app.dialogs.imports.len(),
+            app.toasts.texts().collect::<Vec<_>>(),
+            app.file_activity()
+        );
+        assert_eq!(app.docs[previous].doc.workbook(), &before);
+        let opened = app.doc().unwrap();
+        assert_eq!(opened.format, thinoda_io::Format::Thinoda);
+        assert_eq!(opened.import_source, Some(diagram.canonicalize().unwrap()));
+        assert!(opened.path.is_none());
+        assert!(opened.is_dirty());
+        assert!(opened.ensure_export_destination(&diagram).is_err());
+        assert!(
+            opened
+                .doc
+                .sheet()
+                .canvas
+                .objects
+                .iter()
+                .any(|object| object.label() == "Dropped diagram")
+        );
+        assert_eq!(std::fs::read(&diagram).unwrap(), embedded);
+
+        let mut image_app = ThinodaApp::headless();
+        let count = image_app.docs.len();
+        drop_path(&mut image_app, plain_image);
+        assert_eq!(image_app.docs.len(), count);
+        let sheet = image_app.doc().unwrap().doc.sheet();
+        let image = sheet.root_topic().image.as_deref().unwrap();
+        assert_eq!(sheet.resources.get(image).unwrap().bytes(), embedded);
+
+        let mut invalid_app = ThinodaApp::headless();
+        let before = invalid_app.doc().unwrap().doc.workbook().clone();
+        let count = invalid_app.docs.len();
+        drop_path(&mut invalid_app, invalid_diagram);
+        assert_eq!(invalid_app.docs.len(), count);
+        assert_eq!(invalid_app.doc().unwrap().doc.workbook(), &before);
+        assert!(
+            invalid_app
+                .toasts
+                .texts()
+                .any(|text| text.contains(t("Could not open")))
+        );
+
+        let mut picker_app = ThinodaApp::headless();
+        let request = owner(&mut picker_app, 42);
+        picker_app.image_request = Some(request);
+        picker_app.finish_image(42, &diagram);
+        assert!(
+            picker_app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .image
+                .is_some()
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dropped_published_drawio_png_opens_its_rectangle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("published.drawio.png");
+        let bytes =
+            include_bytes!("../../thinoda-io/tests/fixtures/published-rectangle.drawio.png");
+        std::fs::write(&path, bytes).unwrap();
+        let mut app = ThinodaApp::headless();
+        let count = app.docs.len();
+
+        drop_path(&mut app, path.clone());
+
+        assert_eq!(app.docs.len(), count, "a pristine tab is replaced");
+        assert!(app.dialogs.imports.is_empty());
+        let opened = app.doc().unwrap();
+        assert_eq!(opened.import_source, Some(path.canonicalize().unwrap()));
+        assert_eq!(opened.doc.sheet().title, "Page-1");
+        assert!(
+            opened
+                .doc
+                .sheet()
+                .canvas
+                .objects
+                .iter()
+                .any(|object| object.label() == "Published PNG")
+        );
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dropped_drawio_png_requires_consent_for_import_losses() {
+        let dir = tempfile::tempdir().unwrap();
+        let diagram = dir.path().join("lossy.drawio.png");
+        let bytes = encoded_drawio("dashed=1;");
+        std::fs::write(&diagram, &bytes).unwrap();
+        let mut app = ThinodaApp::headless();
+        let root = app.doc().unwrap().doc.sheet().root;
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Title", |sheet| sheet.set_title(root, "Keep this document"))
+            .unwrap();
+        let previous = app.active;
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let count = app.docs.len();
+
+        drop_path(&mut app, diagram.clone());
+        assert_eq!(app.docs.len(), count);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert_eq!(app.dialogs.imports.len(), 1);
+        assert!(
+            app.dialogs.imports[0]
+                .2
+                .contains(&thinoda_io::ImportWarning::Formatting)
+        );
+        app.resolve_import(false);
+        assert_eq!(app.docs.len(), count);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+
+        drop_path(&mut app, diagram.clone());
+        assert_eq!(app.dialogs.imports.len(), 1);
+        app.resolve_import(true);
+        assert_eq!(app.docs.len(), count + 1);
+        assert_eq!(app.docs[previous].doc.workbook(), &before);
+        assert_eq!(
+            app.doc().unwrap().import_source,
+            Some(diagram.canonicalize().unwrap())
+        );
+        assert_eq!(std::fs::read(diagram).unwrap(), bytes);
     }
 
     #[test]

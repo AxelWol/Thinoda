@@ -27,6 +27,18 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::OrientedImageMetadataDropped(15),
         ExportLoss::BoardSettingsDropped,
         ExportLoss::InlineTextDropped(16),
+        ExportLoss::ConnectorAttachmentsDetached(17),
+        ExportLoss::FixedConnectorAttachmentsDetached(27),
+        ExportLoss::DrawioFixedConnectorPositionApproximated(28),
+        ExportLoss::LegacyConnectorMarkersApproximated(18),
+        ExportLoss::DrawioLabelAppearanceApproximated(19),
+        ExportLoss::ConnectorLabelCompositingApproximated(20),
+        ExportLoss::DrawioRectangleAppearanceApproximated(21),
+        ExportLoss::DrawioCollapsedProcessApproximated(22),
+        ExportLoss::DrawioGridSettingsApproximated(23),
+        ExportLoss::DrawioBackgroundAppearanceApproximated(24),
+        ExportLoss::DrawioCardAppearanceApproximated(25),
+        ExportLoss::DrawioDoubleEllipseAppearanceApproximated(26),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -41,13 +53,34 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     for (line, count) in lines.iter().take(14).zip(2..=15) {
         assert!(line.starts_with(&format!("{count} — ")), "{line}");
     }
-    assert!(lines[15].starts_with("16 — "), "{}", lines[15]);
+    for count in 16..=28 {
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with(&format!("{count} — "))),
+            "missing count {count}: {lines:?}"
+        );
+    }
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
         (13, "Boundaries omitted"),
         (14, "Cards omitted"),
         (15, "Camera image metadata or color profiles may be omitted"),
+        (18, "Legacy arrowheads approximated in draw.io"),
+        (19, "Label color or opacity may differ in draw.io"),
+        (20, "Translucent connector labels may render differently"),
+        (
+            21,
+            "Rectangle colors or automatic outlines may differ in draw.io",
+        ),
+        (22, "Collapsed process outlines may be omitted in draw.io"),
+        (23, "Grid or snapping may differ in draw.io"),
+        (24, "Page background may differ in draw.io"),
+        (25, "Cards may show folded corners in draw.io"),
+        (26, "Double-ellipse appearance may differ in draw.io"),
+        (27, "Fixed connector attachments detached"),
+        (28, "Fixed connector positions may differ in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -95,6 +128,204 @@ fn oriented_photo_metadata_loss_requires_visual_export_consent() {
 }
 
 #[test]
+fn drawio_label_appearance_loss_requires_export_consent() {
+    let mut book = Workbook::default();
+    let mut object = shape();
+    if let thinoda_core::board::CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+        *label = "Label".into();
+    }
+    object.style.opacity = 0.5;
+    book.active_mut().add_canvas_object(object).unwrap();
+    let options = ExportOptions::default();
+    let message = require_board_consent(&book, Format::DrawIo, &options, false).unwrap_err();
+    assert!(message.contains(t("Label color or opacity may differ in draw.io")));
+    assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn drawio_fixed_connector_position_loss_requires_localized_export_consent() {
+    use thinoda_core::{CanvasConnector, ConnectorPort, Endpoint};
+
+    let mut book = Workbook::default();
+    let target = book
+        .active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Star,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(target),
+        Endpoint::Point(Vec2::new(200.0, 50.0)),
+    );
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 1.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    });
+    book.active_mut()
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let options = ExportOptions::default();
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            message.contains(t("Fixed connector positions may differ in draw.io")),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn partial_rectangle_appearance_loss_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    let mut object = shape();
+    object.rectangle_sides = Some(thinoda_core::RectangleSides::default());
+    book.active_mut().add_canvas_object(object).unwrap();
+    let options = ExportOptions::default();
+    let message = require_board_consent(&book, Format::DrawIo, &options, false).unwrap_err();
+    assert!(
+        message.contains(t(
+            "Rectangle colors or automatic outlines may differ in draw.io"
+        )),
+        "{message}"
+    );
+    assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn double_ellipse_appearance_loss_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let options = ExportOptions::default();
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            message.contains(t("Double-ellipse appearance may differ in draw.io")),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn collapsed_process_loss_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Process,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(0.0, 100.0)),
+        ))
+        .unwrap();
+    let options = ExportOptions::default();
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            message.contains(t("Collapsed process outlines may be omitted in draw.io")),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn drawio_grid_approximation_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut().board.grid = thinoda_core::GridKind::Lines;
+    book.active_mut().board.snap = false;
+    let key = "Grid or snapping may differ in draw.io";
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message =
+            require_board_consent(&book, format, &ExportOptions::default(), false).unwrap_err();
+        assert!(message.contains(t(key)), "{format:?}: {message}");
+        assert!(require_board_consent(&book, format, &ExportOptions::default(), true).is_ok());
+    }
+    assert!(
+        require_board_consent(&book, Format::Thinoda, &ExportOptions::default(), false).is_ok()
+    );
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
+}
+
+#[test]
+fn drawio_background_approximation_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut().theme.background = Some(thinoda_core::Color::rgba(17, 34, 51, 128));
+    let key = "Page background may differ in draw.io";
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message =
+            require_board_consent(&book, format, &ExportOptions::default(), false).unwrap_err();
+        assert!(message.contains(t(key)), "{format:?}: {message}");
+        assert!(require_board_consent(&book, format, &ExportOptions::default(), true).is_ok());
+    }
+    assert!(
+        require_board_consent(&book, Format::Thinoda, &ExportOptions::default(), false).is_ok()
+    );
+    for key in [key, "draw.io page background was approximated or omitted"] {
+        for language in i18n::Lang::ALL {
+            let value = i18n::t_in(language, key);
+            assert!(!value.is_empty());
+            if language != i18n::Lang::En {
+                assert_ne!(value, key, "missing {language:?} warning");
+            }
+        }
+    }
+}
+
+#[test]
+fn translucent_connector_compositing_requires_localized_visual_consent() {
+    use thinoda_core::{CanvasConnector, Color, Endpoint, PresentationSource};
+
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label = "Label".into();
+    let mut object = CanvasObject::connector(connector);
+    object.style.text_color = Some(Color::rgba(30, 60, 90, 128));
+    let mut book = Workbook::default();
+    book.active_mut().add_canvas_object(object).unwrap();
+    let options = ExportOptions::default();
+    let key = "Translucent connector labels may render differently";
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(message.contains(t(key)), "{format:?}: {message}");
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+    let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0));
+    book.active_mut()
+        .add_presentation_slide("Viewport", PresentationSource::Viewport, frame)
+        .unwrap();
+    let message = require_board_consent(&book, Format::PowerPoint, &options, false).unwrap_err();
+    assert!(message.contains(t(key)), "{message}");
+    assert!(require_board_consent(&book, Format::PowerPoint, &options, true).is_ok());
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
+}
+
+#[test]
 fn oriented_photo_metadata_warning_is_localized() {
     let key = "Camera image metadata or color profiles may be omitted";
     for language in i18n::Lang::ALL {
@@ -103,6 +334,175 @@ fn oriented_photo_metadata_warning_is_localized() {
         if language != i18n::Lang::En {
             assert_ne!(value, key, "missing {language:?} warning");
         }
+    }
+}
+
+fn connector_attachment_book() -> Workbook {
+    use thinoda_core::{CanvasConnector, Endpoint, SheetRootMode};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut target = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(250.0, 100.0)),
+    );
+    target.waypoints = vec![Vec2::new(200.0, 0.0), Vec2::new(200.0, 100.0)].into();
+    let target = sheet
+        .add_canvas_object(CanvasObject::connector(target))
+        .unwrap();
+    let mut dependent = CanvasConnector::new(
+        Endpoint::Object(target),
+        Endpoint::Point(Vec2::new(300.0, 200.0)),
+    );
+    dependent.label = "Dependent".into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(dependent))
+        .unwrap();
+    Workbook::new(sheet)
+}
+
+#[test]
+fn drawio_connector_attachment_loss_requires_localized_consent() {
+    let book = connector_attachment_book();
+    let options = ExportOptions::default();
+    let key = "Connector-to-connector attachments detached";
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            i18n::Lang::ALL
+                .into_iter()
+                .any(|language| message.contains(&format!("1 — {}", i18n::t_in(language, key)))),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+        assert!(
+            !SaveConsent {
+                board: false,
+                mindmanager: true,
+            }
+            .for_io(format)
+        );
+    }
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+    assert!(
+        !SaveConsent {
+            board: true,
+            mindmanager: false,
+        }
+        .for_io(Format::MindManager)
+    );
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
+}
+
+#[test]
+fn legacy_arrow_approximation_requires_localized_drawio_consent() {
+    use thinoda_core::{
+        CanvasConnector, CanvasObjectKind, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        SheetRootMode,
+    };
+
+    let mut sheet = Sheet::new("Legacy", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let options = ExportOptions::default();
+    let key = "Legacy arrowheads approximated in draw.io";
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            i18n::Lang::ALL
+                .into_iter()
+                .any(|language| message.contains(&format!("2 — {}", i18n::t_in(language, key)))),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+    let mut exact = book;
+    let CanvasObjectKind::Connector(connector) = &mut exact.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.end_marker = connector.start_marker;
+    assert!(require_board_consent(&exact, Format::DrawIo, &options, false).is_ok());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn drawio_attachment_consent_reaches_document_and_sheet_saves() {
+    use thinoda_core::{CanvasObjectKind, Endpoint};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut doc = OpenDoc::new(connector_attachment_book());
+    let sheet_path = directory.path().join("sheet.drawio");
+    assert!(
+        doc.save_sheet_to_with_consent(&sheet_path, false, false, false)
+            .is_err()
+    );
+    assert!(!sheet_path.exists());
+    doc.save_sheet_to_with_consent(&sheet_path, false, true, false)
+        .unwrap();
+
+    let document_path = directory.path().join("document.drawio");
+    assert!(
+        doc.save_to_with_backup_directory_and_consent(
+            &document_path,
+            false,
+            None,
+            SaveConsent::default(),
+        )
+        .is_err()
+    );
+    assert!(!document_path.exists());
+    doc.save_to_with_backup_directory_and_consent(
+        &document_path,
+        false,
+        None,
+        SaveConsent {
+            board: true,
+            mindmanager: false,
+        },
+    )
+    .unwrap();
+
+    for path in [&sheet_path, &document_path] {
+        let report =
+            thinoda_io::import_bytes_with_report(Format::DrawIo, &std::fs::read(path).unwrap())
+                .unwrap();
+        let dependent = report.workbook.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .find_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector) if connector.label == "Dependent" => {
+                    Some(connector)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(dependent.from, Endpoint::Point(Vec2::new(175.0, 0.0)));
     }
 }
 

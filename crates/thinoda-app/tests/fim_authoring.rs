@@ -91,6 +91,64 @@ fn fourth_tab_shows_fim_identity_without_installing_or_validating() {
 }
 
 #[test]
+fn fim_tab_tracks_the_active_sheet_and_falls_back_to_style() {
+    let mut h = harness(app());
+    h.get_by_role_and_label(Role::Tab, "FIM");
+    h.get_by_label("FIM · XDF3");
+
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::NewSheet);
+    h.run_steps(4);
+    assert!(h.state().doc().unwrap().doc.sheet().fim.is_none());
+    assert!(h.query_by_role_and_label(Role::Tab, "FIM").is_none());
+    assert_eq!(h.state().format_tab, FormatTab::Style);
+    h.get_by_role_and_label(Role::Tab, "Style");
+
+    h.state_mut().exec(&ctx, Cmd::PreviousSheet);
+    h.run_steps(4);
+    let root = h.state().doc().unwrap().doc.sheet().root;
+    h.state_mut().doc_mut().unwrap().view.select_only(root);
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Tab, "FIM").click();
+    h.run_steps(4);
+    h.get_by_label("FIM · XDF3");
+    h.get_by_role_and_label(Role::Label, "S00000000001");
+
+    h.state_mut().exec(&ctx, Cmd::NextSheet);
+    h.run_steps(4);
+    assert!(h.query_by_role_and_label(Role::Tab, "FIM").is_none());
+    assert_eq!(h.state().format_tab, FormatTab::Style);
+}
+
+#[test]
+fn restored_fim_tab_is_hidden_for_an_ordinary_sheet() {
+    let mut app = ThinodaApp::headless();
+    app.format_tab = FormatTab::Fim;
+    app.settings.show_format_panel = true;
+    let h = harness(app);
+    assert!(h.query_by_role_and_label(Role::Tab, "FIM").is_none());
+    assert_eq!(h.state().format_tab, FormatTab::Style);
+    h.get_by_role_and_label(Role::Tab, "Style");
+}
+
+#[test]
+fn fim_tab_tracks_document_switches() {
+    let mut h = harness(app());
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::New);
+    h.run_steps(4);
+    assert!(h.state().doc().unwrap().doc.sheet().fim.is_none());
+    assert!(h.query_by_role_and_label(Role::Tab, "FIM").is_none());
+    assert_eq!(h.state().format_tab, FormatTab::Style);
+
+    h.state_mut().active = 0;
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Tab, "FIM").click();
+    h.run_steps(4);
+    h.get_by_label("FIM · XDF3");
+}
+
+#[test]
 fn node_wizard_keeps_its_target_while_the_map_selection_changes() {
     let mut app = app();
     let root = app.docs[0].doc.sheet().root;

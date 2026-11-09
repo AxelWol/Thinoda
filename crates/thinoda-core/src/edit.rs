@@ -52,6 +52,20 @@ impl Sheet {
         Ok(())
     }
 
+    fn require_attachable_subtree(&self, id: TopicId) -> EditResult<()> {
+        let mut pending = vec![id];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let topic = self.topic(id).ok_or(EditError::NoSuchTopic(id))?;
+            topic.ensure_can_be_child().map_err(EditError::Invalid)?;
+            pending.extend(topic.children.iter().rev().copied());
+        }
+        Ok(())
+    }
+
     /// Adds a new last child (Tab).
     pub fn insert_child(&mut self, parent: TopicId, title: &str) -> EditResult<TopicId> {
         self.require(parent)?;
@@ -88,9 +102,11 @@ impl Sheet {
         self.require(id)?;
         let p = self.parent(id).ok_or(EditError::RootNotAllowed)?;
         let i = self.index_in_parent(id).unwrap();
+        self.require_attachable_subtree(id)?;
         let sub = self.detach_subtree_keep_refs(id)?;
         let new = self.add_child(p, Some(i), title);
-        self.attach_child(new, 0, sub);
+        self.attach_child(new, 0, sub)
+            .map_err(|error| EditError::Invalid(error.message))?;
         Ok(new)
     }
 
@@ -239,8 +255,11 @@ impl Sheet {
                 self.detach_subtree(id);
             }
         }
-        if let Some(before) = before {
-            self.fix_dangling_endpoints(&before);
+        if let Some(before) = before
+            && let Err(error) = self.fix_dangling_endpoints(&before)
+        {
+            *self = before;
+            return Err(EditError::Invalid(error));
         }
         Ok(next_sel
             .filter(|s| self.contains(*s))
@@ -271,10 +290,14 @@ impl Sheet {
         let p = self.parent(id).ok_or(EditError::RootNotAllowed)?;
         let mut i = self.index_in_parent(id).unwrap();
         let kids = self.children(id).to_vec();
+        for &kid in &kids {
+            self.require_attachable_subtree(kid)?;
+        }
         for k in kids {
             let sub = self.detach_subtree_keep_refs(k)?;
             i += 1;
-            self.attach_child(p, i, sub);
+            self.attach_child(p, i, sub)
+                .map_err(|error| EditError::Invalid(error.message))?;
         }
         self.detach_subtree(id);
         Ok(())
@@ -297,11 +320,16 @@ impl Sheet {
                 });
         }
         let mut sub = self.copy_subtree(id).unwrap();
+        let parent = self.parent(id);
+        if parent.is_some() {
+            sub.ensure_can_be_child().map_err(EditError::Invalid)?;
+        }
         sub.reassign_ids(self);
-        match self.parent(id) {
+        match parent {
             Some(p) => {
                 let i = self.index_in_parent(id).unwrap();
-                Ok(self.attach_child(p, i + 1, sub))
+                self.attach_child(p, i + 1, sub)
+                    .map_err(|error| EditError::Invalid(error.message))
             }
             None => {
                 let pos = self.topic(id).and_then(|t| t.position).unwrap_or_default()
@@ -352,8 +380,10 @@ impl Sheet {
                 })
                 .map_err(|e| EditError::Invalid(e.to_string()));
         }
+        self.require_attachable_subtree(id)?;
         let sub = self.detach_subtree_keep_refs(id)?;
-        self.attach_child(new_parent, index, sub);
+        self.attach_child(new_parent, index, sub)
+            .map_err(|error| EditError::Invalid(error.message))?;
         Ok(())
     }
 
@@ -376,23 +406,44 @@ impl Sheet {
         self.move_topic(id, grandparent, index)
     }
 
-    /// Copies a branch with its owned annotations; unrelated floating trees and
-    /// relationships to topics outside the branch remain only in the source.
+    /// Copies a branch with its owned annotations and resources. Board context,
+    /// unrelated trees and references outside the branch remain in the source.
     pub fn copy_branch_as_sheet(&self, id: TopicId) -> EditResult<Sheet> {
         if self.fim.is_some() {
             return Err(EditError::Invalid("FIM branch extraction requires an explicit closed-document workflow; duplicate/copy the complete sheet instead".into()));
         }
         self.require(id)?;
+        let is_card = self.topic(id).unwrap().card.is_some();
+        if !is_card {
+            self.topic(id)
+                .unwrap()
+                .ensure_can_be_child()
+                .map_err(EditError::Invalid)?;
+        }
         let owned = self.owned_subtree_ids(id);
         let mut sheet = self.clone();
-        sheet.resources = self.copy_subtree(id).ok_or(EditError::NotFound)?.resources;
-        sheet.root = id;
+        let anchor = is_card.then(|| sheet.alloc_topic_id());
+        sheet.resources = self
+            .resources
+            .for_topics(owned.iter().map(|topic| &self.topics[topic]));
         sheet.title = self.topic(id).unwrap().title.clone();
         sheet.topics.retain(|id, _| owned.contains(id));
-        let root = sheet.topic_mut(id).unwrap();
-        root.parent = None;
-        root.position = None;
-        sheet.floating.clear();
+        if let Some(anchor) = anchor {
+            sheet.root = anchor;
+            sheet.root_mode = crate::board::SheetRootMode::Hidden;
+            sheet.topics.insert(anchor, Topic::new(anchor, ""));
+            sheet.floating = vec![id];
+        } else {
+            sheet.root = id;
+            sheet.root_mode = crate::board::SheetRootMode::Central;
+            let root = sheet.topic_mut(id).unwrap();
+            root.parent = None;
+            root.position = None;
+            sheet.floating.clear();
+        }
+        sheet.zones.clear();
+        sheet.canvas = Default::default();
+        sheet.presentation = Default::default();
         sheet.boundaries.retain(|b| owned.contains(&b.parent));
         sheet
             .summaries
@@ -895,12 +946,36 @@ impl Sheet {
 
     /// Pastes subtrees as children of `parent` (fresh ids). Returns the new roots.
     pub fn paste(&mut self, parent: TopicId, subtrees: &[Subtree]) -> EditResult<Vec<TopicId>> {
+        if subtrees
+            .iter()
+            .any(|subtree| !subtree.tasks.is_empty() || !subtree.dependencies.is_empty())
+        {
+            let mut candidate = self.clone();
+            let roots = candidate.paste_subtrees(parent, subtrees)?;
+            candidate
+                .scheduling
+                .validate(&candidate)
+                .map_err(|error| EditError::Invalid(error.to_string()))?;
+            *self = candidate;
+            return Ok(roots);
+        }
+        self.paste_subtrees(parent, subtrees)
+    }
+
+    fn paste_subtrees(
+        &mut self,
+        parent: TopicId,
+        subtrees: &[Subtree],
+    ) -> EditResult<Vec<TopicId>> {
         if self.fim.is_some() && !subtrees.is_empty() {
             return Err(EditError::Invalid(
                 "FIM subtree paste requires an explicit identity and dependency decision; use Duplicate or Shared definition".into(),
             ));
         }
         self.require(parent)?;
+        for subtree in subtrees {
+            subtree.ensure_can_be_child().map_err(EditError::Invalid)?;
+        }
         let resources = self
             .resources
             .merged(
@@ -931,7 +1006,10 @@ impl Sheet {
         for s in subtrees {
             let mut s = s.clone();
             s.reassign_ids(self);
-            out.push(self.attach_child(parent, usize::MAX, s));
+            out.push(
+                self.attach_child(parent, usize::MAX, s)
+                    .map_err(|error| EditError::Invalid(error.message))?,
+            );
         }
         self.topic_mut(parent).unwrap().collapsed = false;
         Ok(out)
@@ -1159,6 +1237,224 @@ mod tests {
             }
         }
         assert_eq!(s, before);
+    }
+
+    #[test]
+    fn copy_card_branch_to_rootless_sheet_preserves_owned_resources_and_omits_board_context() {
+        use crate::board::BoardMember;
+        use crate::{CanvasConnector, CanvasObject, Card, CardKind, Endpoint, Rect, ShapeKind};
+
+        let mut source = Sheet::new("Source", "Central");
+        let card = source
+            .add_card(
+                "Styled card",
+                Vec2::new(120.0, 100.0),
+                Card::new(CardKind::Sticky, Vec2::new(160.0, 100.0)),
+            )
+            .unwrap();
+        let child = source.add_child(card, None, "Child");
+        let summary = source.add_summary(&[child], "Summary").unwrap();
+        let attachment =
+            crate::attachments::insert(&mut source, summary, "owned.bin", vec![1, 2, 3]).unwrap();
+        let resource = source
+            .topic(attachment)
+            .unwrap()
+            .attachment
+            .as_ref()
+            .unwrap()
+            .resource
+            .clone();
+        let other = source.add_floating("Other", Vec2::new(500.0, 100.0));
+        crate::attachments::insert(&mut source, other, "other.bin", vec![4, 5, 6]).unwrap();
+        source.add_boundary(&[child]).unwrap();
+        source.add_relationship(card, summary).unwrap();
+        source.add_relationship(card, other).unwrap();
+        for topic in [card, child, other] {
+            source
+                .set_task(topic, Some(crate::schedule::Task::default()))
+                .unwrap();
+        }
+        source.add_task_dependency(card, child).unwrap();
+        source.add_task_dependency(child, other).unwrap();
+
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(700.0, 400.0));
+        let zone = source
+            .create_zone("Zone", vec![card, other], frame)
+            .unwrap();
+        let shape = source
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(300.0, 100.0), Vec2::new(100.0, 100.0)),
+            ))
+            .unwrap();
+        source
+            .set_zone_members(zone, vec![card, other], vec![shape])
+            .unwrap();
+        let group = source
+            .group_board_members(&[BoardMember::Card(card), BoardMember::Object(shape)])
+            .unwrap();
+        source
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(card),
+                Endpoint::Object(shape),
+            )))
+            .unwrap();
+        source
+            .add_presentation_slide("Zone slide", PresentationSource::Zone(zone), frame)
+            .unwrap();
+        source
+            .add_presentation_slide("Card slide", PresentationSource::Branch(card), frame)
+            .unwrap();
+
+        for formatted in [false, true] {
+            if formatted {
+                source
+                    .topic_mut(card)
+                    .unwrap()
+                    .inline_text
+                    .update_range("Styled card", 0..6, |style| style.bold = Some(true))
+                    .unwrap();
+                source.topic_mut(card).unwrap().inline_text.paragraphs.push(
+                    crate::rich_text::InlineParagraph {
+                        index: 0,
+                        list: crate::rich_text::ListKind::Bulleted,
+                    },
+                );
+            }
+            source.validate().unwrap();
+            let before = source.clone();
+            let copy = source.copy_branch_as_sheet(card).unwrap();
+            assert_eq!(source, before);
+            assert_eq!(copy.root_mode, crate::SheetRootMode::Hidden);
+            assert_ne!(copy.root, source.root);
+            assert_ne!(copy.root, card);
+            assert_eq!(copy.root_topic().title, "");
+            assert_eq!(copy.floating, vec![card]);
+            assert_eq!(copy.topic(card), source.topic(card));
+            assert_eq!(copy.topic(child), source.topic(child));
+            assert_eq!(copy.topic(summary), source.topic(summary));
+            assert_eq!(copy.topic(attachment), source.topic(attachment));
+            assert!(!copy.contains(other));
+            assert_eq!(copy.summaries.len(), 1);
+            assert_eq!(copy.boundaries.len(), 1);
+            assert_eq!(copy.relationships.len(), 1);
+            assert_eq!(copy.scheduling.tasks.len(), 2);
+            assert_eq!(copy.scheduling.dependencies.len(), 1);
+            assert_eq!(copy.scheduling.dependencies[0].predecessor, card);
+            assert_eq!(copy.scheduling.dependencies[0].successor, child);
+            assert_eq!(copy.resources.entries.len(), 1);
+            assert_eq!(copy.resources.get(&resource).unwrap().bytes(), [1, 2, 3]);
+            assert!(copy.zones.is_empty());
+            assert!(copy.canvas.is_empty());
+            assert!(copy.presentation.slides.is_empty());
+            copy.validate().unwrap();
+            let encoded = crate::clipboard::encode_sheet(&copy).unwrap();
+            assert_eq!(crate::clipboard::decode_sheet(&encoded).unwrap(), copy);
+        }
+
+        source.set_canvas_group_locked(group, true).unwrap();
+        let before = source.clone();
+        assert!(source.copy_branch_as_sheet(card).is_err());
+        assert_eq!(source, before);
+    }
+
+    #[test]
+    fn copy_each_card_kind_preserves_presentation_and_embedded_image() {
+        use crate::{Card, CardKind, Color, SheetRootMode, resources::Resource};
+        use image::ImageEncoder;
+
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[255, 40, 20, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+
+        for kind in [CardKind::Sticky, CardKind::Text, CardKind::Image] {
+            let mut source = Sheet::new("Board", "");
+            source.root_mode = SheetRootMode::Hidden;
+            let mut presentation = Card::new(kind, Vec2::new(160.0, 100.0));
+            presentation.rotation = 22.5;
+            presentation.color = Some(Color::rgb(20, 40, 60));
+            let card = source
+                .add_card("Card", Vec2::new(120.0, 100.0), presentation)
+                .unwrap();
+            let child = source.add_child(card, None, "Child");
+            if kind == CardKind::Image {
+                let resource = Resource::new("image.png", "image/png", png.clone()).unwrap();
+                crate::images::set_image(&mut source, card, Some((resource, Vec2::new(1.0, 1.0))))
+                    .unwrap();
+            } else {
+                source
+                    .topic_mut(card)
+                    .unwrap()
+                    .inline_text
+                    .update_range("Card", 0..4, |style| style.bold = Some(true))
+                    .unwrap();
+            }
+            source.validate().unwrap();
+            let before = source.clone();
+
+            let copy = source.copy_branch_as_sheet(card).unwrap();
+
+            assert_eq!(source, before);
+            assert_eq!(copy.root_mode, SheetRootMode::Hidden);
+            assert_eq!(copy.floating, vec![card]);
+            assert_eq!(copy.topic(card), source.topic(card));
+            assert_eq!(copy.topic(child), source.topic(child));
+            assert_eq!(copy.resources, source.resources);
+            copy.validate().unwrap();
+            crate::images::validate_visual(&copy).unwrap();
+            let encoded = crate::clipboard::encode_sheet(&copy).unwrap();
+            assert_eq!(crate::clipboard::decode_sheet(&encoded).unwrap(), copy);
+        }
+    }
+
+    #[test]
+    fn copy_ordinary_branch_from_rootless_sheet_creates_a_central_root() {
+        let mut source = Sheet::new("Board", "");
+        source.root_mode = crate::SheetRootMode::Hidden;
+        let topic = source.add_floating("Branch", Vec2::new(100.0, 200.0));
+        let child = source.add_child(topic, None, "Child");
+        let other = source.add_floating("Other", Vec2::new(400.0, 200.0));
+        source
+            .create_zone(
+                "Zone",
+                vec![topic, other],
+                crate::Rect::from_min_size(Vec2::ZERO, Vec2::new(600.0, 400.0)),
+            )
+            .unwrap();
+        source.validate().unwrap();
+        let before = source.clone();
+        let copy = source.copy_branch_as_sheet(topic).unwrap();
+        assert_eq!(source, before);
+        assert_eq!(copy.root_mode, crate::SheetRootMode::Central);
+        assert_eq!(copy.root, topic);
+        assert_eq!(copy.root_topic().position, None);
+        assert_eq!(copy.children(topic), &[child]);
+        assert!(copy.floating.is_empty());
+        assert!(copy.zones.is_empty());
+        copy.validate().unwrap();
+        assert_eq!(
+            source.copy_branch_as_sheet(source.root),
+            Err(EditError::RootNotAllowed)
+        );
+    }
+
+    #[test]
+    fn copy_branch_with_missing_summary_resource_fails_without_mutation() {
+        let (mut source, kids) = sheet();
+        let child = source.add_child(kids[0], None, "Child");
+        let summary = source.add_summary(&[child], "Summary").unwrap();
+        crate::attachments::insert(&mut source, summary, "missing.bin", vec![1, 2, 3]).unwrap();
+        source.resources.entries.clear();
+        let before = source.clone();
+        assert!(
+            source
+                .copy_branch_as_sheet(kids[0])
+                .unwrap_err()
+                .to_string()
+                .contains("missing embedded resource")
+        );
+        assert_eq!(source, before);
     }
 
     #[test]

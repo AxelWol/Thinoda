@@ -15,11 +15,15 @@ use thinoda_ui::{Dialog, widgets};
 
 use crate::{
     app::ThinodaApp,
-    doc::{OpenDoc, is_native},
+    doc::{OpenDoc, is_save_target},
     i18n::{self, t},
 };
 
 const TITLE: &str = "Board export changes";
+const EDITABLE_IMAGE_TITLE: &str = "Editable image export";
+pub(crate) const EDITABLE_IMAGE_SCOPE: &str =
+    "Only the current sheet is included; other sheets are not exported.";
+pub(crate) const EDITABLE_IMAGE_NOTICE: &str = "This image contains the editable diagram, including content outside the visible preview. It is not redacted.";
 const INTRO: &str = "The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.";
 const XMIND_METADATA: &str = "XMind stores a Thinoda-only copy of the complete board. Other apps may not display it and may discard it when saving. This export is not redacted.";
 
@@ -27,6 +31,16 @@ const XMIND_METADATA: &str = "XMind stores a Thinoda-only copy of the complete b
 pub(crate) struct SaveConsent {
     pub board: bool,
     pub mindmanager: bool,
+}
+
+impl SaveConsent {
+    pub(crate) fn for_io(self, format: Format) -> bool {
+        if format.is_drawio() {
+            self.board
+        } else {
+            self.mindmanager
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -162,9 +176,55 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     *count,
                     "Camera image metadata or color profiles may be omitted",
                 ),
+                ExportLoss::ConnectorLabelCompositingApproximated(count) => (
+                    *count,
+                    "Translucent connector labels may render differently",
+                ),
                 ExportLoss::InlineTextDropped(count) => {
                     (*count, "Inline card text and list formatting omitted")
                 }
+                ExportLoss::MapElementsFlattened(count) => {
+                    (*count, "Mind-map topics and links flattened to shapes")
+                }
+                ExportLoss::ConnectorAttachmentsDetached(count) => {
+                    (*count, "Connector-to-connector attachments detached")
+                }
+                ExportLoss::FixedConnectorAttachmentsDetached(count) => {
+                    (*count, "Fixed connector attachments detached")
+                }
+                ExportLoss::DrawioFixedConnectorPositionApproximated(count) => {
+                    (*count, "Fixed connector positions may differ in draw.io")
+                }
+                ExportLoss::LegacyConnectorMarkersApproximated(count) => {
+                    (*count, "Legacy arrowheads approximated in draw.io")
+                }
+                ExportLoss::DrawioLabelAppearanceApproximated(count) => {
+                    (*count, "Label color or opacity may differ in draw.io")
+                }
+                ExportLoss::DrawioRectangleAppearanceApproximated(count) => (
+                    *count,
+                    "Rectangle colors or automatic outlines may differ in draw.io",
+                ),
+                ExportLoss::DrawioDoubleEllipseAppearanceApproximated(count) => {
+                    (*count, "Double-ellipse appearance may differ in draw.io")
+                }
+                ExportLoss::DrawioCollapsedProcessApproximated(count) => (
+                    *count,
+                    "Collapsed process outlines may be omitted in draw.io",
+                ),
+                ExportLoss::DrawioGridSettingsApproximated(count) => {
+                    (*count, "Grid or snapping may differ in draw.io")
+                }
+                ExportLoss::DrawioBackgroundAppearanceApproximated(count) => {
+                    (*count, "Page background may differ in draw.io")
+                }
+                ExportLoss::DrawioCardAppearanceApproximated(count) => {
+                    (*count, "Cards may show folded corners in draw.io")
+                }
+                ExportLoss::TopicDetailsDropped(count) => {
+                    (*count, "Topic notes, labels, markers or tasks omitted")
+                }
+                ExportLoss::SlidesDropped(count) => (*count, "Presentation slides omitted"),
                 ExportLoss::BoardSettingsDropped => {
                     return t("Board grid and snapping settings omitted").to_owned();
                 }
@@ -275,8 +335,13 @@ impl ThinodaApp {
         }
         let owner = Owner::of(doc);
         let losses = export_loss_report(doc.doc.workbook(), format, &ExportOptions::default());
-        if losses.is_empty() {
-            self.perform_preflight_export(format, allow_symbol_color_loss, allow_note_format_loss);
+        if losses.is_empty() && !format.is_drawio_image() {
+            self.perform_preflight_export(
+                format,
+                allow_symbol_color_loss,
+                allow_note_format_loss,
+                false,
+            );
         } else {
             self.dialogs.board_export = Some(BoardPreflight {
                 owner: Some(owner),
@@ -303,9 +368,7 @@ impl ThinodaApp {
         if self.dialogs.board_export.is_some() {
             return false;
         }
-        let Some(format) = Format::from_path(path)
-            .filter(|format| is_native(*format) || *format == Format::MindManager)
-        else {
+        let Some(format) = Format::from_path(path).filter(|format| is_save_target(*format)) else {
             return self.perform_preflight_save(
                 path,
                 backup,
@@ -585,6 +648,7 @@ impl ThinodaApp {
                 format,
                 allow_symbol_color_loss,
                 allow_note_format_loss,
+                true,
             ),
             Action::Presentation {
                 sheet,
@@ -618,11 +682,16 @@ impl ThinodaApp {
         }
         let lines = loss_lines(&pending.losses, pending.format);
         let format = pending.format;
+        let title = if format.is_drawio_image() {
+            EDITABLE_IMAGE_TITLE
+        } else {
+            TITLE
+        };
         let mut accepted = false;
         let mut canceled = false;
         let touch = widgets::touch_activation_allowed(ctx);
         let loss_height = (ctx.content_rect().height() - 230.0).clamp(60.0, 360.0);
-        let response = Dialog::new(egui::Id::unique("board_export_preflight"), t(TITLE))
+        let response = Dialog::new(egui::Id::unique("board_export_preflight"), t(title))
             .labels(&i18n::dialog_labels())
             .modal(true)
             .close_on_backdrop(true)
@@ -633,16 +702,22 @@ impl ThinodaApp {
             .scroll(false)
             .show(ctx, |ui| {
                 ui.strong(t(format.label()));
-                ui.label(t(INTRO));
-                ui.add_space(8.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("board_export_losses")
-                    .max_height(loss_height)
-                    .show(ui, |ui| {
-                        for line in &lines {
-                            ui.label(line);
-                        }
-                    });
+                if format.is_drawio_image() {
+                    ui.label(t(EDITABLE_IMAGE_SCOPE));
+                    ui.label(t(EDITABLE_IMAGE_NOTICE));
+                }
+                if !lines.is_empty() {
+                    ui.label(t(INTRO));
+                    ui.add_space(8.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("board_export_losses")
+                        .max_height(loss_height)
+                        .show(ui, |ui| {
+                            for line in &lines {
+                                ui.label(line);
+                            }
+                        });
+                }
                 ui.add_space(12.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     accepted = widgets::primary_button(ui, t("Confirm")).clicked() && touch;

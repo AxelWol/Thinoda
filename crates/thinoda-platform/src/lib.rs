@@ -94,6 +94,8 @@ pub enum Error {
     Toml(#[from] toml::ser::Error),
     #[error("invalid workbook: {0}")]
     InvalidWorkbook(String),
+    #[error("invalid recovery snapshot: {0}")]
+    InvalidRecovery(String),
     #[error("invalid document key: {0:?}; use ASCII letters, digits, hyphens or underscores")]
     InvalidDocKey(String),
     #[error("recovery mutex is poisoned")]

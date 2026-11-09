@@ -160,6 +160,15 @@ vector stage to hide its subtree, or use the
 keyboard-accessible **Topic visibility** controls. **Hidden topics** offers
 individual restoration and **Restore all topics**.
 
+For source-only branch and Zone slides, board objects explicitly assigned to
+another Zone are excluded. Objects with no Zone assignment remain visible if
+they fall within the resulting frame. They do not enlarge an automatically
+fitted source frame; disable auto-fit and adjust the frame to include them.
+Connectors are hidden if a topic or object endpoint is hidden, including
+through chains of connectors. Context and View slides retain all Zone objects,
+subject to topic visibility and the slide frame. The editor, player and export
+paths use the same object-visibility rules.
+
 **Apply** saves the draft as one undoable edit; **Cancel** discards it.
 **Apply and export PowerPoint** deliberately saves the draft before opening the
 ratio/export flow. PDF and slide-image actions export the draft without applying
@@ -232,6 +241,33 @@ Separate integration acceptance uncovered two export issues:
   Emitting those same curves as native editable freeform shapes preserves their
   geometry and opens cleanly. A semantic regression prevents reintroducing
   custom connector geometry.
+
+### Scene object-isolation follow-up
+
+A later review found that source-only editor and Pitch scenes retained
+foreign Zone objects even though exports filtered them. Scene object
+visibility is now shared with the export path, and connector exclusions
+propagate to dependent connectors. Auto-fit also excludes source-owned
+connectors whose endpoints are hidden; otherwise an invisible connection to a
+distant object could enlarge the slide. Retained clipping frames now suppress
+their independent background tint as well as their title and outline.
+Synthetic regressions cover source, context and View slides, unassigned objects,
+ink, connector chains, hidden and unrevealed topics, clipping frames, object
+order, SVG, PNG, PDF and PowerPoint output. A 2,000-connector reversed chain
+checks iterative exclusion propagation rather than general performance.
+Production-browser checks in Chromium, Firefox and WebKit exercise fixed-crop
+source Zone and branch, context and View slides in Pitch, PDF, slide images and
+PowerPoint. They inspect rendered colors, editable object inclusion, dependent
+connectors, the flattened viewport image and source preservation. PDF pages
+from each browser are inspected in Chromium's PDF viewer; the image archive is
+inspected directly. This fixture does not establish text-search accessibility,
+every crop, browser device, PDF viewer or Office rendering combination.
+
+This preserves the existing crop behavior for unassigned objects rather than
+turning every unrelated free object into an auto-fit target. The presenter's
+orientation panel still shows the whole map, and slide clipping is not secure
+redaction. The follow-up has not been accepted on every browser, device or
+Office version; the earlier Office evidence below predates this change.
 
 ## Evidence and status
 

@@ -14,7 +14,13 @@ pub(crate) fn options_for_gui_export(
         dark: view_dark
             && matches!(
                 format,
-                Format::Png | Format::Jpeg | Format::Svg | Format::Pdf | Format::PowerPoint
+                Format::Png
+                    | Format::Jpeg
+                    | Format::Svg
+                    | Format::DrawIoSvg
+                    | Format::DrawIoPng
+                    | Format::Pdf
+                    | Format::PowerPoint
             ),
         scale: 2.0,
         presentation_aspect_ratio: aspect_ratio,
@@ -137,6 +143,8 @@ mod tests {
                 Format::Png,
                 Format::Jpeg,
                 Format::Svg,
+                Format::DrawIoSvg,
+                Format::DrawIoPng,
                 Format::Pdf,
                 Format::PowerPoint,
             ] {

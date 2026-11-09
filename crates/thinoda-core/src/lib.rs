@@ -41,20 +41,21 @@ pub mod todo;
 
 pub use board::{
     Band, BoardSettings, CanvasConnector, CanvasGroup, CanvasGroupId, CanvasLayer, CanvasObject,
-    CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorRoute, Endpoint, GridKind,
-    InkStroke, InkTool, ObjectStyle, RootProjection, ShapeKind, SheetRootMode, ZOrder,
+    CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
+    ConnectorPort, ConnectorRoute, DrawioRectangleStencil, Endpoint, GridKind, InkStroke, InkTool,
+    ObjectStyle, RectangleSides, RootProjection, ShapeKind, ShapeRounding, SheetRootMode, ZOrder,
 };
 pub use document::Document;
 pub use edit::{EditError, EditResult};
 pub use geometry::{Color, Rect, Vec2};
 pub use layout::{ApproxMeasure, Layout, TextMeasure, TopicLayout, layout_sheet};
 pub use model::{
-    Boundary, BoundaryId, BranchSide, ChildRange, LineShape, MAX_PRESENTATION_COORDINATE,
-    MAX_PRESENTATION_NAME_BYTES, MAX_PRESENTATION_SLIDES, MAX_ZONE_MEMBERSHIPS, MAX_ZONES,
-    MIN_ZONE_SIZE, Presentation, PresentationScope, PresentationSlide, PresentationSource,
-    Relationship, RelationshipId, Sheet, SlideFrame, SlideId, Structure, Subtree, Summary,
-    SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle, Workbook, Zone, ZoneId,
-    automatic_zone_color,
+    AttachChildError, Boundary, BoundaryId, BranchSide, ChildRange, LineShape,
+    MAX_PRESENTATION_COORDINATE, MAX_PRESENTATION_NAME_BYTES, MAX_PRESENTATION_SLIDES,
+    MAX_ZONE_MEMBERSHIPS, MAX_ZONES, MIN_ZONE_SIZE, Presentation, PresentationScope,
+    PresentationSlide, PresentationSource, Relationship, RelationshipId, Sheet, SlideFrame,
+    SlideId, Structure, Subtree, Summary, SummaryId, TextAlign, Topic, TopicId, TopicShape,
+    TopicStyle, Workbook, Zone, ZoneId, automatic_zone_color,
 };
 pub use outline::OutlineNode;
 pub use presentation::{ResolvedPresentationSlide, resolve_presentation_slide};

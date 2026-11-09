@@ -245,11 +245,13 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
     }
     wide.get_by_role_and_label(Role::Button, t("Edit")).click();
     wide.run_steps(3);
+    reveal(&mut wide, t("Copy as draw.io"));
     let settings = format!(
         "{} {}",
         t("Settings…"),
         ThinodaApp::shortcut_hint(&wide.ctx, &Cmd::Settings).unwrap()
     );
+    reveal(&mut wide, &settings);
     wide.get_by_role_and_label(Role::Button, &settings).click();
     wide.run_steps(3);
     assert!(wide.state().dialogs.settings);

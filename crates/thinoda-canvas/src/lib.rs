@@ -41,21 +41,24 @@ pub mod ink_controller;
 pub mod ink_input;
 mod measure;
 pub mod minimap;
+pub mod pen_input;
 mod relationship_editing;
 mod render;
 mod topic_drag;
 #[cfg(test)]
 mod topic_ordering_tests;
+pub mod touch_input;
 mod view;
 
 pub use actions::{Action, BoardAction, FloatingArrangement, apply_action, apply_board_action};
 pub use measure::EguiMeasure;
 pub use minimap::MinimapLabels;
 pub use render::{
-    PaintOptions, Xf, automatic_board_stroke, color32, paint_map, paint_marker_colored,
-    paint_thumbnail, resource_preview_texture,
+    PaintOptions, Xf, automatic_board_stroke, board_label_colors, color32, paint_map,
+    paint_marker_colored, paint_thumbnail, resource_preview_texture,
 };
 pub use view::{
     AddControlLabels, BoardLabels, BoardTool, CanvasOutput, MapCanvas, MapView, NewTopicTitles,
-    ObjectSelection, TitleEditContinuation, protect_ime_candidate_keys, shortcut_bindings,
+    ObjectSelection, ShapeDrop, TitleEditContinuation, protect_ime_candidate_keys,
+    shortcut_bindings,
 };

@@ -71,7 +71,7 @@ fn rich_sheet() -> thinoda_core::Sheet {
 }
 
 #[test]
-fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
+fn sheet_clipboard_payload_pastes_once_with_undo() {
     let mut source = ThinodaApp::headless();
     let ctx = egui::Context::default();
     let sheet = rich_sheet();
@@ -84,14 +84,7 @@ fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
     let source_state = source.doc().unwrap().doc.state_id();
     source.exec(&ctx, Cmd::CopySheet);
     assert_eq!(source.doc().unwrap().doc.state_id(), source_state);
-    let payload = ctx
-        .output(|output| {
-            output.commands.iter().find_map(|command| match command {
-                egui::OutputCommand::CopyText(text) => Some(text.clone()),
-                _ => None,
-            })
-        })
-        .unwrap();
+    let payload = thinoda_core::clipboard::encode_sheet(source.doc().unwrap().doc.sheet()).unwrap();
     let mut target = harness(ThinodaApp::headless());
     let before = target.state().doc().unwrap().doc.workbook().clone();
     let ctx = target.ctx.clone();
@@ -128,7 +121,7 @@ fn sheet_context_menu_exposes_complete_clipboard_and_separate_save_actions() {
     menu_action(&h, "New Sheet");
     h.get_by_role_and_label(Role::Button, "Copy Sheet").click();
     h.run_steps(3);
-    h.get_by_label("Copied sheet to clipboard");
+    h.get_by_label("Copied sheet and SVG to clipboard");
     assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
 }
 
@@ -169,6 +162,54 @@ fn new_sheet_from_topic_copies_owned_annotations_without_changing_the_source() {
     let before_invalid = app.doc().unwrap().doc.workbook().clone();
     app.exec(&ctx, Cmd::NewSheetFromTopic);
     assert_eq!(app.doc().unwrap().doc.workbook(), &before_invalid);
+}
+
+#[test]
+fn new_sheet_from_formatted_card_round_trips_and_undoes() {
+    let mut app = ThinodaApp::headless();
+    let ctx = egui::Context::default();
+    let mut sheet = thinoda_core::Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    let card = sheet
+        .add_card(
+            "Formatted card",
+            thinoda_core::Vec2::new(200.0, 150.0),
+            thinoda_core::Card::new(
+                thinoda_core::CardKind::Sticky,
+                thinoda_core::Vec2::new(180.0, 120.0),
+            ),
+        )
+        .unwrap();
+    sheet
+        .topic_mut(card)
+        .unwrap()
+        .inline_text
+        .update_range("Formatted card", 0..9, |style| style.bold = Some(true))
+        .unwrap();
+    let child = sheet.add_child(card, None, "Child");
+    let summary = sheet.add_summary(&[child], "Summary").unwrap();
+    thinoda_core::attachments::insert(&mut sheet, summary, "evidence.bin", vec![1, 2, 3]).unwrap();
+    app.doc_mut().unwrap().doc.add_sheet(sheet).unwrap();
+    app.doc_mut().unwrap().view.select_only(card);
+    let before = app.doc().unwrap().doc.workbook().clone();
+
+    app.exec(&ctx, Cmd::NewSheetFromTopic);
+
+    let extracted = app.doc().unwrap().doc.sheet().clone();
+    assert_eq!(extracted.root_mode, thinoda_core::SheetRootMode::Hidden);
+    assert_eq!(extracted.floating, vec![card]);
+    assert!(!extracted.topic(card).unwrap().inline_text.is_empty());
+    assert_eq!(extracted.summaries.len(), 1);
+    assert_eq!(extracted.resources.entries.len(), 1);
+    app.exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    app.exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Redo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &extracted);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("card-branch.thinoda");
+    assert!(app.save_sheet_to(&path));
+    assert_eq!(thinoda_io::import_file(&path).unwrap().sheets[0], extracted);
 }
 
 #[test]
@@ -536,7 +577,7 @@ fn style_shortcuts_and_context_actions_share_availability() {
     let d = h.state().doc().unwrap();
     let root_rect = d.view.selected_topic_rect(&d.doc).unwrap();
     right_click_at(&mut h, root_rect.center());
-    open_context_styles(&mut h);
+    open_context_submenu(&mut h, "Styles");
     assert!(
         h.get_by_role_and_label(Role::Button, "Paste Style")
             .accesskit_node()
@@ -577,7 +618,7 @@ fn style_shortcuts_and_context_actions_share_availability() {
     let d = h.state().doc().unwrap();
     let rect = d.view.selected_topic_rect(&d.doc).unwrap();
     right_click_at(&mut h, rect.center());
-    open_context_styles(&mut h);
+    open_context_submenu(&mut h, "Styles");
     h.get_by_role_and_label(Role::Button, "Reset Style").click();
     h.run_steps(3);
     h.state_mut().doc_mut().unwrap().view.selection.clear();
@@ -680,7 +721,7 @@ fn indent_outdent_context_commands_are_single_undo_steps() {
     let d = h.state().doc().unwrap();
     let point = d.view.selected_topic_rect(&d.doc).unwrap().center();
     right_click_at(&mut h, point);
-    open_context_styles(&mut h);
+    open_context_submenu(&mut h, "Structure");
     h.get_by_role_and_label(Role::Button, "Indent").click();
     h.run_steps(3);
     assert_eq!(
@@ -2401,10 +2442,10 @@ fn right_click_at(h: &mut Harness<'static, ThinodaApp>, pos: egui::Pos2) {
     h.run_steps(3);
 }
 
-fn open_context_styles(h: &mut Harness<'static, ThinodaApp>) {
-    menu_action(h, "Styles").scroll_to_me();
+fn open_context_submenu(h: &mut Harness<'static, ThinodaApp>, submenu: &str) {
+    menu_action(h, submenu).scroll_to_me();
     h.run_steps(4);
-    menu_action(h, "Styles").click();
+    menu_action(h, submenu).click();
     h.run_steps(3);
 }
 
@@ -2485,10 +2526,6 @@ fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_dis
                 h.get_by_label(
                     "Deletes the summary topic and its children, not the covered branches.",
                 );
-            }
-            if matches!(object, ObjectSelection::Zone(_)) {
-                menu_action(&h, "Zone").click();
-                h.run_steps(3);
             }
             h.get_by_role_and_label(Role::Button, label).click();
             h.run_steps(3);

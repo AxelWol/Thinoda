@@ -33,7 +33,7 @@ fn clipboard_branch_copy_merge_and_undo_preserve_only_owned_bytes() {
         branch.resources.get(&reference).unwrap().bytes(),
         &[1, 2, 3]
     );
-    let clipboard = copy_topics(&sheet, &[child]).unwrap();
+    let clipboard = copy_topics(&sheet, &[child]).unwrap().unwrap();
     assert_eq!(clipboard.subtrees[0].resources.entries.len(), 1);
 
     let mut doc = Document::new(Workbook::new(Sheet::new("Destination", "Root")));
@@ -87,7 +87,7 @@ fn ordinary_subtree_paste_merges_multiple_resources_and_undoes_atomically() {
         });
         topics.push(topic);
     }
-    let payload = copy_topics(&source, &topics).unwrap();
+    let payload = copy_topics(&source, &topics).unwrap().unwrap();
     let mut target = Sheet::new("Target", "Root");
     let shared = target
         .resources

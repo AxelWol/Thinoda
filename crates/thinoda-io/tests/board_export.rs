@@ -3,8 +3,9 @@
 
 use std::io::{Cursor, Read, Write};
 use thinoda_core::{
-    CanvasConnector, CanvasObject, Card, CardKind, Endpoint, InkStroke, InkTool,
-    PresentationSource, ShapeKind, Sheet, SheetRootMode, Workbook,
+    CanvasConnector, CanvasObject, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
+    ConnectorPort, DrawioRectangleStencil, Endpoint, InkStroke, InkTool, PresentationSource,
+    ShapeKind, ShapeRounding, Sheet, SheetRootMode, Workbook,
     board::{CanvasObjectKind, RootProjection},
     geometry::{Color, Rect, Vec2},
     outline::{project_to_outline, to_outline},
@@ -133,6 +134,1518 @@ fn all_text(bytes: &[u8]) -> String {
 }
 
 // --- native versioning --------------------------------------------------------------
+
+#[test]
+fn connector_markers_require_v11_and_preserve_private_xmind_content() {
+    let mut sheet = Sheet::new("Markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let mut book = Workbook::default();
+    book.sheets.push(sheet);
+    book.validate().unwrap();
+    assert_eq!(required_native_version(&book), 11);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 11);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    assert_eq!(
+        export(
+            &import_bytes(Format::Thinoda, &native).unwrap(),
+            Format::Thinoda
+        ),
+        native
+    );
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":10,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("connector markers require native format version 11")
+    );
+    assert!(
+        import_bytes(Format::Thinoda, &content)
+            .unwrap_err()
+            .to_string()
+            .contains("connector markers require a versioned native archive")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-1")
+    );
+}
+
+#[test]
+fn classic_and_thin_markers_require_v12_and_extended_xmind_snapshots() {
+    for kind in [
+        ConnectorMarkerKind::Classic,
+        ConnectorMarkerKind::ClassicThin,
+        ConnectorMarkerKind::OpenThin,
+        ConnectorMarkerKind::BlockThin,
+    ] {
+        let mut sheet = Sheet::new("Markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker { kind });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut book = Workbook::default();
+        book.sheets.push(sheet);
+        assert_eq!(required_native_version(&book), 12);
+        let native = export(&book, Format::Thinoda);
+        assert_eq!(manifest_version(&native), 12);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+        let content = serde_json::to_vec(&book).unwrap();
+        let forged = zip_with(&[
+            (
+                "manifest.json",
+                br#"{"format":"thinoda","version":11,"resources":[]}"#,
+            ),
+            ("content.json", &content),
+        ]);
+        assert!(
+            import_bytes(Format::Thinoda, &forged)
+                .unwrap_err()
+                .to_string()
+                .contains("classic and thin connector markers require native format version 12")
+        );
+        let xmind = export(&book, Format::XMind);
+        assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+        assert!(
+            String::from_utf8(entry(&xmind, "metadata.json"))
+                .unwrap()
+                .contains("THINODA-XMIND-MARKERS-2")
+        );
+    }
+}
+
+#[test]
+fn marker_sizes_require_v13_and_size_aware_xmind_snapshots() {
+    let mut sheet = Sheet::new("Sized markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.end_marker_size = Some(12.5);
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(required_native_version(&book), 13);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 13);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":12,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("connector marker sizes require native format version 13")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-3")
+    );
+}
+
+#[test]
+fn hollow_markers_require_v14_and_fill_aware_xmind_snapshots() {
+    let mut sheet = Sheet::new("Hollow markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    connector.start_marker_size = Some(12.5);
+    connector.start_marker_unfilled = true;
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.end_marker_size = Some(12.5);
+    connector.end_marker_unfilled = true;
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(required_native_version(&book), 14);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 14);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":13,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("connector marker fills require native format version 14")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-4")
+    );
+}
+
+#[test]
+fn diamond_markers_require_v15_and_diamond_aware_xmind_snapshots() {
+    for kind in [
+        ConnectorMarkerKind::Diamond,
+        ConnectorMarkerKind::DiamondThin,
+    ] {
+        let mut sheet = Sheet::new("Diamond markers", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker { kind });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let book = Workbook::new(sheet);
+        assert_eq!(required_native_version(&book), 15);
+        let native = export(&book, Format::Thinoda);
+        assert_eq!(manifest_version(&native), 15);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+        let content = serde_json::to_vec(&book).unwrap();
+        let forged = zip_with(&[
+            (
+                "manifest.json",
+                br#"{"format":"thinoda","version":14,"resources":[]}"#,
+            ),
+            ("content.json", &content),
+        ]);
+        assert!(
+            import_bytes(Format::Thinoda, &forged)
+                .unwrap_err()
+                .to_string()
+                .contains("diamond connector markers require native format version 15")
+        );
+        let xmind = export(&book, Format::XMind);
+        assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+        assert!(
+            String::from_utf8(entry(&xmind, "metadata.json"))
+                .unwrap()
+                .contains("THINODA-XMIND-MARKERS-5")
+        );
+    }
+}
+
+#[test]
+fn oval_markers_require_v16_and_oval_aware_xmind_snapshots() {
+    let (mut book, _) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Diamond,
+    });
+    assert_eq!(required_native_version(&book), 16);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 16);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":15,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("oval connector markers require native format version 16")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-6")
+    );
+}
+
+#[test]
+fn half_circle_markers_require_v17_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Oval,
+    });
+    assert_eq!(required_native_version(&book), 17);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 17);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":16,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("half-circle connector markers require native format version 17")
+    );
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-MARKERS-7")
+    );
+}
+
+#[test]
+fn bar_markers_require_v18_and_aware_xmind_snapshots() {
+    for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+        for bar_at_start in [false, true] {
+            let (mut book, _) = half_circle_marker_book();
+            let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind
+            else {
+                panic!("expected connector");
+            };
+            if bar_at_start {
+                connector.start_marker = Some(ConnectorMarker { kind });
+            } else {
+                connector.end_marker = Some(ConnectorMarker { kind });
+            }
+            connector.start_marker_size = Some(0.0);
+            connector.end_marker_size = Some(12.5);
+            connector.start_marker_unfilled = true;
+            connector.end_marker_unfilled = true;
+            assert_eq!(required_native_version(&book), 18);
+            let native = export(&book, Format::Thinoda);
+            assert_eq!(manifest_version(&native), 18);
+            assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+            let content = serde_json::to_vec(&book).unwrap();
+            for version in 1..18 {
+                let manifest =
+                    format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+                let forged = zip_with(&[
+                    ("manifest.json", manifest.as_bytes()),
+                    ("content.json", &content),
+                ]);
+                let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+                if version == 17 {
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("bar connector markers require native format version 18")
+                    );
+                }
+            }
+            let xmind = export(&book, Format::XMind);
+            assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+            assert!(
+                String::from_utf8(entry(&xmind, "metadata.json"))
+                    .unwrap()
+                    .contains("THINODA-XMIND-MARKERS-8")
+            );
+        }
+    }
+}
+
+#[test]
+fn shape_rounding_requires_v19_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Dash,
+    });
+    let mut shape = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rounding = Some(ShapeRounding {
+        radius: 17.0,
+        stencil: DrawioRectangleStencil::Containers,
+    });
+    book.active_mut().add_canvas_object(shape).unwrap();
+    assert_eq!(required_native_version(&book), 19);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 19);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 1..19 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+        if version == 18 {
+            assert!(
+                error
+                    .to_string()
+                    .contains("shape rounding requires native format version 19")
+            );
+        }
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-ROUNDING-1")
+    );
+}
+
+#[test]
+fn rectangle_sides_require_v20_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rectangle_sides = Some(thinoda_core::RectangleSides {
+        top: true,
+        right: false,
+        bottom: true,
+        left: false,
+    });
+    book.active_mut().add_canvas_object(shape).unwrap();
+    let mut rounded = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::new(110.0, 0.0), Vec2::new(100.0, 60.0)),
+    );
+    rounded.rounding = Some(ShapeRounding {
+        radius: 17.0,
+        stencil: DrawioRectangleStencil::Containers,
+    });
+    book.active_mut().add_canvas_object(rounded).unwrap();
+    assert_eq!(required_native_version(&book), 20);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 20);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 1..20 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+        if version == 19 {
+            assert!(
+                error
+                    .to_string()
+                    .contains("rectangle outline sides require native format version 20")
+            );
+        }
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-RECTANGLE-SIDES-1")
+    );
+}
+
+#[test]
+fn fixed_connector_ports_require_v22_and_aware_xmind_snapshots() {
+    let mut book = Workbook::new(Sheet::new("Ports", "Root"));
+    let shape = book
+        .active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(shape),
+        Endpoint::Point(Vec2::new(200.0, 0.0)),
+    );
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.25),
+        offset: Vec2::new(5.0, 0.0),
+        perimeter: false,
+    });
+    book.active_mut()
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    assert_eq!(required_native_version(&book), 22);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 22);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 3..22 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        assert!(import_bytes(Format::Thinoda, &forged).is_err(), "{version}");
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-FIXED-PORTS-1")
+    );
+}
+
+#[test]
+fn double_ellipses_require_v21_and_aware_xmind_snapshots() {
+    for margin in [None, Some(8.5)] {
+        let (mut book, _) = half_circle_marker_book();
+        let mut ellipse = CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        ellipse.double_ellipse_margin = margin;
+        book.active_mut().add_canvas_object(ellipse).unwrap();
+        let mut rectangle = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+        );
+        rectangle.rectangle_sides = Some(thinoda_core::RectangleSides::default());
+        book.active_mut().add_canvas_object(rectangle).unwrap();
+
+        assert_eq!(required_native_version(&book), 21);
+        let native = export(&book, Format::Thinoda);
+        assert_eq!(manifest_version(&native), 21);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+        let content = serde_json::to_vec(&book).unwrap();
+        let manifest = br#"{"format":"thinoda","version":20,"resources":[]}"#;
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_slice()),
+            ("content.json", &content),
+        ]);
+        assert!(
+            import_bytes(Format::Thinoda, &forged)
+                .unwrap_err()
+                .to_string()
+                .contains("double ellipses require native format version 21")
+        );
+        for version in 3..20 {
+            let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+            let forged = zip_with(&[
+                ("manifest.json", manifest.as_bytes()),
+                ("content.json", &content),
+            ]);
+            assert!(import_bytes(Format::Thinoda, &forged).is_err(), "{version}");
+        }
+        assert!(import_bytes(Format::Thinoda, &content).is_err());
+        for value in [serde_json::json!(-1), serde_json::json!("invalid")] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][0]["double_ellipse_margin"] = value;
+            let malformed = serde_json::to_vec(&malformed).unwrap();
+            let manifest = br#"{"format":"thinoda","version":21,"resources":[]}"#;
+            let forged = zip_with(&[
+                ("manifest.json", manifest.as_slice()),
+                ("content.json", &malformed),
+            ]);
+            assert!(import_bytes(Format::Thinoda, &forged).is_err());
+        }
+        let xmind = export(&book, Format::XMind);
+        assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+        assert!(
+            String::from_utf8(entry(&xmind, "metadata.json"))
+                .unwrap()
+                .contains("THINODA-XMIND-DOUBLE-ELLIPSE-1")
+        );
+    }
+}
+
+#[test]
+fn double_ellipse_renders_in_svg_raster_pdf_and_powerpoint() {
+    let mut sheet = Sheet::new("Double ellipse", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::DoubleEllipse,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.fill = Some(Color::WHITE);
+    shape.style.stroke = Some(Color::rgb(200, 30, 40));
+    shape.style.stroke_width = 4.0;
+    shape.double_ellipse_margin = Some(10.0);
+    let id = sheet.add_canvas_object(shape).unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 150.0));
+    let frame = Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 220.0));
+    sheet
+        .add_presentation_slide("Editable", PresentationSource::Branch(root), frame)
+        .unwrap();
+    sheet
+        .add_presentation_slide("Viewport", PresentationSource::Viewport, frame)
+        .unwrap();
+    let double = Workbook::new(sheet);
+    let mut collapsed = double.clone();
+    collapsed
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .double_ellipse_margin = Some(30.0);
+    let double_svg = String::from_utf8(export(&double, Format::Svg)).unwrap();
+    let collapsed_svg = String::from_utf8(export(&collapsed, Format::Svg)).unwrap();
+    assert!(double_svg.contains("M 90.00,30.00"), "{double_svg}");
+    assert!(!collapsed_svg.contains("M 90.00,30.00"), "{collapsed_svg}");
+    let presentation =
+        render_presentation_slide_svg(double.active(), 0, &ExportOptions::default()).unwrap();
+    assert!(presentation.contains("M 90.00,30.00"), "{presentation}");
+
+    let double_png = image::load_from_memory(&export(&double, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let collapsed_png = image::load_from_memory(&export(&collapsed, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let view = view_box(&double_svg);
+    assert_eq!(view, view_box(&collapsed_svg));
+    let sample = |image: &image::RgbaImage, x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    assert_ne!(
+        sample(&double_png, 50.0, 10.0),
+        sample(&collapsed_png, 50.0, 10.0)
+    );
+    assert_eq!(
+        sample(&double_png, 50.0, 30.0),
+        sample(&collapsed_png, 50.0, 30.0)
+    );
+    let double_pdf = export(&double, Format::Pdf);
+    let collapsed_pdf = export(&collapsed, Format::Pdf);
+    assert!(double_pdf.starts_with(b"%PDF"));
+    assert_ne!(double_pdf, collapsed_pdf);
+    let double_pptx = export(&double, Format::PowerPoint);
+    let collapsed_pptx = export(&collapsed, Format::PowerPoint);
+    let double_slide = String::from_utf8(entry(&double_pptx, "ppt/slides/slide1.xml")).unwrap();
+    let collapsed_slide =
+        String::from_utf8(entry(&collapsed_pptx, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(
+        double_slide.matches(&format!("Canvas object {id}")).count(),
+        2
+    );
+    assert_eq!(
+        collapsed_slide
+            .matches(&format!("Canvas object {id}"))
+            .count(),
+        1
+    );
+    assert_ne!(
+        entry(&double_pptx, "ppt/media/slide2-viewport.png"),
+        entry(&collapsed_pptx, "ppt/media/slide2-viewport.png")
+    );
+
+    let mut no_stroke = double.clone();
+    no_stroke
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .style
+        .stroke = None;
+    let mut no_stroke_collapsed = no_stroke.clone();
+    no_stroke_collapsed
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .double_ellipse_margin = Some(30.0);
+    assert_eq!(
+        export(&no_stroke, Format::Png),
+        export(&no_stroke_collapsed, Format::Png)
+    );
+}
+
+#[test]
+fn shape_rounding_renders_in_svg_raster_pdf_and_powerpoint() {
+    let mut sheet = Sheet::new("Rounded", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+    );
+    shape.style.fill = Some(Color::rgb(200, 30, 40));
+    shape.style.stroke = Some(Color::TRANSPARENT);
+    shape.rounding = Some(ShapeRounding {
+        radius: 40.0,
+        stencil: DrawioRectangleStencil::Mockup,
+    });
+    let id = sheet.add_canvas_object(shape).unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 150.0));
+    sheet
+        .add_presentation_slide(
+            "Rounded",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 220.0)),
+        )
+        .unwrap();
+    let rounded = Workbook::new(sheet);
+    let mut square = rounded.clone();
+    square
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .rounding
+        .as_mut()
+        .unwrap()
+        .radius = 0.0;
+
+    let rounded_svg = String::from_utf8(export(&rounded, Format::Svg)).unwrap();
+    let square_svg = String::from_utf8(export(&square, Format::Svg)).unwrap();
+    assert!(rounded_svg.contains("M 60.00,0.00"), "{rounded_svg}");
+    assert!(square_svg.contains("M 0.00,0.00"), "{square_svg}");
+    let presentation =
+        render_presentation_slide_svg(rounded.active(), 0, &ExportOptions::default()).unwrap();
+    assert!(presentation.contains("M 60.00,0.00"), "{presentation}");
+
+    let rounded_png = image::load_from_memory(&export(&rounded, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let square_png = image::load_from_memory(&export(&square, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let view = view_box(&rounded_svg);
+    assert_eq!(view, view_box(&square_svg));
+    let sample = |image: &image::RgbaImage, x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    assert_ne!(
+        sample(&rounded_png, 3.0, 3.0),
+        sample(&square_png, 3.0, 3.0)
+    );
+    assert_eq!(
+        sample(&rounded_png, 50.0, 50.0),
+        sample(&square_png, 50.0, 50.0)
+    );
+    let rounded_pdf = export(&rounded, Format::Pdf);
+    let square_pdf = export(&square, Format::Pdf);
+    assert!(rounded_pdf.starts_with(b"%PDF"));
+    assert_ne!(rounded_pdf, square_pdf);
+    let rounded_pptx = export(&rounded, Format::PowerPoint);
+    let square_pptx = export(&square, Format::PowerPoint);
+    let rounded_slide = String::from_utf8(entry(&rounded_pptx, "ppt/slides/slide1.xml")).unwrap();
+    let square_slide = String::from_utf8(entry(&square_pptx, "ppt/slides/slide1.xml")).unwrap();
+    let shape_path = |slide: &str| {
+        slide
+            .split("<p:sp>")
+            .find(|fragment| fragment.contains(&format!("Canvas object {id}")))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(
+        shape_path(&rounded_slide).matches("<a:lnTo>").count()
+            > shape_path(&square_slide).matches("<a:lnTo>").count()
+    );
+}
+
+#[test]
+fn connector_markers_render_in_svg_raster_and_presentation_exports() {
+    let mut sheet = Sheet::new("Markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Open,
+    });
+    connector.color = Some(Color::rgb(20, 40, 60));
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 100.0));
+    sheet
+        .add_presentation_slide(
+            "Markers",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 180.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let open = "M 89.76,4.00 L 97.76,0.00 L 89.76,-4.00";
+    let block = "M 10.24,-4.00 L 2.24,0.00 L 10.24,4.00 Z";
+    assert!(svg.contains(open), "{svg}");
+    assert!(svg.contains(block), "{svg}");
+    assert!(svg.contains("M 10.24,0.00 L 95.53,0.00"), "{svg}");
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    assert!(slide.contains(open));
+    assert!(slide.contains(block));
+    let image = image::load_from_memory(&export(&book, Format::Png)).unwrap();
+    assert!(image.width() > 0 && image.height() > 0);
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    let name = format!("Canvas object {id}");
+    assert_eq!(slide.matches(&name).count(), 3, "{slide}");
+    assert!(slide.contains("<a:close/>"), "{slide}");
+}
+
+#[test]
+fn classic_markers_render_notches_in_visual_and_presentation_exports() {
+    let mut sheet = Sheet::new("Markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::ClassicThin,
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 100.0));
+    sheet
+        .add_presentation_slide(
+            "Markers",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 180.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let classic = "M 10.24,-4.00 L 2.24,0.00 L 10.24,4.00 L 8.24,0.00 Z";
+    let thin = "M 89.76,2.67 L 97.76,0.00 L 89.76,-2.67 L 91.76,0.00 Z";
+    assert!(svg.contains(classic), "{svg}");
+    assert!(svg.contains(thin), "{svg}");
+    assert!(svg.contains("M 8.24,0.00 L 91.76,0.00"), "{svg}");
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    assert!(slide.contains(classic));
+    assert!(slide.contains(thin));
+    let image = image::load_from_memory(&export(&book, Format::Png)).unwrap();
+    assert!(image.width() > 0 && image.height() > 0);
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(slide.matches(&format!("Canvas object {id}")).count(), 3);
+    assert!(slide.matches("<a:close/>").count() >= 2, "{slide}");
+}
+
+#[test]
+fn custom_marker_sizes_render_in_visual_and_presentation_exports() {
+    let mut sheet = Sheet::new("Sized markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    connector.start_marker_size = Some(0.0);
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.end_marker_size = Some(12.5);
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 100.0));
+    sheet
+        .add_presentation_slide(
+            "Markers",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 180.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let start = "M 4.24,-1.00 L 2.24,0.00 L 4.24,1.00 Z";
+    let end = "M 83.26,7.25 L 97.76,0.00 L 83.26,-7.25 L 86.89,0.00 Z";
+    assert!(svg.contains(start), "{svg}");
+    assert!(svg.contains(end), "{svg}");
+    assert!(svg.contains("M 4.24,0.00 L 86.89,0.00"), "{svg}");
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    assert!(slide.contains(start));
+    assert!(slide.contains(end));
+    let sized = export(&book, Format::Png);
+    let mut default = book.clone();
+    let CanvasObjectKind::Connector(connector) = &mut default.sheets[0].canvas.objects[0].kind
+    else {
+        panic!("expected connector");
+    };
+    connector.start_marker_size = None;
+    connector.end_marker_size = None;
+    assert_ne!(sized, export(&default, Format::Png));
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(slide.matches(&format!("Canvas object {id}")).count(), 3);
+}
+
+fn hollow_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let mut sheet = Sheet::new("Hollow markers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Block,
+    });
+    connector.start_marker_size = Some(12.5);
+    connector.start_marker_unfilled = true;
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Classic,
+    });
+    connector.end_marker_size = Some(12.5);
+    connector.end_marker_unfilled = true;
+    connector.color = Some(Color::rgb(20, 40, 60));
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 100.0));
+    sheet
+        .add_presentation_slide(
+            "Markers",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 180.0)),
+        )
+        .unwrap();
+    (Workbook::new(sheet), id)
+}
+
+fn diamond_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let (mut book, id) = hollow_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Diamond,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::DiamondThin,
+    });
+    (book, id)
+}
+
+fn oval_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let (mut book, id) = hollow_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Oval,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Oval,
+    });
+    connector.end_marker_size = Some(8.0);
+    (book, id)
+}
+
+fn half_circle_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let (mut book, id) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::HalfCircle,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::HalfCircle,
+    });
+    connector.end_marker_unfilled = false;
+    (book, id)
+}
+
+fn bar_marker_book() -> (Workbook, thinoda_core::CanvasObjectId) {
+    let (mut book, id) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::BaseDash,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Dash,
+    });
+    connector.start_marker_unfilled = true;
+    connector.end_marker_unfilled = false;
+    (book, id)
+}
+
+#[test]
+fn bar_markers_render_in_visual_and_editable_exports() {
+    let (book, id) = bar_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let paths = [
+        r##"<path d="M 0.00,-7.75 L 0.00,7.75" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+        r##"<path d="M 94.50,5.50 L 83.50,-5.50" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+    ];
+    let presentation =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for path in paths {
+        assert!(svg.contains(path), "{svg}");
+        assert!(presentation.contains(path), "{presentation}");
+    }
+    assert!(svg.contains("M 0.00,0.00 L 100.00,0.00"), "{svg}");
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * png.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * png.height() as f32).floor() as u32;
+        *png.get_pixel(px, py)
+    };
+    for (x, y) in [(0.0, 5.0), (91.75, 2.75)] {
+        assert_ne!(sample(x, y), sample(x, 20.0), "{x}, {y}");
+    }
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    let paths: Vec<_> = slide
+        .split("<p:sp>")
+        .filter(|shape| shape.contains(&format!("Canvas object {id}")))
+        .collect();
+    assert_eq!(paths.len(), 3, "{slide}");
+    for path in &paths {
+        assert_eq!(path.matches("<a:moveTo>").count(), 1);
+        assert_eq!(path.matches("<a:lnTo>").count(), 1);
+        assert!(!path.contains("<a:close/>"));
+        assert!(path.contains(r#"fill="none""#));
+        assert!(path.contains("</a:custGeom><a:noFill/><a:ln"));
+    }
+    let point = |shape: &str, tag: &str| {
+        let (_, point) = shape.split_once(&format!(r#"<a:{tag}><a:pt x=""#)).unwrap();
+        let (x, rest) = point.split_once(r#"" y=""#).unwrap();
+        let (y, _) = rest.split_once('"').unwrap();
+        (x.parse::<f64>().unwrap(), y.parse::<f64>().unwrap())
+    };
+    let start = point(paths[0], "moveTo");
+    let end = point(paths[0], "lnTo");
+    let scale = (end.0 - start.0) / 100.0;
+    assert!(scale > 0.0);
+    let expected = [
+        (paths[1], (94.5, 5.5), (83.5, -5.5)),
+        (paths[2], (0.0, -7.75), (0.0, 7.75)),
+    ];
+    for (shape, first, last) in expected {
+        for (actual, expected) in [
+            (point(shape, "moveTo"), first),
+            (point(shape, "lnTo"), last),
+        ] {
+            assert!((actual.0 - (start.0 + expected.0 * scale)).abs() <= 2.0);
+            assert!((actual.1 - (start.1 + expected.1 * scale)).abs() <= 2.0);
+        }
+    }
+
+    let mut other_fill = book.clone();
+    let CanvasObjectKind::Connector(connector) = &mut other_fill.sheets[0].canvas.objects[0].kind
+    else {
+        panic!("expected connector");
+    };
+    connector.start_marker_unfilled = false;
+    connector.end_marker_unfilled = true;
+    assert_eq!(
+        String::from_utf8(export(&other_fill, Format::Svg)).unwrap(),
+        svg
+    );
+}
+
+#[test]
+fn half_circle_markers_render_in_visual_and_editable_exports() {
+    let (book, id) = half_circle_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let paths = [
+        r##"<path d="M 0.00,-15.50 Q 15.50,-15.50 15.50,0.00 Q 15.50,15.50 0.00,15.50" fill="none" stroke="#14283C" stroke-width="2.00"/>"##,
+        r##"<path d="M 100.00,11.00 Q 89.00,11.00 89.00,0.00 Q 89.00,-11.00 100.00,-11.00" fill="none" stroke="#14283C" stroke-width="2.00"/>"##,
+    ];
+    let presentation =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for path in paths {
+        assert!(svg.contains(path), "{svg}");
+        assert!(presentation.contains(path), "{presentation}");
+    }
+    assert!(svg.contains("M 15.50,0.00 L 89.00,0.00"), "{svg}");
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * png.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * png.height() as f32).floor() as u32;
+        *png.get_pixel(px, py)
+    };
+    for x in [0.0, 100.0] {
+        assert_eq!(sample(x, 0.0), sample(x, 20.0));
+    }
+    for (x, y) in [(11.625, -11.625), (91.75, 8.25)] {
+        assert_ne!(sample(x, y), sample(x, 20.0));
+    }
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    let curves: Vec<_> = slide
+        .split("<p:sp>")
+        .filter(|shape| {
+            shape.contains(&format!("Canvas object {id}")) && shape.contains("<a:quadBezTo>")
+        })
+        .collect();
+    assert_eq!(curves.len(), 2, "{slide}");
+    for curve in curves {
+        assert_eq!(curve.matches("<a:quadBezTo>").count(), 2);
+        assert!(!curve.contains("<a:close/>"));
+        assert!(curve.contains(r#"fill="none""#));
+        assert!(curve.contains("</a:custGeom><a:noFill/><a:ln"));
+    }
+}
+
+#[test]
+fn hollow_markers_render_closed_and_transparent_in_visual_exports() {
+    let (book, id) = hollow_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let paths = [
+        r##"<path d="M 16.74,-7.25 L 2.24,0.00 L 16.74,7.25 Z" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+        r##"<path d="M 83.26,7.25 L 97.76,0.00 L 83.26,-7.25 L 86.89,0.00 Z" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+    ];
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for path in paths {
+        assert!(svg.contains(path), "{svg}");
+        assert!(slide.contains(path), "{slide}");
+    }
+
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * png.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * png.height() as f32).floor() as u32;
+        *png.get_pixel(px, py)
+    };
+    for x in [7.0, 93.0] {
+        assert_eq!(sample(x, 0.0), sample(x, 12.0));
+    }
+    let mut filled = book.clone();
+    let CanvasObjectKind::Connector(connector) = &mut filled.sheets[0].canvas.objects[0].kind
+    else {
+        panic!("expected connector");
+    };
+    connector.start_marker_unfilled = false;
+    connector.end_marker_unfilled = false;
+    let filled_png = image::load_from_memory(
+        &export_bytes_with_consent(&filled, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    for x in [7.0, 93.0] {
+        let px = ((x - view[0]) / view[2] * filled_png.width() as f32).floor() as u32;
+        let py = ((0.0 - view[1]) / view[3] * filled_png.height() as f32).floor() as u32;
+        assert_ne!(*filled_png.get_pixel(px, py), sample(x, 0.0));
+    }
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(
+        slide
+            .split("<p:sp>")
+            .filter(|shape| {
+                shape.contains(&format!("Canvas object {id}"))
+                    && shape.contains("<a:close/>")
+                    && shape.contains(r#"fill="none""#)
+                    && shape.contains("</a:custGeom><a:noFill/><a:ln")
+            })
+            .count(),
+        2,
+        "{slide}"
+    );
+}
+
+#[test]
+fn diamond_markers_render_in_visual_and_editable_exports() {
+    let (book, id) = diamond_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let paths = [
+        r##"<path d="M 8.66,-7.25 L 1.41,0.00 L 8.66,7.25 L 15.91,0.00 Z" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+        r##"<path d="M 90.78,4.26 L 98.03,0.00 L 90.78,-4.26 L 83.53,0.00 Z" fill="none" stroke="#14283C" stroke-width="2.00" stroke-linejoin="round"/>"##,
+    ];
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for path in paths {
+        assert!(svg.contains(path), "{svg}");
+        assert!(slide.contains(path), "{slide}");
+    }
+    assert!(svg.contains("M 15.91,0.00 L 83.53,0.00"), "{svg}");
+
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |image: &image::RgbaImage, x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    let mut filled = book.clone();
+    let CanvasObjectKind::Connector(connector) = &mut filled.sheets[0].canvas.objects[0].kind
+    else {
+        panic!("expected connector");
+    };
+    connector.start_marker_unfilled = false;
+    connector.end_marker_unfilled = false;
+    let filled_png = image::load_from_memory(
+        &export_bytes_with_consent(&filled, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    for x in [8.0, 91.0] {
+        let background = sample(&png, x, 12.0);
+        assert_eq!(sample(&png, x, 0.0), background);
+        assert_ne!(sample(&filled_png, x, 0.0), background);
+    }
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(
+        slide
+            .split("<p:sp>")
+            .filter(|shape| {
+                shape.contains(&format!("Canvas object {id}"))
+                    && shape.contains("<a:close/>")
+                    && shape.contains(r#"fill="none""#)
+                    && shape.contains("</a:custGeom><a:noFill/><a:ln")
+            })
+            .count(),
+        2,
+        "{slide}"
+    );
+    let powerpoint = export(&filled, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(
+        slide
+            .split("<p:sp>")
+            .filter(|shape| {
+                shape.contains(&format!("Canvas object {id}"))
+                    && shape.contains("<a:close/>")
+                    && shape.contains("</a:custGeom><a:solidFill>")
+            })
+            .count(),
+        2,
+        "{slide}"
+    );
+}
+
+#[test]
+fn oval_markers_render_in_visual_and_editable_exports() {
+    let (mut book, id) = oval_marker_book();
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.end_marker_unfilled = false;
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let circles = [
+        r##"<circle cx="0.00" cy="0.00" r="6.25" fill="none" stroke="#14283C" stroke-width="2.00"/>"##,
+        r##"<circle cx="100.00" cy="0.00" r="4" fill="#14283C" stroke="#14283C" stroke-width="2.00"/>"##,
+    ];
+    let slide =
+        render_presentation_slide_svg(&book.sheets[0], 0, &ExportOptions::default()).unwrap();
+    for circle in circles {
+        assert!(svg.contains(circle), "{svg}");
+        assert!(slide.contains(circle), "{slide}");
+    }
+    assert!(svg.contains("M 6.25,0.00 L 96.00,0.00"), "{svg}");
+
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * png.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * png.height() as f32).floor() as u32;
+        *png.get_pixel(px, py)
+    };
+    assert_eq!(sample(0.0, 0.0), sample(0.0, 12.0));
+    assert_ne!(sample(0.0, 6.25), sample(0.0, 12.0));
+    assert_ne!(sample(100.0, 0.0), sample(100.0, 12.0));
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    let shapes: Vec<_> = slide
+        .split("<p:sp>")
+        .filter(|shape| {
+            shape.contains(&format!("Canvas object {id}"))
+                && shape.contains(r#"<a:prstGeom prst="ellipse">"#)
+        })
+        .collect();
+    assert_eq!(shapes.len(), 2, "{slide}");
+    assert!(
+        shapes
+            .iter()
+            .any(|shape| shape.contains("</a:prstGeom><a:noFill/><a:ln"))
+    );
+    assert!(
+        shapes
+            .iter()
+            .any(|shape| shape.contains("</a:prstGeom><a:solidFill>"))
+    );
+
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker_size = Some(0.0);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(!svg.contains(r#"<circle cx="0.00" cy="0.00""#));
+    let powerpoint = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&powerpoint, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(
+        slide
+            .split("<p:sp>")
+            .filter(|shape| {
+                shape.contains(&format!("Canvas object {id}"))
+                    && shape.contains(r#"<a:prstGeom prst="ellipse">"#)
+            })
+            .count(),
+        1,
+        "{slide}"
+    );
+    let CanvasObjectKind::Connector(connector) = &mut book.sheets[0].canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    connector.start_marker_size = Some(0.001);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(svg.contains(r#"<circle cx="0.00" cy="0.00" r="0.0005""#));
+}
+
+#[test]
+#[ignore = "requires Python 3, pypdfium2 and Pillow"]
+fn hollow_marker_pdf_rasterizes_an_outline_without_a_fill() {
+    use std::process::{Command, Stdio};
+
+    fn rasterize(pdf: &[u8]) -> image::RgbImage {
+        let script = r#"
+import sys
+import pypdfium2 as pdfium
+document = pdfium.PdfDocument(sys.stdin.buffer.read())
+assert len(document) == 1
+document[0].render(scale=4).to_pil().convert("RGB").save(sys.stdout.buffer, format="PNG")
+"#;
+        let mut child = Command::new("python")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("install Python, pypdfium2 and Pillow to run this ignored test");
+        child.stdin.take().unwrap().write_all(pdf).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "PDF rasterization failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        image::load_from_memory(&output.stdout).unwrap().to_rgb8()
+    }
+
+    fn sample(image: &image::RgbImage, view: [f32; 4], x: f32, y: f32) -> [u8; 3] {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        image.get_pixel(px, py).0
+    }
+
+    for (book, positions, outline) in [
+        (hollow_marker_book().0, [7.0, 93.0], (90.0, 3.8)),
+        (diamond_marker_book().0, [8.0, 91.0], (94.0, 2.4)),
+        (oval_marker_book().0, [0.0, 100.0], (100.0, 4.0)),
+    ] {
+        let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+        let view = view_box(&svg);
+        let hollow = rasterize(&export(&book, Format::Pdf));
+        let mut filled = book.clone();
+        let CanvasObjectKind::Connector(connector) = &mut filled.sheets[0].canvas.objects[0].kind
+        else {
+            panic!("expected connector");
+        };
+        connector.start_marker_unfilled = false;
+        connector.end_marker_unfilled = false;
+        let filled = rasterize(&export(&filled, Format::Pdf));
+        for x in positions {
+            let background = sample(&hollow, view, x, 12.0);
+            assert_eq!(sample(&hollow, view, x, 0.0), background);
+            assert_ne!(sample(&filled, view, x, 0.0), background);
+        }
+        let background = sample(&hollow, view, positions[1], 12.0);
+        assert_ne!(sample(&hollow, view, outline.0, outline.1), background);
+    }
+    let (book, _) = half_circle_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let view = view_box(&svg);
+    let open = rasterize(&export(&book, Format::Pdf));
+    for x in [0.0, 100.0] {
+        let background = sample(&open, view, x, 20.0);
+        assert_eq!(sample(&open, view, x, 0.0), background);
+    }
+    for (x, y) in [(11.625, -11.625), (91.75, 8.25)] {
+        assert_ne!(sample(&open, view, x, y), sample(&open, view, x, 20.0));
+    }
+    let (book, _) = bar_marker_book();
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let view = view_box(&svg);
+    let bars = rasterize(&export(&book, Format::Pdf));
+    for (x, y) in [(0.0, 5.0), (91.75, 2.75)] {
+        assert_ne!(sample(&bars, view, x, y), sample(&bars, view, x, 20.0));
+    }
+}
+
+#[test]
+fn connector_waypoints_require_v10_and_render_in_svg() {
+    let mut sheet = Sheet::new("Route", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 0.0)),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.waypoints = vec![Vec2::new(20.0, 40.0), Vec2::new(80.0, 40.0)].into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    assert_eq!(required_native_version(&book), 10);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 10);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    assert_eq!(
+        export(
+            &import_bytes(Format::Thinoda, &native).unwrap(),
+            Format::Thinoda
+        ),
+        native
+    );
+
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":9,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("connector waypoints require native format version 10")
+    );
+    assert!(
+        import_bytes(Format::Thinoda, &content)
+            .unwrap_err()
+            .to_string()
+            .contains("connector waypoints require a versioned native archive")
+    );
+
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(
+        svg.contains("M 0.00,0.00 L 20.00,40.00 L 80.00,40.00 L 100.00,0.00"),
+        "{svg}"
+    );
+}
 
 #[test]
 fn explicit_zone_objects_require_native_v9_and_round_trip() {
@@ -307,6 +1820,74 @@ fn inline_card_text_requires_native_v8_and_reports_non_native_loss() {
         export_losses(&wb, Format::Svg, &ExportOptions::default())
             .contains(&ExportLoss::InlineTextDropped(1))
     );
+}
+
+#[test]
+fn formatted_card_native_clipboard_native_round_trip_is_undoable() {
+    use thinoda_core::{
+        ApproxMeasure, Document, EditError, InlineParagraph, ListKind,
+        clipboard::{
+            copy_board_selection, decode_board_payload, encode_board_payload, paste_board_selection,
+        },
+        layout_sheet,
+    };
+
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        let mut source = central();
+        let title = "A🦀é\n第二";
+        let card = source.sheets[0]
+            .add_card(
+                title,
+                Vec2::new(120.0, 100.0),
+                Card::new(kind, Vec2::new(180.0, 120.0)),
+            )
+            .unwrap();
+        let topic = source.sheets[0].topic_mut(card).unwrap();
+        topic
+            .inline_text
+            .update_range(title, 0..3, |style| {
+                style.bold = Some(true);
+                style.font_size = Some(18.0);
+            })
+            .unwrap();
+        topic.inline_text.paragraphs.push(InlineParagraph {
+            index: 1,
+            list: ListKind::Numbered,
+        });
+        let native = export_bytes(&source, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(manifest_version(&native), 8);
+        let loaded = import_bytes(Format::Thinoda, &native).unwrap();
+        let layout = layout_sheet(loaded.active(), &ApproxMeasure, false);
+        let payload = copy_board_selection(loaded.active(), &layout, &[card], &[])
+            .unwrap()
+            .unwrap();
+        let encoded = encode_board_payload(&payload).unwrap();
+        let decoded = decode_board_payload(&encoded).unwrap();
+        let mut destination = Sheet::new("Destination", "Root");
+        destination.add_child(destination.root, None, "Existing");
+        let mut doc = Document::new(Workbook::new(destination));
+        let before = doc.workbook().clone();
+        let pasted = doc
+            .edit_sheet("Paste", |sheet| {
+                paste_board_selection(sheet, &decoded, Vec2::ZERO).map_err(EditError::Invalid)
+            })
+            .unwrap();
+        let copied = doc.sheet().topic(pasted.topics[0]).unwrap();
+        assert_eq!(
+            copied.inline_text,
+            loaded.active().topic(card).unwrap().inline_text
+        );
+        assert_eq!(copied.title, title);
+        assert_ne!(pasted.topics[0], card);
+        let after = doc.workbook().clone();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &before);
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &after);
+        let native = export_bytes(&after, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(manifest_version(&native), 8);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), after);
+    }
 }
 
 #[test]
@@ -729,13 +2310,233 @@ fn export_losses_itemise_board_content_per_format() {
         ]
     );
 
-    // Plain Central workbooks lose nothing to board export.
+    // Plain Central workbooks lose nothing to board export, except draw.io, which has no
+    // editable mind-map model and flattens every topic into a shape.
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&central(), format, &o),
+            vec![ExportLoss::MapElementsFlattened(3)],
+            "{format:?}"
+        );
+    }
     for &format in Format::EXPORTABLE {
+        if format.is_drawio() {
+            continue;
+        }
         assert!(
             export_losses(&central(), format, &o).is_empty(),
             "{format:?}"
         );
     }
+}
+
+#[test]
+fn translucent_connector_compositing_loss_matches_export_scope() {
+    let mut sheet = Sheet::new("First", "");
+    for (label, opacity, text_color) in [
+        ("Translucent color", 1.0, Some(Color::rgba(30, 60, 90, 128))),
+        ("Translucent object", 0.5, Some(Color::BLACK)),
+        ("Automatic", 0.5, None),
+        ("Opaque", 1.0, Some(Color::BLACK)),
+        ("Transparent", 1.0, Some(Color::TRANSPARENT)),
+        ("Rounds to transparent", 0.1, Some(Color::rgba(0, 0, 0, 1))),
+        ("", 0.5, Some(Color::BLACK)),
+        ("Zero opacity", 0.0, Some(Color::BLACK)),
+    ] {
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.label = label.into();
+        let mut object = CanvasObject::connector(connector);
+        object.style.opacity = opacity;
+        object.style.text_color = text_color;
+        sheet.add_canvas_object(object).unwrap();
+    }
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.text_color = Some(Color::rgba(0, 0, 0, 128));
+    sheet.add_canvas_object(shape).unwrap();
+
+    let mut second = Sheet::new("Second", "");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label = "Second sheet".into();
+    let mut object = CanvasObject::connector(connector);
+    object.style.text_color = Some(Color::rgba(0, 0, 0, 128));
+    second.add_canvas_object(object).unwrap();
+    let mut book = Workbook::new(sheet);
+    book.sheets.push(second);
+    book.validate().unwrap();
+
+    let options = ExportOptions::default();
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        assert_eq!(
+            export_losses(&book, format, &options),
+            vec![ExportLoss::ConnectorLabelCompositingApproximated(2)],
+            "{format:?}"
+        );
+        let second_sheet = ExportOptions {
+            sheet: Some(1),
+            ..options.clone()
+        };
+        assert_eq!(
+            export_losses(&book, format, &second_sheet),
+            vec![ExportLoss::ConnectorLabelCompositingApproximated(1)],
+            "{format:?}"
+        );
+    }
+    assert!(export_losses(&book, Format::Thinoda, &options).is_empty());
+    assert!(export_losses(&book, Format::PowerPoint, &options).is_empty());
+
+    let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0));
+    let root = book.sheets[0].add_floating("Branch", Vec2::new(150.0, 100.0));
+    book.sheets[0]
+        .add_presentation_slide("Editable", PresentationSource::Branch(root), frame)
+        .unwrap();
+    assert!(export_losses(&book, Format::PowerPoint, &options).is_empty());
+    book.sheets[0]
+        .add_presentation_slide("Viewport", PresentationSource::Viewport, frame)
+        .unwrap();
+    assert_eq!(
+        export_losses(&book, Format::PowerPoint, &options),
+        vec![ExportLoss::ConnectorLabelCompositingApproximated(2)]
+    );
+    let second_sheet = ExportOptions {
+        sheet: Some(1),
+        ..options
+    };
+    assert!(export_losses(&book, Format::PowerPoint, &second_sheet).is_empty());
+}
+
+fn translucent_connector_label_book() -> Workbook {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(120.0, 0.0)),
+    );
+    connector.label = "MMMMMMMM".into();
+    connector.color = Some(Color::BLACK);
+    connector.width = 8.0;
+    connector.arrow_end = false;
+    let mut object = CanvasObject::connector(connector);
+    object.style.text_color = Some(Color::rgba(255, 0, 0, 128));
+    sheet.add_canvas_object(object).unwrap();
+    Workbook::new(sheet)
+}
+
+fn grouped_red(pixel: [u8; 3]) -> bool {
+    (110..=145).contains(&pixel[0]) && pixel[1] < 15 && pixel[2] < 15
+}
+
+#[test]
+fn translucent_connector_grouping_survives_jpeg_and_viewport_powerpoint() {
+    let mut book = translucent_connector_label_book();
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgb8();
+    let jpeg = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Jpeg, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgb8();
+    assert_eq!(png.dimensions(), jpeg.dimensions());
+    let mut expected = 0;
+    let mut matched = 0;
+    for (x, y, pixel) in png.enumerate_pixels() {
+        if grouped_red(pixel.0) {
+            expected += 1;
+            let actual = jpeg.get_pixel(x, y).0;
+            matched +=
+                usize::from((80..=175).contains(&actual[0]) && actual[1] < 40 && actual[2] < 40);
+        }
+    }
+    assert!(expected > 20, "the PNG must contain glyphs over the line");
+    assert!(
+        matched * 2 >= expected,
+        "JPEG preserved {matched} of {expected} opaque glyph interiors"
+    );
+
+    book.active_mut()
+        .add_presentation_slide(
+            "Viewport",
+            PresentationSource::Viewport,
+            Rect::from_min_size(Vec2::new(-20.0, -30.0), Vec2::new(160.0, 90.0)),
+        )
+        .unwrap();
+    let pptx = export(&book, Format::PowerPoint);
+    let image = image::load_from_memory(&entry(&pptx, "ppt/media/slide1-viewport.png"))
+        .unwrap()
+        .to_rgb8();
+    assert!(
+        image.pixels().filter(|pixel| grouped_red(pixel.0)).count() > 20,
+        "the flattened slide must preserve grouped glyphs over the line"
+    );
+}
+
+#[test]
+#[ignore = "requires Python 3, pypdfium2 and Pillow"]
+fn translucent_connector_pdf_preserves_grouped_label_compositing() {
+    use std::process::{Command, Stdio};
+
+    let book = translucent_connector_label_book();
+    let options = ExportOptions {
+        scale: 4.0,
+        ..Default::default()
+    };
+    let png = image::load_from_memory(
+        &export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+    )
+    .unwrap()
+    .to_rgb8();
+    let pdf = export_bytes_with_consent(&book, Format::Pdf, &options, true).unwrap();
+    let script = r#"
+import sys
+import pypdfium2 as pdfium
+document = pdfium.PdfDocument(sys.stdin.buffer.read())
+assert len(document) == 1
+document[0].render(scale=4).to_pil().convert("RGB").save(sys.stdout.buffer, format="PNG")
+"#;
+    let mut child = Command::new("python")
+        .args(["-c", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("install Python, pypdfium2 and Pillow to run this ignored test");
+    child.stdin.take().unwrap().write_all(&pdf).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "PDF rasterization failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let raster = image::load_from_memory(&output.stdout).unwrap().to_rgb8();
+    assert_eq!(raster.dimensions(), png.dimensions());
+    let mut expected = 0;
+    let mut matched = 0;
+    for (x, y, pixel) in png.enumerate_pixels() {
+        if grouped_red(pixel.0) {
+            expected += 1;
+            matched += usize::from(grouped_red(raster.get_pixel(x, y).0));
+        }
+    }
+    assert!(expected > 20, "the PNG must contain glyphs over the line");
+    assert!(
+        matched * 2 >= expected,
+        "PDF preserved {matched} of {expected} opaque glyph interiors"
+    );
 }
 
 // --- outline projection ---------------------------------------------------------------
@@ -1489,6 +3290,47 @@ fn xmind_hidden_root_is_titled_with_the_sheet_and_round_trips() {
     // The private snapshot restores the full board.
     let back = import_bytes(Format::XMind, &bytes).unwrap();
     assert_eq!(back, wb);
+}
+
+#[test]
+fn xmind_private_snapshot_versions_and_preserves_connector_waypoints() {
+    let mut sheet = Sheet::new("Routes", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.waypoints = vec![Vec2::new(50.0, 40.0)].into();
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let bytes = export(&book, Format::XMind);
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&entry(&bytes, "metadata.json")).unwrap();
+    let snapshot = metadata["thinodaWorkbook"].as_str().unwrap();
+    let mut tagged: serde_json::Value = serde_json::from_str(snapshot).unwrap();
+    assert_eq!(tagged[0], "THINODA-XMIND-WAYPOINTS-1");
+    assert!(serde_json::from_str::<Workbook>(snapshot).is_err());
+    assert_eq!(import_bytes(Format::XMind, &bytes).unwrap(), book);
+
+    tagged[0] = serde_json::json!("THINODA-XMIND-WAYPOINTS-999");
+    tagged[1] = serde_json::json!({"sheets": "incompatible future schema"});
+    metadata["thinodaWorkbook"] = serde_json::Value::String(tagged.to_string());
+    let metadata = serde_json::to_vec(&metadata).unwrap();
+    let content = entry(&bytes, "content.json");
+    let manifest = entry(&bytes, "manifest.json");
+    let legacy = entry(&bytes, "content.xml");
+    let future = zip_with(&[
+        ("metadata.json", &metadata),
+        ("content.json", &content),
+        ("manifest.json", &manifest),
+        ("content.xml", &legacy),
+    ]);
+    assert!(matches!(
+        import_bytes(Format::XMind, &future),
+        Err(thinoda_io::IoError::NewerVersion(version))
+            if version == "THINODA-XMIND-WAYPOINTS-999"
+    ));
 }
 
 #[test]

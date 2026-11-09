@@ -34,3 +34,10 @@ path = "fuzz_targets/opml.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "drawio_import"
+path = "fuzz_targets/drawio_import.rs"
+test = false
+doc = false
+bench = false

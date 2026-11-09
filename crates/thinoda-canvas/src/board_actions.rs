@@ -51,6 +51,20 @@ impl MapView {
     pub fn paste_encoded_board(&mut self, doc: &mut Document, encoded: &str) -> EditResult<bool> {
         self.invalidate_clipboard();
         let payload = clipboard::decode_board_payload(encoded).map_err(EditError::Invalid)?;
+        self.paste_board_payload(doc, payload)
+    }
+
+    /// Pastes a validated board representation obtained from the clipboard.
+    ///
+    /// The caller must establish that it came from the clipboard's separate
+    /// board format, rather than inferring ownership from plain text.
+    pub fn paste_board_payload(
+        &mut self,
+        doc: &mut Document,
+        payload: BoardClipboardPayload,
+    ) -> EditResult<bool> {
+        self.invalidate_clipboard();
+        payload.validate().map_err(EditError::Invalid)?;
         if self.has_title_changes() {
             self.try_commit_edit(doc)?;
         }
@@ -59,6 +73,54 @@ impl MapView {
         let pasted = paste_board(doc, self, &payload, "Paste board items")?;
         self.set_board_clipboard(Some(payload));
         Ok(pasted)
+    }
+
+    /// Pastes board content converted from another application, centred in
+    /// the visible canvas as one undoable edit.
+    ///
+    /// `bounds` are the content's sheet-space bounds in `payload`. The
+    /// payload is not kept as an internal clipboard because the OS clipboard
+    /// still holds the foreign representation.
+    pub fn paste_foreign_board(
+        &mut self,
+        doc: &mut Document,
+        payload: &BoardClipboardPayload,
+        bounds: Option<thinoda_core::Rect>,
+        label: &str,
+    ) -> EditResult<bool> {
+        self.invalidate_clipboard();
+        payload.validate().map_err(EditError::Invalid)?;
+        if self.has_title_changes() {
+            self.try_commit_edit(doc)?;
+        }
+        self.try_commit_board_label(doc)?;
+        self.prune_selection(doc.sheet());
+        let delta = bounds.map_or(PASTE_OFFSET, |bounds| {
+            let target = self.visible_sheet_center() - bounds.center();
+            Vec2::new(target.x.round(), target.y.round())
+        });
+        paste_board_at(doc, self, payload, delta, label)
+    }
+
+    /// Copies the current selection as a board fragment without changing any
+    /// clipboard, for hosts that export it in another format.
+    pub fn selection_board_payload(
+        &mut self,
+        doc: &Document,
+    ) -> EditResult<Option<BoardClipboardPayload>> {
+        let Some(prepared) =
+            clipboard::prepare_board_selection(doc.sheet(), &self.selection, &self.board_selection)
+                .map_err(EditError::Invalid)?
+        else {
+            return Ok(None);
+        };
+        let layout = self.layout_for(doc);
+        prepared.copy(&layout).map(Some).map_err(EditError::Invalid)
+    }
+
+    /// Sheet-space point shown at the centre of the canvas.
+    pub fn visible_sheet_center(&self) -> Vec2 {
+        Vec2::new(-self.offset.x / self.zoom, -self.offset.y / self.zoom)
     }
 }
 
@@ -736,12 +798,13 @@ pub(crate) fn duplicate_selection(
     if topics.is_empty() && objects.is_empty() {
         return Ok(false);
     }
-    let layout = view.layout_for(doc);
-    let Some(payload) = clipboard::copy_board_selection(doc.sheet(), &layout, &topics, &objects)
+    let Some(prepared) = clipboard::prepare_board_selection(doc.sheet(), &topics, &objects)
         .map_err(EditError::Invalid)?
     else {
         return Ok(false);
     };
+    let layout = view.layout_for(doc);
+    let payload = prepared.copy(&layout).map_err(EditError::Invalid)?;
     paste_board_at(doc, view, &payload, delta, "Duplicate board items")
 }
 
@@ -784,12 +847,12 @@ fn duplicate_frame(
     let payload = if frame.roots.is_empty() && frame.objects.is_empty() {
         None
     } else {
-        let layout = view.layout_for(doc);
-        Some(
-            clipboard::copy_board_selection(doc.sheet(), &layout, &frame.roots, &frame.objects)
+        let prepared =
+            clipboard::prepare_board_selection(doc.sheet(), &frame.roots, &frame.objects)
                 .map_err(EditError::Invalid)?
-                .ok_or_else(|| EditError::Invalid("frame contents could not be copied".into()))?,
-        )
+                .ok_or_else(|| EditError::Invalid("frame contents could not be copied".into()))?;
+        let layout = view.layout_for(doc);
+        Some(prepared.copy(&layout).map_err(EditError::Invalid)?)
     };
     let new_id =
         doc.edit_sheet("Duplicate board frame", |sheet| {
@@ -859,17 +922,14 @@ fn copy_cut_or_duplicate(
     {
         return Ok(false);
     }
-    let layout = view.layout_for(doc);
-    let Some(payload) = clipboard::copy_board_selection(
-        doc.sheet(),
-        &layout,
-        &view.selection,
-        &view.board_selection,
-    )
-    .map_err(EditError::Invalid)?
+    let Some(prepared) =
+        clipboard::prepare_board_selection(doc.sheet(), &view.selection, &view.board_selection)
+            .map_err(EditError::Invalid)?
     else {
         return Ok(false);
     };
+    let layout = view.layout_for(doc);
+    let payload = prepared.copy(&layout).map_err(EditError::Invalid)?;
     if *action == Action::Duplicate {
         return paste_board(doc, view, &payload, "Duplicate board items");
     }
@@ -1007,7 +1067,11 @@ pub(super) fn apply_shared(
             return Some(paste_board(doc, view, &payload, "Paste board items"));
         }
         if !doc.sheet().root_mode.is_central() {
-            let subtrees = clipboard::resolve_paste(view.clipboard.as_ref(), text.as_deref());
+            let subtrees = match clipboard::resolve_paste(view.clipboard.as_ref(), text.as_deref())
+            {
+                Ok(subtrees) => subtrees,
+                Err(error) => return Some(Err(EditError::Invalid(error))),
+            };
             if subtrees.is_empty() {
                 return Some(Ok(false));
             }

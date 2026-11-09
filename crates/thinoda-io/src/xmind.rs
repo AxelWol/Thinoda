@@ -1,4 +1,5 @@
 use crate::{IoError, zip_entry};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -14,6 +15,19 @@ use thinoda_core::{
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 const MAX_XMIND_ARCHIVE_ENTRIES: usize = MAX_RESOURCES + 5;
+const WAYPOINT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-WAYPOINTS-1";
+const MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-1";
+const EXTENDED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-2";
+const SIZED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-3";
+const FILLED_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-4";
+const DIAMOND_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-5";
+const OVAL_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-6";
+const HALF_CIRCLE_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-7";
+const BAR_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-8";
+const ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-ROUNDING-1";
+const RECTANGLE_SIDES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RECTANGLE-SIDES-1";
+const DOUBLE_ELLIPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DOUBLE-ELLIPSE-1";
+const FIXED_PORT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FIXED-PORTS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -702,9 +716,319 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
     ))
 }
 
+fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
+    if book.has_fixed_connector_ports() {
+        Ok(serde_json::to_string(&(FIXED_PORT_SNAPSHOT_VERSION, book))?)
+    } else if book.has_double_ellipses() {
+        Ok(serde_json::to_string(&(
+            DOUBLE_ELLIPSE_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rectangle_sides() {
+        Ok(serde_json::to_string(&(
+            RECTANGLE_SIDES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_shape_rounding() {
+        Ok(serde_json::to_string(&(ROUNDING_SNAPSHOT_VERSION, book))?)
+    } else if book.has_bar_connector_markers() {
+        Ok(serde_json::to_string(&(BAR_MARKER_SNAPSHOT_VERSION, book))?)
+    } else if book.has_half_circle_connector_markers() {
+        Ok(serde_json::to_string(&(
+            HALF_CIRCLE_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_oval_connector_markers() {
+        Ok(serde_json::to_string(&(
+            OVAL_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_diamond_connector_markers() {
+        Ok(serde_json::to_string(&(
+            DIAMOND_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_marker_fills() {
+        Ok(serde_json::to_string(&(
+            FILLED_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_marker_sizes() {
+        Ok(serde_json::to_string(&(
+            SIZED_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_extended_connector_markers() {
+        Ok(serde_json::to_string(&(
+            EXTENDED_MARKER_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_connector_markers() {
+        Ok(serde_json::to_string(&(MARKER_SNAPSHOT_VERSION, book))?)
+    } else if book.has_connector_waypoints() {
+        Ok(serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, book))?)
+    } else {
+        Ok(serde_json::to_string(book)?)
+    }
+}
+
+fn strict_private_snapshot(source: &str) -> bool {
+    source
+        .trim_start()
+        .strip_prefix('[')
+        .and_then(|contents| {
+            String::deserialize(&mut serde_json::Deserializer::from_str(contents)).ok()
+        })
+        .is_some_and(|version| {
+            version == MARKER_SNAPSHOT_VERSION
+                || version == EXTENDED_MARKER_SNAPSHOT_VERSION
+                || version == SIZED_MARKER_SNAPSHOT_VERSION
+                || version == FILLED_MARKER_SNAPSHOT_VERSION
+                || version == DIAMOND_MARKER_SNAPSHOT_VERSION
+                || version == OVAL_MARKER_SNAPSHOT_VERSION
+                || version == HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+                || version == BAR_MARKER_SNAPSHOT_VERSION
+                || version == ROUNDING_SNAPSHOT_VERSION
+                || version == RECTANGLE_SIDES_SNAPSHOT_VERSION
+                || version == DOUBLE_ELLIPSE_SNAPSHOT_VERSION
+                || version == FIXED_PORT_SNAPSHOT_VERSION
+        })
+}
+
+fn snapshot_contains_versioned_fields(source: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(source) else {
+        return false;
+    };
+    let workbook = value
+        .as_array()
+        .and_then(|envelope| envelope.get(1))
+        .unwrap_or(&value);
+    workbook
+        .get("sheets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|sheet| sheet.get("canvas")?.get("objects")?.as_array())
+        .flatten()
+        .any(|object| {
+            object.get("rounding").is_some()
+                || object.get("rectangle_sides").is_some()
+                || object.get("double_ellipse_margin").is_some()
+                || object
+                    .get("kind")
+                    .and_then(|kind| kind.get("shape"))
+                    .and_then(|shape| shape.get("shape"))
+                    .and_then(Value::as_str)
+                    == Some("double-ellipse")
+                || object
+                    .get("kind")
+                    .and_then(|kind| kind.get("connector"))
+                    .and_then(Value::as_object)
+                    .is_some_and(|connector| {
+                        connector.contains_key("start_marker")
+                            || connector.contains_key("end_marker")
+                            || connector.contains_key("start_marker_size")
+                            || connector.contains_key("end_marker_size")
+                            || connector.contains_key("start_marker_unfilled")
+                            || connector.contains_key("end_marker_unfilled")
+                            || connector.contains_key("from_port")
+                            || connector.contains_key("to_port")
+                    })
+        })
+}
+
+fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
+    if let Some(contents) = source.trim_start().strip_prefix('[') {
+        let version = String::deserialize(&mut serde_json::Deserializer::from_str(contents))?;
+        if version != WAYPOINT_SNAPSHOT_VERSION
+            && version != MARKER_SNAPSHOT_VERSION
+            && version != EXTENDED_MARKER_SNAPSHOT_VERSION
+            && version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
+            && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
+            && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && version != RECTANGLE_SIDES_SNAPSHOT_VERSION
+            && version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION
+            && version != FIXED_PORT_SNAPSHOT_VERSION
+        {
+            return Err(IoError::NewerVersion(version));
+        }
+        let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != FIXED_PORT_SNAPSHOT_VERSION && workbook.has_fixed_connector_ports() {
+            return Err(IoError::NewerVersion(
+                "fixed connector ports require a port-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if version == FIXED_PORT_SNAPSHOT_VERSION {
+            DOUBLE_ELLIPSE_SNAPSHOT_VERSION
+        } else {
+            version.as_str()
+        };
+        if version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION && workbook.has_double_ellipses() {
+            return Err(IoError::NewerVersion(
+                "double ellipses require a double-ellipse-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if version == DOUBLE_ELLIPSE_SNAPSHOT_VERSION {
+            RECTANGLE_SIDES_SNAPSHOT_VERSION
+        } else {
+            version
+        };
+        if version != RECTANGLE_SIDES_SNAPSHOT_VERSION && workbook.has_rectangle_sides() {
+            return Err(IoError::NewerVersion(
+                "rectangle outline sides require a partial-rectangle-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        // The rectangle-side envelope supports all earlier rounding-era features.
+        let version = if version == RECTANGLE_SIDES_SNAPSHOT_VERSION {
+            ROUNDING_SNAPSHOT_VERSION
+        } else {
+            version
+        };
+        if version != MARKER_SNAPSHOT_VERSION
+            && version != EXTENDED_MARKER_SNAPSHOT_VERSION
+            && version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
+            && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
+            && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_connector_markers()
+        {
+            return Err(IoError::NewerVersion(
+                "connector markers require a marker-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != EXTENDED_MARKER_SNAPSHOT_VERSION
+            && version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
+            && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
+            && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_extended_connector_markers()
+        {
+            return Err(IoError::NewerVersion(
+                "classic and thin connector markers require an extended-marker private XMind snapshot"
+                    .into(),
+            ));
+        }
+        if version != SIZED_MARKER_SNAPSHOT_VERSION
+            && version != FILLED_MARKER_SNAPSHOT_VERSION
+            && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
+            && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_connector_marker_sizes()
+        {
+            return Err(IoError::NewerVersion(
+                "connector marker sizes require a size-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != FILLED_MARKER_SNAPSHOT_VERSION
+            && version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
+            && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_connector_marker_fills()
+        {
+            return Err(IoError::NewerVersion(
+                "connector marker fills require a fill-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != DIAMOND_MARKER_SNAPSHOT_VERSION
+            && version != OVAL_MARKER_SNAPSHOT_VERSION
+            && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_diamond_connector_markers()
+        {
+            return Err(IoError::NewerVersion(
+                "diamond connector markers require a diamond-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != OVAL_MARKER_SNAPSHOT_VERSION
+            && version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_oval_connector_markers()
+        {
+            return Err(IoError::NewerVersion(
+                "oval connector markers require an oval-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != HALF_CIRCLE_MARKER_SNAPSHOT_VERSION
+            && version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_half_circle_connector_markers()
+        {
+            return Err(IoError::NewerVersion(
+                "half-circle connector markers require a half-circle-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        if version != BAR_MARKER_SNAPSHOT_VERSION
+            && version != ROUNDING_SNAPSHOT_VERSION
+            && workbook.has_bar_connector_markers()
+        {
+            return Err(IoError::NewerVersion(
+                "bar connector markers require a bar-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != ROUNDING_SNAPSHOT_VERSION && workbook.has_shape_rounding() {
+            return Err(IoError::NewerVersion(
+                "shape rounding requires a rounding-aware private XMind snapshot".into(),
+            ));
+        }
+        Ok(workbook)
+    } else {
+        let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_fixed_connector_ports() {
+            return Err(IoError::NewerVersion(
+                "fixed connector ports require a port-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_double_ellipses() {
+            return Err(IoError::NewerVersion(
+                "double ellipses require a double-ellipse-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_rectangle_sides() {
+            return Err(IoError::NewerVersion(
+                "rectangle outline sides require a partial-rectangle-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        if workbook.has_shape_rounding() {
+            return Err(IoError::NewerVersion(
+                "shape rounding requires a rounding-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "connector markers require a marker-aware private XMind snapshot".into(),
+            ));
+        }
+        if workbook.has_connector_waypoints() {
+            return Err(IoError::Invalid(
+                "connector waypoints require a versioned private XMind snapshot".into(),
+            ));
+        }
+        Ok(workbook)
+    }
+}
+
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
     let resource_files = export_resource_files(book)?;
-    let stable = serde_json::to_string(book)?;
+    let stable = private_snapshot(book)?;
     let sheets = public_content(book)?;
     let content = serde_json::to_vec(&sheets)?;
     let metadata = serde_json::to_vec(&json!({
@@ -1215,9 +1539,15 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 .and_then(|m| m.get("thinodaWorkbook"))
                 .and_then(Value::as_str)
             {
-                match serde_json::from_str::<Workbook>(w) {
+                let protected_snapshot = strict_private_snapshot(w);
+                match read_private_snapshot(w) {
                     Ok(workbook) => {
                         if let Err(e) = workbook.validate() {
+                            if protected_snapshot {
+                                return Err(IoError::Invalid(format!(
+                                    "invalid versioned private XMind snapshot: {e}"
+                                )));
+                            }
                             log::warn!("Ignoring invalid private XMind snapshot: {e}");
                         } else {
                             let public_matches = match public_content(&workbook) {
@@ -1262,6 +1592,10 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                                 "XMind public content or image resources changed; ignoring stale private snapshot"
                             );
                         }
+                    }
+                    Err(error @ IoError::NewerVersion(_)) => return Err(error),
+                    Err(error) if protected_snapshot || snapshot_contains_versioned_fields(w) => {
+                        return Err(error);
                     }
                     Err(e) => log::warn!("Ignoring unreadable private XMind snapshot: {e}"),
                 }
@@ -1677,6 +2011,620 @@ mod tests {
 
     fn image_resource_path(topic: TopicId) -> String {
         format!("resources/topic-0-{}", topic.0)
+    }
+
+    #[test]
+    fn connector_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for snapshot in [
+            private_snapshot(&book).unwrap(),
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(WAYPOINT_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            for (from, to) in [
+                ("\"kind\":\"open\"", "\"kind\":\"unknown-marker\""),
+                ("\"arrow_end\":true", "\"arrow_end\":false"),
+            ] {
+                let malformed = snapshot.replace(from, to);
+                assert_ne!(snapshot, malformed);
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(malformed);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(import(&make_archive(&entries)).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn classic_and_thin_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Classic,
+            ConnectorMarkerKind::ClassicThin,
+            ConnectorMarkerKind::OpenThin,
+            ConnectorMarkerKind::BlockThin,
+        ] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+            let mut entries = original;
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] =
+                json!(serde_json::to_string(&(MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn marker_sizes_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        connector.end_marker_size = Some(12.5);
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata["thinodaWorkbook"] =
+            json!(serde_json::to_string(&(EXTENDED_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+        assert!(matches!(
+            import(&make_archive(&entries)),
+            Err(IoError::NewerVersion(_))
+        ));
+    }
+
+    #[test]
+    fn marker_fills_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata["thinodaWorkbook"] =
+            json!(serde_json::to_string(&(SIZED_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+        assert!(matches!(
+            import(&make_archive(&entries)),
+            Err(IoError::NewerVersion(_))
+        ));
+    }
+
+    #[test]
+    fn diamond_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        for kind in [
+            ConnectorMarkerKind::Diamond,
+            ConnectorMarkerKind::DiamondThin,
+        ] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            connector.end_marker = Some(ConnectorMarker { kind });
+            connector.end_marker_size = Some(12.5);
+            connector.end_marker_unfilled = true;
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let mut entries = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] =
+                json!(serde_json::to_string(&(FILLED_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn oval_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Diamond,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata["thinodaWorkbook"] =
+            json!(serde_json::to_string(&(DIAMOND_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+        assert!(matches!(
+            import(&make_archive(&entries)),
+            Err(IoError::NewerVersion(_))
+        ));
+    }
+
+    #[test]
+    fn half_circle_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::HalfCircle,
+        });
+        connector.end_marker_size = Some(12.5);
+        connector.end_marker_unfilled = true;
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "metadata.json")
+            .unwrap();
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        metadata["thinodaWorkbook"] =
+            json!(serde_json::to_string(&(OVAL_MARKER_SNAPSHOT_VERSION, &book)).unwrap());
+        *bytes = serde_json::to_vec(&metadata).unwrap();
+        assert!(matches!(
+            import(&make_archive(&entries)),
+            Err(IoError::NewerVersion(_))
+        ));
+    }
+
+    #[test]
+    fn bar_markers_reject_forged_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        for kind in [ConnectorMarkerKind::BaseDash, ConnectorMarkerKind::Dash] {
+            for bar_at_start in [false, true] {
+                let mut book = Workbook::default();
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                connector.arrow_start = true;
+                let bar = Some(ConnectorMarker { kind });
+                let half_circle = Some(ConnectorMarker {
+                    kind: ConnectorMarkerKind::HalfCircle,
+                });
+                (connector.start_marker, connector.end_marker) = if bar_at_start {
+                    (bar, half_circle)
+                } else {
+                    (half_circle, bar)
+                };
+                connector.start_marker_size = Some(0.0);
+                connector.end_marker_size = Some(12.5);
+                connector.start_marker_unfilled = true;
+                connector.end_marker_unfilled = true;
+                book.active_mut()
+                    .add_canvas_object(CanvasObject::connector(connector))
+                    .unwrap();
+                let mut entries = archive_entries(&export(&book).unwrap());
+                assert_eq!(import(&make_archive(&entries)).unwrap(), book);
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                let snapshot: (String, Value) =
+                    serde_json::from_str(metadata["thinodaWorkbook"].as_str().unwrap()).unwrap();
+                assert_eq!(snapshot.0, BAR_MARKER_SNAPSHOT_VERSION);
+                metadata["thinodaWorkbook"] = json!(
+                    serde_json::to_string(&(HALF_CIRCLE_MARKER_SNAPSHOT_VERSION, &book)).unwrap()
+                );
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(matches!(
+                    import(&make_archive(&entries)),
+                    Err(IoError::NewerVersion(_))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn shape_rounding_rejects_old_and_malformed_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind,
+            DrawioRectangleStencil, Endpoint, Rect, ShapeKind, ShapeRounding, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 17.0,
+            stencil: DrawioRectangleStencil::Forms,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Dash,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(BAR_MARKER_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for version in [ROUNDING_SNAPSHOT_VERSION, BAR_MARKER_SNAPSHOT_VERSION] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][0]["rounding"]["radius"] = json!("invalid");
+            let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(import(&make_archive(&entries)).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn rectangle_sides_reject_old_and_malformed_private_snapshots() {
+        use thinoda_core::{CanvasObject, Rect, RectangleSides, ShapeKind, Vec2};
+
+        let mut book = Workbook::default();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rectangle_sides = Some(RectangleSides {
+            top: true,
+            right: false,
+            bottom: false,
+            left: true,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(ROUNDING_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for version in [RECTANGLE_SIDES_SNAPSHOT_VERSION, ROUNDING_SNAPSHOT_VERSION] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][0]["rectangle_sides"]["top"] =
+                json!("invalid");
+            let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(import(&make_archive(&entries)).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn fixed_connector_ports_reject_old_and_malformed_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorPort, Endpoint, Rect, ShapeKind, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let shape = book
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Object(shape),
+            Endpoint::Point(Vec2::new(200.0, 0.0)),
+        );
+        connector.from_port = Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.25),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(DOUBLE_ELLIPSE_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for version in [FIXED_PORT_SNAPSHOT_VERSION, DOUBLE_ELLIPSE_SNAPSHOT_VERSION] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][1]["kind"]["connector"]["from_port"]["position"]
+                ["x"] = json!("invalid");
+            let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(import(&make_archive(&entries)).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn double_ellipses_reject_old_and_malformed_private_snapshots() {
+        use thinoda_core::{
+            CanvasObject, DrawioRectangleStencil, Rect, RectangleSides, ShapeKind, ShapeRounding,
+            Vec2,
+        };
+
+        for margin in [None, Some(8.5)] {
+            let mut book = Workbook::default();
+            let mut ellipse = CanvasObject::shape(
+                ShapeKind::DoubleEllipse,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            );
+            ellipse.double_ellipse_margin = margin;
+            book.active_mut().add_canvas_object(ellipse).unwrap();
+            let mut rectangle = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rectangle.rectangle_sides = Some(RectangleSides::default());
+            book.active_mut().add_canvas_object(rectangle).unwrap();
+            let mut rounded = CanvasObject::shape(
+                ShapeKind::RoundedRectangle,
+                Rect::from_min_size(Vec2::new(240.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rounded.rounding = Some(ShapeRounding {
+                radius: 15.0,
+                stencil: DrawioRectangleStencil::Forms,
+            });
+            book.active_mut().add_canvas_object(rounded).unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(RECTANGLE_SIDES_SNAPSHOT_VERSION, &book)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(matches!(
+                    import(&make_archive(&entries)),
+                    Err(IoError::NewerVersion(_))
+                ));
+            }
+            for version in [
+                DOUBLE_ELLIPSE_SNAPSHOT_VERSION,
+                RECTANGLE_SIDES_SNAPSHOT_VERSION,
+            ] {
+                let mut malformed = serde_json::to_value(&book).unwrap();
+                malformed["sheets"][0]["canvas"]["objects"][0]["double_ellipse_margin"] =
+                    json!("invalid");
+                let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(import(&make_archive(&entries)).is_err(), "{version}");
+            }
+        }
+    }
+
+    #[test]
+    fn externally_edited_xmind_content_supersedes_stale_marker_snapshot() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let mut entries = archive_entries(&export(&book).unwrap());
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(name, _)| name == "content.json")
+            .unwrap();
+        let mut content: Value = serde_json::from_slice(bytes).unwrap();
+        content[0]["rootTopic"]["title"] = json!("Edited externally");
+        *bytes = serde_json::to_vec(&content).unwrap();
+        let reopened = import(&make_archive(&entries)).unwrap();
+        assert_eq!(reopened.active().root_topic().title, "Edited externally");
+        assert!(reopened.active().canvas.is_empty());
     }
 
     #[test]

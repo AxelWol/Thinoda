@@ -87,7 +87,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "independent Zone background colors require native format version 7".into(),
             ));
         }
-        if version < 8 && has_inline_text(&book) {
+        if version < 8 && book.has_inline_text() {
             return Err(IoError::Invalid(
                 "inline card text requires native format version 8".into(),
             ));
@@ -97,28 +97,116 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "explicit Zone object membership requires native format version 9".into(),
             ));
         }
+        if version < 10 && book.has_connector_waypoints() {
+            return Err(IoError::Invalid(
+                "connector waypoints require native format version 10".into(),
+            ));
+        }
+        if version < 11 && book.has_connector_markers() {
+            return Err(IoError::Invalid(
+                "connector markers require native format version 11".into(),
+            ));
+        }
+        if version < 12 && book.has_extended_connector_markers() {
+            return Err(IoError::Invalid(
+                "classic and thin connector markers require native format version 12".into(),
+            ));
+        }
+        if version < 13 && book.has_connector_marker_sizes() {
+            return Err(IoError::Invalid(
+                "connector marker sizes require native format version 13".into(),
+            ));
+        }
+        if version < 14 && book.has_connector_marker_fills() {
+            return Err(IoError::Invalid(
+                "connector marker fills require native format version 14".into(),
+            ));
+        }
+        if version < 15 && book.has_diamond_connector_markers() {
+            return Err(IoError::Invalid(
+                "diamond connector markers require native format version 15".into(),
+            ));
+        }
+        if version < 16 && book.has_oval_connector_markers() {
+            return Err(IoError::Invalid(
+                "oval connector markers require native format version 16".into(),
+            ));
+        }
+        if version < 17 && book.has_half_circle_connector_markers() {
+            return Err(IoError::Invalid(
+                "half-circle connector markers require native format version 17".into(),
+            ));
+        }
+        if version < 18 && book.has_bar_connector_markers() {
+            return Err(IoError::Invalid(
+                "bar connector markers require native format version 18".into(),
+            ));
+        }
+        if version < 19 && book.has_shape_rounding() {
+            return Err(IoError::Invalid(
+                "shape rounding requires native format version 19".into(),
+            ));
+        }
+        if version < 20 && book.has_rectangle_sides() {
+            return Err(IoError::Invalid(
+                "rectangle outline sides require native format version 20".into(),
+            ));
+        }
+        if version < 21 && book.has_double_ellipses() {
+            return Err(IoError::Invalid(
+                "double ellipses require native format version 21".into(),
+            ));
+        }
+        if version < 22 && book.has_fixed_connector_ports() {
+            return Err(IoError::Invalid(
+                "fixed connector ports require native format version 22".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_fixed_connector_ports() {
+            return Err(IoError::Invalid(
+                "fixed connector ports require a versioned native archive".into(),
+            ));
+        }
+        if book.has_double_ellipses() {
+            return Err(IoError::Invalid(
+                "double ellipses require a versioned native archive".into(),
+            ));
+        }
+        if book.has_rectangle_sides() {
+            return Err(IoError::Invalid(
+                "rectangle outline sides require a versioned native archive".into(),
+            ));
+        }
+        if book.has_shape_rounding() {
+            return Err(IoError::Invalid(
+                "shape rounding requires a versioned native archive".into(),
+            ));
+        }
+        if book.has_connector_markers() {
+            return Err(IoError::Invalid(
+                "connector markers require a versioned native archive".into(),
+            ));
+        }
+        if book.has_connector_waypoints() {
+            return Err(IoError::Invalid(
+                "connector waypoints require a versioned native archive".into(),
+            ));
+        }
         if has_zone_objects(&book) {
             return Err(IoError::Invalid(
                 "explicit Zone object membership requires a versioned native archive".into(),
             ));
         }
-        if has_inline_text(&book) {
+        if book.has_inline_text() {
             return Err(IoError::Invalid(
                 "inline card text requires a versioned native archive".into(),
             ));
         }
         Ok(book)
     }
-}
-
-fn has_inline_text(book: &Workbook) -> bool {
-    book.sheets
-        .iter()
-        .flat_map(|sheet| sheet.topics.values())
-        .any(|topic| !topic.inline_text.is_empty())
 }
 
 fn has_zone_objects(book: &Workbook) -> bool {

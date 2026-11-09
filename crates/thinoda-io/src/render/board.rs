@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
-        CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, rotate_around, shape_label_rect,
+        CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath, ShapeKind,
+        rectangle_side_paths, rotate_around, shape_label_rect_with_style,
     },
-    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem},
+    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_path},
 };
 
 use crate::VisualExportContext;
@@ -27,6 +28,26 @@ pub(crate) enum Prim {
         /// Round caps and joins (ink).
         round: bool,
     },
+    /// All visible rectangle sides are stroked as one compound path.
+    RectangleSides {
+        paths: Vec<RectangleSidePath>,
+        stroke: Color,
+        width: f32,
+    },
+    /// Circular connector marker in sheet coordinates.
+    Circle {
+        center: Vec2,
+        radius: f32,
+        fill: Option<Color>,
+        stroke: Color,
+        width: f32,
+    },
+    /// Two connected quadratic spans of an open connector marker.
+    Quadratic {
+        points: [Vec2; 5],
+        stroke: Color,
+        width: f32,
+    },
     /// Centered text lines in an unrotated `rect`, turned around `pivot`.
     Text {
         rect: Rect,
@@ -37,6 +58,8 @@ pub(crate) enum Prim {
         color: Color,
         /// Backdrop behind the text (connector labels).
         backdrop: Option<Color>,
+        /// Unfaded backdrop when text and backdrop share one opacity group.
+        group_backdrop: Option<Color>,
     },
 }
 
@@ -153,26 +176,51 @@ pub(crate) fn object_prims(
                 .stroke
                 .or(object.style.fill.is_none().then_some(automatic_stroke))
                 .map(|c| faded(c, opacity));
-            let width = if visual.automatic_board_stroke.is_some() && object.style.stroke.is_none()
+            let width = if object.style.stroke.is_none()
+                && (visual.automatic_board_stroke.is_some()
+                    || (object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse)
+                        && object.style.fill.is_none())
             {
                 2.0
             } else {
                 object.style.stroke_width.max(0.0)
             };
             let stroke = stroke_color.map(|c| (c, width));
-            out.push(Prim::Path {
-                points: outline.clone(),
-                closed: true,
-                fill,
-                stroke,
-                round: false,
-            });
+            if let Some(sides) = object.rectangle_sides {
+                out.push(Prim::Path {
+                    points: outline.clone(),
+                    closed: true,
+                    fill,
+                    stroke: None,
+                    round: false,
+                });
+                if let Some((stroke, width)) = stroke {
+                    let paths = rectangle_side_paths(object.rect, object.rotation, sides);
+                    if !paths.is_empty() {
+                        out.push(Prim::RectangleSides {
+                            paths,
+                            stroke,
+                            width,
+                        });
+                    }
+                }
+            } else {
+                out.push(Prim::Path {
+                    points: outline.clone(),
+                    closed: true,
+                    fill,
+                    stroke,
+                    round: false,
+                });
+            }
             for detail in details {
                 out.push(Prim::Path {
                     points: detail.clone(),
                     closed: false,
                     fill: None,
-                    stroke: if visual.automatic_board_stroke.is_some() {
+                    stroke: if *shape == ShapeKind::DoubleEllipse
+                        || visual.automatic_board_stroke.is_some()
+                    {
                         stroke
                     } else {
                         Some(stroke.unwrap_or((ink, 1.0)))
@@ -181,7 +229,12 @@ pub(crate) fn object_prims(
                 });
             }
             if !label.trim().is_empty() {
-                let rect = shape_label_rect(*shape, object.rect);
+                let rect = shape_label_rect_with_style(
+                    *shape,
+                    object.rect,
+                    object.style.effective_shape_stroke_width(),
+                    object.double_ellipse_margin,
+                );
                 let under = object.style.fill.map_or(background, |f| f.over(background));
                 out.push(Prim::Text {
                     rect,
@@ -197,6 +250,7 @@ pub(crate) fn object_prims(
                         opacity,
                     ),
                     backdrop: None,
+                    group_backdrop: None,
                 });
             }
         }
@@ -228,7 +282,14 @@ pub(crate) fn object_prims(
                 round: true,
             });
         }
-        (CanvasObjectKind::Connector(connector), SceneGeometry::Polyline { points, width }) => {
+        (
+            CanvasObjectKind::Connector(connector),
+            SceneGeometry::Polyline {
+                points,
+                width,
+                markers,
+            },
+        ) => {
             let color = faded(
                 connector
                     .color
@@ -238,7 +299,7 @@ pub(crate) fn object_prims(
             );
             let width = width.max(0.1);
             out.push(Prim::Path {
-                points: points.clone(),
+                points: connector_stroke_path(points, markers),
                 closed: false,
                 fill: None,
                 stroke: Some((color, width)),
@@ -246,10 +307,18 @@ pub(crate) fn object_prims(
             });
             let n = points.len();
             if connector.arrow_end && n >= 2 {
-                out.push(arrowhead(points[n - 2], points[n - 1], width, color));
+                if let Some(marker) = markers[1] {
+                    out.push(marker_primitive(marker, width, color));
+                } else if connector.end_marker.is_none() {
+                    out.push(arrowhead(points[n - 2], points[n - 1], width, color));
+                }
             }
             if connector.arrow_start && n >= 2 {
-                out.push(arrowhead(points[1], points[0], width, color));
+                if let Some(marker) = markers[0] {
+                    out.push(marker_primitive(marker, width, color));
+                } else if connector.start_marker.is_none() {
+                    out.push(arrowhead(points[1], points[0], width, color));
+                }
             }
             if !connector.label.trim().is_empty() {
                 let mid = midpoint(points);
@@ -259,20 +328,60 @@ pub(crate) fn object_prims(
                     longest as f32 * 12.0 * 0.6 + 8.0,
                     lines.len() as f32 * 12.0 * 1.25 + 4.0,
                 );
+                let text_color = object
+                    .style
+                    .text_color
+                    .map(|text| faded(text, opacity))
+                    .unwrap_or(color);
                 out.push(Prim::Text {
                     rect: Rect::from_center_size(mid, size),
                     pivot: mid,
                     rotation: 0.0,
                     lines,
                     size: 12.0,
-                    color,
-                    backdrop: Some(background),
+                    color: text_color,
+                    backdrop: Some(if object.style.text_color.is_some() {
+                        faded(background, f32::from(text_color.a) / 255.0)
+                    } else {
+                        background
+                    }),
+                    group_backdrop: object.style.text_color.map(|_| background),
                 });
             }
         }
         _ => {}
     }
     out
+}
+
+fn marker_primitive(
+    marker: thinoda_core::scene::ConnectorMarkerGeometry,
+    width: f32,
+    color: Color,
+) -> Prim {
+    if let Some((center, radius)) = marker.circle() {
+        Prim::Circle {
+            center,
+            radius,
+            fill: marker.filled.then_some(color),
+            stroke: color,
+            width,
+        }
+    } else if let Some(points) = marker.curve() {
+        Prim::Quadratic {
+            points,
+            stroke: color,
+            width,
+        }
+    } else {
+        Prim::Path {
+            points: marker.points().to_vec(),
+            closed: marker.closed,
+            fill: marker.filled.then_some(color),
+            stroke: Some((color, width)),
+            round: false,
+        }
+    }
 }
 
 fn arrowhead(from: Vec2, tip: Vec2, width: f32, color: Color) -> Prim {
@@ -307,20 +416,7 @@ fn arrowhead(from: Vec2, tip: Vec2, width: f32, color: Color) -> Prim {
 
 /// Point halfway along a polyline.
 pub(crate) fn midpoint(points: &[Vec2]) -> Vec2 {
-    let total: f32 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
-    let mut left = total / 2.0;
-    for w in points.windows(2) {
-        let len = (w[1] - w[0]).length();
-        if len >= left && len > 0.0 {
-            let t = left / len;
-            return Vec2::new(
-                w[0].x + (w[1].x - w[0].x) * t,
-                w[0].y + (w[1].y - w[0].y) * t,
-            );
-        }
-        left -= len;
-    }
-    points.last().copied().unwrap_or(Vec2::ZERO)
+    thinoda_core::board::polyline_midpoint(points).unwrap_or(Vec2::ZERO)
 }
 
 /// Match the canvas defaults for sticky and text cards in each color mode.

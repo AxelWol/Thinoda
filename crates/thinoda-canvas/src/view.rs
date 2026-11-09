@@ -20,7 +20,10 @@ use thinoda_core::{
 
 use crate::{
     actions::{Action, apply_action},
-    ink_controller::{InkController, InkControllerError, InkMode, InkOutcome, InkSettings},
+    ink_controller::{
+        InkController, InkControllerError, InkMode, InkOutcome, InkRecoveryBlock, InkSettings,
+        RecoveredInkGesture, RecoveredPointer,
+    },
     ink_input::{InkSample, StrokeFinishOptions},
     measure::EguiMeasure,
     minimap::{
@@ -28,8 +31,8 @@ use crate::{
         bottom_right_rect, show_minimap,
     },
     render::{
-        PaintOptions, Xf, brace_path, color32, paint_map, paint_map_scene, sheet_background,
-        topic_badge_center,
+        PaintOptions, PaintSceneExtras, Xf, brace_path, color32, paint_map, paint_map_scene,
+        sheet_background, topic_badge_center,
     },
 };
 
@@ -61,7 +64,7 @@ mod minimap_view_tests;
 /// Active freeform tool. Hosts may change it with [`MapView::set_board_tool`].
 ///
 /// The default, `Select`, preserves the normal mind-map interaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BoardTool {
     #[default]
     Select,
@@ -77,6 +80,13 @@ pub enum BoardTool {
     PixelEraser,
     Lasso,
 }
+
+/// Drag-and-drop payload of a shape dragged from a host's shape library.
+///
+/// Set it with [`egui::Response::dnd_set_drag_payload`]; releasing it over
+/// empty board space creates the shape there as one undoable edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShapeDrop(pub ShapeKind);
 
 impl BoardTool {
     fn ink_mode(self) -> Option<InkMode> {
@@ -109,10 +119,28 @@ pub struct BoardLabels {
     pub locked: String,
     pub from: String,
     pub to: String,
+    pub fixed_attachment: String,
+    pub connector_end_hint: String,
     pub free_point: String,
     pub resize: String,
     pub rotate: String,
+    pub waypoint: String,
+    pub insert_waypoint: String,
+    pub waypoint_hint: String,
+    pub insert_waypoint_hint: String,
+    pub connect_up: String,
+    pub connect_right: String,
+    pub connect_down: String,
+    pub connect_left: String,
+    /// Tooltip line explaining the direction-arrow modifiers.
+    pub connect_hint: String,
+    /// Shape-picker footer line explaining how to open it.
+    pub quick_hint: String,
     pub label_editor: String,
+    pub label_editing: String,
+    pub label_edit_hint: String,
+    pub label_edit_armed_hint: String,
+    pub label_placeholder: String,
 }
 
 impl Default for BoardLabels {
@@ -140,10 +168,26 @@ impl Default for BoardLabels {
             locked: "Locked".into(),
             from: "From".into(),
             to: "To".into(),
+            fixed_attachment: "Fixed attachment".into(),
+            connector_end_hint: "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points. Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.".into(),
             free_point: "Free point".into(),
             resize: "Resize board item".into(),
             rotate: "Rotate board item".into(),
+            waypoint: "Connector waypoint".into(),
+            insert_waypoint: "Add connector waypoint".into(),
+            waypoint_hint: "Drag or use arrow keys to move; double-click or press Delete to remove.".into(),
+            insert_waypoint_hint: "Drag, press Enter, or use arrow keys to add a waypoint.".into(),
+            connect_up: "Add connected shape above".into(),
+            connect_right: "Add connected shape to the right".into(),
+            connect_down: "Add connected shape below".into(),
+            connect_left: "Add connected shape to the left".into(),
+            connect_hint: "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS. Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.".into(),
+            quick_hint: "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.".into(),
             label_editor: "Board object label".into(),
+            label_editing: "Editing label".into(),
+            label_edit_hint: "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel".into(),
+            label_edit_armed_hint: "Clicking or tapping empty canvas also adds the armed shape.".into(),
+            label_placeholder: "Type a label".into(),
         }
     }
 }
@@ -318,6 +362,8 @@ pub struct MapView {
     pub board_labels: BoardLabels,
     pub selected_object: Option<ObjectSelection>,
     pub context_marker: Option<(TopicId, usize)>,
+    /// Sheet position of the latest canvas secondary click, used by context actions.
+    pub context_point: Option<Vec2>,
     /// Source topic while the user is picking the target of a new relationship.
     pub relationship_from: Option<TopicId>,
     pub relationship_handle_labels: [String; 4],
@@ -381,6 +427,7 @@ impl Default for MapView {
             board_labels: BoardLabels::default(),
             selected_object: None,
             context_marker: None,
+            context_point: None,
             relationship_from: None,
             relationship_handle_labels: [
                 "Relationship start",
@@ -501,6 +548,11 @@ impl MapView {
         self.ink_controller.pending_mode()
     }
 
+    /// Pointer identity recognized for the retained gesture, not the selected tool.
+    pub fn pending_ink_pointer(&self) -> Option<RecoveredPointer> {
+        self.ink_controller.pending_pointer()
+    }
+
     /// Settings captured for the retained gesture.
     pub fn pending_ink_settings(&self) -> Option<InkSettings> {
         self.ink_controller.pending_settings()
@@ -514,6 +566,39 @@ impl MapView {
     /// Whether a rejected sample prevents retrying the retained gesture.
     pub fn pending_ink_has_rejected_input(&self) -> bool {
         self.ink_controller.pending_has_rejected_input()
+    }
+
+    pub fn pending_ink_recovery_revision(&self) -> u64 {
+        self.ink_controller.recovery_revision()
+    }
+
+    pub fn pending_ink_recovery_block(&self) -> Option<InkRecoveryBlock> {
+        self.ink_controller.pending_recovery_block()
+    }
+
+    pub fn pending_ink_was_recovered(&self) -> bool {
+        self.ink_controller.pending_was_recovered()
+    }
+
+    pub fn pending_ink_source_is_current(&self, doc: &Document) -> bool {
+        self.ink_controller.pending_source_is_current(doc)
+    }
+
+    pub fn pending_ink_for_recovery(
+        &self,
+        doc: &Document,
+        has_other_drafts: bool,
+    ) -> Option<RecoveredInkGesture> {
+        self.ink_controller
+            .pending_for_recovery(doc, has_other_drafts)
+    }
+
+    pub fn restore_recovered_ink(
+        &mut self,
+        doc: &Document,
+        recovered: &RecoveredInkGesture,
+    ) -> Result<(), String> {
+        self.ink_controller.restore_recovered_ink(doc, recovered)
     }
 
     /// Release pointer ownership without discarding the buffered gesture.
@@ -535,14 +620,21 @@ impl MapView {
         ctx: &egui::Context,
     ) -> crate::ink_controller::InkFrameOutput {
         let frame = (ctx.viewport_id(), ctx.cumulative_frame_nr());
-        let events = if self.ink_events_frame == Some(frame) {
-            Vec::new()
+        let (events, pen) = if self.ink_events_frame == Some(frame) {
+            (Vec::new(), crate::pen_input::PenFrameData::default())
         } else {
-            ctx.input(|input| input.events.clone())
+            let events = ctx.input(|input| input.events.clone());
+            // Hidden tabs observe releases without consuming the active canvas's metadata.
+            let mut pen = crate::pen_input::peek(ctx, frame.0, &events);
+            let touch = crate::touch_input::peek_pointer_frame(ctx, frame.0, &events);
+            pen.touch_pointers = touch.pointers;
+            pen.touch_issue = touch.issue;
+            (events, pen)
         };
         self.ink_events_frame = Some(frame);
         let transform = self.xf();
-        self.ink_controller.suspend(doc, transform, &events)
+        self.ink_controller
+            .suspend_with_pen(doc, transform, &events, &pen)
     }
 
     /// Explicitly discard the pending gesture and suppress its held pointer until release.
@@ -1400,6 +1492,11 @@ impl MapCanvas {
         Self::id().with("edit")
     }
 
+    /// Focusable shape or connector label editor.
+    pub fn board_label_editor_id() -> Id {
+        Self::id().with("board-label-edit")
+    }
+
     /// Paints the current camera without interaction, selection, search dimming or editing chrome.
     pub fn show_snapshot(ui: &mut Ui, doc: &Document, view: &mut MapView) -> Rect {
         view.drag = Drag::None;
@@ -1434,6 +1531,39 @@ impl MapCanvas {
 
     pub fn show(ui: &mut Ui, doc: &mut Document, view: &mut MapView) -> CanvasOutput {
         Self::show_with_shortcuts(ui, doc, view, &shortcut_bindings())
+    }
+
+    /// Finish an outside label edit before the host handles a pointer press.
+    ///
+    /// Hosts should call this for the visible canvas before processing their own
+    /// controls, so an outside click cannot commit a stale label draft.
+    pub fn finish_board_label_before_pointer_press(
+        ui: &mut Ui,
+        doc: &mut Document,
+        view: &mut MapView,
+    ) -> Option<thinoda_core::EditError> {
+        if view.board_input.label.is_none()
+            || !ui.input(|input| input.focused && input.pointer.any_pressed())
+        {
+            return None;
+        }
+        let layout = view.layout_with(ui.ctx(), doc);
+        let scene = build_scene(doc.sheet(), &layout);
+        let overlay_rect = if ui.is_enabled() && !egui::Popup::is_any_open(ui.ctx()) {
+            view.minimap_rect(view.canvas_rect(), ui.clip_rect())
+        } else {
+            None
+        };
+        let mut error = None;
+        board_input::finish_label_before_pointer_press(
+            ui,
+            doc,
+            view,
+            &scene,
+            &mut error,
+            overlay_rect,
+        );
+        error
     }
 
     /// The host may supply an explicitly selected keyboard profile.
@@ -1505,6 +1635,21 @@ impl MapCanvas {
         }
 
         let minimap_rect = view.minimap_rect(rect, ui.clip_rect());
+        if ctx.input(|input| input.pointer.any_pressed()) {
+            let overlay_rect = if ui.is_enabled() && !egui::Popup::is_any_open(&ctx) {
+                minimap_rect
+            } else {
+                None
+            };
+            board_input::finish_label_before_pointer_press(
+                ui,
+                doc,
+                view,
+                &scene,
+                &mut out.error,
+                overlay_rect,
+            );
+        }
         let (minimap_blocks_pointer, mut minimap_blocks_keyboard) =
             if let Some(minimap_rect) = minimap_rect {
                 if view
@@ -1571,6 +1716,13 @@ impl MapCanvas {
             && ctx.memory(|m| m.focused()).is_none()
             && view.editing.is_none()
             && view.editing_board_object().is_none()
+            && !ctx.input(|input| {
+                (input.pointer.any_pressed() || input.pointer.any_released())
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|position| !rect.contains(position))
+            })
         {
             ctx.memory_mut(|m| m.request_focus(id));
         }
@@ -1601,6 +1753,8 @@ impl MapCanvas {
             });
 
         let previous_touch_navigation = view.touch_navigation.is_some();
+        let space =
+            ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
         let (multi_touch, any_touches, touch_canceled, restart_after_cancel) = ctx.input(|input| {
             let canceled = input.events.iter().any(|event| {
                 matches!(
@@ -1623,7 +1777,16 @@ impl MapCanvas {
                     .flatten(),
             )
         });
-        let restart_after_cancel = restart_after_cancel.filter(|_| multi_touch.is_none());
+        let pen_blocks_touch_navigation = view.ink_controller.blocks_touch_navigation()
+            || (!minimap_blocks_pointer
+                && (multi_touch.is_some() || touch_canceled)
+                && ink_view::starts_confirmed_pen(ui, view, &response, space));
+        let multi_touch = (!pen_blocks_touch_navigation)
+            .then_some(multi_touch)
+            .flatten();
+        let touch_canceled = touch_canceled && !pen_blocks_touch_navigation;
+        let restart_after_cancel =
+            restart_after_cancel.filter(|_| !pen_blocks_touch_navigation && multi_touch.is_none());
         if touch_canceled {
             view.board_input
                 .touch_canceled(restart_after_cancel.is_some());
@@ -1646,12 +1809,16 @@ impl MapCanvas {
             view.board_input.resume_after_touch_cancel(&ctx);
         }
         let touch_navigation = view.touch_navigation.is_some();
-        out.context_menu_allowed = !touch_navigation && !minimap_blocks_pointer && ui.is_enabled();
+        out.context_menu_allowed = !touch_navigation
+            && !pen_blocks_touch_navigation
+            && !minimap_blocks_pointer
+            && ui.is_enabled();
         if touch_navigation || minimap_blocks_pointer {
             view.drag = Drag::None;
             view.relationship_drag = None;
         }
         if !touch_navigation
+            && !pen_blocks_touch_navigation
             && !minimap_blocks_pointer
             && ui.is_enabled()
             && response.hovered()
@@ -1671,8 +1838,6 @@ impl MapCanvas {
             }
         }
 
-        let space =
-            ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
         let ink_captured = ink_view::interact(
             ui,
             doc,
@@ -2075,6 +2240,7 @@ impl MapCanvas {
             view.context_marker = None;
             view.commit_edit(doc);
             let point = view.xf().sheet(p);
+            view.context_point = Some(point);
             if let Some(t) = scene_topic_hit(&scene, point) {
                 view.context_marker = layout.topics.get(&t).and_then(|topic| {
                     topic
@@ -2324,9 +2490,22 @@ impl MapCanvas {
             show_grid: true,
         };
         let paint_scene = build_scene(sheet, &layout);
-        paint_map_scene(&painter, sheet, &layout, xf, &opts, &paint_scene, None);
+        paint_map_scene(
+            &painter,
+            sheet,
+            &layout,
+            xf,
+            &opts,
+            &paint_scene,
+            PaintSceneExtras {
+                editing_board_object: view.editing_board_object(),
+                ..Default::default()
+            },
+        );
         board_input::paint(&painter, view, sheet, &layout, &paint_scene, pointer);
-        view.ink_controller.paint_preview(&painter, xf, view.accent);
+        if view.ink_controller.pending_preview_sheet() == Some(doc.active_index()) {
+            view.ink_controller.paint_preview(&painter, xf, view.accent);
+        }
         image_resize::paint(&painter, view, sheet, &layout, !space && !touch_navigation);
         crate::relationship_editing::paint_target(&painter, view, sheet, &layout);
         if !space && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. }) {
@@ -2459,7 +2638,15 @@ impl MapCanvas {
 
         // ---- inline editor ---------------------------------------------------------------
         show_editor(ui, doc, view, &layout, &mut out);
-        board_input::show_label_editor(ui, doc, view, &paint_scene, &mut out);
+        board_input::show_label_editor(
+            ui,
+            doc,
+            view,
+            &paint_scene,
+            out.minimap_blocks_keyboard,
+            &mut out.error,
+            false,
+        );
 
         if response.hovered() && !minimap_blocks_pointer {
             let sheet = doc.sheet();
@@ -2500,7 +2687,14 @@ impl MapCanvas {
                 Drag::Zone { resize: true, .. } => egui::CursorIcon::ResizeNwSe,
                 Drag::Zone { .. } => egui::CursorIcon::Grabbing,
                 _ if space || view.board_tool == BoardTool::Hand => egui::CursorIcon::Grab,
-                _ if view.board_tool != BoardTool::Select => egui::CursorIcon::Crosshair,
+                _ if view.board_input.connection_hot
+                    || view.board_input.outline_hover.is_some() =>
+                {
+                    egui::CursorIcon::Crosshair
+                }
+                _ if view.board_tool != BoardTool::Select && !view.board_input.armed_hover => {
+                    egui::CursorIcon::Crosshair
+                }
                 _ if zone_hover == Some(true) => egui::CursorIcon::ResizeNwSe,
                 _ if zone_hover == Some(false) => egui::CursorIcon::Grab,
                 _ if image_handle => image_resize::cursor(view, doc.sheet(), &layout),

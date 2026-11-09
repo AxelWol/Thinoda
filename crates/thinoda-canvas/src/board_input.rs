@@ -4,10 +4,11 @@ use super::*;
 use crate::actions::{BoardAction, apply_board_action, board_actions};
 use std::collections::{HashMap, HashSet, VecDeque};
 use thinoda_core::{
-    CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, EditError, EditResult,
-    Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
+    CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorPort, EditError,
+    EditResult, Endpoint, Scene, SceneId, SheetRootMode, TopicShape, ZOrder, Zone, ZoneId,
     board::{
-        BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, rotate_around, rotated_corners,
+        BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
+        rotate_around, rotated_corners, shape_geometry_with_style,
     },
     scene::{SceneGeometry, SceneItem},
 };
@@ -17,6 +18,7 @@ pub(super) struct State {
     pub(super) label: Option<LabelEdit>,
     gesture: Option<Gesture>,
     creation_press: Option<CreationPress>,
+    primary_press: Option<(Pos2, Modifiers)>,
     connector: Option<PendingConnector>,
     rotation_pivot: Option<RotationPivot>,
     last_tool: BoardTool,
@@ -25,6 +27,43 @@ pub(super) struct State {
     control_focused: bool,
     focus_exit: Option<FocusExit>,
     focus_after_duplicate: Option<SceneId>,
+    /// An armed shape tool is hovering existing content or a handle, where a
+    /// click selects instead of creating (no ghost, no crosshair).
+    pub(super) armed_hover: bool,
+    /// Unobscured screen position for the armed shape's ghost preview.
+    pub(super) ghost: Option<Pos2>,
+    /// Shape dragged from a library and where it would drop.
+    pub(super) drop_ghost: Option<(ShapeKind, Pos2)>,
+    /// Unselected shape whose draw.io-style direction arrows are shown on hover.
+    hover_shape: Option<CanvasObjectId>,
+    /// Open quick-shape picker of a direction arrow.
+    pub(super) quick: Option<QuickShapes>,
+    /// Direction arrow under the mouse and when resting there began; `None`
+    /// after a press or a closed picker, until the pointer leaves the arrow.
+    arrow_hover: Option<((SceneId, ArrowDir), Option<f64>)>,
+    /// Shape whose outline band is hovered, where a drag draws a connector.
+    pub(super) outline_hover: Option<CanvasObjectId>,
+    pub(super) connection_hot: bool,
+    connection_hover: Option<ConnectionPoints>,
+}
+
+/// draw.io-style shape picker shown next to a direction arrow.
+pub(super) struct QuickShapes {
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    /// Screen rect of the arrow the picker belongs to.
+    anchor: Rect,
+    /// Opened by resting the mouse, so it closes once the pointer leaves.
+    hover: bool,
+    /// Arrow to refocus when the picker was opened from the keyboard.
+    return_focus: Option<Id>,
+    focus_first: bool,
+    /// Tile under the pointer or focus, previewed on the board.
+    pub(super) preview: Option<ShapeKind>,
+    state: u64,
+    sheet: usize,
+    sheet_identity: SheetIdentity,
+    camera: (EVec2, f32, Rect),
 }
 
 struct RotationPivot {
@@ -50,6 +89,7 @@ impl State {
         self.suppress_until_release |= self.gesture.is_some() || self.creation_press.is_some();
         self.gesture = None;
         self.creation_press = None;
+        self.primary_press = None;
         self.connector = None;
     }
 
@@ -143,8 +183,41 @@ pub(super) fn end_focus_exit(ctx: &egui::Context, view: &mut MapView, next: Opti
     }
 }
 
+#[derive(Clone, Copy)]
+struct ConnectorAttachment {
+    endpoint: Endpoint,
+    port: Option<ConnectorPort>,
+}
+
+impl ConnectorAttachment {
+    fn floating(endpoint: Endpoint) -> Self {
+        Self {
+            endpoint,
+            port: None,
+        }
+    }
+
+    fn connector(self, to: Self) -> CanvasConnector {
+        let mut connector = CanvasConnector::new(self.endpoint, to.endpoint);
+        connector.from_port = self.port;
+        connector.to_port = to.port;
+        connector
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ConnectionPoint {
+    attachment: ConnectorAttachment,
+    position: Vec2,
+}
+
+struct ConnectionPoints {
+    item: SceneId,
+    points: Vec<ConnectionPoint>,
+}
+
 struct PendingConnector {
-    from: Endpoint,
+    from: ConnectorAttachment,
     point: Vec2,
     state: u64,
     sheet: usize,
@@ -182,7 +255,7 @@ enum GestureKind {
         tool: BoardTool,
         start: Vec2,
         current: Vec2,
-        from: Endpoint,
+        from: ConnectorAttachment,
     },
     Move {
         start: Vec2,
@@ -209,6 +282,29 @@ enum GestureKind {
         start: bool,
         point: Vec2,
     },
+    Waypoint {
+        id: CanvasObjectId,
+        index: usize,
+        insert: bool,
+        original: Vec2,
+        point: Vec2,
+    },
+    Arrow {
+        source: CanvasObjectId,
+        dir: ArrowDir,
+        anchor: Vec2,
+        current: Vec2,
+        /// Input time of the press, for press-and-hold.
+        since: f64,
+        /// Moved far enough to become a drag; holding no longer opens the picker.
+        far: bool,
+    },
+    /// Connector dragged out of a shape's outline band.
+    Outline {
+        source: CanvasObjectId,
+        anchor: Vec2,
+        current: Vec2,
+    },
 }
 
 pub(super) struct LabelEdit {
@@ -218,6 +314,9 @@ pub(super) struct LabelEdit {
     sheet: usize,
     sheet_identity: SheetIdentity,
     focus_requested: bool,
+    focus_retry_after: Option<(egui::ViewportId, u64)>,
+    /// Started by typing: the draft holds the typed text and the caret must follow it.
+    seeded: bool,
     ime_composing: bool,
 }
 
@@ -327,6 +426,27 @@ impl MapView {
     }
 
     /// Whether the active shape or connector label differs from its original text.
+    /// Inserts a default-size `kind` shape into free space as one undoable
+    /// edit: right of the selection, else near the viewport centre. The new
+    /// shape is selected and revealed; the active tool is unchanged.
+    pub fn insert_board_shape(
+        &mut self,
+        doc: &mut Document,
+        kind: ShapeKind,
+    ) -> EditResult<CanvasObjectId> {
+        self.try_commit_edit(doc)?;
+        self.try_commit_board_label(doc)?;
+        let layout = self.layout_for(doc);
+        let scene = thinoda_core::scene::build_scene(doc.sheet(), &layout);
+        let size = default_size(BoardTool::Shape(kind));
+        let center = insert_spot(doc.sheet(), self, &scene, size);
+        let rect = thinoda_core::Rect::from_center_size(center, size);
+        let id = doc.add_canvas_object(CanvasObject::shape(kind, rect))?;
+        select_hit(self, doc.sheet(), SceneHit::Object(id), false);
+        self.reveal_board_object(id);
+        Ok(id)
+    }
+
     pub fn has_board_label_changes(&self) -> bool {
         self.board_input
             .label
@@ -375,6 +495,8 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
         sheet: doc.active_index(),
         sheet_identity: sheet_identity(doc),
         focus_requested: false,
+        focus_retry_after: None,
+        seeded: false,
         ime_composing: false,
     });
     true
@@ -517,20 +639,492 @@ fn endpoint_at(
     point: Vec2,
     except: Option<CanvasObjectId>,
 ) -> Endpoint {
-    // Excluding the connector being edited lets a handle reach a target beneath it.
-    let hit = if let Some(except) = except {
-        let mut scene = scene.clone();
-        scene
-            .items
-            .retain(|item| item.id != SceneId::Object(except));
-        scene.hit_test(point)
-    } else {
-        scene.hit_test(point)
-    };
+    let hit = scene.hit_test_tolerance_excluding(
+        point,
+        thinoda_core::scene::HIT_TOLERANCE,
+        except.map(SceneId::Object),
+    );
     match hit {
         Some(SceneHit::Topic(id)) if !sheet.is_anchor(id) => Endpoint::Topic(id),
         Some(SceneHit::Object(id)) => Endpoint::Object(id),
         _ => Endpoint::Point(snapped(sheet, point)),
+    }
+}
+
+const CONNECTION_POINT_RADIUS: f32 = 4.0;
+const RECTANGLE_CONNECTION_POINTS: [(f32, f32); 16] = [
+    (0.0, 0.0),
+    (0.25, 0.0),
+    (0.5, 0.0),
+    (0.75, 0.0),
+    (1.0, 0.0),
+    (1.0, 0.25),
+    (1.0, 0.5),
+    (1.0, 0.75),
+    (1.0, 1.0),
+    (0.75, 1.0),
+    (0.5, 1.0),
+    (0.25, 1.0),
+    (0.0, 1.0),
+    (0.0, 0.75),
+    (0.0, 0.5),
+    (0.0, 0.25),
+];
+const PERIMETER_CONNECTION_POINTS: [(f32, f32); 8] = [
+    (0.0, 0.0),
+    (0.5, 0.0),
+    (1.0, 0.0),
+    (1.0, 0.5),
+    (1.0, 1.0),
+    (0.5, 1.0),
+    (0.0, 1.0),
+    (0.0, 0.5),
+];
+
+impl ConnectionPoints {
+    fn nearest(&self, point: Vec2, tolerance: f32) -> Option<ConnectionPoint> {
+        self.points
+            .iter()
+            .copied()
+            .filter(|candidate| (candidate.position - point).length() <= tolerance)
+            .min_by(|a, b| {
+                (a.position - point)
+                    .length()
+                    .total_cmp(&(b.position - point).length())
+            })
+    }
+}
+
+fn connection_points_for_item(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    index: usize,
+    object: Option<&CanvasObject>,
+    excluded: Option<SceneId>,
+    occlusion_tolerance: Option<f32>,
+) -> Option<ConnectionPoints> {
+    let item = &scene.items[index];
+    let (endpoint, rect, rotation, shape, positions): (_, _, _, _, &[(f32, f32)]) = match item.id {
+        SceneId::Object(id) => {
+            let object = object?;
+            let CanvasObjectKind::Shape { shape, .. } = object.kind else {
+                return None;
+            };
+            let positions = match shape {
+                ShapeKind::Rectangle | ShapeKind::RoundedRectangle => {
+                    &RECTANGLE_CONNECTION_POINTS[..]
+                }
+                ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::Diamond => {
+                    &PERIMETER_CONNECTION_POINTS[..]
+                }
+                _ => return None,
+            };
+            (
+                Endpoint::Object(id),
+                object.rect,
+                object.rotation,
+                Some((shape, object.rounding)),
+                positions,
+            )
+        }
+        SceneId::Topic(id) if !sheet.is_anchor(id) => {
+            if !matches!(
+                layout.topics.get(&id)?.style.shape,
+                TopicShape::Rect | TopicShape::RoundedRect | TopicShape::Capsule
+            ) {
+                return None;
+            }
+            let SceneGeometry::Rect { rect, rotation } = item.geometry else {
+                return None;
+            };
+            (
+                Endpoint::Topic(id),
+                rect,
+                rotation,
+                None,
+                &RECTANGLE_CONNECTION_POINTS[..],
+            )
+        }
+        _ => return None,
+    };
+    if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+        return None;
+    }
+    let points = positions
+        .iter()
+        .filter_map(|&(x, y)| {
+            let port = ConnectorPort {
+                position: Vec2::new(x, y),
+                offset: Vec2::ZERO,
+                perimeter: true,
+            };
+            let position =
+                thinoda_core::scene::fixed_connector_port_position(rect, rotation, shape, port);
+            if item.clip.is_some_and(|clip| !clip.contains(position)) {
+                return None;
+            }
+            let obscured = occlusion_tolerance.is_some_and(|tolerance| {
+                scene
+                    .hit_test_tolerance_excluding(position, tolerance, excluded)
+                    .and_then(|hit| {
+                        let id = match hit {
+                            SceneHit::Object(id) => SceneId::Object(id),
+                            SceneHit::Topic(id) => SceneId::Topic(id),
+                        };
+                        scene.items.iter().rposition(|other| other.id == id)
+                    })
+                    .is_some_and(|top| top > index)
+            });
+            (!obscured).then_some(ConnectionPoint {
+                attachment: ConnectorAttachment {
+                    endpoint,
+                    port: Some(port),
+                },
+                position,
+            })
+        })
+        .collect();
+    Some(ConnectionPoints {
+        item: item.id,
+        points,
+    })
+}
+
+fn connection_points_at(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+    zoom: f32,
+    except: Option<CanvasObjectId>,
+) -> Option<ConnectionPoints> {
+    let tolerance = CONNECTION_POINT_RADIUS / zoom;
+    let excluded = except.map(SceneId::Object);
+    let body = scene
+        .hit_test_tolerance_excluding(point, tolerance, excluded)
+        .and_then(|hit| {
+            let id = match hit {
+                SceneHit::Topic(id) => SceneId::Topic(id),
+                SceneHit::Object(id) => SceneId::Object(id),
+            };
+            scene.items.iter().rposition(|item| item.id == id)
+        });
+
+    // Rotated rounded corners can put a connection point outside painted bounds.
+    let possibly_nearby = |item: &SceneItem| {
+        let margin = item.bounds.size.x.max(item.bounds.size.y) * 0.5;
+        Some(item.id) != excluded
+            && item.clip.is_none_or(|clip| clip.contains(point))
+            && item.bounds.expand(tolerance + margin).contains(point)
+    };
+    let first_higher = body.map_or(0, |index| index + 1);
+    if scene.items[first_higher..].iter().any(possibly_nearby) {
+        let objects: HashMap<_, _> = sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object))
+            .collect();
+        let candidate = scene
+            .items
+            .iter()
+            .enumerate()
+            .skip(first_higher)
+            .rev()
+            .filter(|(_, item)| possibly_nearby(item))
+            .find_map(|(index, item)| {
+                let object = match item.id {
+                    SceneId::Object(id) => objects.get(&id).copied(),
+                    _ => None,
+                };
+                let bounds = object.map_or(item.bounds, CanvasObject::rotated_bounds);
+                if !bounds.expand(tolerance).contains(point) {
+                    return None;
+                }
+                let points = connection_points_for_item(
+                    sheet, layout, scene, index, object, excluded, None,
+                )?;
+                points.nearest(point, tolerance).map(|_| (index, object))
+            })
+            .and_then(|(index, object)| {
+                connection_points_for_item(
+                    sheet,
+                    layout,
+                    scene,
+                    index,
+                    object,
+                    excluded,
+                    Some(tolerance),
+                )
+            });
+        if let Some(points) = candidate
+            && points.nearest(point, tolerance).is_some()
+        {
+            return Some(points);
+        }
+    }
+    let index = body?;
+    let object = match scene.items[index].id {
+        SceneId::Object(id) => sheet.canvas.object(id),
+        _ => None,
+    };
+    connection_points_for_item(
+        sheet,
+        layout,
+        scene,
+        index,
+        object,
+        excluded,
+        Some(tolerance),
+    )
+}
+
+fn attachment_at(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+    zoom: f32,
+    except: Option<CanvasObjectId>,
+    modifiers: Modifiers,
+) -> EditResult<(ConnectorAttachment, Vec2)> {
+    if modifiers.alt && !modifiers.shift {
+        return Ok((ConnectorAttachment::floating(Endpoint::Point(point)), point));
+    }
+    if !modifiers.alt
+        && let Some(point) = connection_point_at(sheet, layout, scene, point, zoom, except)
+    {
+        return Ok((point.attachment, point.position));
+    }
+    let mut endpoint = endpoint_at(sheet, scene, point, except);
+    if modifiers.alt && matches!(endpoint, Endpoint::Point(_)) {
+        endpoint = Endpoint::Point(point);
+    }
+    let port = if modifiers.shift && !modifiers.alt {
+        fixed_port_at(sheet, scene, endpoint, point, None)?
+    } else {
+        None
+    };
+    Ok((ConnectorAttachment { endpoint, port }, point))
+}
+
+fn connection_point_at(
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+    zoom: f32,
+    except: Option<CanvasObjectId>,
+) -> Option<ConnectionPoint> {
+    connection_points_at(sheet, layout, scene, point, zoom, except)
+        .and_then(|points| points.nearest(point, CONNECTION_POINT_RADIUS / zoom))
+}
+
+#[cfg(test)]
+mod connection_point_tests {
+    use super::*;
+    use thinoda_core::{ApproxMeasure, layout_sheet, scene::build_scene};
+
+    fn setup(kind: ShapeKind, rect: thinoda_core::Rect, rotation: f32) -> (Sheet, CanvasObjectId) {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = CanvasObject::shape(kind, rect);
+        object.rotation = rotation;
+        let id = sheet.add_canvas_object(object).unwrap();
+        (sheet, id)
+    }
+
+    #[test]
+    fn verified_connection_points_share_routing_geometry_at_any_rotation() {
+        let rect = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(200.0, 100.0));
+        for (kind, count) in [
+            (ShapeKind::Rectangle, 16),
+            (ShapeKind::RoundedRectangle, 16),
+            (ShapeKind::Ellipse, 8),
+            (ShapeKind::DoubleEllipse, 8),
+            (ShapeKind::Diamond, 8),
+        ] {
+            for rotation in [0.0, 37.0, 90.0] {
+                let (sheet, id) = setup(kind, rect, rotation);
+                let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                let scene = build_scene(&sheet, &layout);
+                let points =
+                    connection_points_at(&sheet, &layout, &scene, Vec2::ZERO, 1.0, None).unwrap();
+                assert_eq!(points.item, SceneId::Object(id));
+                assert_eq!(points.points.len(), count, "{kind:?}, {rotation}");
+                for point in points.points {
+                    let port = point.attachment.port.unwrap();
+                    assert!(port.perimeter);
+                    assert_eq!(port.offset, Vec2::ZERO);
+                    assert_eq!(
+                        point.position,
+                        thinoda_core::scene::fixed_connector_port_position(
+                            rect,
+                            rotation,
+                            Some((kind, None)),
+                            port
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn marker_tolerance_is_in_screen_space_and_rounded_corners_remain_reachable() {
+        let rect = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(400.0, 400.0));
+        let (sheet, _) = setup(ShapeKind::RoundedRectangle, rect, 0.0);
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        for zoom in [0.25, 0.5, 1.0, 2.0, 4.0] {
+            let marker = Vec2::new(200.0, 0.0);
+            let inside = marker + Vec2::new(0.0, 3.9 / zoom);
+            let outside = marker + Vec2::new(0.0, 4.1 / zoom);
+            assert!(connection_point_at(&sheet, &layout, &scene, inside, zoom, None).is_some());
+            assert!(connection_point_at(&sheet, &layout, &scene, outside, zoom, None).is_none());
+            assert!(
+                connection_point_at(&sheet, &layout, &scene, rect.max(), zoom, None).is_some(),
+                "rounded corner at zoom {zoom}"
+            );
+        }
+        let (rotated, _) = setup(ShapeKind::RoundedRectangle, rect, 45.0);
+        let layout = layout_sheet(&rotated, &ApproxMeasure, false);
+        let scene = build_scene(&rotated, &layout);
+        let corner = rotate_around(rect.max(), rect.center(), 45.0);
+        assert!(
+            !scene.items[0].bounds.expand(4.0).contains(corner),
+            "fixture must put the cross outside painted bounds"
+        );
+        assert!(
+            connection_point_at(&rotated, &layout, &scene, corner, 1.0, None).is_some(),
+            "rotated rounded corners remain reachable"
+        );
+    }
+
+    #[test]
+    fn rectangular_card_connection_points_follow_card_rotation() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut card = Card::new(CardKind::Sticky, Vec2::new(200.0, 100.0));
+        card.rotation = 90.0;
+        let id = sheet.add_card("Card", Vec2::ZERO, card).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let points = connection_points_at(&sheet, &layout, &scene, Vec2::ZERO, 1.0, None)
+            .expect("sticky card connection points");
+        assert_eq!(points.item, SceneId::Topic(id));
+        assert_eq!(points.points.len(), 16);
+        let right = points
+            .points
+            .iter()
+            .find(|point| point.attachment.port.unwrap().position == Vec2::new(1.0, 0.5))
+            .unwrap();
+        assert_eq!(right.attachment.endpoint, Endpoint::Topic(id));
+        assert!((right.position - Vec2::new(0.0, 100.0)).length() < 0.01);
+    }
+
+    #[test]
+    fn markers_obey_paint_order_clipping_and_supported_shape_scope() {
+        let rect = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(200.0, 100.0));
+        let (mut sheet, lower) = setup(ShapeKind::Rectangle, rect, 0.0);
+        let upper = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                rect.translate(Vec2::new(130.0, 0.0)),
+            ))
+            .unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let lower_points =
+            connection_points_at(&sheet, &layout, &scene, Vec2::new(-50.0, 0.0), 1.0, None)
+                .unwrap();
+        assert_eq!(lower_points.item, SceneId::Object(lower));
+        assert!(
+            lower_points
+                .points
+                .iter()
+                .all(|point| point.position.x < 100.0)
+        );
+        let overlapping =
+            connection_points_at(&sheet, &layout, &scene, Vec2::new(75.0, 0.0), 1.0, None).unwrap();
+        assert_eq!(overlapping.item, SceneId::Object(upper));
+        let excluded = connection_points_at(
+            &sheet,
+            &layout,
+            &scene,
+            Vec2::new(75.0, 0.0),
+            1.0,
+            Some(upper),
+        )
+        .unwrap();
+        assert_eq!(excluded.item, SceneId::Object(lower));
+
+        let (mut overlap, underneath) = setup(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(400.0, 300.0)),
+            0.0,
+        );
+        let rounded = overlap
+            .add_canvas_object(CanvasObject::shape(ShapeKind::RoundedRectangle, rect))
+            .unwrap();
+        let layout = layout_sheet(&overlap, &ApproxMeasure, false);
+        let scene = build_scene(&overlap, &layout);
+        assert_eq!(
+            scene.hit_test(rect.max()),
+            Some(SceneHit::Object(underneath))
+        );
+        let point = connection_point_at(&overlap, &layout, &scene, rect.max(), 1.0, None)
+            .expect("top rounded corner remains reachable over a lower shape");
+        assert_eq!(point.attachment.endpoint, Endpoint::Object(rounded));
+
+        let (mut adjacent, lower) = setup(ShapeKind::Rectangle, rect, 0.0);
+        adjacent
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                rect.translate(Vec2::new(203.0, 0.0)),
+            ))
+            .unwrap();
+        let layout = layout_sheet(&adjacent, &ApproxMeasure, false);
+        let scene = build_scene(&adjacent, &layout);
+        let points =
+            connection_points_at(&adjacent, &layout, &scene, Vec2::new(-50.0, 0.0), 1.0, None)
+                .unwrap();
+        assert_eq!(points.item, SceneId::Object(lower));
+        assert!(points.points.iter().all(|point| point.position.x < 100.0));
+
+        let (mut clipped, id) = setup(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_min_size(Vec2::new(-80.0, -40.0), Vec2::new(240.0, 80.0)),
+            0.0,
+        );
+        clipped
+            .create_board_frame(
+                "Frame",
+                thinoda_core::Rect::from_min_size(
+                    Vec2::new(-100.0, -100.0),
+                    Vec2::new(200.0, 200.0),
+                ),
+            )
+            .unwrap();
+        clipped.zones[0].clip = true;
+        let layout = layout_sheet(&clipped, &ApproxMeasure, false);
+        let scene = build_scene(&clipped, &layout);
+        let points =
+            connection_points_at(&clipped, &layout, &scene, Vec2::ZERO, 1.0, None).unwrap();
+        assert_eq!(points.item, SceneId::Object(id));
+        assert!(points.points.iter().all(|point| point.position.x <= 100.0));
+        assert!(
+            connection_point_at(&clipped, &layout, &scene, Vec2::new(160.0, 0.0), 1.0, None)
+                .is_none()
+        );
+
+        let (unsupported, _) = setup(ShapeKind::Triangle, rect, 0.0);
+        let layout = layout_sheet(&unsupported, &ApproxMeasure, false);
+        let scene = build_scene(&unsupported, &layout);
+        assert!(
+            connection_points_at(&unsupported, &layout, &scene, Vec2::ZERO, 1.0, None).is_none()
+        );
     }
 }
 
@@ -689,7 +1283,7 @@ fn creation_input(
     press: &mut CreationPress,
     started_here: bool,
     event_offset: usize,
-) -> (Option<Pos2>, bool) {
+) -> (Option<(Pos2, Modifiers)>, bool) {
     let threshold = ctx.options(|options| options.input_options.max_click_dist);
     ctx.input(|input| {
         let mut started = !started_here;
@@ -739,10 +1333,10 @@ fn creation_input(
                     pos,
                     button: PointerButton::Primary,
                     pressed: false,
-                    ..
+                    modifiers,
                 } if started && released.is_none() => {
                     press.moved |= press.screen_origin.distance(*pos) > threshold;
-                    released = Some(*pos);
+                    released = Some((*pos, *modifiers));
                 }
                 egui::Event::PointerMoved(pos) if started && released.is_none() => {
                     press.moved |= press.screen_origin.distance(*pos) > threshold;
@@ -780,7 +1374,7 @@ fn create(
     view: &mut MapView,
     tool: BoardTool,
     rect: thinoda_core::Rect,
-    endpoints: Option<(Endpoint, Endpoint)>,
+    endpoints: Option<(ConnectorAttachment, ConnectorAttachment)>,
 ) -> EditResult<bool> {
     match tool {
         BoardTool::Sticky | BoardTool::Text => {
@@ -803,8 +1397,7 @@ fn create(
             let Some((from, to)) = endpoints else {
                 return Ok(false);
             };
-            let id =
-                doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+            let id = doc.add_canvas_object(CanvasObject::connector(from.connector(to)))?;
             select_hit(view, doc.sheet(), SceneHit::Object(id), false);
             Ok(true)
         }
@@ -834,11 +1427,118 @@ fn create_at(
     let rect = thinoda_core::Rect::from_center_size(center, size);
     let ends = (tool == BoardTool::Connector).then(|| {
         (
-            Endpoint::Point(center - Vec2::new(60.0, 0.0)),
-            Endpoint::Point(center + Vec2::new(60.0, 0.0)),
+            ConnectorAttachment::floating(Endpoint::Point(center - Vec2::new(60.0, 0.0))),
+            ConnectorAttachment::floating(Endpoint::Point(center + Vec2::new(60.0, 0.0))),
         )
     });
     create(doc, view, tool, rect, ends)
+}
+
+const INSERT_GAP: f32 = 40.0;
+
+/// Snapped centre nearest `preferred` where a `size` item overlaps no topic,
+/// card or shape, searching rings of grid cells and preferring the same row
+/// and the right-hand side (draw.io inserts beside content, never on it).
+fn free_spot(sheet: &Sheet, scene: &Scene, preferred: Vec2, size: Vec2) -> Vec2 {
+    let blocked = |center: Vec2| {
+        let target = thinoda_core::Rect::from_center_size(center, size).expand(8.0);
+        scene.items.iter().any(|item| {
+            let solid = match item.id {
+                SceneId::Topic(_) => true,
+                SceneId::Object(id) => sheet
+                    .canvas
+                    .object(id)
+                    .is_some_and(|object| !object.is_connector()),
+                SceneId::Zone(_) => false,
+            };
+            solid && item.bounds.intersects(&target)
+        })
+    };
+    let step = Vec2::new(size.x + INSERT_GAP, size.y + INSERT_GAP);
+    for ring in 0..=8_i32 {
+        let mut cells: Vec<_> = (-ring..=ring)
+            .flat_map(|dy| (-ring..=ring).map(move |dx| (dx, dy)))
+            .filter(|(dx, dy)| dx.abs().max(dy.abs()) == ring)
+            .collect();
+        cells.sort_by_key(|&(dx, dy)| (dy.abs(), dx < 0, dx.abs(), dy < 0));
+        for (dx, dy) in cells {
+            let center = snapped(
+                sheet,
+                preferred + Vec2::new(dx as f32 * step.x, dy as f32 * step.y),
+            );
+            if !blocked(center) {
+                return center;
+            }
+        }
+    }
+    snapped(sheet, preferred)
+}
+
+/// Free insertion centre right of the selection, else near the viewport centre.
+fn insert_spot(sheet: &Sheet, view: &MapView, scene: &Scene, size: Vec2) -> Vec2 {
+    let selection = scene
+        .items
+        .iter()
+        .filter(|item| match item.id {
+            SceneId::Topic(id) => selected(view, SceneHit::Topic(id)),
+            SceneId::Object(id) => selected(view, SceneHit::Object(id)),
+            SceneId::Zone(_) => false,
+        })
+        .map(|item| item.bounds)
+        .reduce(|a, b| a.union(&b));
+    let preferred = selection.map_or_else(
+        || view.xf().sheet(view.canvas_rect.center()),
+        |bounds| {
+            Vec2::new(
+                bounds.min.x + bounds.size.x + INSERT_GAP + size.x / 2.0,
+                bounds.center().y,
+            )
+        },
+    );
+    free_spot(sheet, scene, preferred, size)
+}
+
+/// True when an armed shape must select rather than create at `point`: topics,
+/// cards, objects, ink, annotations and frame edges or title bands are content.
+fn armed_target(
+    doc: &Document,
+    view: &MapView,
+    layout: &Layout,
+    scene: &Scene,
+    point: Vec2,
+) -> bool {
+    let tolerance = 6.0 / view.zoom;
+    scene.hit_test(point).is_some()
+        || outline_source(doc.sheet(), scene, view, point).is_some()
+        || hit_zone(doc.sheet(), point, tolerance).is_some()
+        || hit_object(doc.sheet(), layout, point, tolerance).is_some()
+}
+
+/// Shape whose outline band, the ring just outside its body, holds `point`.
+/// Dragging from there draws a connector, as on draw.io's hover outline.
+fn outline_source(
+    sheet: &Sheet,
+    scene: &Scene,
+    view: &MapView,
+    point: Vec2,
+) -> Option<CanvasObjectId> {
+    if scene.hit_test(point).is_some() {
+        return None;
+    }
+    let band = thinoda_core::scene::HIT_TOLERANCE + OUTLINE_BAND / view.zoom;
+    let Some(SceneHit::Object(id)) = scene.hit_test_tolerance(point, band) else {
+        return None;
+    };
+    arrow_source(sheet, id).map(|object| object.id)
+}
+
+/// Sheet-space outline of a shape item, for the outline-band highlight.
+fn item_outline(item: &SceneItem) -> Option<Vec<Vec2>> {
+    match &item.geometry {
+        SceneGeometry::Polygon { outline, .. } => Some(outline.clone()),
+        SceneGeometry::Rect { rect, rotation } => Some(rotated_corners(*rect, *rotation).to_vec()),
+        _ => None,
+    }
 }
 
 fn prepare_edit(doc: &mut Document, view: &mut MapView, out: &mut CanvasOutput) -> bool {
@@ -853,12 +1553,69 @@ fn prepare_edit(doc: &mut Document, view: &mut MapView, out: &mut CanvasOutput) 
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ArrowDir {
+    Up,
+    Right,
+    Down,
+    Left,
+}
+
+impl ArrowDir {
+    const ALL: [ArrowDir; 4] = [
+        ArrowDir::Up,
+        ArrowDir::Right,
+        ArrowDir::Down,
+        ArrowDir::Left,
+    ];
+
+    fn unit(self) -> Vec2 {
+        match self {
+            ArrowDir::Up => Vec2::new(0.0, -1.0),
+            ArrowDir::Right => Vec2::new(1.0, 0.0),
+            ArrowDir::Down => Vec2::new(0.0, 1.0),
+            ArrowDir::Left => Vec2::new(-1.0, 0.0),
+        }
+    }
+
+    /// The reverse direction.
+    fn opposite(self) -> ArrowDir {
+        match self {
+            ArrowDir::Up => ArrowDir::Down,
+            ArrowDir::Right => ArrowDir::Left,
+            ArrowDir::Down => ArrowDir::Up,
+            ArrowDir::Left => ArrowDir::Right,
+        }
+    }
+
+    /// Bounds extent along the direction.
+    fn extent(self, bounds: thinoda_core::Rect) -> f32 {
+        match self {
+            ArrowDir::Up | ArrowDir::Down => bounds.size.y,
+            ArrowDir::Right | ArrowDir::Left => bounds.size.x,
+        }
+    }
+
+    /// Midpoint of the bounds side facing the direction.
+    fn side(self, bounds: thinoda_core::Rect) -> Vec2 {
+        match self {
+            ArrowDir::Up => bounds.top_center(),
+            ArrowDir::Right => bounds.right_center(),
+            ArrowDir::Down => bounds.bottom_center(),
+            ArrowDir::Left => bounds.left_center(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ControlKind {
     Resize,
     Rotate,
     From,
     To,
+    Waypoint(usize),
+    InsertWaypoint(usize, usize),
+    Arrow(ArrowDir),
 }
 
 #[derive(Clone, Copy)]
@@ -868,20 +1625,173 @@ struct Control {
     point: Vec2,
     rect: thinoda_core::Rect,
     rotation: f32,
+    /// Shown only while hovering an unselected shape; not a Tab stop.
+    hover: bool,
 }
 
 fn control_id(control: Control) -> Id {
-    let part = match control.kind {
-        ControlKind::Resize => 0,
-        ControlKind::Rotate => 1,
-        ControlKind::From => 2,
-        ControlKind::To => 3,
+    control_kind_id(control.item, control.kind, control.hover)
+}
+
+fn control_kind_id(item: SceneId, kind: ControlKind, hover: bool) -> Id {
+    let part = match kind {
+        ControlKind::Resize => (0, 0, 0),
+        ControlKind::Rotate => (1, 0, 0),
+        ControlKind::From => (2, 0, 0),
+        ControlKind::To => (3, 0, 0),
+        ControlKind::Arrow(dir) => (4, dir as usize, 0),
+        ControlKind::Waypoint(index) => (5, index, 0),
+        ControlKind::InsertWaypoint(index, segment) => (6, index, segment),
     };
-    MapCanvas::id().with(("board-control", control.item, part))
+    // Hover arrows never share an Id with the selection's, so focus cannot
+    // silently move onto a non-focusable hover control.
+    MapCanvas::id().with(("board-control", item, part, hover))
+}
+
+/// After keyboard activation, focus the same arrow on the new selection so
+/// Enter can keep chaining; otherwise focus the new selection itself.
+fn focus_next_arrow(ui: &Ui, view: &mut MapView, sheet: &Sheet, scene: &Scene, dir: ArrowDir) {
+    let next = match view.board_selection[..] {
+        [id] => arrow_controls(view, sheet, scene, id, false)
+            .into_iter()
+            .find(|control| control.kind == ControlKind::Arrow(dir))
+            .filter(|control| view.canvas_rect.contains(view.xf().pos(control.point))),
+        _ => None,
+    };
+    match next {
+        Some(control) => ui
+            .ctx()
+            .memory_mut(|memory| memory.request_focus(control_id(control))),
+        None => focus_duplicated_selection(ui, view),
+    }
+}
+
+/// Screen distance between a shape's bounds and its direction arrows.
+const ARROW_OFFSET: f32 = 32.0;
+/// Gap between a shape and its draw.io-style connected clone (`defaultEdgeLength`).
+const ARROW_GAP: f32 = 80.0;
+/// Shapes smaller than this on screen get no direction arrows.
+const ARROW_MIN_SCREEN: f32 = 40.0;
+/// Screen movement turning an arrow press into a drag.
+const ARROW_DRAG: f32 = 8.0;
+/// Screen width of the band outside a shape where a drag starts a connector.
+const OUTLINE_BAND: f32 = 8.0;
+/// Seconds the mouse rests on, or a press holds, an arrow before its shape picker opens.
+const QUICK_DELAY: f64 = 0.6;
+/// Shapes offered by the picker after the source's own kind.
+const QUICK_SHAPES: [ShapeKind; 10] = [
+    ShapeKind::Rectangle,
+    ShapeKind::RoundedRectangle,
+    ShapeKind::Ellipse,
+    ShapeKind::Diamond,
+    ShapeKind::Triangle,
+    ShapeKind::Hexagon,
+    ShapeKind::Parallelogram,
+    ShapeKind::Cylinder,
+    ShapeKind::Cloud,
+    ShapeKind::Document,
+];
+const QUICK_COLUMNS: usize = 5;
+const QUICK_TILE: f32 = 40.0;
+
+fn arrow_point(view: &MapView, object: &CanvasObject, dir: ArrowDir) -> Vec2 {
+    dir.side(object.rotated_bounds()) + dir.unit() * (ARROW_OFFSET / view.zoom)
+}
+
+fn arrow_rect(view: &MapView, point: Vec2) -> Rect {
+    Rect::from_center_size(view.xf().pos(point), vec2(28.0, 28.0))
+}
+
+/// Shapes offering direction arrows: single, unlocked and ungrouped.
+fn arrow_source(sheet: &Sheet, id: CanvasObjectId) -> Option<&CanvasObject> {
+    sheet
+        .canvas
+        .object(id)
+        .filter(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        .filter(|_| board_actions::member_is_movable(sheet, BoardMember::Object(id)))
+        .filter(|_| {
+            sheet
+                .expand_board_selection(&[BoardMember::Object(id)])
+                .is_ok_and(|members| members.len() == 1)
+        })
+}
+
+fn arrow_controls(
+    view: &MapView,
+    sheet: &Sheet,
+    scene: &Scene,
+    id: CanvasObjectId,
+    hover: bool,
+) -> Vec<Control> {
+    let Some(object) = arrow_source(sheet, id) else {
+        return Vec::new();
+    };
+    let bounds = object.rotated_bounds();
+    if bounds.size.x * view.zoom < ARROW_MIN_SCREEN || bounds.size.y * view.zoom < ARROW_MIN_SCREEN
+    {
+        return Vec::new();
+    }
+    let item = SceneId::Object(id);
+    let clip = scene.item(item).and_then(|item| item.clip);
+    ArrowDir::ALL
+        .into_iter()
+        .map(|dir| Control {
+            item,
+            kind: ControlKind::Arrow(dir),
+            point: arrow_point(view, object, dir),
+            rect: object.rect,
+            rotation: object.rotation,
+            hover,
+        })
+        .filter(|control| clip.is_none_or(|clip| clip.contains(control.point)))
+        .collect()
+}
+
+/// Keyboard-reachable controls, in Tab order.
+fn tab_controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Vec<Control> {
+    let mut list = controls(view, sheet, layout, scene);
+    list.retain(|control| !control.hover);
+    list
+}
+
+/// Tracks the unselected shape whose arrows follow the mouse, kept while the
+/// pointer stays near it so the arrows can be reached.
+fn update_hover_shape(
+    view: &mut MapView,
+    sheet: &Sheet,
+    scene: &Scene,
+    response: &Response,
+    over_controls: bool,
+) {
+    if over_controls || view.board_input.is_active() || view.board_input.quick.is_some() {
+        return;
+    }
+    let xf = view.xf();
+    let current = view.board_input.hover_shape;
+    view.board_input.hover_shape = response
+        .hover_pos()
+        .filter(|_| matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_)))
+        .and_then(|pos| {
+            if let Some(SceneHit::Object(id)) = scene.hit_test(xf.sheet(pos))
+                && arrow_source(sheet, id).is_some()
+            {
+                return Some(id);
+            }
+            if let Some(id) = outline_source(sheet, scene, view, xf.sheet(pos)) {
+                return Some(id);
+            }
+            current.filter(|id| {
+                sheet.canvas.object(*id).is_some_and(|object| {
+                    xf.rect(object.rotated_bounds())
+                        .expand(ARROW_OFFSET + 18.0)
+                        .contains(pos)
+                })
+            })
+        });
 }
 
 fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Vec<Control> {
-    if view.board_tool != BoardTool::Select
+    if !matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_))
         || view.editing.is_some()
         || view.editing_board_object().is_some()
         || view.selected_object.is_some()
@@ -889,6 +1799,23 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
     {
         return Vec::new();
     }
+    let mut list = selection_controls(view, sheet, layout, scene);
+    if let Some(id) = view.board_input.hover_shape
+        && !list
+            .iter()
+            .any(|control| control.item == SceneId::Object(id))
+    {
+        list.extend(arrow_controls(view, sheet, scene, id, true));
+    }
+    list
+}
+
+fn selection_controls(
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+) -> Vec<Control> {
     let (item, rect, rotation) = if view.selection.is_empty() && view.board_selection.len() == 1 {
         let id = view.board_selection[0];
         let Some(object) = sheet.canvas.object(id) else {
@@ -902,7 +1829,7 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
             return Vec::new();
         }
         let item = SceneId::Object(id);
-        if object.is_connector() {
+        if let CanvasObjectKind::Connector(connector) = &object.kind {
             let Some(SceneGeometry::Polyline { points, .. }) =
                 scene.item(item).map(|item| &item.geometry)
             else {
@@ -911,21 +1838,54 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
             let (Some(from), Some(to)) = (points.first(), points.last()) else {
                 return Vec::new();
             };
-            return [(ControlKind::From, *from), (ControlKind::To, *to)]
+            let clip = scene.item(item).and_then(|item| item.clip);
+            let make_control = |kind, point| Control {
+                item,
+                kind,
+                point,
+                rect: object.rect,
+                rotation: 0.0,
+                hover: false,
+            };
+            let mut list: Vec<_> = [(ControlKind::From, *from), (ControlKind::To, *to)]
                 .into_iter()
-                .filter(|(_, point)| {
-                    scene.item(item).is_none_or(|scene_item| {
-                        scene_item.clip.is_none_or(|clip| clip.contains(*point))
-                    })
-                })
-                .map(|(kind, point)| Control {
-                    item,
-                    kind,
-                    point,
-                    rect: object.rect,
-                    rotation: 0.0,
-                })
+                .filter(|(_, point)| clip.is_none_or(|clip| clip.contains(*point)))
+                .map(|(kind, point)| make_control(kind, point))
                 .collect();
+            list.extend(
+                connector
+                    .waypoints
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, point)| {
+                        clip.is_none_or(|clip| clip.contains(**point))
+                            && view.canvas_rect.contains(view.xf().pos(**point))
+                    })
+                    .map(|(index, &point)| make_control(ControlKind::Waypoint(index), point)),
+            );
+            let xf = view.xf();
+            let mut occupied: Vec<_> = list.iter().map(|control| xf.pos(control.point)).collect();
+            for (segment, handle) in
+                thinoda_core::scene::connector_insert_handles(sheet, layout, connector)
+                    .into_iter()
+                    .enumerate()
+            {
+                let center = xf.pos(handle.point);
+                if clip.is_some_and(|clip| !clip.contains(handle.point))
+                    || !view.canvas_rect.contains(center)
+                    || occupied
+                        .iter()
+                        .any(|point| point.distance_sq(center) < 18.0 * 18.0)
+                {
+                    continue;
+                }
+                occupied.push(center);
+                list.push(make_control(
+                    ControlKind::InsertWaypoint(handle.insert_at, segment),
+                    handle.point,
+                ));
+            }
+            return list;
         }
         (item, object.rect, object.rotation)
     } else if view.board_selection.is_empty() && view.selection.len() == 1 {
@@ -949,21 +1909,19 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
     };
 
     let corner = rotated_corners(rect, rotation)[2];
-    let top = rotate_around(rect.top_center(), rect.center(), rotation);
-    let outward = rotate_around(
-        rect.top_center() - Vec2::new(0.0, 25.0 / view.zoom),
-        rect.center(),
-        rotation,
-    );
+    // draw.io keeps the rotation handle off the top-right corner, clear of the ↑ arrow.
+    let bounds = thinoda_core::board::rotated_bounds(rect, rotation);
+    let anchor = Vec2::new(bounds.max().x, bounds.min.y);
+    let outward = anchor + Vec2::new(14.0, -14.0) * (1.0 / view.zoom);
     let clip = scene.item(item).and_then(|item| item.clip);
-    [
+    let mut list: Vec<Control> = [
         (ControlKind::Resize, corner),
         (ControlKind::Rotate, outward),
     ]
     .into_iter()
     .filter(|(kind, point)| {
         clip.is_none_or(|clip| {
-            clip.contains(*point) || (*kind == ControlKind::Rotate && clip.contains(top))
+            clip.contains(*point) || (*kind == ControlKind::Rotate && clip.contains(anchor))
         })
     })
     .map(|(kind, point)| Control {
@@ -972,8 +1930,13 @@ fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Ve
         point,
         rect,
         rotation,
+        hover: false,
     })
-    .collect()
+    .collect();
+    if let SceneId::Object(id) = item {
+        list.extend(arrow_controls(view, sheet, scene, id, false));
+    }
+    list
 }
 
 fn control_label(view: &MapView, kind: ControlKind) -> String {
@@ -982,6 +1945,16 @@ fn control_label(view: &MapView, kind: ControlKind) -> String {
         ControlKind::Rotate => view.board_labels.rotate.clone(),
         ControlKind::From => format!("{} {}", view.board_labels.connector, view.board_labels.from),
         ControlKind::To => format!("{} {}", view.board_labels.connector, view.board_labels.to),
+        ControlKind::Waypoint(index) => format!("{} {}", view.board_labels.waypoint, index + 1),
+        ControlKind::InsertWaypoint(_, segment) => {
+            format!("{} {}", view.board_labels.insert_waypoint, segment + 1)
+        }
+        ControlKind::Arrow(dir) => match dir {
+            ArrowDir::Up => view.board_labels.connect_up.clone(),
+            ArrowDir::Right => view.board_labels.connect_right.clone(),
+            ArrowDir::Down => view.board_labels.connect_down.clone(),
+            ArrowDir::Left => view.board_labels.connect_left.clone(),
+        },
     }
 }
 
@@ -1027,6 +2000,7 @@ fn set_endpoint(
     id: CanvasObjectId,
     start: bool,
     endpoint: Endpoint,
+    port: Option<ConnectorPort>,
 ) -> EditResult<()> {
     if !board_actions::member_is_movable(doc.sheet(), BoardMember::Object(id)) {
         return Err(EditError::Invalid("connector is locked".into()));
@@ -1035,11 +2009,728 @@ fn set_endpoint(
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             if start {
                 connector.from = endpoint;
+                connector.from_port = port;
             } else {
                 connector.to = endpoint;
+                connector.to_port = port;
             }
         }
     })
+}
+
+fn connector_end(
+    sheet: &Sheet,
+    id: CanvasObjectId,
+    start: bool,
+) -> Option<(Endpoint, Option<ConnectorPort>)> {
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(id)?.kind else {
+        return None;
+    };
+    Some(if start {
+        (connector.from, connector.from_port)
+    } else {
+        (connector.to, connector.to_port)
+    })
+}
+
+fn port_target(sheet: &Sheet, scene: &Scene, end: Endpoint) -> Option<(thinoda_core::Rect, f32)> {
+    match end {
+        Endpoint::Object(id) => {
+            let object = sheet.canvas.object(id)?;
+            matches!(object.kind, CanvasObjectKind::Shape { .. })
+                .then_some((object.rect, object.rotation))
+        }
+        Endpoint::Topic(mut id) => loop {
+            if sheet.is_anchor(id) {
+                return None;
+            }
+            if let Some(SceneItem {
+                geometry: SceneGeometry::Rect { rect, rotation },
+                ..
+            }) = scene.item(SceneId::Topic(id))
+            {
+                return Some((*rect, *rotation));
+            }
+            id = sheet.topic(id)?.parent?;
+        },
+        Endpoint::Point(_) => None,
+    }
+}
+
+fn fixed_port_at(
+    sheet: &Sheet,
+    scene: &Scene,
+    end: Endpoint,
+    point: Vec2,
+    previous: Option<ConnectorPort>,
+) -> EditResult<Option<ConnectorPort>> {
+    if matches!(end, Endpoint::Point(_)) {
+        return Ok(None);
+    }
+    let (rect, rotation) = port_target(sheet, scene, end).ok_or_else(|| {
+        EditError::Invalid("fixed connector ports require a shape or topic".into())
+    })?;
+    let local = rotate_around(point, rect.center(), -rotation);
+    let old_offset = previous.map_or(Vec2::ZERO, |port| port.offset);
+    let position_axis = |value: f32, min: f32, size: f32, offset: f32| {
+        if size.abs() <= f32::EPSILON {
+            0.5
+        } else {
+            ((value - min - offset) / size).clamp(0.0, 1.0)
+        }
+    };
+    let position = Vec2::new(
+        position_axis(local.x, rect.min.x, rect.size.x, old_offset.x),
+        position_axis(local.y, rect.min.y, rect.size.y, old_offset.y),
+    );
+    let port = ConnectorPort {
+        position,
+        offset: Vec2::new(
+            local.x - rect.min.x - rect.size.x * position.x,
+            local.y - rect.min.y - rect.size.y * position.y,
+        ),
+        // A direct move pins the visible point rather than projecting it again.
+        perimeter: false,
+    };
+    if !port.is_valid() {
+        return Err(EditError::Invalid(
+            "fixed connector port exceeds supported limits".into(),
+        ));
+    }
+    Ok(Some(port))
+}
+
+fn toggle_fixed_endpoint(
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    control: Control,
+    out: &mut CanvasOutput,
+) {
+    let SceneId::Object(id) = control.item else {
+        return;
+    };
+    let start = control.kind == ControlKind::From;
+    let Some((end, current)) = connector_end(doc.sheet(), id, start) else {
+        return;
+    };
+    if matches!(end, Endpoint::Point(_)) || !prepare_edit(doc, view, out) {
+        return;
+    }
+    let port = if current.is_some() {
+        Ok(None)
+    } else {
+        fixed_port_at(doc.sheet(), scene, end, control.point, None)
+    };
+    if let Err(error) = port.and_then(|port| set_endpoint(doc, id, start, end, port)) {
+        out.error = Some(error);
+    }
+}
+
+enum WaypointEdit {
+    Insert(usize, Vec2),
+    Move(usize, Vec2),
+    Remove(usize),
+}
+
+fn edit_waypoint(doc: &mut Document, id: CanvasObjectId, edit: WaypointEdit) -> EditResult<bool> {
+    if !board_actions::member_is_movable(doc.sheet(), BoardMember::Object(id)) {
+        return Err(EditError::Invalid("connector is locked".into()));
+    }
+    let Some(CanvasObjectKind::Connector(connector)) =
+        doc.sheet().canvas.object(id).map(|object| &object.kind)
+    else {
+        return Err(EditError::Invalid("connector no longer exists".into()));
+    };
+    let mut points = connector.waypoints.to_vec();
+    match edit {
+        WaypointEdit::Insert(index, point) if index <= points.len() => points.insert(index, point),
+        WaypointEdit::Move(index, point) if index < points.len() => points[index] = point,
+        WaypointEdit::Remove(index) if index < points.len() => {
+            points.remove(index);
+        }
+        _ => {
+            return Err(EditError::Invalid(
+                "connector waypoint no longer exists".into(),
+            ));
+        }
+    }
+    if points.as_slice() == connector.waypoints.as_ref() {
+        return Ok(false);
+    }
+    doc.update_canvas_object("Edit connector waypoints", id, |object| {
+        if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+            connector.waypoints = points.into();
+        }
+    })?;
+    Ok(true)
+}
+
+/// What a direction-arrow click does, following draw.io's `plusTooltip`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrowMode {
+    /// Clone and connect, or connect to a neighbour already in that place.
+    Chain,
+    /// Ctrl/Cmd: clone without a connector.
+    CloneOnly,
+    /// Shift: connector only.
+    ConnectOnly,
+}
+
+impl ArrowMode {
+    fn from_modifiers(modifiers: Modifiers) -> Self {
+        if modifiers.command {
+            Self::CloneOnly
+        } else if modifiers.shift {
+            Self::ConnectOnly
+        } else {
+            Self::Chain
+        }
+    }
+}
+
+/// Unlabelled, unlocked copy of `source` centred on `center`.
+fn arrow_clone(source: &CanvasObject, center: Vec2) -> CanvasObject {
+    let mut clone = source.clone();
+    clone.rect = thinoda_core::Rect::from_center_size(center, source.rect.size);
+    clone.locked = false;
+    clone.alt_text.clear();
+    if let CanvasObjectKind::Shape { label, .. } = &mut clone.kind {
+        label.clear();
+    }
+    clone
+}
+
+/// Topic or shape under `point`, other than `source`.
+fn arrow_neighbour(
+    sheet: &Sheet,
+    scene: &Scene,
+    point: Vec2,
+    source: CanvasObjectId,
+) -> Option<Endpoint> {
+    let mut scene = scene.clone();
+    scene.items.retain(|item| match item.id {
+        SceneId::Topic(id) => !sheet.is_anchor(id),
+        SceneId::Object(id) => {
+            id != source
+                && sheet
+                    .canvas
+                    .object(id)
+                    .is_some_and(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        }
+        SceneId::Zone(_) => false,
+    });
+    Some(match scene.hit_test(point)? {
+        SceneHit::Topic(id) => Endpoint::Topic(id),
+        SceneHit::Object(id) => Endpoint::Object(id),
+    })
+}
+
+/// Offset from `source` to the first free clone position in `dir`.
+fn clone_offset(sheet: &Sheet, scene: &Scene, source: &CanvasObject, dir: ArrowDir) -> Vec2 {
+    let bounds = source.rotated_bounds();
+    let step = dir.unit() * (dir.extent(bounds) + ARROW_GAP);
+    let mut offset = step;
+    for _ in 0..20 {
+        let target = bounds.translate(offset).expand(8.0);
+        let blocked = scene.items.iter().any(|item| {
+            let solid = match item.id {
+                SceneId::Topic(_) => true,
+                SceneId::Object(id) => {
+                    id != source.id
+                        && sheet
+                            .canvas
+                            .object(id)
+                            .is_some_and(|object| !object.is_connector())
+                }
+                SceneId::Zone(_) => false,
+            };
+            solid && item.bounds.intersects(&target)
+        });
+        if !blocked {
+            break;
+        }
+        offset = offset + step;
+    }
+    offset
+}
+
+fn select_endpoint(view: &mut MapView, sheet: &Sheet, endpoint: Endpoint) {
+    match endpoint {
+        Endpoint::Topic(id) => select_hit(view, sheet, SceneHit::Topic(id), false),
+        Endpoint::Object(id) => select_hit(view, sheet, SceneHit::Object(id), false),
+        Endpoint::Point(_) => {}
+    }
+}
+
+/// Click (or Enter) on a direction arrow; selects the result so users can keep chaining.
+fn arrow_click(
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    mode: ArrowMode,
+) -> EditResult<bool> {
+    let Some(object) = arrow_source(doc.sheet(), source).cloned() else {
+        return Ok(false);
+    };
+    let bounds = object.rotated_bounds();
+    let center = bounds.center();
+    let from = Endpoint::Object(source);
+    let neighbour = if mode == ArrowMode::CloneOnly {
+        None
+    } else {
+        let step = dir.unit() * (dir.extent(bounds) + ARROW_GAP);
+        arrow_neighbour(doc.sheet(), scene, center + step, source)
+    };
+    match (mode, neighbour) {
+        (ArrowMode::ConnectOnly, to) => {
+            let to =
+                to.unwrap_or_else(|| Endpoint::Point(dir.side(bounds) + dir.unit() * ARROW_GAP));
+            let edge =
+                doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+            select_hit(view, doc.sheet(), SceneHit::Object(edge), false);
+        }
+        (_, Some(to)) => {
+            doc.add_canvas_object(CanvasObject::connector(CanvasConnector::new(from, to)))?;
+            select_endpoint(view, doc.sheet(), to);
+        }
+        (mode, None) => {
+            let offset = clone_offset(doc.sheet(), scene, &object, dir);
+            let clone = arrow_clone(&object, center + offset);
+            let id = if mode == ArrowMode::CloneOnly {
+                doc.add_canvas_object(clone)?
+            } else {
+                doc.add_connected_canvas_object(
+                    clone,
+                    CanvasConnector::new(from, Endpoint::Point(center)),
+                )?
+                .0
+            };
+            select_hit(view, doc.sheet(), SceneHit::Object(id), false);
+        }
+    }
+    Ok(true)
+}
+
+/// Drag from a direction arrow released at `point`: connect to the item there,
+/// or leave a free end; Ctrl/Cmd over empty space drops a connected clone.
+fn arrow_drop(
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    scene: &Scene,
+    source: CanvasObjectId,
+    point: Vec2,
+    modifiers: Modifiers,
+) -> EditResult<bool> {
+    let Some(object) = arrow_source(doc.sheet(), source).cloned() else {
+        return Ok(false);
+    };
+    if object.rotated_bounds().contains(point) {
+        return Ok(false);
+    }
+    let from = Endpoint::Object(source);
+    let (target, _) = attachment_at(
+        doc.sheet(),
+        layout,
+        scene,
+        point,
+        view.zoom,
+        Some(source),
+        modifiers,
+    )?;
+    let occupied =
+        if modifiers.command && modifiers.alt && matches!(target.endpoint, Endpoint::Point(_)) {
+            let (unmodified, _) = attachment_at(
+                doc.sheet(),
+                layout,
+                scene,
+                point,
+                view.zoom,
+                Some(source),
+                Modifiers::NONE,
+            )?;
+            !matches!(unmodified.endpoint, Endpoint::Point(_))
+        } else {
+            false
+        };
+    match target.endpoint {
+        Endpoint::Point(center) if modifiers.command && !occupied => {
+            let (id, _) = doc.add_connected_canvas_object(
+                arrow_clone(&object, center),
+                CanvasConnector::new(from, Endpoint::Point(center)),
+            )?;
+            select_hit(view, doc.sheet(), SceneHit::Object(id), false);
+        }
+        _ => {
+            let edge = doc.add_canvas_object(CanvasObject::connector(
+                ConnectorAttachment::floating(from).connector(target),
+            ))?;
+            select_hit(view, doc.sheet(), SceneHit::Object(edge), false);
+        }
+    }
+    Ok(true)
+}
+
+fn quick_popup_id() -> Id {
+    MapCanvas::id().with("quick-shapes")
+}
+
+fn quick_tile_id(index: usize) -> Id {
+    quick_popup_id().with(("tile", index))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_quick(
+    ctx: &egui::Context,
+    doc: &Document,
+    view: &mut MapView,
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    anchor: Rect,
+    hover: bool,
+    return_focus: Option<Id>,
+) {
+    view.board_input.quick = Some(QuickShapes {
+        source,
+        dir,
+        anchor,
+        hover,
+        return_focus,
+        focus_first: return_focus.is_some(),
+        preview: None,
+        state: doc.state_id(),
+        sheet: doc.active_index(),
+        sheet_identity: sheet_identity(doc),
+        camera: (view.offset, view.zoom, view.canvas_rect),
+    });
+    view.board_input.arrow_hover = Some(((SceneId::Object(source), dir), None));
+    egui::Popup::open_id(ctx, quick_popup_id());
+    ctx.request_repaint();
+}
+
+fn close_quick(ctx: &egui::Context, view: &mut MapView) {
+    if let Some(quick) = view.board_input.quick.take() {
+        // Resting on the same arrow must not reopen it at once.
+        view.board_input.arrow_hover = Some(((SceneId::Object(quick.source), quick.dir), None));
+        egui::Popup::close_id(ctx, quick_popup_id());
+    }
+}
+
+/// The source's own kind first, then common draw.io shapes.
+fn quick_shapes(source: ShapeKind) -> Vec<ShapeKind> {
+    let mut list = vec![source];
+    list.extend(QUICK_SHAPES.into_iter().filter(|shape| *shape != source));
+    list.truncate(QUICK_SHAPES.len());
+    list
+}
+
+/// Where a connected shape added from `dir` lands, as a rect.
+fn quick_target(
+    sheet: &Sheet,
+    scene: &Scene,
+    source: &CanvasObject,
+    dir: ArrowDir,
+) -> thinoda_core::Rect {
+    let center = source.rotated_bounds().center() + clone_offset(sheet, scene, source, dir);
+    thinoda_core::Rect::from_center_size(center, source.rect.size)
+}
+
+/// Adds a `shape` copy of `source` connected in `dir`, as one undoable edit.
+fn quick_insert(
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    source: CanvasObjectId,
+    dir: ArrowDir,
+    shape: ShapeKind,
+) -> EditResult<bool> {
+    let Some(object) = arrow_source(doc.sheet(), source).cloned() else {
+        return Ok(false);
+    };
+    let target = quick_target(doc.sheet(), scene, &object, dir);
+    let mut clone = arrow_clone(&object, target.center());
+    if let CanvasObjectKind::Shape { shape: kind, .. } = &mut clone.kind {
+        if *kind != shape {
+            clone.rounding = None;
+            clone.rectangle_sides = None;
+            clone.double_ellipse_margin = None;
+        }
+        *kind = shape;
+    }
+    let center = object.rotated_bounds().center();
+    let (id, _) = doc.add_connected_canvas_object(
+        clone,
+        CanvasConnector::new(Endpoint::Object(source), Endpoint::Point(center)),
+    )?;
+    select_hit(view, doc.sheet(), SceneHit::Object(id), false);
+    Ok(true)
+}
+
+#[derive(Default)]
+struct QuickResult {
+    chosen: Option<ShapeKind>,
+    preview: Option<ShapeKind>,
+    focused: bool,
+}
+
+fn quick_content(
+    ui: &mut Ui,
+    title: &str,
+    hint: &str,
+    tiles: &[(ShapeKind, String)],
+    focus_first: bool,
+    accent: Color32,
+) -> QuickResult {
+    let gap = 4.0;
+    let width = QUICK_COLUMNS as f32 * (QUICK_TILE + gap) - gap;
+    ui.set_max_width(width);
+    ui.label(egui::RichText::new(title).strong());
+    let mut result = QuickResult::default();
+    let count = tiles.len();
+    let focused = ui.memory(|memory| (0..count).find(|i| memory.has_focus(quick_tile_id(*i))));
+    if let Some(index) = focused {
+        result.focused = true;
+        ui.memory_mut(|memory| {
+            memory.set_focus_lock_filter(
+                quick_tile_id(index),
+                EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                },
+            )
+        });
+        let next = ui.input_mut(|input| {
+            if input.consume_key(Modifiers::SHIFT, Key::Tab)
+                || input.consume_key(Modifiers::NONE, Key::ArrowLeft)
+            {
+                Some((index + count - 1) % count)
+            } else if input.consume_key(Modifiers::NONE, Key::Tab)
+                || input.consume_key(Modifiers::NONE, Key::ArrowRight)
+            {
+                Some((index + 1) % count)
+            } else if input.consume_key(Modifiers::NONE, Key::ArrowDown) {
+                Some((index + QUICK_COLUMNS).min(count - 1))
+            } else if input.consume_key(Modifiers::NONE, Key::ArrowUp) {
+                Some(index.saturating_sub(QUICK_COLUMNS))
+            } else {
+                None
+            }
+        });
+        if let Some(next) = next {
+            ui.memory_mut(|memory| memory.request_focus(quick_tile_id(next)));
+        }
+    } else if focus_first && count > 0 {
+        ui.memory_mut(|memory| memory.request_focus(quick_tile_id(0)));
+    }
+    for (row, chunk) in tiles.chunks(QUICK_COLUMNS).enumerate() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (column, (shape, name)) in chunk.iter().enumerate() {
+                let index = row * QUICK_COLUMNS + column;
+                let (_, rect) = ui.allocate_space(vec2(QUICK_TILE, QUICK_TILE));
+                let response = ui.interact(rect, quick_tile_id(index), Sense::click());
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+                let hot = response.hovered() || response.has_focus();
+                let visuals = ui.style().interact(&response);
+                let fill = if hot {
+                    visuals.bg_fill
+                } else {
+                    ui.visuals().faint_bg_color
+                };
+                ui.painter().rect(
+                    rect.shrink(0.5),
+                    6.0,
+                    fill,
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                    StrokeKind::Inside,
+                );
+                if response.has_focus() {
+                    ui.painter().rect_stroke(
+                        rect.shrink(2.0),
+                        5.0,
+                        Stroke::new(2.0, accent),
+                        StrokeKind::Inside,
+                    );
+                }
+                let icon = Rect::from_center_size(
+                    rect.center(),
+                    vec2(QUICK_TILE * 0.62, QUICK_TILE * 0.5),
+                );
+                let point = |p: Vec2| icon.min + vec2(p.x * icon.width(), p.y * icon.height());
+                let stroke = Stroke::new(1.5, ui.visuals().text_color());
+                ui.painter().add(egui::Shape::closed_line(
+                    shape.unit_outline().into_iter().map(point).collect(),
+                    stroke,
+                ));
+                for detail in shape.unit_details() {
+                    ui.painter().add(egui::Shape::line(
+                        detail.into_iter().map(point).collect(),
+                        stroke,
+                    ));
+                }
+                if hot {
+                    result.preview = Some(*shape);
+                }
+                if response.on_hover_text(name).clicked() {
+                    result.chosen = Some(*shape);
+                }
+            }
+        });
+    }
+    ui.add(egui::Label::new(egui::RichText::new(hint).small().weak()).wrap());
+    result
+}
+
+/// Shows the open shape picker and applies its choice; returns whether it
+/// consumed this frame's board input.
+fn show_quick(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    out: &mut CanvasOutput,
+) -> bool {
+    let ctx = ui.ctx().clone();
+    let Some(quick) = view.board_input.quick.as_ref() else {
+        return false;
+    };
+    let kind = arrow_source(doc.sheet(), quick.source).and_then(|object| match object.kind {
+        CanvasObjectKind::Shape { shape, .. } => Some(shape),
+        _ => None,
+    });
+    let stale = quick.state != doc.state_id()
+        || quick.sheet != doc.active_index()
+        || quick.sheet_identity != sheet_identity(doc)
+        || quick.camera != (view.offset, view.zoom, view.canvas_rect)
+        || !egui::Popup::is_id_open(&ctx, quick_popup_id())
+        || !matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_))
+        || view.editing.is_some()
+        || view.editing_board_object().is_some()
+        || !ui.is_enabled();
+    let Some(kind) = kind.filter(|_| !stale) else {
+        close_quick(&ctx, view);
+        return false;
+    };
+    let (source, dir, anchor, hover, return_focus, focus_first) = (
+        quick.source,
+        quick.dir,
+        quick.anchor,
+        quick.hover,
+        quick.return_focus,
+        quick.focus_first,
+    );
+    let title = control_label(view, ControlKind::Arrow(dir));
+    let hint = format!(
+        "{}\n{}",
+        view.board_labels.connect_hint, view.board_labels.quick_hint
+    );
+    let tiles: Vec<_> = quick_shapes(kind)
+        .into_iter()
+        .map(|shape| {
+            let name = view
+                .board_labels
+                .shape_names
+                .get(&shape)
+                .cloned()
+                .unwrap_or_else(|| view.board_labels.shape.clone());
+            (shape, name)
+        })
+        .collect();
+    let align = match dir {
+        ArrowDir::Up => egui::RectAlign::TOP,
+        ArrowDir::Right => egui::RectAlign::RIGHT,
+        ArrowDir::Down => egui::RectAlign::BOTTOM,
+        ArrowDir::Left => egui::RectAlign::LEFT,
+    };
+    if let Some(origin) = ctx.input(|input| {
+        input
+            .pointer
+            .primary_pressed()
+            .then(|| input.pointer.press_origin())
+            .flatten()
+            .filter(|origin| anchor.contains(*origin))
+    }) {
+        // The arrow stays live under its picker: a press starts the usual
+        // click/drag gesture, as in draw.io.
+        close_quick(&ctx, view);
+        if let Some(object) = arrow_source(doc.sheet(), source) {
+            let start = view.xf().sheet(origin);
+            let kind = GestureKind::Arrow {
+                source,
+                dir,
+                anchor: dir.side(object.rotated_bounds()),
+                current: start,
+                since: ctx.input(|input| input.time),
+                far: false,
+            };
+            view.board_input.gesture = Some(gesture(doc, view, kind, start));
+        }
+        return true;
+    }
+    let accent = view.accent;
+    let shown = egui::Popup::new(quick_popup_id(), ctx.clone(), anchor, ui.layer_id())
+        .kind(egui::PopupKind::Popup)
+        .open_memory(None)
+        .align(align)
+        .gap(6.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .accessible_name(title.clone())
+        .show(|ui| quick_content(ui, &title, &hint, &tiles, focus_first, accent));
+    let Some(shown) = shown else {
+        close_quick(&ctx, view);
+        return false;
+    };
+    let result = shown.inner;
+    if let Some(shape) = result.chosen {
+        close_quick(&ctx, view);
+        if prepare_edit(doc, view, out) {
+            match quick_insert(doc, view, scene, source, dir, shape) {
+                Ok(true) if return_focus.is_some() => {
+                    focus_next_arrow(ui, view, doc.sheet(), scene, dir);
+                }
+                Ok(_) => {}
+                Err(error) => out.error = Some(error),
+            }
+        }
+        return false;
+    }
+    if !egui::Popup::is_id_open(&ctx, quick_popup_id()) {
+        close_quick(&ctx, view);
+        if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+            if let Some(id) = return_focus {
+                ctx.memory_mut(|memory| memory.request_focus(id));
+            }
+        } else if ctx.input(|input| input.pointer.any_down()) {
+            view.board_input.suppress_until_release = true;
+        }
+        // The input that closed the picker must not also act on the board.
+        return true;
+    }
+    let rect = shown.response.rect;
+    if hover
+        && !result.focused
+        && !ctx
+            .pointer_hover_pos()
+            .is_some_and(|pointer| anchor.union(rect).expand(12.0).contains(pointer))
+    {
+        close_quick(&ctx, view);
+        if ctx.input(|input| input.pointer.any_down()) {
+            // A press dragged out of the picker must not reach the board.
+            view.board_input.suppress_until_release = true;
+            return true;
+        }
+        return false;
+    }
+    if let Some(quick) = view.board_input.quick.as_mut() {
+        quick.preview = result.preview;
+        quick.focus_first &= !result.focused;
+    }
+    true
 }
 
 fn arrow(ui: &Ui, accept: impl Fn(Vec2, Modifiers) -> bool) -> Option<(Vec2, Modifiers)> {
@@ -1081,6 +2772,110 @@ fn alt_arrow_pressed(ui: &Ui) -> bool {
     })
 }
 
+fn activate_waypoint_insertion(
+    ui: &Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    out: &mut CanvasOutput,
+    control: Control,
+) {
+    let (ControlKind::InsertWaypoint(index, _), SceneId::Object(id)) = (control.kind, control.item)
+    else {
+        return;
+    };
+    if prepare_edit(doc, view, out) {
+        match edit_waypoint(doc, id, WaypointEdit::Insert(index, control.point)) {
+            Ok(true) => ui.ctx().memory_mut(|memory| {
+                memory.request_focus(control_kind_id(
+                    control.item,
+                    ControlKind::Waypoint(index),
+                    false,
+                ))
+            }),
+            Ok(false) => {}
+            Err(error) => out.error = Some(error),
+        }
+    }
+}
+
+fn cycle_connection_point(
+    doc: &mut Document,
+    layout: &Layout,
+    scene: &Scene,
+    control: Control,
+    zoom: f32,
+    forward: bool,
+) -> EditResult<bool> {
+    let SceneId::Object(edge) = control.item else {
+        return Ok(false);
+    };
+    let start = control.kind == ControlKind::From;
+    let (endpoint, current) = connector_end(doc.sheet(), edge, start)
+        .ok_or_else(|| EditError::Invalid("connector no longer exists".into()))?;
+    let target = match endpoint {
+        Endpoint::Object(id) => SceneId::Object(id),
+        Endpoint::Topic(id) => SceneId::Topic(id),
+        Endpoint::Point(_) => {
+            return Err(EditError::Invalid(
+                "no visible connection points on this target".into(),
+            ));
+        }
+    };
+    let index = scene
+        .items
+        .iter()
+        .rposition(|item| item.id == target)
+        .ok_or_else(|| EditError::Invalid("no visible connection points on this target".into()))?;
+    let object = match target {
+        SceneId::Object(id) => doc.sheet().canvas.object(id),
+        _ => None,
+    };
+    let points = connection_points_for_item(
+        doc.sheet(),
+        layout,
+        scene,
+        index,
+        object,
+        Some(SceneId::Object(edge)),
+        Some(CONNECTION_POINT_RADIUS / zoom),
+    )
+    .filter(|points| !points.points.is_empty())
+    .ok_or_else(|| EditError::Invalid("no visible connection points on this target".into()))?;
+    let current_index = points
+        .points
+        .iter()
+        .position(|point| point.attachment.port == current && current.is_some());
+    let next = if let Some(current) = current_index {
+        if forward {
+            (current + 1) % points.points.len()
+        } else {
+            (current + points.points.len() - 1) % points.points.len()
+        }
+    } else {
+        points
+            .points
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                (a.position - control.point)
+                    .length()
+                    .total_cmp(&(b.position - control.point).length())
+            })
+            .map(|(index, _)| index)
+            .ok_or_else(|| {
+                EditError::Invalid("no visible connection points on this target".into())
+            })?
+    };
+    set_endpoint(
+        doc,
+        edge,
+        start,
+        endpoint,
+        points.points[next].attachment.port,
+    )?;
+    Ok(true)
+}
+
 fn keyboard_control(
     ui: &Ui,
     doc: &mut Document,
@@ -1103,7 +2898,7 @@ fn keyboard_control(
     });
     for (modifiers, reverse) in [(Modifiers::SHIFT, true), (Modifiers::NONE, false)] {
         if ui.input_mut(|input| input.consume_key(modifiers, Key::Tab)) {
-            let controls = controls(view, doc.sheet(), layout, scene);
+            let controls = tab_controls(view, doc.sheet(), layout, scene);
             if let Some(index) = controls
                 .iter()
                 .position(|candidate| control_id(*candidate) == control_id(control))
@@ -1127,9 +2922,95 @@ fn keyboard_control(
             .memory_mut(|memory| memory.request_focus(MapCanvas::id()));
         return;
     }
+    if matches!(
+        control.kind,
+        ControlKind::Waypoint(_) | ControlKind::InsertWaypoint(_, _)
+    ) && ui.input_mut(|input| {
+        input.consume_key(Modifiers::NONE, Key::Delete)
+            || input.consume_key(Modifiers::NONE, Key::Backspace)
+    }) {
+        if let (ControlKind::Waypoint(index), SceneId::Object(id)) = (control.kind, control.item)
+            && prepare_edit(doc, view, out)
+        {
+            match edit_waypoint(doc, id, WaypointEdit::Remove(index)) {
+                Ok(true) => ui
+                    .ctx()
+                    .memory_mut(|memory| memory.request_focus(item_id(control.item))),
+                Ok(false) => {}
+                Err(error) => out.error = Some(error),
+            }
+        }
+        return;
+    }
+    if matches!(control.kind, ControlKind::InsertWaypoint(_, _))
+        && ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter)
+                || input.consume_key(Modifiers::NONE, Key::Space)
+        })
+    {
+        activate_waypoint_insertion(ui, doc, view, out, control);
+        return;
+    }
+    if matches!(control.kind, ControlKind::From | ControlKind::To)
+        && ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter)
+                || input.consume_key(Modifiers::NONE, Key::Space)
+        })
+    {
+        toggle_fixed_endpoint(doc, view, scene, control, out);
+        return;
+    }
+    if matches!(control.kind, ControlKind::From | ControlKind::To) {
+        let direction = ui.input_mut(|input| {
+            if input.consume_key(Modifiers::NONE, Key::Home) {
+                Some(false)
+            } else if input.consume_key(Modifiers::NONE, Key::End) {
+                Some(true)
+            } else {
+                None
+            }
+        });
+        if let Some(forward) = direction {
+            if prepare_edit(doc, view, out)
+                && let Err(error) =
+                    cycle_connection_point(doc, layout, scene, control, view.zoom, forward)
+            {
+                out.error = Some(error);
+            }
+            return;
+        }
+    }
     // Let the canvas own Alt+arrow duplication/rotation even when a handle is
     // focused. `consume_key` otherwise accepts extra Alt modifiers.
     if alt_arrow_pressed(ui) {
+        return;
+    }
+    if let ControlKind::Arrow(dir) = control.kind {
+        let SceneId::Object(source) = control.item else {
+            return;
+        };
+        if ui.input_mut(|input| input.consume_key(Modifiers::SHIFT, Key::F10)) {
+            let anchor = arrow_rect(view, control.point);
+            let focus = Some(control_id(control));
+            open_quick(ui.ctx(), doc, view, source, dir, anchor, false, focus);
+            return;
+        }
+        // Enter/Space act like a click; modifiers pick the same variants.
+        for modifiers in [Modifiers::COMMAND, Modifiers::SHIFT, Modifiers::NONE] {
+            if ui.input_mut(|input| {
+                input.consume_key(modifiers, Key::Enter) || input.consume_key(modifiers, Key::Space)
+            }) {
+                if prepare_edit(doc, view, out) {
+                    let mode = ArrowMode::from_modifiers(modifiers);
+                    match arrow_click(doc, view, scene, source, dir, mode) {
+                        Ok(true) => focus_next_arrow(ui, view, doc.sheet(), scene, dir),
+                        Ok(false) => {}
+                        Err(error) => out.error = Some(error),
+                    }
+                }
+                return;
+            }
+        }
         return;
     }
     let Some((delta, modifiers)) = arrow(ui, |_, _| true) else {
@@ -1146,6 +3027,26 @@ fn keyboard_control(
             let SceneId::Object(id) = control.item else {
                 return;
             };
+            let start = control.kind == ControlKind::From;
+            if !modifiers.command
+                && let Some((end, Some(previous))) = connector_end(doc.sheet(), id, start)
+            {
+                if !prepare_edit(doc, view, out) {
+                    return;
+                }
+                let result = fixed_port_at(
+                    doc.sheet(),
+                    scene,
+                    end,
+                    control.point + delta,
+                    Some(previous),
+                )
+                .and_then(|port| set_endpoint(doc, id, start, end, port));
+                if let Err(error) = result {
+                    out.error = Some(error);
+                }
+                return;
+            }
             let endpoint = if modifiers.command {
                 let choices: Vec<_> = scene
                     .items
@@ -1183,8 +3084,39 @@ fn keyboard_control(
             } else {
                 Endpoint::Point(control.point + delta)
             };
-            set_endpoint(doc, id, control.kind == ControlKind::From, endpoint).map(|()| true)
+            set_endpoint(doc, id, start, endpoint, None).map(|()| true)
         }
+        ControlKind::Waypoint(index) | ControlKind::InsertWaypoint(index, _) => {
+            let SceneId::Object(id) = control.item else {
+                return;
+            };
+            if !prepare_edit(doc, view, out) {
+                return;
+            }
+            let point = control.point + delta;
+            let edit = if matches!(control.kind, ControlKind::Waypoint(_)) {
+                WaypointEdit::Move(index, point)
+            } else {
+                WaypointEdit::Insert(index, point)
+            };
+            let result = edit_waypoint(doc, id, edit);
+            if matches!(result, Ok(true)) {
+                let visible = view.canvas_rect.contains(view.xf().pos(point))
+                    && scene
+                        .item(control.item)
+                        .and_then(|item| item.clip)
+                        .is_none_or(|clip| clip.contains(point));
+                ui.ctx().memory_mut(|memory| {
+                    memory.request_focus(if visible {
+                        control_kind_id(control.item, ControlKind::Waypoint(index), false)
+                    } else {
+                        item_id(control.item)
+                    })
+                });
+            }
+            result
+        }
+        ControlKind::Arrow(_) => return,
     };
     if let Err(error) = result {
         out.error = Some(error);
@@ -1202,21 +3134,74 @@ fn interact_controls(
 ) -> bool {
     view.board_input.control_focused = false;
     if !enabled {
+        if let Some((_, since)) = view.board_input.arrow_hover.as_mut() {
+            *since = None;
+        }
         return view.board_input.is_active();
     }
     let mut blocked = view.board_input.is_active();
+    let mut arrow_hovered = false;
+    let now = ui.input(|input| input.time);
     for control in controls(view, doc.sheet(), layout, scene) {
-        let rect = Rect::from_center_size(view.xf().pos(control.point), vec2(28.0, 28.0));
+        let rect = arrow_rect(view, control.point);
         if !view.canvas_rect.intersects(rect) {
             continue;
         }
-        let response = ui.interact(
-            rect,
-            control_id(control),
-            Sense::click_and_drag() | Sense::FOCUSABLE,
-        );
-        let label = control_label(view, control.kind);
+        let sense = if control.hover {
+            Sense::click_and_drag()
+        } else {
+            Sense::click_and_drag() | Sense::FOCUSABLE
+        };
+        let response = ui.interact(rect, control_id(control), sense);
+        let mut label = control_label(view, control.kind);
+        if matches!(control.kind, ControlKind::From | ControlKind::To)
+            && let SceneId::Object(id) = control.item
+            && connector_end(doc.sheet(), id, control.kind == ControlKind::From)
+                .is_some_and(|(_, port)| port.is_some())
+        {
+            label = format!("{label}, {}", view.board_labels.fixed_attachment);
+        }
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+        let hint = match control.kind {
+            ControlKind::From | ControlKind::To => Some(&view.board_labels.connector_end_hint),
+            ControlKind::Waypoint(_) => Some(&view.board_labels.waypoint_hint),
+            ControlKind::InsertWaypoint(_, _) => Some(&view.board_labels.insert_waypoint_hint),
+            _ => None,
+        };
+        if let Some(hint) = hint {
+            response.clone().on_hover_text(hint);
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_description(hint.as_str());
+            });
+        } else if matches!(control.kind, ControlKind::Arrow(_)) {
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_description(view.board_labels.connect_hint.as_str());
+            });
+        }
+        if let ControlKind::Arrow(dir) = control.kind
+            && let SceneId::Object(source) = control.item
+            && response.hovered()
+            && view.board_input.gesture.is_none()
+        {
+            // Resting the mouse on an arrow opens its shape picker, which
+            // also explains the arrow; a press restarts only after leaving.
+            let key = (control.item, dir);
+            let since = match view.board_input.arrow_hover {
+                Some((previous, since)) if previous == key => since,
+                _ => Some(now),
+            }
+            .filter(|_| !ui.input(|input| input.pointer.any_down() || input.pointer.any_click()));
+            view.board_input.arrow_hover = Some((key, since));
+            arrow_hovered = true;
+            if let Some(since) = since {
+                if now - since >= QUICK_DELAY {
+                    open_quick(ui.ctx(), doc, view, source, dir, rect, true, None);
+                    return true;
+                }
+                ui.ctx()
+                    .request_repaint_after_secs((QUICK_DELAY - (now - since)) as f32);
+            }
+        }
         blocked |= response.hovered()
             || response.is_pointer_button_down_on()
             || ui
@@ -1226,7 +3211,9 @@ fn interact_controls(
             && ui.input(|input| input.pointer.primary_pressed())
             && view.board_input.gesture.is_none()
         {
-            response.request_focus();
+            if !control.hover {
+                response.request_focus();
+            }
             let start = view.xf().sheet(
                 ui.input(|input| input.pointer.press_origin())
                     .unwrap_or(rect.center()),
@@ -1256,14 +3243,107 @@ fn interact_controls(
                         point: control.point,
                     }
                 }
+                ControlKind::Waypoint(index) | ControlKind::InsertWaypoint(index, _) => {
+                    let SceneId::Object(id) = control.item else {
+                        continue;
+                    };
+                    GestureKind::Waypoint {
+                        id,
+                        index,
+                        insert: matches!(control.kind, ControlKind::InsertWaypoint(_, _)),
+                        original: control.point,
+                        point: control.point,
+                    }
+                }
+                ControlKind::Arrow(dir) => {
+                    let SceneId::Object(source) = control.item else {
+                        continue;
+                    };
+                    let bounds =
+                        thinoda_core::board::rotated_bounds(control.rect, control.rotation);
+                    GestureKind::Arrow {
+                        source,
+                        dir,
+                        anchor: dir.side(bounds),
+                        current: start,
+                        since: now,
+                        far: false,
+                    }
+                }
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, start));
             blocked = true;
+        }
+        if response.double_clicked()
+            && let (ControlKind::Waypoint(index), SceneId::Object(id)) =
+                (control.kind, control.item)
+            && view
+                .board_input
+                .gesture
+                .as_ref()
+                .is_none_or(|drag| !drag.canceled && !drag.guard.changed(doc, view))
+        {
+            view.board_input.gesture = None;
+            if prepare_edit(doc, view, out) {
+                match edit_waypoint(doc, id, WaypointEdit::Remove(index)) {
+                    Ok(true) => ui
+                        .ctx()
+                        .memory_mut(|memory| memory.request_focus(item_id(control.item))),
+                    Ok(false) => {}
+                    Err(error) => out.error = Some(error),
+                }
+            }
+            return true;
+        }
+        if response.clicked()
+            && view.board_input.gesture.is_none()
+            && ui.input(|input| {
+                input.has_accesskit_action_request(response.id, egui::accesskit::Action::Click)
+            })
+        {
+            match control.kind {
+                ControlKind::From | ControlKind::To => {
+                    response.request_focus();
+                    toggle_fixed_endpoint(doc, view, scene, control, out);
+                    return true;
+                }
+                ControlKind::InsertWaypoint(_, _) => {
+                    activate_waypoint_insertion(ui, doc, view, out, control);
+                    return true;
+                }
+                ControlKind::Waypoint(_) => {
+                    response.request_focus();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        // Press and release can land in one frame (e.g. synthetic taps).
+        if response.clicked()
+            && view.board_input.gesture.is_none()
+            && let ControlKind::Arrow(dir) = control.kind
+            && let SceneId::Object(source) = control.item
+        {
+            if prepare_edit(doc, view, out) {
+                let mode = ArrowMode::from_modifiers(ui.input(|input| input.modifiers));
+                match arrow_click(doc, view, scene, source, dir, mode) {
+                    // Enter/Space on a focused arrow, or an assistive-technology click.
+                    Ok(true) if response.has_focus() => {
+                        focus_next_arrow(ui, view, doc.sheet(), scene, dir);
+                    }
+                    Ok(_) => {}
+                    Err(error) => out.error = Some(error),
+                }
+            }
+            return true;
         }
         if response.has_focus() && view.board_input.gesture.is_none() {
             view.board_input.control_focused = true;
             keyboard_control(ui, doc, view, layout, scene, control, out);
         }
+    }
+    if !arrow_hovered && view.board_input.quick.is_none() {
+        view.board_input.arrow_hover = None;
     }
     blocked
 }
@@ -1273,7 +3353,9 @@ fn update_gesture(
     ui: &Ui,
     doc: &mut Document,
     view: &mut MapView,
+    layout: &Layout,
     scene: &Scene,
+    response: &Response,
     pointer: Option<Pos2>,
     enabled: bool,
     event_offset: usize,
@@ -1292,8 +3374,8 @@ fn update_gesture(
                     pos,
                     button: PointerButton::Primary,
                     pressed: false,
-                    ..
-                } => release = Some(*pos),
+                    modifiers,
+                } => release = Some((*pos, *modifiers)),
                 egui::Event::PointerGone if release.is_none() => canceled = true,
                 egui::Event::WindowFocused(false)
                 | egui::Event::Touch {
@@ -1305,6 +3387,8 @@ fn update_gesture(
         }
         (release, canceled)
     });
+    let release_modifiers = release.map_or(Modifiers::NONE, |(_, modifiers)| modifiers);
+    let release = release.map(|(point, _)| point);
     let pointer = release.or(pointer);
     let changed = drag.guard.changed(doc, view);
     drag.canceled |= !enabled
@@ -1349,13 +3433,65 @@ fn update_gesture(
                 };
                 *preview = thinoda_core::board::normalize_rotation(degrees);
             }
-            GestureKind::Endpoint { point: p, .. } => *p = current,
+            GestureKind::Endpoint { point: p, .. }
+            | GestureKind::Arrow { current: p, .. }
+            | GestureKind::Outline { current: p, .. } => {
+                *p = current;
+            }
+            GestureKind::Waypoint {
+                original, point, ..
+            } => {
+                *point = snapped(doc.sheet(), *original + current - drag.origin);
+            }
+        }
+    }
+    if release.is_none()
+        && !drag.canceled
+        && ctx.input(|input| input.pointer.primary_down())
+        && let GestureKind::Arrow {
+            source,
+            dir,
+            current,
+            since,
+            far,
+            ..
+        } = &mut drag.kind
+    {
+        // Pressing and holding an arrow (the touch path to the shape picker).
+        *far |= (*current - drag.origin).length() * view.zoom >= ARROW_DRAG;
+        if !*far {
+            let now = ctx.input(|input| input.time);
+            if now - *since >= QUICK_DELAY {
+                let (source, dir) = (*source, *dir);
+                if let Some(object) = arrow_source(doc.sheet(), source) {
+                    let anchor = arrow_rect(view, arrow_point(view, object, dir));
+                    open_quick(ctx, doc, view, source, dir, anchor, false, None);
+                    view.board_input.suppress_until_release = true;
+                }
+                return true;
+            }
+            ctx.request_repaint_after_secs((QUICK_DELAY - (now - *since)) as f32);
         }
     }
     if release.is_some() {
+        let is_arrow = matches!(drag.kind, GestureKind::Arrow { .. });
+        let connecting = match &drag.kind {
+            GestureKind::Create {
+                tool: BoardTool::Connector,
+                ..
+            }
+            | GestureKind::Endpoint { .. } => true,
+            GestureKind::Arrow { current, .. } | GestureKind::Outline { current, .. } => {
+                (*current - drag.origin).length() * view.zoom >= ARROW_DRAG
+            }
+            _ => false,
+        };
         if !drag.canceled
-            && drag.moved
-            && pointer.is_some_and(|point| view.canvas_rect.contains(point))
+            && (drag.moved || is_arrow)
+            && pointer.is_some_and(|point| {
+                view.canvas_rect.contains(point)
+                    && (!connecting || canvas_point_unobscured(ui, response, point))
+            })
         {
             let duplicating = matches!(
                 drag.kind,
@@ -1364,6 +3500,10 @@ fn update_gesture(
                     ..
                 }
             );
+            let waypoint_focus = match &drag.kind {
+                GestureKind::Waypoint { id, index, .. } => Some((*id, *index)),
+                _ => None,
+            };
             let result = match drag.kind {
                 GestureKind::Create {
                     tool,
@@ -1372,14 +3512,24 @@ fn update_gesture(
                     from,
                 } => {
                     if tool == BoardTool::Connector {
-                        let to = endpoint_at(doc.sheet(), scene, current, None);
-                        create(
-                            doc,
-                            view,
-                            tool,
-                            thinoda_core::Rect::default(),
-                            Some((from, to)),
+                        attachment_at(
+                            doc.sheet(),
+                            layout,
+                            scene,
+                            current,
+                            view.zoom,
+                            None,
+                            release_modifiers,
                         )
+                        .and_then(|(to, _)| {
+                            create(
+                                doc,
+                                view,
+                                tool,
+                                thinoda_core::Rect::default(),
+                                Some((from, to)),
+                            )
+                        })
                     } else {
                         let minimum = if tool == BoardTool::Frame {
                             thinoda_core::MIN_ZONE_SIZE
@@ -1431,13 +3581,66 @@ fn update_gesture(
                         set_rotation(doc, item, preview).map(|()| true)
                     }
                 }
-                GestureKind::Endpoint { id, start, point } => {
-                    let end = endpoint_at(doc.sheet(), scene, point, Some(id));
-                    set_endpoint(doc, id, start, end).map(|()| true)
+                GestureKind::Endpoint { id, start, point } => attachment_at(
+                    doc.sheet(),
+                    layout,
+                    scene,
+                    point,
+                    view.zoom,
+                    Some(id),
+                    release_modifiers,
+                )
+                .and_then(|(target, _)| set_endpoint(doc, id, start, target.endpoint, target.port))
+                .map(|()| true),
+                GestureKind::Waypoint {
+                    id,
+                    index,
+                    insert,
+                    point,
+                    ..
+                } => {
+                    let edit = if insert {
+                        WaypointEdit::Insert(index, point)
+                    } else {
+                        WaypointEdit::Move(index, point)
+                    };
+                    edit_waypoint(doc, id, edit)
+                }
+                GestureKind::Arrow {
+                    source,
+                    dir,
+                    current,
+                    ..
+                } => {
+                    if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
+                        arrow_drop(doc, view, layout, scene, source, current, release_modifiers)
+                    } else {
+                        let mode = ArrowMode::from_modifiers(release_modifiers);
+                        arrow_click(doc, view, scene, source, dir, mode)
+                    }
+                }
+                GestureKind::Outline {
+                    source, current, ..
+                } => {
+                    if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
+                        arrow_drop(doc, view, layout, scene, source, current, release_modifiers)
+                    } else {
+                        Ok(false)
+                    }
                 }
             };
             match result {
                 Ok(true) if duplicating => focus_duplicated_selection(ui, view),
+                Ok(true) if waypoint_focus.is_some() => {
+                    let (id, index) = waypoint_focus.expect("checked");
+                    ctx.memory_mut(|memory| {
+                        memory.request_focus(control_kind_id(
+                            SceneId::Object(id),
+                            ControlKind::Waypoint(index),
+                            false,
+                        ))
+                    });
+                }
                 Err(error) => out.error = Some(error),
                 _ => {}
             }
@@ -1464,10 +3667,31 @@ pub(super) fn interact(
     out: &mut CanvasOutput,
 ) -> bool {
     view.observe_board_rotation_selection(doc);
+    view.board_input.armed_hover = false;
+    view.board_input.ghost = None;
+    view.board_input.outline_hover = None;
+    view.board_input.connection_hot = false;
+    view.board_input.connection_hover = None;
     let ctx = ui.ctx().clone();
     if view.board_input.last_tool != view.board_tool {
         view.board_input.cancel_gesture();
+        close_quick(&ctx, view);
         view.board_input.last_tool = view.board_tool;
+    }
+    if let Some(press) = ctx.input(|input| {
+        input.events[event_offset..]
+            .iter()
+            .find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                } => Some((*pos, *modifiers)),
+                _ => None,
+            })
+    }) {
+        view.board_input.primary_press = Some(press);
     }
     if view.board_input.connector.as_ref().is_some_and(|pending| {
         pending.sheet != doc.active_index()
@@ -1475,6 +3699,34 @@ pub(super) fn interact(
             || pending.state != doc.state_id()
     }) {
         view.board_input.connector = None;
+    }
+    if show_quick(ui, doc, view, scene, out) {
+        return true;
+    }
+    view.board_input.drop_ghost = None;
+    if let Some(drop) = egui::DragAndDrop::payload::<ShapeDrop>(&ctx) {
+        // A library shape previews where it lands and is created on release;
+        // Escape cancels (egui clears the payload) and the tool is unchanged.
+        let point = ctx
+            .input(|input| input.pointer.latest_pos())
+            .filter(|point| {
+                ui.is_enabled()
+                    && !view.board_input.is_active()
+                    && canvas_point_unobscured(ui, response, *point)
+            });
+        if !ctx.input(|input| input.pointer.any_released()) {
+            view.board_input.drop_ghost = point.map(|point| (drop.0, point));
+        } else if let Some(point) = point {
+            egui::DragAndDrop::clear_payload(&ctx);
+            if prepare_edit(doc, view, out)
+                && let Err(error) =
+                    create_at(doc, view, BoardTool::Shape(drop.0), view.xf().sheet(point))
+            {
+                out.error = Some(error);
+            }
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+        }
+        return true;
     }
     if view.board_input.suppress_until_release {
         if !ctx.input(|input| input.pointer.primary_down()) {
@@ -1489,7 +3741,71 @@ pub(super) fn interact(
         return true;
     }
     let over_controls = interact_controls(ui, doc, view, layout, scene, enabled, out);
-    if update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out) {
+    update_hover_shape(view, doc.sheet(), scene, response, over_controls);
+    let connecting = match view.board_input.gesture.as_ref().map(|drag| &drag.kind) {
+        Some(GestureKind::Create {
+            tool: BoardTool::Connector,
+            ..
+        })
+        | Some(GestureKind::Endpoint { .. })
+        | Some(GestureKind::Arrow { .. })
+        | Some(GestureKind::Outline { .. }) => true,
+        Some(_) => false,
+        None => matches!(
+            view.board_tool,
+            BoardTool::Select | BoardTool::Connector | BoardTool::Shape(_)
+        ),
+    };
+    let except = match view.board_input.gesture.as_ref().map(|drag| &drag.kind) {
+        Some(GestureKind::Endpoint { id, .. }) => Some(*id),
+        Some(GestureKind::Arrow { source, .. } | GestureKind::Outline { source, .. }) => {
+            Some(*source)
+        }
+        _ => None,
+    };
+    let ignoring_points = ctx.input(|input| input.modifiers.alt)
+        && (view.board_tool == BoardTool::Connector
+            || (connecting && view.board_input.gesture.is_some()));
+    if enabled && connecting && !ignoring_points && view.board_input.quick.is_none() {
+        view.board_input.connection_hover = pointer
+            .filter(|point| canvas_point_unobscured(ui, response, *point))
+            .and_then(|point| {
+                connection_points_at(
+                    doc.sheet(),
+                    layout,
+                    scene,
+                    view.xf().sheet(point),
+                    view.zoom,
+                    except,
+                )
+            });
+        let alt_copies_shape = view.board_input.gesture.is_none()
+            && matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_))
+            && ctx.input(|input| input.modifiers.alt);
+        view.board_input.connection_hot = !alt_copies_shape
+            && (!over_controls || view.board_input.gesture.is_some())
+            && pointer.is_some_and(|point| {
+                view.board_input
+                    .connection_hover
+                    .as_ref()
+                    .and_then(|points| {
+                        points.nearest(view.xf().sheet(point), CONNECTION_POINT_RADIUS / view.zoom)
+                    })
+                    .is_some()
+            });
+    }
+    if update_gesture(
+        ui,
+        doc,
+        view,
+        layout,
+        scene,
+        response,
+        pointer,
+        enabled,
+        event_offset,
+        out,
+    ) {
         return true;
     }
     if !enabled {
@@ -1513,21 +3829,50 @@ pub(super) fn interact(
         }
         return true;
     }
-    if tool != BoardTool::Select {
+    let pressed_origin = ctx.input(|input| {
+        input.events[event_offset..]
+            .iter()
+            .find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+    });
+    // An armed shape behaves like Select over existing content and handles;
+    // only empty canvas creates. A press already creating keeps creating.
+    let armed = matches!(tool, BoardTool::Shape(_));
+    let on_content = |point: Pos2| {
+        let sheet_point = view.xf().sheet(point);
+        canvas_point_unobscured(ui, response, point)
+            && (armed_target(doc, view, layout, scene, sheet_point)
+                || connection_point_at(doc.sheet(), layout, scene, sheet_point, view.zoom, None)
+                    .is_some())
+    };
+    let armed_idle =
+        armed && view.board_input.creation_press.is_none() && view.board_input.connector.is_none();
+    let armed_hover = armed_idle && (over_controls || pointer.is_some_and(on_content));
+    let armed_passthrough = armed_idle
+        && (over_controls
+            || pressed_origin
+                .or_else(|| ctx.input(|input| input.pointer.press_origin()))
+                .or_else(|| response.interact_pointer_pos())
+                .is_some_and(on_content));
+    view.board_input.armed_hover = armed_hover;
+    view.board_input.ghost = response.hover_pos().filter(|point| {
+        armed_idle && !armed_hover && canvas_point_unobscured(ui, response, *point)
+    });
+    if (tool == BoardTool::Select || armed_idle) && !over_controls {
+        view.board_input.outline_hover = response
+            .hover_pos()
+            .filter(|point| canvas_point_unobscured(ui, response, *point))
+            .and_then(|point| outline_source(doc.sheet(), scene, view, view.xf().sheet(point)));
+    }
+    if tool != BoardTool::Select && !armed_passthrough {
         let mut started_here = false;
-        let pressed_origin = ctx.input(|input| {
-            input.events[event_offset..]
-                .iter()
-                .find_map(|event| match event {
-                    egui::Event::PointerButton {
-                        pos,
-                        button: PointerButton::Primary,
-                        pressed: true,
-                        ..
-                    } => Some(*pos),
-                    _ => None,
-                })
-        });
         if view.board_input.creation_press.is_none()
             && let Some(origin) = pressed_origin
             && canvas_point_unobscured(ui, response, origin)
@@ -1577,51 +3922,103 @@ pub(super) fn interact(
                 .or_else(|| press.as_ref().map(|press| press.screen_origin));
             if let Some(origin) = origin
                 && canvas_point_unobscured(ui, response, origin)
-                && released.is_none_or(|point| canvas_point_unobscured(ui, response, point))
+                && released.is_none_or(|(point, _)| canvas_point_unobscured(ui, response, point))
                 && prepare_edit(doc, view, out)
             {
-                let start = view.xf().sheet(origin);
-                let from = view
+                let modifiers = view
                     .board_input
-                    .connector
-                    .as_ref()
-                    .map_or_else(|| endpoint_at(doc.sheet(), scene, start, None), |p| p.from);
+                    .primary_press
+                    .filter(|(point, _)| point.distance(origin) <= 1.0)
+                    .map_or_else(
+                        || ctx.input(|input| input.modifiers),
+                        |(_, modifiers)| modifiers,
+                    );
+                let origin = view.xf().sheet(origin);
+                let (from, start) = if tool != BoardTool::Connector {
+                    (
+                        ConnectorAttachment::floating(Endpoint::Point(origin)),
+                        origin,
+                    )
+                } else if let Some(pending) = &view.board_input.connector {
+                    (pending.from, pending.point)
+                } else {
+                    match attachment_at(
+                        doc.sheet(),
+                        layout,
+                        scene,
+                        origin,
+                        view.zoom,
+                        None,
+                        modifiers,
+                    ) {
+                        Ok(attachment) => attachment,
+                        Err(error) => {
+                            out.error = Some(error);
+                            return true;
+                        }
+                    }
+                };
                 let kind = GestureKind::Create {
                     tool,
                     start,
                     current: start,
                     from,
                 };
-                view.board_input.gesture = Some(gesture(doc, view, kind, start));
-                update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+                view.board_input.gesture = Some(gesture(doc, view, kind, origin));
+                update_gesture(
+                    ui,
+                    doc,
+                    view,
+                    layout,
+                    scene,
+                    response,
+                    pointer,
+                    enabled,
+                    event_offset,
+                    out,
+                );
             }
         } else if response.clicked()
             && (pressed_origin.is_none() || view.board_input.creation_press.is_some())
-            && released.is_none_or(|point| canvas_point_unobscured(ui, response, point))
+            && released.is_none_or(|(point, _)| canvas_point_unobscured(ui, response, point))
             && let Some(point) = response.interact_pointer_pos()
             && prepare_edit(doc, view, out)
         {
             let point = view.xf().sheet(point);
             let result = if tool == BoardTool::Connector {
-                let end = endpoint_at(doc.sheet(), scene, point, None);
-                if let Some(pending) = view.board_input.connector.take() {
-                    create(
-                        doc,
-                        view,
-                        tool,
-                        thinoda_core::Rect::default(),
-                        Some((pending.from, end)),
-                    )
-                } else {
-                    view.board_input.connector = Some(PendingConnector {
-                        from: end,
-                        point,
-                        state: doc.state_id(),
-                        sheet: doc.active_index(),
-                        sheet_identity: sheet_identity(doc),
-                    });
-                    Ok(false)
-                }
+                let modifiers = released.map_or_else(
+                    || ctx.input(|input| input.modifiers),
+                    |(_, modifiers)| modifiers,
+                );
+                attachment_at(
+                    doc.sheet(),
+                    layout,
+                    scene,
+                    point,
+                    view.zoom,
+                    None,
+                    modifiers,
+                )
+                .and_then(|(end, position)| {
+                    if let Some(pending) = view.board_input.connector.take() {
+                        create(
+                            doc,
+                            view,
+                            tool,
+                            thinoda_core::Rect::default(),
+                            Some((pending.from, end)),
+                        )
+                    } else {
+                        view.board_input.connector = Some(PendingConnector {
+                            from: end,
+                            point: position,
+                            state: doc.state_id(),
+                            sheet: doc.active_index(),
+                            sheet_identity: sheet_identity(doc),
+                        });
+                        Ok(false)
+                    }
+                })
             } else {
                 create_at(doc, view, tool, point)
             };
@@ -1643,12 +4040,85 @@ pub(super) fn interact(
             .input(|input| input.pointer.press_origin())
             .unwrap_or_default();
         let point = view.xf().sheet(origin);
-        let hit = scene.hit_test(point);
+        let modifiers = view
+            .board_input
+            .primary_press
+            .filter(|(point, _)| point.distance(origin) <= 1.0)
+            .map_or_else(
+                || ctx.input(|input| input.modifiers),
+                |(_, modifiers)| modifiers,
+            );
+        if !modifiers.alt
+            && canvas_point_unobscured(ui, response, origin)
+            && let Some(source) =
+                connection_point_at(doc.sheet(), layout, scene, point, view.zoom, None)
+        {
+            if !prepare_edit(doc, view, out) {
+                return true;
+            }
+            let kind = GestureKind::Create {
+                tool: BoardTool::Connector,
+                start: source.position,
+                current: source.position,
+                from: source.attachment,
+            };
+            view.board_input.gesture = Some(gesture(doc, view, kind, point));
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
+            return true;
+        }
+        let hit = if modifiers.alt && canvas_point_unobscured(ui, response, origin) {
+            connection_point_at(doc.sheet(), layout, scene, point, view.zoom, None).and_then(
+                |source| match source.attachment.endpoint {
+                    Endpoint::Topic(id) => Some(SceneHit::Topic(id)),
+                    Endpoint::Object(id) => Some(SceneHit::Object(id)),
+                    Endpoint::Point(_) => None,
+                },
+            )
+        } else {
+            None
+        }
+        .or_else(|| scene.hit_test(point));
         let board_hit = hit.filter(|hit| match *hit {
             SceneHit::Object(_) => true,
             SceneHit::Topic(id) => is_board_topic(doc.sheet(), view, id),
         });
-        let modifiers = ctx.input(|input| input.modifiers);
+        if hit.is_none()
+            && let Some(source) = outline_source(doc.sheet(), scene, view, point)
+        {
+            if !prepare_edit(doc, view, out) {
+                return true;
+            }
+            let kind = GestureKind::Outline {
+                source,
+                anchor: point,
+                current: point,
+            };
+            view.board_input.gesture = Some(gesture(doc, view, kind, point));
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
+            return true;
+        }
         if let Some(hit) = board_hit {
             if !prepare_edit(doc, view, out) {
                 return true;
@@ -1675,7 +4145,18 @@ pub(super) fn interact(
                 duplicate: modifiers.alt,
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, point));
-            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
             return true;
         }
         // Frames use the legacy zone hit test. Capture only board-frame
@@ -1704,7 +4185,18 @@ pub(super) fn interact(
                 duplicate: true,
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, point));
-            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+            update_gesture(
+                ui,
+                doc,
+                view,
+                layout,
+                scene,
+                response,
+                pointer,
+                enabled,
+                event_offset,
+                out,
+            );
             return true;
         }
     }
@@ -2126,7 +4618,7 @@ fn cycle_selection(
     let id = items[index].id;
     select_item(view, doc.sheet(), id);
     let target = if reverse {
-        controls(view, doc.sheet(), layout, scene)
+        tab_controls(view, doc.sheet(), layout, scene)
             .last()
             .map_or_else(|| item_id(id), |control| control_id(*control))
     } else {
@@ -2169,7 +4661,7 @@ pub(super) fn keyboard(
     for (modifiers, reverse) in [(Modifiers::SHIFT, true), (Modifiers::NONE, false)] {
         if ctx.input_mut(|input| input.consume_key(modifiers, Key::Tab)) {
             let focused = ctx.memory(|memory| memory.focused());
-            let first = controls(view, doc.sheet(), layout, scene)
+            let first = tab_controls(view, doc.sheet(), layout, scene)
                 .into_iter()
                 .next();
             if !reverse
@@ -2183,14 +4675,29 @@ pub(super) fn keyboard(
             return true;
         }
     }
-    if view.board_tool != BoardTool::Select && view.board_tool != BoardTool::Hand {
+    let armed = matches!(view.board_tool, BoardTool::Shape(_));
+    if armed && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::V)) {
+        view.set_board_tool(BoardTool::Select);
+        return true;
+    }
+    // With a selection, an armed shape edits like Select (arrows, F2, typing);
+    // without one, Enter/Space still inserts the armed shape.
+    let armed_editing =
+        armed && !board_actions::selected_board_members(doc.sheet(), view).is_empty();
+    if view.board_tool != BoardTool::Select && view.board_tool != BoardTool::Hand && !armed_editing
+    {
         if ctx.input_mut(|input| {
             input.consume_key(Modifiers::NONE, Key::Enter)
                 || input.consume_key(Modifiers::NONE, Key::Space)
         }) && prepare_edit(doc, view, out)
         {
-            let point = view.xf().sheet(view.canvas_rect.center());
-            if let Err(error) = create_at(doc, view, view.board_tool, point) {
+            let tool = view.board_tool;
+            let point = if tool == BoardTool::Connector {
+                view.xf().sheet(view.canvas_rect.center())
+            } else {
+                insert_spot(doc.sheet(), view, scene, default_size(tool))
+            };
+            if let Err(error) = create_at(doc, view, tool, point) {
                 out.error = Some(error);
             }
             return true;
@@ -2322,6 +4829,7 @@ pub(super) fn keyboard(
         {
             if let Some(edit) = &mut view.board_input.label {
                 edit.text = text;
+                edit.seeded = true;
             }
             return true;
         }
@@ -2357,18 +4865,171 @@ pub(super) fn paint(
         );
     }
 
+    if let Some(points) = &view.board_input.connection_hover {
+        let clipped = scene
+            .item(points.item)
+            .and_then(|item| item.clip)
+            .map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let target = clipped.as_ref().unwrap_or(painter);
+        let hot = pointer
+            .and_then(|point| points.nearest(xf.sheet(point), CONNECTION_POINT_RADIUS / xf.zoom))
+            .map(|point| point.position);
+        let accent = view.accent;
+        let brightness =
+            u32::from(accent.r()) * 299 + u32::from(accent.g()) * 587 + u32::from(accent.b()) * 114;
+        let halo = if brightness > 127_500 {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        };
+        for point in &points.points {
+            let center = xf.pos(point.position);
+            if !view.canvas_rect.contains(center) {
+                continue;
+            }
+            let active = hot == Some(point.position);
+            let radius = if active { 4.0 } else { 2.5 };
+            let stroke = Stroke::new(if active { 2.0 } else { 1.0 }, view.accent);
+            for segment in [
+                [center - vec2(radius, 0.0), center + vec2(radius, 0.0)],
+                [center - vec2(0.0, radius), center + vec2(0.0, radius)],
+            ] {
+                target.line_segment(segment, Stroke::new(stroke.width + 2.0, halo));
+                target.line_segment(segment, stroke);
+            }
+        }
+    }
+
     for control in controls(view, sheet, layout, scene) {
         let center = xf.pos(control.point);
         if !view.canvas_rect.contains(center) {
             continue;
         }
-        painter.circle_filled(center, 6.0, sheet_background(sheet, view.dark));
-        painter.circle_stroke(center, 6.0, Stroke::new(2.0, view.accent));
-        if painter
+        let focused = painter
             .ctx()
-            .memory(|memory| memory.has_focus(control_id(control)))
-        {
+            .memory(|memory| memory.has_focus(control_id(control)));
+        if let ControlKind::Arrow(dir) = control.kind {
+            if view.board_input.gesture.is_some() {
+                continue;
+            }
+            let picking = view.board_input.quick.as_ref().is_some_and(|quick| {
+                SceneId::Object(quick.source) == control.item && quick.dir == dir
+            });
+            let hot = focused
+                || picking
+                || pointer.is_some_and(|pointer| pointer.distance(center) <= 14.0);
+            let unit = dir.unit();
+            let forward = vec2(unit.x, unit.y);
+            let normal = vec2(-forward.y, forward.x);
+            let size = if hot { 9.0 } else { 7.0 };
+            let color = if hot {
+                view.accent
+            } else {
+                view.accent.gamma_multiply(0.6)
+            };
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    center + forward * size,
+                    center - forward * (size * 0.6) + normal * size,
+                    center - forward * (size * 0.6) - normal * size,
+                ],
+                color,
+                Stroke::NONE,
+            ));
+            if focused {
+                painter.circle_stroke(center, 12.0, Stroke::new(2.0, view.accent));
+            }
+            continue;
+        }
+        let radius = if matches!(control.kind, ControlKind::InsertWaypoint(_, _)) {
+            4.0
+        } else {
+            6.0
+        };
+        painter.circle_filled(center, radius, sheet_background(sheet, view.dark));
+        painter.circle_stroke(center, radius, Stroke::new(2.0, view.accent));
+        if focused {
             painter.circle_stroke(center, 9.0, Stroke::new(2.0, view.accent));
+        }
+    }
+
+    let armed_ghost = match view.board_tool {
+        BoardTool::Shape(kind)
+            if view.board_input.gesture.is_none() && view.board_input.creation_press.is_none() =>
+        {
+            view.board_input.ghost.map(|pointer| (kind, pointer))
+        }
+        _ => None,
+    };
+    if let Some((kind, pointer)) = view.board_input.drop_ghost.or(armed_ghost) {
+        let center = snapped(sheet, xf.sheet(pointer));
+        let ghost =
+            thinoda_core::Rect::from_center_size(center, default_size(BoardTool::Shape(kind)));
+        let geometry = thinoda_core::board::shape_geometry(kind, ghost, 0.0);
+        let stroke = Stroke::new(1.5, view.accent.gamma_multiply(0.6));
+        painter.add(egui::Shape::closed_line(
+            geometry
+                .outline
+                .into_iter()
+                .map(|point| xf.pos(point))
+                .collect(),
+            stroke,
+        ));
+        for detail in geometry.details {
+            painter.add(egui::Shape::line(
+                detail.into_iter().map(|point| xf.pos(point)).collect(),
+                stroke,
+            ));
+        }
+    }
+
+    if let Some(quick) = &view.board_input.quick
+        && let Some(shape) = quick.preview
+        && let Some(object) = arrow_source(sheet, quick.source)
+    {
+        // Where the hovered or focused picker tile would land.
+        let target = quick_target(sheet, scene, object, quick.dir);
+        let stroke = Stroke::new(1.5, view.accent.gamma_multiply(0.6));
+        painter.add(egui::Shape::dashed_line(
+            &[
+                xf.pos(quick.dir.side(object.rotated_bounds())),
+                xf.pos(quick.dir.opposite().side(target)),
+            ],
+            stroke,
+            6.0,
+            4.0,
+        ));
+        let rounding = match &object.kind {
+            CanvasObjectKind::Shape { shape: source, .. } if *source == shape => object.rounding,
+            _ => None,
+        };
+        let margin = match &object.kind {
+            CanvasObjectKind::Shape { shape: source, .. } if *source == shape => {
+                object.double_ellipse_margin
+            }
+            _ => None,
+        };
+        let geometry = shape_geometry_with_style(
+            shape,
+            target,
+            object.rotation,
+            rounding,
+            object.style.effective_shape_stroke_width(),
+            margin,
+        );
+        painter.add(egui::Shape::closed_line(
+            geometry
+                .outline
+                .into_iter()
+                .map(|point| xf.pos(point))
+                .collect(),
+            stroke,
+        ));
+        for detail in geometry.details {
+            painter.add(egui::Shape::line(
+                detail.into_iter().map(|point| xf.pos(point)).collect(),
+                stroke,
+            ));
         }
     }
 
@@ -2381,6 +5042,20 @@ pub(super) fn paint(
             6.0,
             4.0,
         ));
+    }
+    if view.board_input.gesture.is_none()
+        && let Some(id) = view.board_input.outline_hover
+        && let Some(item) = scene.item(SceneId::Object(id))
+        && let Some(outline) = item_outline(item)
+    {
+        let clipped = item.clip.map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        clipped
+            .as_ref()
+            .unwrap_or(painter)
+            .add(egui::Shape::closed_line(
+                outline.into_iter().map(|point| xf.pos(point)).collect(),
+                Stroke::new(3.0, view.accent.gamma_multiply(0.7)),
+            ));
     }
     let Some(drag) = &view.board_input.gesture else {
         return;
@@ -2488,6 +5163,377 @@ pub(super) fn paint(
                 }
             }
         }
+        GestureKind::Waypoint {
+            id,
+            index,
+            insert,
+            point,
+            ..
+        } => {
+            if let Some(object) = sheet.canvas.object(*id)
+                && let CanvasObjectKind::Connector(connector) = &object.kind
+            {
+                let mut connector = connector.clone();
+                let mut points = connector.waypoints.to_vec();
+                if *insert && *index <= points.len() {
+                    points.insert(*index, *point);
+                } else if !*insert && *index < points.len() {
+                    points[*index] = *point;
+                } else {
+                    return;
+                }
+                connector.waypoints = points.into();
+                let preview = thinoda_core::scene::connector_path(sheet, layout, &connector);
+                if preview.len() >= 2 {
+                    let clipped = scene
+                        .item(SceneId::Object(*id))
+                        .and_then(|item| item.clip)
+                        .map(|clip| painter.with_clip_rect(xf.rect(clip)));
+                    let target = clipped.as_ref().unwrap_or(painter);
+                    target.add(egui::Shape::dashed_line(
+                        &preview
+                            .into_iter()
+                            .map(|point| xf.pos(point))
+                            .collect::<Vec<_>>(),
+                        stroke,
+                        6.0,
+                        4.0,
+                    ));
+                    target.circle_filled(xf.pos(*point), 6.0, sheet_background(sheet, view.dark));
+                    target.circle_stroke(xf.pos(*point), 6.0, stroke);
+                }
+            }
+        }
+        GestureKind::Arrow {
+            source,
+            anchor,
+            current,
+            ..
+        }
+        | GestureKind::Outline {
+            source,
+            anchor,
+            current,
+        } => {
+            if (*current - drag.origin).length() * xf.zoom < ARROW_DRAG {
+                return;
+            }
+            painter.add(egui::Shape::dashed_line(
+                &[xf.pos(*anchor), xf.pos(*current)],
+                stroke,
+                6.0,
+                4.0,
+            ));
+            let modifiers = painter.ctx().input(|input| input.modifiers);
+            let body = endpoint_at(sheet, scene, *current, Some(*source));
+            let occupied = if modifiers.command || !modifiers.alt {
+                connection_point_at(sheet, layout, scene, *current, xf.zoom, Some(*source))
+                    .map_or(body, |point| point.attachment.endpoint)
+            } else {
+                body
+            };
+            let preview = if modifiers.alt && !modifiers.shift {
+                Endpoint::Point(*current)
+            } else if modifiers.alt {
+                body
+            } else {
+                occupied
+            };
+            let target = match preview {
+                Endpoint::Topic(id) => scene.item(SceneId::Topic(id)),
+                Endpoint::Object(id) => scene.item(SceneId::Object(id)),
+                Endpoint::Point(_) => None,
+            };
+            if let Some(item) = target {
+                painter.rect_stroke(
+                    xf.rect(item.bounds).expand(3.0),
+                    2.0,
+                    stroke,
+                    StrokeKind::Outside,
+                );
+            } else if modifiers.command
+                && matches!(occupied, Endpoint::Point(_))
+                && let Some(object) = sheet.canvas.object(*source)
+            {
+                let rect = thinoda_core::Rect::from_center_size(
+                    if modifiers.alt {
+                        *current
+                    } else {
+                        snapped(sheet, *current)
+                    },
+                    object.rect.size,
+                );
+                painter.add(egui::Shape::closed_line(
+                    rotated_corners(rect, object.rotation)
+                        .into_iter()
+                        .map(|point| xf.pos(point))
+                        .collect(),
+                    Stroke::new(1.5, view.accent.gamma_multiply(0.6)),
+                ));
+            }
+        }
+    }
+}
+
+fn show_label_edit_hint(ui: &Ui, view: &MapView, object_bounds: egui::Rect, hint: &str) {
+    let canvas = view.canvas_rect();
+    let max_width = (canvas.width() - 24.0).max(0.0);
+    if max_width < 1.0 {
+        return;
+    }
+    let text_width = (max_width - 16.0).max(1.0);
+    let title = ui.painter().layout_no_wrap(
+        view.board_labels.label_editing.clone(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        ui.visuals().text_color(),
+    );
+    let detail = ui.painter().layout(
+        hint.to_owned(),
+        egui::TextStyle::Small.resolve(ui.style()),
+        ui.visuals().text_color(),
+        text_width,
+    );
+    let height = title.size().y + detail.size().y + ui.spacing().item_spacing.y + 48.0;
+    let bounds = object_bounds.expand(8.0);
+    let below = canvas.bottom() - bounds.bottom();
+    let above = bounds.top() - canvas.top();
+    let (pivot, y) = if below >= height + 12.0 && below >= above {
+        (egui::Align2::CENTER_BOTTOM, canvas.bottom() - 12.0)
+    } else if above >= height + 64.0 {
+        (egui::Align2::CENTER_TOP, canvas.top() + 64.0)
+    } else if below >= height + 12.0 {
+        (egui::Align2::CENTER_BOTTOM, canvas.bottom() - 12.0)
+    } else {
+        return;
+    };
+    egui::Area::new(MapCanvas::id().with("board-label-edit-hint"))
+        .order(egui::Order::Foreground)
+        .pivot(pivot)
+        .fixed_pos(egui::pos2(canvas.center().x, y))
+        .constrain_to(canvas)
+        .movable(false)
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width((max_width - 16.0).max(1.0));
+                ui.strong(&view.board_labels.label_editing);
+                ui.add(egui::Label::new(egui::RichText::new(hint).small()).wrap());
+            });
+        });
+}
+
+fn label_text_halo(
+    position: Pos2,
+    galley: std::sync::Arc<egui::Galley>,
+    color: Color32,
+) -> egui::Shape {
+    let [r, g, b, _] = color.to_srgba_unmultiplied();
+    let outline = crate::render::color32(thinoda_core::Color::highest_contrast_on(
+        thinoda_core::Color::rgb(r, g, b),
+    ));
+    egui::Shape::Vec(
+        [
+            vec2(-1.0, 0.0),
+            vec2(1.0, 0.0),
+            vec2(0.0, -1.0),
+            vec2(0.0, 1.0),
+        ]
+        .into_iter()
+        .map(|offset| {
+            egui::Shape::galley_with_override_text_color(position + offset, galley.clone(), outline)
+        })
+        .collect(),
+    )
+}
+
+fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
+    let [r, g, b, a] = text.to_srgba_unmultiplied();
+    let [br, bg, bb, _] = background.to_srgba_unmultiplied();
+    let background = thinoda_core::Color::rgb(br, bg, bb);
+    if thinoda_core::Color::rgba(r, g, b, a).contrast_on(background) < 4.5 {
+        crate::render::color32(thinoda_core::Color::highest_contrast_on(background))
+    } else {
+        text
+    }
+}
+
+fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
+    let rect = match &object.kind {
+        CanvasObjectKind::Shape { shape, .. } => {
+            let label_rect = thinoda_core::board::shape_label_rect_with_style(
+                *shape,
+                object.rect,
+                object.style.effective_shape_stroke_width(),
+                object.double_ellipse_margin,
+            );
+            thinoda_core::Rect::from_center_size(
+                rotate_around(label_rect.center(), object.rect.center(), object.rotation),
+                label_rect.size,
+            )
+        }
+        CanvasObjectKind::Connector(_) => {
+            let point = match &item.geometry {
+                SceneGeometry::Polyline { points, .. } => {
+                    polyline_midpoint(points).unwrap_or(item.bounds.center())
+                }
+                _ => item.bounds.center(),
+            };
+            thinoda_core::Rect::from_center_size(point, Vec2::new(140.0, 40.0))
+        }
+        CanvasObjectKind::Ink(_) => return None,
+    };
+    Some(view.xf().rect(rect).expand(2.0))
+}
+
+pub(super) fn label_keyboard_event(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::Text(_)
+            | egui::Event::Paste(_)
+            | egui::Event::Cut
+            | egui::Event::Copy
+            | egui::Event::Ime(_)
+            | egui::Event::Key { .. }
+    )
+}
+
+fn plain_key_press(event: &egui::Event, expected: Key) -> bool {
+    matches!(
+        event,
+        egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } if *key == expected && modifiers.matches_exact(Modifiers::NONE)
+    )
+}
+
+/// Finish a draft after applying input that preceded an outside pointer press.
+pub(super) fn finish_label_before_pointer_press(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    edit_error: &mut Option<thinoda_core::EditError>,
+    overlay_rect: Option<Rect>,
+) {
+    let edit_id = MapCanvas::board_label_editor_id();
+    let (editor_focused, editor_lost_focus) = ui.memory(|memory| {
+        (
+            memory.has_focus(edit_id),
+            memory.focused().is_none() && memory.had_focus_last_frame(edit_id),
+        )
+    });
+    let Some(edit) = &view.board_input.label else {
+        return;
+    };
+    let retry_pending = edit.focus_retry_after.is_some_and(|(viewport, frame)| {
+        viewport == ui.ctx().viewport_id()
+            && frame < ui.ctx().cumulative_frame_nr()
+            && ui.memory(|memory| memory.focused().is_none())
+    });
+    if !editor_focused && !editor_lost_focus && !retry_pending {
+        return;
+    }
+    let Some(object) = doc.sheet().canvas.object(edit.id) else {
+        return;
+    };
+    let Some(item) = scene.item(SceneId::Object(edit.id)) else {
+        return;
+    };
+    let Some(rect) = label_editor_rect(object, item, view) else {
+        return;
+    };
+    let split = ui.input(|input| {
+        if !input.focused {
+            return None;
+        }
+        let (index, position) =
+            input
+                .events
+                .iter()
+                .enumerate()
+                .find_map(|(index, event)| match event {
+                    egui::Event::PointerButton {
+                        pos, pressed: true, ..
+                    } => Some((index, *pos)),
+                    _ => None,
+                })?;
+        if view.canvas_rect().contains(position)
+            && rect.contains(position)
+            && !overlay_rect.is_some_and(|r| r.contains(position))
+        {
+            return None;
+        }
+        let prefix = &input.events[..index];
+        #[allow(deprecated)]
+        let ime_frame = edit.ime_composing
+            || prefix.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Ime(
+                        egui::ImeEvent::Preedit { .. }
+                            | egui::ImeEvent::Commit(_)
+                            | egui::ImeEvent::Disabled
+                    )
+                )
+            });
+        let input_end = if ime_frame {
+            index
+        } else {
+            prefix
+                .iter()
+                .position(|event| {
+                    [Key::Enter, Key::Tab, Key::Escape]
+                        .into_iter()
+                        .any(|key| plain_key_press(event, key))
+                })
+                .map_or(index, |finish| finish + 1)
+        };
+        Some(input_end)
+    });
+    let Some(input_end) = split else {
+        return;
+    };
+    if ui.input(|input| input.events[..input_end].iter().any(label_keyboard_event)) {
+        // Keep the pointer and later input for their actual owners.
+        let (events, pointer) = ui.input_mut(|input| {
+            let events = std::mem::take(&mut input.events);
+            input.events = events[..input_end].to_vec();
+            (events, std::mem::take(&mut input.pointer))
+        });
+        if !editor_focused && !retry_pending {
+            ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
+        // A separate Ui keeps the host's auto-generated widget IDs unchanged.
+        let mut child = Ui::new(
+            ui.ctx().clone(),
+            edit_id.with("input-only"),
+            egui::UiBuilder::new()
+                .layer_id(ui.layer_id())
+                .max_rect(ui.max_rect())
+                .layout(*ui.layout())
+                .style(ui.style().clone()),
+        );
+        child.set_clip_rect(Rect::NOTHING);
+        show_label_editor(&mut child, doc, view, scene, false, edit_error, true);
+        ui.input_mut(|input| {
+            input.pointer = pointer;
+            input.events = events
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, event)| {
+                    (index >= input_end || !label_keyboard_event(&event)).then_some(event)
+                })
+                .collect();
+        });
+    }
+    if view.board_input.label.is_some() {
+        match view.try_commit_board_label(doc) {
+            Ok(_) => ui.memory_mut(|memory| memory.surrender_focus(edit_id)),
+            Err(error) => *edit_error = Some(error),
+        }
     }
 }
 
@@ -2496,7 +5542,9 @@ pub(super) fn show_label_editor(
     doc: &mut Document,
     view: &mut MapView,
     scene: &Scene,
-    out: &mut CanvasOutput,
+    minimap_blocks_keyboard: bool,
+    edit_error: &mut Option<thinoda_core::EditError>,
+    input_only: bool,
 ) {
     let Some(edit) = view.board_input.label.as_ref() else {
         return;
@@ -2508,37 +5556,58 @@ pub(super) fn show_label_editor(
     let Some(item) = scene.item(SceneId::Object(edit.id)) else {
         return;
     };
-    let rect = match &object.kind {
-        CanvasObjectKind::Shape { shape, .. } => {
-            let label_rect = thinoda_core::board::shape_label_rect(*shape, object.rect);
-            thinoda_core::Rect::from_center_size(
-                rotate_around(label_rect.center(), object.rect.center(), object.rotation),
-                label_rect.size,
-            )
-        }
-        CanvasObjectKind::Connector(_) => {
-            let point = match &item.geometry {
-                SceneGeometry::Polyline { points, .. } => points[points.len() / 2],
-                _ => item.bounds.center(),
-            };
-            thinoda_core::Rect::from_center_size(point, Vec2::new(140.0, 40.0))
-        }
-        CanvasObjectKind::Ink(_) => return,
+    let Some(rect) = label_editor_rect(object, item, view) else {
+        return;
     };
-    let rect = view.xf().rect(rect).expand(2.0);
-    let edit_id = MapCanvas::id().with("board-label-edit");
-    if !out.minimap_blocks_keyboard
+    let edit_id = MapCanvas::board_label_editor_id();
+    if let Some(edit) = &mut view.board_input.label
+        && let Some((viewport, frame)) = edit.focus_retry_after
+        && (viewport != ui.ctx().viewport_id() || frame < ui.ctx().cumulative_frame_nr())
+    {
+        edit.focus_retry_after = None;
+        if viewport == ui.ctx().viewport_id()
+            && !minimap_blocks_keyboard
+            && ui.memory(|memory| memory.focused().is_none())
+            && ui.input(|input| {
+                input.focused && !input.pointer.any_pressed() && !input.pointer.any_released()
+            })
+        {
+            ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
+    }
+    let editor_focused = ui.memory(|memory| memory.has_focus(edit_id));
+    // On the first focused frame egui can surrender focus to an Escape key
+    // before TextEdit has installed its focus filter.
+    let escape_released_editor = !editor_focused
+        && ui.memory(|memory| memory.focused().is_none() && memory.had_focus_last_frame(edit_id))
+        && ui.input(|input| {
+            input.focused
+                && !input.pointer.any_pressed()
+                && !input.pointer.any_released()
+                && input
+                    .events
+                    .iter()
+                    .any(|event| plain_key_press(event, Key::Escape))
+        });
+    let editor_owns_keyboard = editor_focused || escape_released_editor;
+    if !minimap_blocks_keyboard
+        && editor_owns_keyboard
         && let Some(edit) = &mut view.board_input.label
     {
         protect_ime_candidate_keys(ui.ctx(), edit_id, &mut edit.ime_composing);
     }
-    let (commit, cancel) = if out.minimap_blocks_keyboard {
+    let (commit, cancel) = if minimap_blocks_keyboard || !editor_owns_keyboard {
         (false, false)
     } else {
         ui.input_mut(|input| {
+            let mut enter = false;
+            input.events.retain(|event| {
+                let plain_enter = plain_key_press(event, Key::Enter);
+                enter |= plain_enter;
+                !plain_enter
+            });
             (
-                input.consume_key(Modifiers::NONE, Key::Enter)
-                    || input.consume_key(Modifiers::NONE, Key::Tab),
+                enter || input.consume_key(Modifiers::NONE, Key::Tab),
                 input.consume_key(Modifiers::NONE, Key::Escape),
             )
         })
@@ -2548,60 +5617,189 @@ pub(super) fn show_label_editor(
         ui.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
         return;
     }
-    let background = object
-        .style
-        .fill
-        .map(color32)
-        .unwrap_or_else(|| sheet_background(doc.sheet(), view.dark));
-    ui.painter().rect_filled(rect, 2.0, background);
+    let hint = if matches!(view.board_tool, BoardTool::Shape(_)) {
+        format!(
+            "{}\n{}",
+            view.board_labels.label_edit_hint, view.board_labels.label_edit_armed_hint
+        )
+    } else {
+        view.board_labels.label_edit_hint.clone()
+    };
+    if !input_only {
+        show_label_edit_hint(ui, view, view.xf().rect(item.bounds).union(rect), &hint);
+    }
+    // Keep the shape outline visible; connector labels retain their line backdrop.
+    let (text_color, background) =
+        crate::render::board_label_colors(doc.sheet(), &object.style, view.dark);
+    let contrast_background = if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+        crate::render::shape_label_editor_background(doc.sheet(), &object.style, view.dark)
+    } else {
+        background
+    };
+    let text_color = label_editor_text_color(text_color, contrast_background);
+    if !input_only && matches!(object.kind, CanvasObjectKind::Connector(_)) {
+        ui.painter().rect_filled(rect, 2.0, background);
+    }
+    let font_size = crate::render::shape_label_font_size(view.zoom).max(10.0);
+    let font = FontId::proportional(font_size);
+    let is_shape = matches!(object.kind, CanvasObjectKind::Shape { .. });
     let edit = view.board_input.label.as_mut().unwrap();
+    let empty = edit.text.is_empty();
     let text_edit = TextEdit::multiline(&mut edit.text)
         .id(edit_id)
-        .font(FontId::proportional((12.0 * view.zoom).max(10.0)))
+        .font(font.clone())
+        .text_color(text_color)
         .frame(egui::Frame::NONE)
+        .align(egui::Align2::CENTER_CENTER)
         .desired_width(rect.width().max(40.0))
+        .min_size(rect.size())
         .desired_rows(1)
         .return_key(Some(egui::KeyboardShortcut::new(
             Modifiers::SHIFT,
             Key::Enter,
         )))
-        .lock_focus(true);
+        .event_filter(EventFilter {
+            tab: true,
+            horizontal_arrows: true,
+            vertical_arrows: true,
+            escape: true,
+        });
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    if !input_only && empty {
+        let painter = child
+            .painter()
+            .with_clip_rect(rect.intersect(ui.clip_rect()));
+        let color = text_color.gamma_multiply(0.7);
+        let galley =
+            painter.layout_no_wrap(view.board_labels.label_placeholder.clone(), font, color);
+        let position = rect.center() - galley.size() / 2.0;
+        if is_shape {
+            painter.add(label_text_halo(position, galley.clone(), color));
+        }
+        painter.galley(position, galley, color);
+    }
+    // Contrast around the glyphs avoids masking a transparent shape or its outline.
+    let halo = (!input_only && is_shape && !empty).then(|| child.painter().add(egui::Shape::Noop));
     // Text queued with a finish key must reach the editor before the commit.
     let output = text_edit.show(&mut child);
-    output.response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::Role::MultilineTextInput,
-            true,
-            &view.board_labels.label_editor,
-        )
-    });
+    if let Some(index) = halo {
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
+        let position = output.galley_pos - vec2(galley.rect.left(), 0.0);
+        child
+            .painter()
+            .with_clip_rect(output.text_clip_rect)
+            .set(index, label_text_halo(position, galley, text_color));
+    }
+    if !input_only {
+        output.response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::Role::MultilineTextInput,
+                true,
+                &view.board_labels.label_editor,
+            )
+        });
+        ui.ctx().accesskit_node_builder(output.response.id, |node| {
+            node.set_description(hint.as_str());
+        });
+    }
     if commit {
         match view.try_commit_board_label(doc) {
             Ok(_) => ui.memory_mut(|memory| memory.request_focus(MapCanvas::id())),
             Err(error) => {
-                out.error = Some(error);
+                *edit_error = Some(error);
                 ui.memory_mut(|memory| memory.request_focus(edit_id));
             }
         }
-    } else if !edit.focus_requested && !out.minimap_blocks_keyboard {
+    } else if !edit.focus_requested && !minimap_blocks_keyboard {
         edit.focus_requested = true;
+        if ui.input(|input| input.pointer.any_pressed() || input.pointer.any_released()) {
+            // egui may clear focus at the end of the opening click's pass.
+            edit.focus_retry_after = Some((ui.ctx().viewport_id(), ui.ctx().cumulative_frame_nr()));
+            ui.ctx().request_repaint();
+        }
         ui.memory_mut(|memory| memory.request_focus(edit_id));
-        let end = edit.text.chars().count();
+        let end = egui::text::CCursor::new(edit.text.chars().count());
+        // Select an existing label for replacement, but never the character just typed.
+        let start = if edit.seeded {
+            end
+        } else {
+            egui::text::CCursor::new(0)
+        };
         let mut state = output.state.clone();
         state
             .cursor
-            .set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(end),
-            )));
+            .set_char_range(Some(egui::text::CCursorRange::two(start, end)));
         state.store(ui.ctx(), edit_id);
     } else if output.response.lost_focus()
         && let Err(error) = view.try_commit_board_label(doc)
     {
-        out.error = Some(error);
-        if !out.minimap_blocks_keyboard {
+        *edit_error = Some(error);
+        if !minimap_blocks_keyboard {
             ui.memory_mut(|memory| memory.request_focus(edit_id));
+        }
+    }
+}
+
+#[cfg(test)]
+mod label_editor_color_tests {
+    use super::*;
+
+    #[test]
+    fn editor_contrasts_transparent_and_low_contrast_text_without_changing_readable_colors() {
+        for background in [
+            Color32::WHITE,
+            Color32::BLACK,
+            Color32::from_rgb(50, 80, 110),
+        ] {
+            for text in [
+                Color32::TRANSPARENT,
+                Color32::from_black_alpha(102),
+                background,
+            ] {
+                let result = label_editor_text_color(text, background);
+                let [r, g, b, a] = result.to_srgba_unmultiplied();
+                let [br, bg, bb, _] = background.to_srgba_unmultiplied();
+                assert!(
+                    thinoda_core::Color::rgba(r, g, b, a)
+                        .contrast_on(thinoda_core::Color::rgb(br, bg, bb))
+                        >= 4.5
+                );
+            }
+        }
+        assert_eq!(
+            label_editor_text_color(Color32::BLUE, Color32::WHITE),
+            Color32::BLUE
+        );
+    }
+
+    #[test]
+    fn shape_editor_contrast_uses_the_visible_fill_after_object_opacity() {
+        let sheet = Sheet::new("Board", "");
+        for (dark, fill, text) in [
+            (true, thinoda_core::Color::WHITE, Color32::WHITE),
+            (false, thinoda_core::Color::BLACK, Color32::BLACK),
+        ] {
+            let style = thinoda_core::board::ObjectStyle {
+                fill: Some(fill),
+                text_color: Some(fill),
+                opacity: 0.0,
+                ..Default::default()
+            };
+            let (_, unfaded) = crate::render::board_label_colors(&sheet, &style, dark);
+            let visible = crate::render::shape_label_editor_background(&sheet, &style, dark);
+            assert_ne!(unfaded, visible);
+            assert_ne!(label_editor_text_color(text, unfaded), text);
+            assert_eq!(label_editor_text_color(text, visible), text);
+            assert_eq!(visible, crate::render::sheet_background(&sheet, dark));
+
+            let opaque = thinoda_core::board::ObjectStyle {
+                opacity: 1.0,
+                ..style
+            };
+            assert_eq!(
+                crate::render::shape_label_editor_background(&sheet, &opaque, dark),
+                crate::render::board_label_colors(&sheet, &opaque, dark).1
+            );
         }
     }
 }

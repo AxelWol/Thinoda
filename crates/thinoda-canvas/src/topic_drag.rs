@@ -13,7 +13,7 @@ use thinoda_core::{
 
 use crate::{
     MapView, PaintOptions, Xf,
-    render::{GhostClip, connector_path, paint_map_scene},
+    render::{GhostClip, PaintSceneExtras, connector_path, paint_map_scene},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -389,7 +389,10 @@ pub(crate) fn paint_ghost(
             ..Default::default()
         },
         &scene,
-        Some(GhostClip { delta, moving_zone }),
+        PaintSceneExtras {
+            ghost_clip: Some(GhostClip { delta, moving_zone }),
+            ..Default::default()
+        },
     );
 }
 

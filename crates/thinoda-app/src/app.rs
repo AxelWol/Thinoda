@@ -23,7 +23,7 @@ use thinoda_platform::{
 use thinoda_ui::{CommandPalette, ThemeMode, Toasts};
 
 use crate::{
-    doc::{OpenDoc, is_native},
+    doc::{OpenDoc, is_native, is_save_target},
     files,
     i18n::{self, t},
     ui::CardOpenOrder,
@@ -34,7 +34,12 @@ const MAP_FILTERS: &[files::Filter<'static>] = &[
     ("Thinoda", &["thinoda"]),
     ("XMind", &["xmind"]),
     ("MindManager", &["mmap"]),
+    ("draw.io", &["drawio"]),
 ];
+
+/// Embedded draw.io diagrams can also be opened from editable images and HTML.
+const DRAWIO_OPEN_FILTER: files::Filter<'static> =
+    ("draw.io", &["drawio", "dio", "svg", "png", "html", "htm"]);
 
 const MAX_PENDING_RECOVERY_CLEANUPS: usize = 256;
 pub(crate) const RECOVERY_CLEANUP_WARNING: &str =
@@ -85,6 +90,7 @@ pub enum Cmd {
     MoveToNewWindow,
     NextDoc,
     Import,
+    ImportDrawioLink,
     MergeFiles,
     MaskedCopy,
     MapShot,
@@ -147,6 +153,8 @@ pub enum Cmd {
     OpenLink,
     ShowInFolder,
     MenuPaste,
+    /// Copy the selection as a draw.io (diagrams.net) clipboard model.
+    CopyAsDrawio,
     SetTheme(SettingsTheme),
     /// Focus a topic property field in the Format panel (Ctrl+K / Ctrl+Shift+N).
     EditField(FocusField),
@@ -254,6 +262,14 @@ pub struct RenameSheetDraft {
     pub(crate) focus_requested: bool,
 }
 
+/// Source path, converted document, warnings and originating viewport for an import.
+pub type PendingImport = (
+    Option<PathBuf>,
+    OpenDoc,
+    Vec<thinoda_io::ImportWarning>,
+    Option<egui::ViewportId>,
+);
+
 #[derive(Default)]
 pub struct Dialogs {
     pub mindmanager_export: bool,
@@ -264,8 +280,9 @@ pub struct Dialogs {
     pub mindmanager_save: Option<(String, PathBuf, bool)>,
     pub(crate) mindmanager_save_deliver: bool,
     pub(crate) board_export: Option<crate::export_preflight::BoardPreflight>,
+    pub(crate) drawio_link: Option<crate::drawio_link::LinkDraft>,
     pub(crate) save_close_tab: Option<String>,
-    pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
+    pub imports: std::collections::VecDeque<PendingImport>,
     pub symbol_export: Option<(usize, Format)>,
     pub note_export: Option<(Format, bool)>,
     pub(crate) export_owner: Option<(String, usize, u64)>,
@@ -383,6 +400,9 @@ pub const EXPORT_MENU: &[Format] = &[
     Format::Excel,
     Format::Opml,
     Format::TextBundle,
+    Format::DrawIo,
+    Format::DrawIoSvg,
+    Format::DrawIoPng,
     Format::FreeMind,
     Format::XMind,
     Format::Csv,
@@ -707,12 +727,14 @@ impl ThinodaApp {
             .values()
             .any(|owner| *owner == viewport)
         {
+            self.return_drawio_import_viewport(viewport);
             self.window_active_documents.remove(&viewport);
             self.last_titles.remove(&viewport);
         }
     }
 
     fn return_document_window_to_root(&mut self, viewport: egui::ViewportId) {
+        self.return_drawio_import_viewport(viewport);
         self.document_windows.retain(|_, owner| *owner != viewport);
         self.window_active_documents.remove(&viewport);
         self.last_titles.remove(&viewport);
@@ -748,7 +770,12 @@ impl ThinodaApp {
         if self.activate_open_path(path) {
             return;
         }
-        if self.dialogs.imports.iter().any(|(p, ..)| p == path) {
+        if self
+            .dialogs
+            .imports
+            .iter()
+            .any(|(p, ..)| p.as_deref() == Some(path))
+        {
             return;
         }
         self.add_opened(path, OpenDoc::open_with_report(path));
@@ -785,13 +812,18 @@ impl ThinodaApp {
         }
         match opened {
             Ok((d, warnings)) if !warnings.is_empty() => {
-                if !self.dialogs.imports.iter().any(|(p, ..)| p == path) {
+                if !self
+                    .dialogs
+                    .imports
+                    .iter()
+                    .any(|(p, ..)| p.as_deref() == Some(path))
+                {
                     self.dialogs
                         .imports
-                        .push_back((path.to_path_buf(), d, warnings));
+                        .push_back((Some(path.to_path_buf()), d, warnings, None));
                 }
             }
-            Ok((d, _)) => self.install_opened_doc(path, d),
+            Ok((d, _)) => self.install_opened_doc(Some(path), d),
             Err(e) => {
                 self.toasts
                     .error(format!("{} {}: {e}", t("Could not open"), path.display()));
@@ -800,14 +832,17 @@ impl ThinodaApp {
     }
 
     pub fn resolve_import(&mut self, accept: bool) {
-        if let Some((path, d, _)) = self.dialogs.imports.pop_front()
+        if let Some((path, d, _, owner)) = self.dialogs.imports.pop_front()
             && accept
         {
-            self.install_opened_doc(&path, d);
+            let previous = self.current_viewport;
+            self.current_viewport = owner.unwrap_or(previous);
+            self.install_opened_doc(path.as_deref(), d);
+            self.current_viewport = previous;
         }
     }
 
-    fn install_opened_doc(&mut self, path: &Path, mut d: OpenDoc) {
+    pub(crate) fn install_opened_doc(&mut self, path: Option<&Path>, mut d: OpenDoc) {
         let native = is_native(d.format) && d.import_source.is_none();
         if d.doc.sheet().fim.is_some() {
             self.format_tab = FormatTab::Fim;
@@ -832,7 +867,7 @@ impl ThinodaApp {
         self.docs.push(d);
         self.active = self.docs.len() - 1;
         self.assign_document_window(&key, self.current_viewport);
-        if native {
+        if native && let Some(path) = path {
             self.settings.add_recent(path);
             self.save_settings();
         }
@@ -881,6 +916,7 @@ impl ThinodaApp {
                 | Cmd::Home
                 | Cmd::Open
                 | Cmd::OpenPath(_)
+                | Cmd::ImportDrawioLink
                 | Cmd::NextDoc
                 | Cmd::CloseTab(_)
                 | Cmd::CloseWindow
@@ -914,6 +950,7 @@ impl ThinodaApp {
                 | Cmd::Home
                 | Cmd::Open
                 | Cmd::OpenPath(_)
+                | Cmd::ImportDrawioLink
                 | Cmd::NextDoc
         ) && let Some(doc) = self.doc_mut()
         {
@@ -956,7 +993,12 @@ impl ThinodaApp {
         if let Some(doc) = self.doc()
             && let Err(error) = doc.validate_pending_drafts()
         {
-            self.toasts.error(error.to_string());
+            let message = if matches!(&cmd, Cmd::Canvas(Action::Cut)) {
+                format!("{}: {error}", t("Cut cancelled; original content was kept"))
+            } else {
+                error
+            };
+            self.toasts.error(message);
             return;
         }
         if let Some(doc) = self.doc_mut()
@@ -1057,7 +1099,7 @@ impl ThinodaApp {
                 if let Some(files) = files::pick_files(
                     files::Purpose::Open,
                     None,
-                    &[(t("Mind maps"), &exts)],
+                    &[(t("Mind maps"), &exts), DRAWIO_OPEN_FILTER],
                     self.settings.last_open_dir.as_deref(),
                     true,
                 ) {
@@ -1107,13 +1149,20 @@ impl ThinodaApp {
                 for f in files::pick_files(
                     files::Purpose::Import,
                     None,
-                    &[(t("Import"), &exts)],
+                    &[(t("Import"), &exts), DRAWIO_OPEN_FILTER],
                     None,
                     false,
                 )
                 .unwrap_or_default()
                 {
                     self.request_open_from_ui(ctx, &f, CardOpenOrder::CurrentInput);
+                }
+            }
+            Cmd::ImportDrawioLink => {
+                if self.command_available(&Cmd::ImportDrawioLink) {
+                    self.begin_drawio_link(ctx);
+                } else {
+                    self.toasts.warning(t("Not possible here"));
                 }
             }
             Cmd::MergeFiles => {
@@ -1371,21 +1420,7 @@ impl ThinodaApp {
             Cmd::ApplyCustomTheme(theme) => {
                 self.apply_custom_theme(*theme);
             }
-            Cmd::CopySheet => {
-                if let Some(d) = self.doc_mut() {
-                    d.view.commit_edit(&mut d.doc);
-                    match thinoda_core::clipboard::encode_sheet(d.doc.sheet()) {
-                        Ok(text) => {
-                            ctx.copy_text(text);
-                            self.toasts.info(t("Copied sheet to clipboard"));
-                        }
-                        Err(e) => {
-                            self.toasts
-                                .error(format!("{}: {e}", t("Could not copy sheet")));
-                        }
-                    }
-                }
-            }
+            Cmd::CopySheet => self.copy_sheet(ctx),
             Cmd::PasteSheet => {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
@@ -1402,32 +1437,75 @@ impl ThinodaApp {
                     return;
                 }
                 let d = self.doc_mut().unwrap();
-                d.view.commit_edit(&mut d.doc);
+                if let Err(error) = d
+                    .commit_canvas_drafts()
+                    .and_then(|()| d.flush_inspector_edit(ctx))
+                {
+                    self.toasts.error(format!(
+                        "{}: {}",
+                        t("Not possible here"),
+                        i18n::localize_model_error(&error)
+                    ));
+                    return;
+                }
                 let topic = d.view.primary().unwrap();
+                let source = d.doc.sheet();
+                let owned = source.owned_subtree_ids(topic);
+                let external_relationships = source.relationships.iter().any(|relationship| {
+                    owned.contains(&relationship.from) != owned.contains(&relationship.to)
+                });
+                let external_dependencies =
+                    source.scheduling.dependencies.iter().any(|dependency| {
+                        owned.contains(&dependency.predecessor)
+                            != owned.contains(&dependency.successor)
+                    });
+                let mut enclosing_annotation = source
+                    .summaries
+                    .iter()
+                    .any(|summary| summary.topic == topic && !owned.contains(&summary.parent));
+                let mut current = topic;
+                while let Some(parent) = source.parent(current) {
+                    if let Some(index) = source.index_in_parent(current) {
+                        enclosing_annotation |= source.boundaries.iter().any(|boundary| {
+                            boundary.parent == parent
+                                && boundary.range.is_none_or(|range| range.contains(index))
+                        }) || source.summaries.iter().any(|summary| {
+                            summary.parent == parent && summary.range.contains(index)
+                        });
+                    }
+                    current = parent;
+                }
+                let surrounding_context = external_dependencies
+                    || enclosing_annotation
+                    || !source.zones.is_empty()
+                    || !source.canvas.is_empty()
+                    || !source.presentation.slides.is_empty();
                 match d.doc.sheet().copy_branch_as_sheet(topic) {
                     Ok(sheet) => {
-                        let external = d
-                            .doc
-                            .sheet()
-                            .relationships
-                            .iter()
-                            .filter(|r| sheet.contains(r.from) != sheet.contains(r.to))
-                            .count();
                         if let Err(error) = d.doc.add_sheet(sheet) {
                             self.toasts
                                 .error(format!("{}: {error}", t("Not possible here")));
                             return;
                         }
                         d.view.reset();
-                        if external > 0 {
+                        if external_relationships {
                             self.toasts.info(t(
                                 "External relationships remain only in the original sheet",
                             ));
                         }
+                        if surrounding_context {
+                            self.toasts.info(t(
+                                "Some surrounding board, annotation or task context remains only in the original sheet",
+                            ));
+                        }
                     }
                     Err(e) => {
-                        self.toasts
-                            .error(format!("{}: {e}", t("Not possible here")));
+                        let error = e.to_string();
+                        self.toasts.error(format!(
+                            "{}: {}",
+                            t("Not possible here"),
+                            i18n::localize_model_error(&error)
+                        ));
                     }
                 }
             }
@@ -1458,6 +1536,7 @@ impl ThinodaApp {
                 }
                 self.clipboard_action(ctx, Action::Paste(None));
             }
+            Cmd::CopyAsDrawio => self.copy_as_drawio(ctx),
             Cmd::Ai(a) => self.start_ai(a),
             Cmd::AiChat => self.toggle_ai_chat(),
             Cmd::EditField(f) => {
@@ -1612,8 +1691,12 @@ impl ThinodaApp {
             }
             Err(e) => {
                 log::debug!("action failed: {e}");
-                self.toasts
-                    .warning(format!("{}: {e}", t("Not possible here")));
+                let error = e.to_string();
+                self.toasts.warning(format!(
+                    "{}: {}",
+                    t("Not possible here"),
+                    i18n::localize_model_error(&error)
+                ));
             }
         }
     }
@@ -1815,6 +1898,9 @@ impl ThinodaApp {
             Cmd::Palette => {
                 self.palette.open
                     || (!self.any_modal_open() && !self.dialogs.settings && !self.dialogs.about)
+            }
+            Cmd::ImportDrawioLink => {
+                !self.any_modal_open() && !self.dialogs.settings && !self.dialogs.about
             }
             Cmd::Export(Format::FimXdf2 | Format::FimXdf3) => {
                 self.save_all.is_none()
@@ -2024,9 +2110,9 @@ impl ThinodaApp {
             }
             Cmd::NewSheetFromTopic => self.doc().is_some_and(|d| {
                 d.view.selection.len() == 1
-                    && d.view
-                        .primary()
-                        .is_some_and(|id| d.doc.sheet().contains(id))
+                    && d.view.primary().is_some_and(|id| {
+                        d.doc.sheet().contains(id) && !d.doc.sheet().is_anchor(id)
+                    })
             }),
             Cmd::CopyStyle => self.doc().is_some_and(|d| {
                 (d.view.board_selection.is_empty()
@@ -2571,7 +2657,7 @@ impl ThinodaApp {
         }
         d.view.commit_edit(&mut d.doc);
         let (target, chosen) = match (&d.path, save_as) {
-            (Some(p), false) if is_native(d.format) || d.format == Format::MindManager => {
+            (Some(p), false) if is_save_target(d.format) => {
                 if (d.externally_changed || (self.file_ops.inline() && d.changed_on_disk()))
                     && !d.ignore_conflict
                 {
@@ -2776,6 +2862,7 @@ impl ThinodaApp {
         format: Format,
         allow_symbol_color_loss: bool,
         allow_note_format_loss: bool,
+        allow_board_loss: bool,
     ) {
         if let Some(doc) = self.doc()
             && let Err(error) = doc.ensure_no_pending_ink()
@@ -2813,7 +2900,11 @@ impl ThinodaApp {
             d.doc.workbook(),
             format,
             &opts,
-            format == Format::MindManager,
+            crate::export_preflight::SaveConsent {
+                board: allow_board_loss,
+                mindmanager: format == Format::MindManager,
+            }
+            .for_io(format),
             visual,
         )
         .map_err(crate::doc::export_error)
@@ -3012,15 +3103,7 @@ impl ThinodaApp {
         for doc in &mut self.docs {
             if let Some(error) = doc.view.take_title_error() {
                 log::warn!("title commit: {error}");
-                let message = if error
-                    == "Formatted card titles cannot be changed until rich-text editing is supported"
-                {
-                    t("Formatted card titles cannot be changed until rich-text editing is supported")
-                        .to_owned()
-                } else {
-                    error
-                };
-                self.toasts.error(message);
+                self.toasts.error(i18n::localize_model_error(&error));
             }
         }
         let dt = self.last_frame.elapsed().as_secs_f32();
@@ -3044,7 +3127,7 @@ impl ThinodaApp {
                 }
                 files::Purpose::Dropped => {
                     for path in &picked.paths {
-                        if crate::images::is_supported_image_path(path) {
+                        if files::is_dropped_image_path(path) {
                             self.finish_dropped_image(picked.image_owner.clone(), path);
                             #[cfg(target_arch = "wasm32")]
                             if let Err(error) = thinoda_platform::fs::remove_file(path) {
@@ -3113,7 +3196,7 @@ impl ThinodaApp {
             let interval = self.settings.recovery_interval_secs.max(1) as f32;
             let cleanup_retry_due = self.last_poll.elapsed() > Duration::from_millis(500);
             for d in &mut self.docs {
-                if (d.idle_secs() >= interval.min(2.0) || d.idle_secs() >= interval)
+                if d.recovery_due(interval)
                     && (!d.recovery_cleanup_failed || d.is_dirty() || cleanup_retry_due)
                 {
                     d.snapshot(&r);
@@ -3363,59 +3446,92 @@ impl ThinodaApp {
                 keep.push(s);
                 continue;
             }
-            let workbooks = s
+            let snapshots = s
                 .docs
                 .iter()
                 .map(|doc| {
-                    doc.load().map_err(|error| {
+                    doc.load_snapshot().map_err(|error| {
                         format!("{} {}: {error}", t("Could not open"), doc.meta.title)
                     })
                 })
                 .collect::<Result<Vec<_>, _>>();
-            match workbooks {
-                Ok(workbooks) => {
-                    let mut restored = Vec::new();
-                    for (doc, wb) in s.docs.iter().zip(workbooks) {
-                        let mut d = OpenDoc::new(wb);
-                        d.view.titles = new_topic_titles();
-                        d.path = doc
-                            .meta
-                            .original_path
-                            .clone()
-                            .filter(|p| files::document_exists(p));
-                        d.import_source = doc.meta.import_source.clone();
-                        if let Some(p) = &d.path {
-                            d.format = Format::from_path(p).unwrap_or(Format::Thinoda);
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
-                                d.storage_revision = d
-                                    .fingerprint
-                                    .as_ref()
-                                    .map(thinoda_platform::storage::revision_from_fingerprint);
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            if !files::is_durable_document(p) {
-                                d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
-                                d.storage_revision = d
-                                    .fingerprint
-                                    .as_ref()
-                                    .map(thinoda_platform::storage::revision_from_fingerprint);
-                            }
+            match snapshots {
+                Ok(snapshots) => {
+                    let restored =
+                        s.docs
+                            .iter()
+                            .zip(snapshots)
+                            .map(|(source, snapshot)| {
+                                let mut doc = OpenDoc::new(snapshot.workbook);
+                                doc.view.titles = new_topic_titles();
+                                doc.path = source
+                                    .meta
+                                    .original_path
+                                    .clone()
+                                    .filter(|p| files::document_exists(p));
+                                doc.import_source = source.meta.import_source.clone();
+                                if let Some(p) = &doc.path {
+                                    doc.format = Format::from_path(p).unwrap_or(Format::Thinoda);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        doc.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
+                                        doc.storage_revision = doc.fingerprint.as_ref().map(
+                                            thinoda_platform::storage::revision_from_fingerprint,
+                                        );
+                                    }
+                                    #[cfg(target_arch = "wasm32")]
+                                    if !files::is_durable_document(p) {
+                                        doc.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
+                                        doc.storage_revision = doc.fingerprint.as_ref().map(
+                                            thinoda_platform::storage::revision_from_fingerprint,
+                                        );
+                                    }
+                                }
+                                // Rebind a safe recovered gesture only after the new
+                                // document's recovery-dirty state has been established.
+                                doc.doc.mark_dirty();
+                                if let Some(pending_ink) = &snapshot.pending_ink {
+                                    doc.restore_pending_ink(pending_ink).map_err(|error| {
+                                        format!(
+                                            "{} {}: {error}",
+                                            t("Could not open"),
+                                            source.meta.title
+                                        )
+                                    })?;
+                                }
+                                Ok((doc, snapshot.pending_ink))
+                            })
+                            .collect::<Result<Vec<_>, String>>();
+                    let restored = match restored {
+                        Ok(restored) => restored,
+                        Err(message) => {
+                            log::warn!("Recovery restore failed: {message}");
+                            self.warn_incomplete_recovery_discovery();
+                            self.toasts.error(message);
+                            keep.push(s);
+                            continue;
                         }
-                        d.doc.mark_dirty();
-                        restored.push(d);
-                    }
+                    };
                     if let Some(recovery) = self.services.recovery.clone() {
                         let mut attempted = Vec::new();
-                        let persisted =
-                            restored.iter().zip(&s.docs).try_for_each(|(doc, source)| {
+                        let persisted = restored.iter().zip(&s.docs).try_for_each(
+                            |((doc, pending_ink), source)| {
                                 let mut meta = source.meta.clone();
                                 meta.original_path = doc.path.clone();
                                 meta.dirty = true;
                                 attempted.push(doc.key.clone());
-                                recovery.persist_snapshot(&doc.key, meta, doc.doc.workbook())
-                            });
+                                if let Some(pending_ink) = pending_ink {
+                                    recovery.persist_snapshot_with_pending_ink(
+                                        &doc.key,
+                                        meta,
+                                        doc.doc.workbook(),
+                                        pending_ink,
+                                    )
+                                } else {
+                                    recovery.persist_snapshot(&doc.key, meta, doc.doc.workbook())
+                                }
+                            },
+                        );
                         if let Err(error) = persisted {
                             log::warn!("Recovery handoff failed: {error}");
                             self.toasts
@@ -3434,7 +3550,7 @@ impl ThinodaApp {
                             t("Recover Unsaved Work")
                         ));
                     }
-                    for (doc, source) in restored.into_iter().zip(&s.docs) {
+                    for ((doc, _), source) in restored.into_iter().zip(&s.docs) {
                         #[cfg(target_arch = "wasm32")]
                         if let Some(path) = &doc.path
                             && files::is_durable_document(path)
@@ -3564,7 +3680,7 @@ impl ThinodaApp {
                 None
             };
         for (path, owner) in files::dropped_files(ctx, image_owner) {
-            if crate::images::is_supported_image_path(&path) {
+            if files::is_dropped_image_path(&path) {
                 self.finish_dropped_image(owner, &path);
             } else {
                 self.request_open_from_ui(ctx, &path, CardOpenOrder::AfterQueuedInput);
@@ -3885,16 +4001,11 @@ impl ThinodaApp {
             Ok(n) => self.toasts.info(format!("{} × {n}", t("Replace"))),
             Err(e) => {
                 let error = e.to_string();
-                let error = if error
-                    == "Formatted card titles cannot be changed until rich-text editing is supported"
-                {
-                    t("Formatted card titles cannot be changed until rich-text editing is supported")
-                        .to_owned()
-                } else {
-                    error
-                };
-                self.toasts
-                    .error(format!("{}: {error}", t("Not possible here")))
+                self.toasts.error(format!(
+                    "{}: {}",
+                    t("Not possible here"),
+                    i18n::localize_model_error(&error)
+                ))
             }
         };
         self.update_search();
@@ -4008,6 +4119,7 @@ impl ThinodaApp {
             (Cmd::SaveAs, "Save As…", "", "File"),
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
+            (Cmd::ImportDrawioLink, "Import draw.io link…", "", "File"),
             (Cmd::Settings, "Settings…", "", "Edit"),
             (Cmd::TaskPlanning, "Task Planning", "", "Insert"),
             (Cmd::EditFimNode, "Edit FIM node", "", "Edit"),
@@ -4082,6 +4194,7 @@ impl ThinodaApp {
             (Cmd::Canvas(Action::SelectAll), "Select All", "", "Edit"),
             (Cmd::Find, "Find…", "", "Edit"),
             (Cmd::FindReplace, "Find and Replace…", "", "Edit"),
+            (Cmd::CopyAsDrawio, "Copy as draw.io", "", "Edit"),
             (Cmd::CopyStyle, "Copy Style", "", "Edit"),
             (Cmd::PasteStyle, "Paste Style", "", "Edit"),
             (Cmd::ResetStyle, "Reset Style", "", "Edit"),
@@ -4503,6 +4616,185 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
 mod tests {
     use super::*;
 
+    fn app_with_sheet_branch_card(formatted: bool) -> (ThinodaApp, thinoda_core::TopicId) {
+        let mut sheet = thinoda_core::Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = sheet
+            .add_card(
+                "Styled card",
+                thinoda_core::Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        if formatted {
+            sheet
+                .topic_mut(card)
+                .unwrap()
+                .inline_text
+                .update_range("Styled card", 0..6, |style| style.bold = Some(true))
+                .unwrap();
+        }
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        doc.doc.add_sheet(sheet).unwrap();
+        doc.view.select_only(card);
+        (app, card)
+    }
+
+    #[test]
+    fn new_sheet_from_topic_preserves_rejected_formatted_title_draft() {
+        let (mut app, card) = app_with_sheet_branch_card(true);
+        let doc = app.doc_mut().unwrap();
+        doc.view.begin_edit(doc.doc.sheet(), card, false);
+        doc.view.set_editing_text("Pending title");
+        let before = doc.doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.view.editing_text(), Some("Pending title"));
+        assert!(app.toasts.texts().any(|text| {
+            text.contains(t(
+                "Formatted card titles cannot be changed until rich-text editing is supported",
+            ))
+        }));
+    }
+
+    #[test]
+    fn new_sheet_from_topic_commits_inspector_draft_before_copying() {
+        let (mut app, card) = app_with_sheet_branch_card(false);
+        let doc = app.doc_mut().unwrap();
+        let source_index = doc.doc.active_index();
+        doc.inspector_edit = Some(crate::doc::InspectorEdit {
+            buffer_id: None,
+            sheet_index: source_index,
+            sheet_root: doc.doc.sheet().root,
+            topic: card,
+            field: crate::doc::InspectorField::Notes,
+            original: None,
+            format_notes: false,
+            text: "Pending notes".into(),
+        });
+        let old_count = doc.doc.workbook().sheets.len();
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        let doc = app.doc().unwrap();
+        assert!(doc.inspector_edit.is_none());
+        assert_eq!(doc.doc.workbook().sheets.len(), old_count + 1);
+        assert_eq!(
+            doc.doc.workbook().sheets[source_index]
+                .topic(card)
+                .unwrap()
+                .notes
+                .as_deref(),
+            Some("Pending notes")
+        );
+        assert_eq!(
+            doc.doc.sheet().topic(card).unwrap().notes.as_deref(),
+            Some("Pending notes")
+        );
+        assert_eq!(doc.doc.sheet().root_mode, SheetRootMode::Hidden);
+        app.exec(
+            &egui::Context::default(),
+            Cmd::Canvas(thinoda_canvas::Action::Undo),
+        );
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook().sheets.len(), old_count);
+        assert_eq!(
+            doc.doc.workbook().sheets[source_index]
+                .topic(card)
+                .unwrap()
+                .notes
+                .as_deref(),
+            Some("Pending notes")
+        );
+    }
+
+    #[test]
+    fn new_sheet_from_topic_preserves_conflicting_inspector_draft() {
+        let (mut app, card) = app_with_sheet_branch_card(false);
+        let doc = app.doc_mut().unwrap();
+        doc.inspector_edit = Some(crate::doc::InspectorEdit {
+            buffer_id: None,
+            sheet_index: doc.doc.active_index(),
+            sheet_root: doc.doc.sheet().root,
+            topic: card,
+            field: crate::doc::InspectorField::Notes,
+            original: None,
+            format_notes: false,
+            text: "Pending notes".into(),
+        });
+        doc.doc
+            .edit_sheet("Other edit", |sheet| {
+                sheet.set_notes(card, Some("Changed elsewhere".into()))
+            })
+            .unwrap();
+        let before = doc.doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.inspector_edit.as_ref().unwrap().text, "Pending notes");
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains("draft retained"))
+        );
+    }
+
+    #[test]
+    fn new_sheet_from_topic_reports_omitted_board_context_and_external_relationships() {
+        let mut sheet = thinoda_core::Sheet::new("Board", "Central");
+        let card = sheet
+            .add_card(
+                "Card",
+                thinoda_core::Vec2::new(100.0, 100.0),
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet.add_relationship(sheet.root, card).unwrap();
+        sheet
+            .create_zone(
+                "Zone",
+                vec![card],
+                thinoda_core::Rect::from_min_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(300.0, 300.0),
+                ),
+            )
+            .unwrap();
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        doc.doc.add_sheet(sheet).unwrap();
+        doc.view.select_only(card);
+
+        app.exec(&egui::Context::default(), Cmd::NewSheetFromTopic);
+
+        assert_eq!(app.doc().unwrap().doc.sheet().floating, vec![card]);
+        assert!(
+            app.toasts.texts().any(|text| {
+                text == t("External relationships remain only in the original sheet")
+            })
+        );
+        assert!(app.toasts.texts().any(|text| {
+            text == t(
+                "Some surrounding board, annotation or task context remains only in the original sheet",
+            )
+        }));
+        let doc = app.doc_mut().unwrap();
+        doc.view.select_only(doc.doc.sheet().root);
+        assert!(!app.command_available(&Cmd::NewSheetFromTopic));
+    }
+
     fn recovery_fixture() -> (tempfile::TempDir, Arc<RecoveryManager>, ThinodaApp) {
         let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
         let recovery = Arc::new(RecoveryManager::start(&Paths::from_root(dir.path())).unwrap());
@@ -4678,7 +4970,13 @@ mod tests {
         app.close_tab_now(0);
         assert_eq!(app.docs.len(), 1);
         assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert!(app.docs[0].recovery_cleanup_failed);
+        assert!(!app.docs[0].recovery_cleanup_failed);
+        assert!(recovery.has_unflushed_snapshots());
+        recovery.flush().unwrap();
+        let pending: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(pending.pending_ink.is_some());
+        assert_eq!(pending.workbook.active().root_topic().title, "Before");
         app.docs[0].discard_pending_ink();
         snapshot_edit(&mut app.docs[0], &recovery, "After");
         assert!(!app.docs[0].recovery_cleanup_failed);
@@ -4837,6 +5135,132 @@ mod tests {
         app.restore_orphans(None);
         assert_eq!(app.docs.len(), 3);
         assert!(app.dialogs.recovery.is_empty());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn failed_pending_ink_handoff_keeps_the_claimed_original_until_retry() {
+        use thinoda_canvas::ink_controller::InkControllerError;
+
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let original = RecoveryManager::start(&paths).unwrap();
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.ink_feedback.record(InkControllerError::GesturePending);
+        let pending_ink = doc.pending_ink_for_recovery(false).unwrap();
+        original
+            .persist_snapshot_with_pending_ink(
+                "ink",
+                Default::default(),
+                doc.doc.workbook(),
+                &pending_ink,
+            )
+            .unwrap();
+        let source = original.session_dir().join("docs").join("ink.json");
+        let previous = std::fs::read(&source).unwrap();
+        assert!(original.try_flush_for_crash());
+        original.suspend().unwrap();
+        drop(original);
+
+        let recovery = Arc::new(RecoveryManager::start(&paths).unwrap());
+        let mut app = ThinodaApp::new(
+            Settings::default(),
+            Services {
+                recovery: Some(Arc::clone(&recovery)),
+                ..Services::default()
+            },
+            &[],
+        );
+        app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        assert!(RecoveryManager::find_orphans(&paths).is_empty());
+        recovery.suspend().unwrap();
+        app.restore_orphans(None);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        assert_eq!(std::fs::read(&source).unwrap(), previous);
+
+        recovery.resume().unwrap();
+        app.retry_closed_recovery_cleanup();
+        app.restore_orphans(None);
+        assert_eq!(app.docs.len(), 1);
+        assert!(app.doc().unwrap().has_unresolved_ink());
+        assert!(app.dialogs.recovery.is_empty());
+        assert!(!source.exists());
+        let destination = snapshot_path(&recovery, &app.docs[0].key);
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(destination).unwrap()).unwrap();
+        assert_eq!(snapshot.pending_ink.as_deref(), Some(pending_ink.as_str()));
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn unknown_pending_ink_data_cannot_be_restored_or_discarded_implicitly() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let original = RecoveryManager::start(&paths).unwrap();
+        let future = r#"{"version":999,"gesture":null,"feedback":[],"overflow":1,"retry_tolerance_bits":0,"retry_smooth":false}"#;
+        original
+            .persist_snapshot_with_pending_ink(
+                "future",
+                Default::default(),
+                &Workbook::default(),
+                future,
+            )
+            .unwrap();
+        let source = original.session_dir().join("docs").join("future.json");
+        let previous = std::fs::read(&source).unwrap();
+        assert!(original.try_flush_for_crash());
+        original.suspend().unwrap();
+        drop(original);
+        let recovery = Arc::new(RecoveryManager::start(&paths).unwrap());
+        let mut app = ThinodaApp::new(
+            Settings::default(),
+            Services {
+                recovery: Some(Arc::clone(&recovery)),
+                ..Services::default()
+            },
+            &[],
+        );
+        app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+        app.restore_orphans(None);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        assert!(app.recovery_discovery_incomplete);
+        app.discard_orphans();
+        assert_eq!(std::fs::read(&source).unwrap(), previous);
+        app.dialogs.recovery.remove(0).discard().unwrap();
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn oversized_ink_feedback_warns_without_overwriting_previous_recovery() {
+        use thinoda_canvas::{ink_controller::InkControllerError, ink_input::InkSample};
+        use thinoda_platform::recovery::MAX_PENDING_INK_BYTES;
+
+        let (_dir, recovery, mut app) = recovery_fixture();
+        snapshot_edit(app.doc_mut().unwrap(), &recovery, "Before");
+        recovery.flush().unwrap();
+        let path = snapshot_path(&recovery, &app.docs[0].key);
+        let previous = std::fs::read(&path).unwrap();
+        app.docs[0]
+            .ink_feedback
+            .record(InkControllerError::InvalidSettings {
+                reason: "a".repeat(MAX_PENDING_INK_BYTES + 1),
+                sample: InkSample::new(thinoda_core::Vec2::ZERO, None),
+            });
+        app.docs[0].snapshot(&recovery);
+        assert!(app.docs[0].recovery_snapshot_failed);
+        assert!(app.docs[0].has_unresolved_ink());
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        app.docs[0].discard_pending_ink();
+        app.docs[0].snapshot(&recovery);
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(!app.docs[0].recovery_snapshot_failed);
+        assert!(app.recovery_warning.is_none());
         recovery.finish().unwrap();
     }
 
@@ -5203,6 +5627,12 @@ mod tests {
             cmds.iter()
                 .any(|(command, _)| *command == Cmd::MoveToNewWindow)
         );
+        let (_, drawio_copy) = cmds
+            .iter()
+            .find(|(command, _)| *command == Cmd::CopyAsDrawio)
+            .expect("draw.io copy is available from the command palette");
+        assert_eq!(drawio_copy.title, t("Copy as draw.io"));
+        assert_eq!(drawio_copy.category.as_deref(), Some(t("Edit")));
     }
 
     #[test]

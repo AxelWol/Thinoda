@@ -86,10 +86,11 @@ features work differently:
 |---|---|
 | Files on disk | Documents under `/Documents` use OPFS with an IndexedDB fallback. **Open Recent** and autosave use these site-private copies; settings and recovery retain the synchronous virtual file system. |
 | Open / Import / Merge dialogs | The browser's file picker. Open and Import copy files into `/Documents`; Merge uses a temporary browser input. Name collisions receive a suffix. |
-| Drag & drop onto the window | Supported. Dropped files are copied into `/Documents` and opened. |
+| Drag & drop onto the window | Documents, including explicitly named `.drawio.png` files, are copied into `/Documents` and opened. Ordinary PNG/JPEG drops stay in memory and insert an image on the selected topic or as a board image card. A `.png` with embedded draw.io data can instead be opened as a diagram through File > Open. |
 | Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. Plain Save updates the browser copy and, for a file explicitly picked with Chromium File System Access in this tab, saves back to the original file. Firefox/Safari retain downloads; use Save As to download again. |
 | Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |
+| Copy Sheet | Copies the editable Thinoda sheet text and SVG in one clipboard item when the browser supports SVG clipboard data. Otherwise it warns and copies the sheet text only. Clipboard permissions and a secure context are required; receiving apps choose which representation to use. |
 | Native print dialog | **Continue to print…** renders the same print page and opens the browser's print dialog. Select the same paper size and orientation there and set margins to none/default. **Save print PDF…** downloads a paper-sized PDF for exact output. |
 | Crash recovery | The app attempts to flush recovery snapshots to local storage every half second and when the page is hidden. Available snapshots are offered under **Recover Unsaved Work** on a later launch. Storage failures or competing tabs can prevent recovery; save or download important work and keep external backups. |
 | Unsaved changes on quit | Closing or reloading the tab with unsaved changes asks for confirmation. **Quit** shows a hint to close the tab instead. |
@@ -101,6 +102,129 @@ features work differently:
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
 | Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |
+
+**Export > draw.io SVG (editable)** and **draw.io PNG (editable)** download an
+image containing an editable draw.io diagram for the current sheet only. The
+preview and the embedded diagram use the same sheet. Embedded content can extend
+outside the visible preview, so these images are not redacted. Review the
+conversion warnings and keep a `.thinoda` copy; unsupported content can block
+export. These are export formats, not Save As or lossless save-back. See the
+[draw.io plan and current limitations](DRAWIO.md).
+
+Classic, open and block arrows, diamonds, ovals, half-circle and bar connector
+markers, including thin variants where available, have independent start and
+end sizes from 0 to 999 in the connector inspector. Classic and block arrows,
+diamonds and ovals can be filled or hollow independently. Open arrows,
+half-circles and bars remain open; their fill setting is retained when changing
+directly to a fillable draw.io marker. Unsupported marker shapes, out-of-range sizes
+and unsupported fill values trigger a formatting warning. Supported fixed
+connector points, offsets and perimeter settings are retained on attached
+shapes and topics. Hover a rectangle, rounded rectangle, ellipse, double ellipse,
+diamond or rectangular topic to reveal connection crosses; drag from or drop
+onto a cross to fix the attachment. Hold Shift while connecting to fix an
+arbitrary point, Alt to leave a free point without grid snapping, or Alt+Shift
+to attach without fixing. Enter or Space toggles a focused endpoint; Home/End
+cycle visible default
+points.
+Unsupported constraints and possible position differences are reported. Export
+requires consent if a fixed point may move or if an unexported collapsed topic
+detaches it.
+Existing Thinoda triangle arrows retain their native appearance; draw.io export
+warns that they will be approximated. Keep the original diagram.
+
+Import converts supported CSS named, RGB/RGBA, HSL/HSLA, HWB and hex colors
+into editable sRGB colors. It also warns when explicit fill, stroke, text or
+swimlane body colors cannot be resolved or depend on a theme, or when opacity
+or stroke width is invalid or outside the supported range. Adaptive colors can
+be flattened and inherited colors can fall back to Thinoda defaults. Other
+appearance losses may still go unreported.
+
+Unrecognized draw.io shapes or standalone named styles become editable
+rectangle placeholders and are identified in the import or paste warning.
+Named styles combined with an explicit shape can also lose formatting. Original
+stencil and style data are not retained; keep the source file.
+
+Shape and connector labels use a fixed 12-unit canvas font at normal zoom.
+Import warns when a nonempty label's source size differs or cannot be
+determined; draw.io's default connector-label size is 11. Named text and label
+styles also warn when their inherited alignment or other effects cannot be
+preserved. Separate connector label cells are joined into the connector text
+with a warning because their individual styles and positions are not retained.
+HTML labels are converted to editable plain text, including common block breaks
+and semicolon-terminated character references. Rich formatting and inline links
+are not retained. Unsupported markup, unresolved references, and common
+whitespace that HTML may collapse trigger warnings, but some layout differences
+remain unreported; the source HTML is never executed. Keep the original file.
+Export and **Copy as draw.io** write size 12 for labeled board connectors;
+flattened relationship labels use size 12 as well. Text styling and wrapping
+can still differ.
+
+draw.io grid visibility and spacing are imported, with snapping enabled when the
+grid is enabled. Unsupported grid sizes are adjusted with a warning. Thinoda
+preserves its independent grid and snapping settings on direct export and
+reimport, but draw.io may discard those settings when saving. Export warns when
+dot grids or independent snapping can differ; keep a `.thinoda` copy.
+Line-grid appearance is approximate.
+
+An explicit draw.io page color becomes the sheet's canvas background. Import
+warns when a finite page, adaptive or translucent color, gradient, or background
+image cannot be represented faithfully. Export writes matching `light-dark`
+color alternatives so the current draw.io editor retains explicit colors in
+both themes, without changing its settings for shapes. Older viewers may not
+support this syntax. Translucent backgrounds require export confirmation
+because editors can blend them over different colors.
+
+Ordinary folded draw.io notes import as editable flat sticky cards with a
+warning; notes used as containers or images can be simplified differently.
+Export and **Copy as draw.io** report that flat cards can gain folded corners.
+
+Standalone double ellipses retain their editable inner outline and automatic or
+custom inset. Invalid insets and unresolved or adaptive colors are reported;
+**Export** and **Copy as draw.io** warn that appearance can differ. Shape-label
+wrapping and full draw.io text styling are not yet preserved, and double
+ellipses used as containers still become frames with a warning.
+Import warns when a connected double ellipse uses a different perimeter.
+Previously saved fixed perimeter attachments on double ellipses may move
+slightly because their projection now uses the analytic ellipse rather than
+its flattened outline.
+
+Flowchart annotation brackets import as editable open-sided rectangles with a
+formatting warning. Their original stencil identity and exact appearance are
+not preserved; keep the original diagram.
+
+Flowchart process stencils import as editable square-cornered processes with a
+formatting warning; their rounded corners are not preserved. Native processes
+export as square rectangles with a Thinoda identity marker, which other editors
+may remove. Export and **Copy as draw.io** warn when a visible zero-width or
+zero-height process outline may disappear in draw.io.
+
+Opening editable images also accepts older URI- or base64-encoded SVG diagrams
+and older PNG diagram metadata. Ordinary PNG drops still add an image; a
+`.drawio.png` drop opens the embedded diagram instead.
+
+An `.html` or `.htm` file with one embedded draw.io viewer, including older
+compressed or URI-encoded viewers, can be opened or dropped as an unsaved
+converted copy. The page is treated as data: scripts and remote resources are
+never loaded. HTML with remote-only viewers or multiple diagrams is not
+imported; export each diagram as a separate editable file.
+
+**File > Import draw.io link…** imports self-contained published `#R` links
+or fragments locally, without contacting the link's website. The result is an
+unsaved converted copy; review any conversion warning and save or download a
+`.thinoda` copy. Links containing remote references such as `#U` are not
+supported, and ordinary paste does not invoke this import.
+
+Pasting draw.io diagram text inserts the first page as one undoable edit. A
+persistent warning reports possible omissions and counts omitted first-page
+container frames and additional pages; children of those frames become free
+board items. Content-conversion warnings describe the first page, including
+connector attachments that may have been detached. Malformed or out-of-range
+connector and ink points are discarded
+rather than replaced with invented coordinates; a shape with malformed geometry
+and its children are omitted with a warning. If the first page has no pasteable
+items, the paste is rejected and later pages are not pasted. A formatting-only
+paste warning is temporary; omission and detachment warnings remain visible
+until dismissed, subject to the normal notification queue limit.
 
 ## Durable browser documents (C1 platform integration)
 
@@ -431,7 +555,7 @@ and at most 1024 bytes; transformed outlines are bounded to 64 KiB/500 lines.
 ## Zones
 
 Select one or more floating root topics and choose **Insert > Create Zone** or
-**Create Zone** in the context menu. Central-tree topics cannot become Zone
+**Zones > Create Zone** in the context menu. Central-tree topics cannot become Zone
 members. The frame initially includes the selected topics and their visible
 descendants. **Apply** saves the name and frame as one undoable change;
 **Cancel** discards the draft.

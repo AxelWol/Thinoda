@@ -1,11 +1,14 @@
 //! Board tools and accessible labels shared by native and web views.
 
 use egui::{Color32, Context, Rect, Ui, vec2};
-use thinoda_canvas::{BoardTool, MapView};
+use thinoda_canvas::{Action, BoardTool, MapView};
 use thinoda_core::{
-    CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorRoute, InkTool, ObjectStyle,
-    ShapeKind, TopicId,
-    board::{BoardMember, MAX_BOARD_COORDINATE, MIN_CARD_SIZE},
+    CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
+    ConnectorRoute, InkTool, ObjectStyle, ShapeKind, TopicId,
+    board::{
+        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, MAX_BOARD_COORDINATE,
+        MAX_CONNECTOR_MARKER_SIZE, MIN_CARD_SIZE,
+    },
 };
 use thinoda_ui::{
     icons,
@@ -19,6 +22,72 @@ use crate::{
     i18n::{self, t},
 };
 
+/// Hint shown while a shape tool is armed (draw.io-style placement).
+pub(crate) const ARMED_SHAPE_HINT: &str = "Click empty space to add · Esc to finish";
+/// Narrower canvases skip the hint so it never covers the minimap or toolbars.
+pub(crate) const ARMED_SHAPE_HINT_MIN_WIDTH: f32 = 520.0;
+pub(crate) const CONTEXT_STRIP_HEIGHT: f32 = 48.0;
+const BOARD_TOOLBAR_TOP_INSET: f32 = CONTEXT_STRIP_HEIGHT + 16.0;
+const MIN_BOARD_TOOLBAR_HEIGHT: f32 = 70.0;
+
+pub(crate) fn board_toolbar_fits_below_context(canvas: Rect) -> bool {
+    canvas.height() >= CONTEXT_STRIP_HEIGHT + MIN_BOARD_TOOLBAR_HEIGHT + 4.0
+}
+
+pub(crate) fn has_ink_options(tool: BoardTool) -> bool {
+    matches!(
+        tool,
+        BoardTool::Pen | BoardTool::Highlighter | BoardTool::ObjectEraser | BoardTool::PixelEraser
+    )
+}
+
+pub(crate) fn context_strip_rects(
+    canvas: Rect,
+    card: bool,
+    options: bool,
+) -> (Option<Rect>, Option<Rect>) {
+    let row = Rect::from_min_size(
+        canvas.min,
+        vec2(
+            canvas.width().max(0.0),
+            CONTEXT_STRIP_HEIGHT.min(canvas.height().max(0.0)),
+        ),
+    );
+    if card && options {
+        let gap = row.width().min(4.0);
+        let options_width = ((row.width() - gap) * 0.5).min(200.0);
+        let split = row.right() - options_width;
+        (
+            Some(Rect::from_min_max(
+                row.min,
+                egui::pos2(split - gap, row.bottom()),
+            )),
+            Some(Rect::from_min_max(egui::pos2(split, row.top()), row.max)),
+        )
+    } else {
+        (card.then_some(row), options.then_some(row))
+    }
+}
+
+fn armed_shape_hint_dismissed_id() -> egui::Id {
+    egui::Id::unique("thinoda_armed_shape_hint_dismissed")
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct InkOptionsOwner {
+    document: String,
+    instance: u64,
+    sheet: usize,
+    root: TopicId,
+    tool: BoardTool,
+}
+
+#[derive(Clone)]
+struct InkOptionsPopups {
+    owner: InkOptionsOwner,
+    ids: Vec<egui::Id>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ConnectorOwner {
     viewport: egui::ViewportId,
@@ -27,6 +96,7 @@ struct ConnectorOwner {
     sheet: usize,
     root: TopicId,
     object: CanvasObjectId,
+    tool: BoardTool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -43,6 +113,7 @@ struct ConnectorProperties {
     color: Option<Color>,
     effective_color: Color,
     width: f32,
+    has_waypoints: bool,
 }
 
 struct ConnectorContext {
@@ -58,7 +129,153 @@ struct ConnectorPopups {
 }
 
 #[derive(Clone, Copy)]
-struct ConnectorColorDraft {
+struct ShapeProperties {
+    shape: ShapeKind,
+    fill: Option<Color>,
+    stroke: Option<Color>,
+    /// Outline drawn when no explicit stroke is set and the shape has no fill.
+    auto_stroke: Color,
+    stroke_width: f32,
+    text_color: Option<Color>,
+    auto_text_color: Color,
+}
+
+impl ShapeProperties {
+    fn visible_stroke(self) -> Option<Color> {
+        self.stroke
+            .or_else(|| self.fill.is_none().then_some(self.auto_stroke))
+    }
+}
+
+struct ShapeContext {
+    target: ConnectorTarget,
+    enabled: bool,
+    properties: ShapeProperties,
+}
+
+enum BoardObjectContext {
+    Connector(ConnectorContext),
+    Shape(ShapeContext),
+}
+
+impl BoardObjectContext {
+    fn target(&self) -> &ConnectorTarget {
+        match self {
+            Self::Connector(context) => &context.target,
+            Self::Shape(context) => &context.target,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        match self {
+            Self::Connector(context) => context.enabled,
+            Self::Shape(context) => context.enabled,
+        }
+    }
+}
+
+enum ShapeChange {
+    Shape(ShapeKind),
+    Fill(Option<Color>),
+    Stroke(Option<Color>),
+    StrokeWidth(f32),
+    TextColor(Option<Color>),
+}
+
+impl ShapeChange {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Shape(_) => "Change shape",
+            Self::Fill(_) => "Fill color",
+            Self::Stroke(_) => "Outline color",
+            Self::StrokeWidth(_) => "Outline width",
+            Self::TextColor(_) => "Text Color",
+        }
+    }
+
+    fn apply(self, object: &mut CanvasObject, auto_stroke: Color) {
+        match self {
+            Self::Shape(kind) => {
+                if let CanvasObjectKind::Shape { shape, .. } = &mut object.kind {
+                    if *shape != kind {
+                        object.rounding = None;
+                        object.rectangle_sides = None;
+                        object.double_ellipse_margin = None;
+                    }
+                    *shape = kind;
+                }
+            }
+            Self::Fill(color) => object.style.fill = color,
+            Self::Stroke(color) => object.style.stroke = color,
+            Self::StrokeWidth(width) => {
+                object.style.stroke_width = width;
+                // An automatic outline has a fixed width, so a chosen width pins its color.
+                object.style.stroke.get_or_insert(auto_stroke);
+            }
+            Self::TextColor(color) => object.style.text_color = color,
+        }
+    }
+}
+
+/// Shortcut shown below the contextual board-object controls.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContextAction {
+    EditLabel,
+    FormatPanel,
+}
+
+#[derive(Clone, Copy)]
+struct ColorControl {
+    label: &'static str,
+    none: &'static str,
+    key: &'static str,
+    icon: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct WidthControl {
+    label: &'static str,
+    key: &'static str,
+    salt: &'static str,
+}
+
+const CONNECTOR_COLOR: ColorControl = ColorControl {
+    label: "Connector color",
+    none: "Auto",
+    key: "connector",
+    icon: icons::FORMAT,
+};
+const CONNECTOR_WIDTH: WidthControl = WidthControl {
+    label: "Connector width",
+    key: "connector",
+    salt: "connector-width",
+};
+const SHAPE_FILL: ColorControl = ColorControl {
+    label: "Fill color",
+    none: "No fill",
+    key: "shape_fill",
+    icon: icons::FORMAT,
+};
+const SHAPE_OUTLINE: ColorControl = ColorControl {
+    label: "Outline color",
+    none: "Auto",
+    key: "shape_outline",
+    icon: icons::TOPIC_STYLE,
+};
+const SHAPE_OUTLINE_WIDTH: WidthControl = WidthControl {
+    label: "Outline width",
+    key: "shape_outline",
+    salt: "shape-outline-width",
+};
+const SHAPE_TEXT_COLOR: ColorControl = ColorControl {
+    label: "Text Color",
+    none: "Auto",
+    key: "shape_text",
+    icon: icons::BOARD_TEXT,
+};
+
+#[derive(Clone, Copy)]
+struct ColorDraft {
     owner: egui::Id,
     value: egui::ecolor::Hsva,
     frame: u64,
@@ -66,7 +283,7 @@ struct ConnectorColorDraft {
 }
 
 #[derive(Clone, Copy)]
-struct ConnectorWidthDraft {
+struct WidthDraft {
     owner: egui::Id,
     value: f32,
     frame: u64,
@@ -78,6 +295,7 @@ enum ConnectorChange {
     ArrowEnd(bool),
     Color(Option<Color>),
     Width(f32),
+    ClearWaypoints,
 }
 
 impl ConnectorChange {
@@ -88,22 +306,28 @@ impl ConnectorChange {
             Self::ArrowEnd(_) => "Arrow at end",
             Self::Color(_) => "Connector color",
             Self::Width(_) => "Connector width",
+            Self::ClearWaypoints => "Clear connector waypoints",
         }
     }
 
     fn apply(self, connector: &mut thinoda_core::CanvasConnector) {
         match self {
             Self::Route(route) => connector.route = route,
-            Self::ArrowStart(enabled) => connector.arrow_start = enabled,
-            Self::ArrowEnd(enabled) => connector.arrow_end = enabled,
+            Self::ArrowStart(enabled) => connector.set_arrow_start(enabled),
+            Self::ArrowEnd(enabled) => connector.set_arrow_end(enabled),
             Self::Color(color) => connector.color = color,
             Self::Width(width) => connector.width = width,
+            Self::ClearWaypoints => connector.waypoints = Default::default(),
         }
     }
 }
 
 fn connector_popup_slot(viewport: egui::ViewportId) -> egui::Id {
     egui::Id::unique(("board_connector_popups", viewport))
+}
+
+fn ink_popup_slot(viewport: egui::ViewportId) -> egui::Id {
+    egui::Id::unique(("board_ink_popups", viewport))
 }
 
 #[derive(Clone, Copy)]
@@ -116,6 +340,12 @@ pub(crate) enum BoardStyleClipboard {
         route: ConnectorRoute,
         arrow_start: bool,
         arrow_end: bool,
+        start_marker: Option<ConnectorMarker>,
+        end_marker: Option<ConnectorMarker>,
+        start_marker_size: Option<f32>,
+        end_marker_size: Option<f32>,
+        start_marker_unfilled: bool,
+        end_marker_unfilled: bool,
     },
     Ink {
         style: ObjectStyle,
@@ -136,6 +366,12 @@ impl BoardStyleClipboard {
                 route: connector.route,
                 arrow_start: connector.arrow_start,
                 arrow_end: connector.arrow_end,
+                start_marker: connector.start_marker,
+                end_marker: connector.end_marker,
+                start_marker_size: connector.start_marker_size,
+                end_marker_size: connector.end_marker_size,
+                start_marker_unfilled: connector.start_marker_unfilled,
+                end_marker_unfilled: connector.end_marker_unfilled,
             },
             CanvasObjectKind::Ink(ink) => Self::Ink {
                 style: object.style,
@@ -166,6 +402,12 @@ impl BoardStyleClipboard {
                     route,
                     arrow_start,
                     arrow_end,
+                    start_marker,
+                    end_marker,
+                    start_marker_size,
+                    end_marker_size,
+                    start_marker_unfilled,
+                    end_marker_unfilled,
                 },
                 CanvasObjectKind::Connector(connector),
             ) => {
@@ -175,6 +417,12 @@ impl BoardStyleClipboard {
                 connector.route = route;
                 connector.arrow_start = arrow_start;
                 connector.arrow_end = arrow_end;
+                connector.start_marker = start_marker;
+                connector.end_marker = end_marker;
+                connector.start_marker_size = start_marker_size;
+                connector.end_marker_size = end_marker_size;
+                connector.start_marker_unfilled = start_marker_unfilled;
+                connector.end_marker_unfilled = end_marker_unfilled;
             }
             (
                 Self::Ink {
@@ -200,6 +448,7 @@ pub(crate) fn shape_name(shape: ShapeKind) -> &'static str {
         ShapeKind::Rectangle => "Rectangle",
         ShapeKind::RoundedRectangle => "Rounded rectangle",
         ShapeKind::Ellipse => "Ellipse",
+        ShapeKind::DoubleEllipse => "Double ellipse",
         ShapeKind::Diamond => "Diamond",
         ShapeKind::Triangle => "Triangle",
         ShapeKind::RightTriangle => "Right triangle",
@@ -252,10 +501,46 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.locked = t("Locked").into();
     labels.from = t("From").into();
     labels.to = t("To").into();
+    labels.fixed_attachment = t("Fixed attachment").into();
+    let connector_drop_hint = t(
+        "Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.",
+    );
+    labels.connector_end_hint = format!(
+        "{} {}",
+        t(
+            "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points."
+        ),
+        connector_drop_hint
+    );
     labels.free_point = t("Free point").into();
     labels.resize = t("Resize board item").into();
     labels.rotate = t("Rotate board item").into();
+    labels.waypoint = t("Connector waypoint").into();
+    labels.insert_waypoint = t("Add connector waypoint").into();
+    labels.waypoint_hint =
+        t("Drag or use arrow keys to move; double-click or press Delete to remove.").into();
+    labels.insert_waypoint_hint =
+        t("Drag, press Enter, or use arrow keys to add a waypoint.").into();
+    labels.connect_up = t("Add connected shape above").into();
+    labels.connect_right = t("Add connected shape to the right").into();
+    labels.connect_down = t("Add connected shape below").into();
+    labels.connect_left = t("Add connected shape to the left").into();
+    labels.connect_hint = format!(
+        "{} {}",
+        t(
+            "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS."
+        ),
+        connector_drop_hint
+    );
+    labels.quick_hint =
+        t("Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.").into();
     labels.label_editor = t("Board object label").into();
+    labels.label_editing = t("Editing label").into();
+    labels.label_edit_hint =
+        t("Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel").into();
+    labels.label_edit_armed_hint =
+        t("Clicking or tapping empty canvas also adds the armed shape.").into();
+    labels.label_placeholder = t("Type a label").into();
     view.minimap_labels.accessible_name = t(
         "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
     )
@@ -267,11 +552,14 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
 }
 
 impl ThinodaApp {
-    fn connector_context(&self) -> Option<ConnectorContext> {
+    /// The one selected board object a contextual toolbar may edit, and whether editing is allowed.
+    fn single_board_object(&self) -> Option<(ConnectorTarget, bool)> {
         let doc = self.doc()?;
         let view = &doc.view;
-        if !matches!(view.board_tool, BoardTool::Select | BoardTool::Connector)
-            || view.board_selection.len() != 1
+        if !matches!(
+            view.board_tool,
+            BoardTool::Select | BoardTool::Connector | BoardTool::Shape(_)
+        ) || view.board_selection.len() != 1
             || !view.selection.is_empty()
             || view.selected_object.is_some()
             || view.relationship_from.is_some()
@@ -283,20 +571,6 @@ impl ThinodaApp {
         let sheet = doc.doc.sheet();
         let id = view.board_selection[0];
         let object = sheet.canvas.object(id)?;
-        let CanvasObjectKind::Connector(connector) = &object.kind else {
-            return None;
-        };
-        let default_color = if view.accent.a() > 0 {
-            view.accent
-        } else if view.dark {
-            Color32::from_gray(225)
-        } else {
-            Color32::from_gray(65)
-        };
-        let effective_color = connector
-            .color
-            .or(object.style.stroke)
-            .unwrap_or_else(|| crate::ui::to_color(default_color));
         let enabled = !object.locked
             && object.group.is_none()
             && !view.has_active_canvas_gesture()
@@ -311,8 +585,8 @@ impl ThinodaApp {
             && !self.any_modal_open()
             && !self.dialogs.settings
             && !self.dialogs.about;
-        Some(ConnectorContext {
-            target: ConnectorTarget {
+        Some((
+            ConnectorTarget {
                 owner: ConnectorOwner {
                     viewport: self.current_viewport,
                     document: doc.key.clone(),
@@ -320,9 +594,29 @@ impl ThinodaApp {
                     sheet: doc.doc.active_index(),
                     root: sheet.root,
                     object: id,
+                    tool: view.board_tool,
                 },
                 revision: doc.doc.state_id(),
             },
+            enabled,
+        ))
+    }
+
+    fn connector_context(&self) -> Option<ConnectorContext> {
+        let (target, enabled) = self.single_board_object()?;
+        let doc = self.doc()?;
+        let view = &doc.view;
+        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let CanvasObjectKind::Connector(connector) = &object.kind else {
+            return None;
+        };
+        let default_color = thinoda_canvas::automatic_board_stroke(view.accent, view.dark);
+        let effective_color = connector
+            .color
+            .or(object.style.stroke)
+            .unwrap_or_else(|| crate::ui::to_color(default_color));
+        Some(ConnectorContext {
+            target,
             enabled,
             properties: ConnectorProperties {
                 route: connector.route,
@@ -331,8 +625,95 @@ impl ThinodaApp {
                 color: connector.color,
                 effective_color,
                 width: connector.width,
+                has_waypoints: !connector.waypoints.is_empty(),
             },
         })
+    }
+
+    fn board_object_context(&self) -> Option<BoardObjectContext> {
+        self.connector_context()
+            .map(BoardObjectContext::Connector)
+            .or_else(|| self.shape_context().map(BoardObjectContext::Shape))
+    }
+
+    pub(crate) fn has_board_object_options(&self) -> bool {
+        self.board_object_context().is_some()
+    }
+
+    fn shape_context(&self) -> Option<ShapeContext> {
+        let (target, enabled) = self.single_board_object()?;
+        let doc = self.doc()?;
+        let view = &doc.view;
+        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
+            return None;
+        };
+        let mut auto_style = object.style;
+        auto_style.text_color = None;
+        let auto_text_color = crate::ui::to_color(
+            thinoda_canvas::board_label_colors(doc.doc.sheet(), &auto_style, view.dark).0,
+        );
+        Some(ShapeContext {
+            target,
+            enabled,
+            properties: ShapeProperties {
+                shape: *shape,
+                fill: object.style.fill,
+                stroke: object.style.stroke,
+                auto_stroke: crate::ui::to_color(thinoda_canvas::automatic_board_stroke(
+                    view.accent,
+                    view.dark,
+                )),
+                stroke_width: object.style.stroke_width,
+                text_color: object.style.text_color,
+                auto_text_color,
+            },
+        })
+    }
+
+    fn apply_shape_change(
+        &mut self,
+        target: &ConnectorTarget,
+        change: ShapeChange,
+    ) -> Result<ConnectorTarget, String> {
+        let Some(context) = self
+            .shape_context()
+            .filter(|current| current.enabled && current.target == *target)
+        else {
+            return Err(t("Not possible here").into());
+        };
+        let label = change.label();
+        let auto_stroke = context.properties.auto_stroke;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .update_canvas_object(label, target.owner.object, |object| {
+                change.apply(object, auto_stroke);
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(ConnectorTarget {
+            revision: doc.doc.state_id(),
+            ..target.clone()
+        })
+    }
+
+    /// Starts inline editing of the selected shape or connector label, as F2 does.
+    fn edit_board_label(&mut self, target: &ConnectorTarget) -> Result<(), String> {
+        if !self
+            .single_board_object()
+            .is_some_and(|(current, enabled)| enabled && current == *target)
+        {
+            return Err(t("Not possible here").into());
+        }
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        if doc.view.begin_board_label(&doc.doc, target.owner.object) {
+            Ok(())
+        } else {
+            Err(t("Not possible here").into())
+        }
     }
 
     fn apply_connector_change(
@@ -384,54 +765,15 @@ impl ThinodaApp {
         canvas: Rect,
         editing_toolbar: Option<Rect>,
     ) -> Option<Rect> {
-        let connector = self.connector_context();
-        let viewport = self.current_viewport;
-        let popup_slot = connector_popup_slot(viewport);
-        let previous_popups = ctx.data(|data| data.get_temp::<ConnectorPopups>(popup_slot));
-        if previous_popups.as_ref().is_some_and(|previous| {
-            !connector
-                .as_ref()
-                .is_some_and(|current| current.enabled && current.target == previous.target)
-        }) {
-            Self::close_connector_popups(ctx, viewport);
-        }
         let doc = self.doc()?;
         let tool = doc.view.board_tool;
         let show_minimap = doc.view.show_minimap;
-        let mut ink_settings = doc.view.ink_settings;
         let collapsed_id = egui::Id::unique(("board_toolbar_collapsed", &doc.key));
-        let auto_color_id = egui::Id::unique(("board_ink_auto_color", &doc.key));
-        let last_tool_id = egui::Id::unique(("board_toolbar_last_tool", &doc.key));
-        let last_connector_id = egui::Id::unique(("board_toolbar_last_connector", viewport));
-        let connector_owner = connector.as_ref().map(|value| value.target.owner.clone());
-        let reveal_connector = connector_owner.is_some()
-            && ctx
-                .data(|data| data.get_temp::<Option<ConnectorOwner>>(last_connector_id))
-                .flatten()
-                != connector_owner;
-        let reveal_context = reveal_connector
-            || matches!(
-                tool,
-                BoardTool::Pen
-                    | BoardTool::Highlighter
-                    | BoardTool::ObjectEraser
-                    | BoardTool::PixelEraser
-            ) && ctx.data(|data| data.get_temp::<BoardTool>(last_tool_id)) != Some(tool);
-        let mut auto_color = ctx
-            .data(|data| data.get_temp::<bool>(auto_color_id))
-            .unwrap_or(ink_settings.color == Color::BLACK);
-        let background = thinoda_core::theme::Theme::for_settings(&doc.doc.sheet().theme)
-            .background(&doc.doc.sheet().theme, doc.view.dark);
-        let default_ink_color = Color::highest_contrast_on(background);
-        if auto_color {
-            ink_settings.color = default_ink_color;
-        }
         let mut collapsed = ctx
             .data(|data| data.get_temp::<bool>(collapsed_id))
             .unwrap_or(true);
         let mut command = None;
-        let mut connector_change = None;
-        let mut connector_popups = Vec::new();
+        let mut insert_shape = None;
         let content_width = (canvas.width() - 36.0).max(0.0);
         let toolbar_width = if collapsed {
             content_width.min(34.0)
@@ -443,9 +785,11 @@ impl ThinodaApp {
         let editing_toolbar = editing_toolbar
             .filter(|rect| rect.right() > toolbar_left && rect.left() < toolbar_right);
         let top_inset = editing_toolbar
-            .map_or(8.0, |rect| (rect.bottom() - canvas.top() + 8.0).max(8.0))
-            .min((canvas.height() - 100.0).max(0.0));
-        let row_height = ((canvas.height() - 20.0) * 0.5).clamp(20.0, 34.0);
+            .map_or(BOARD_TOOLBAR_TOP_INSET, |rect| {
+                (rect.bottom() - canvas.top() + 8.0).max(BOARD_TOOLBAR_TOP_INSET)
+            })
+            .min((canvas.height() - MIN_BOARD_TOOLBAR_HEIGHT).max(0.0));
+        let row_height = ((canvas.height() - top_inset - 20.0) * 0.5).clamp(20.0, 34.0);
         let inner_height = (canvas.height() - top_inset - 16.0).max(0.0);
         let toolbar = egui::Area::new(egui::Id::unique("thinoda_board_toolbar"))
             .order(egui::Order::Middle)
@@ -476,190 +820,11 @@ impl ThinodaApp {
                     }
                     let available_height =
                         (inner_height - (ui.cursor().min.y - inner_top)).max(0.0);
-                    let mut scroll = egui::ScrollArea::vertical()
+                    let scroll = egui::ScrollArea::vertical()
                         .id_salt("board_toolbar_scroll")
                         .min_scrolled_height(0.0)
                         .max_height(available_height);
-                    if reveal_context {
-                        scroll = scroll.vertical_scroll_offset(0.0);
-                    }
                     scroll.show(ui, |ui| {
-                        if let Some(connector) = &connector {
-                            ui.add_enabled_ui(connector.enabled, |ui| {
-                                ui.push_id(&connector.target.owner, |ui| {
-                                    let (change, popups) = connector_context_controls(
-                                        ui, canvas, collapsed, row_height, connector,
-                                    );
-                                    connector_change = change;
-                                    connector_popups = popups;
-                                });
-                            });
-                            ui.separator();
-                        } else if matches!(tool, BoardTool::Pen | BoardTool::Highlighter) {
-                            let color_control = board_tool_popup(
-                                ui,
-                                icons::FORMAT.into(),
-                                "Ink color",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.set_width((canvas.width() - 24.0).clamp(1.0, 164.0));
-                                    reserve_popup_scrollbar_space(ui);
-                                    let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("board_ink_color_choices")
-                                        .min_scrolled_height(max_height.min(120.0))
-                                        .max_height(max_height)
-                                        .show(ui, |ui| {
-                                            ui.checkbox(&mut auto_color, t("Auto"));
-                                            let selected = (!auto_color).then(|| {
-                                                Color32::from_rgb(
-                                                    ink_settings.color.r,
-                                                    ink_settings.color.g,
-                                                    ink_settings.color.b,
-                                                )
-                                            });
-                                            if let Some(color) = widgets::color_swatches(
-                                                ui,
-                                                &crate::ui::SWATCHES,
-                                                selected,
-                                            ) {
-                                                let [r, g, b, _] = color.to_srgba_unmultiplied();
-                                                ink_settings.color =
-                                                    Color::rgba(r, g, b, ink_settings.color.a);
-                                                auto_color = false;
-                                            }
-                                            if !auto_color {
-                                                let mut color =
-                                                    crate::ui::from_color(ink_settings.color);
-                                                if ui
-                                                    .color_edit_button_srgba(&mut color)
-                                                    .accessible_name(t("Ink color"))
-                                                    .changed()
-                                                {
-                                                    let [r, g, b, a] =
-                                                        color.to_srgba_unmultiplied();
-                                                    ink_settings.color = Color::rgba(r, g, b, a);
-                                                }
-                                            }
-                                        });
-                                },
-                            );
-                            let color = if auto_color {
-                                default_ink_color
-                            } else {
-                                ink_settings.color
-                            };
-                            let swatch = Rect::from_min_size(
-                                color_control.rect.left_bottom() + vec2(8.0, -6.0),
-                                vec2(16.0, 3.0),
-                            );
-                            ui.painter().rect_filled(
-                                swatch,
-                                1,
-                                Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a),
-                            );
-                            ui.painter().rect_stroke(
-                                swatch,
-                                1,
-                                egui::Stroke::new(1.0, thinoda_ui::Palette::of_ui(ui).border),
-                                egui::StrokeKind::Inside,
-                            );
-                            board_tool_popup(
-                                ui,
-                                icons::STROKE_WIDTH.into(),
-                                "Ink width",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.set_width((canvas.width() - 24.0).clamp(1.0, 206.0));
-                                    reserve_popup_scrollbar_space(ui);
-                                    let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("board_ink_width_choices")
-                                        .min_scrolled_height(max_height.min(120.0))
-                                        .max_height(max_height)
-                                        .show(ui, |ui| {
-                                            width_presets(ui, &mut ink_settings.width, "Ink width");
-                                            ui.add(
-                                                egui::DragValue::new(&mut ink_settings.width)
-                                                    .range(
-                                                    thinoda_core::board::MIN_STROKE_WIDTH
-                                                        ..=thinoda_core::board::MAX_STROKE_WIDTH,
-                                                ),
-                                            )
-                                            .accessible_name(t("Ink width"));
-                                        });
-                                },
-                            );
-                            board_tool_popup(
-                                ui,
-                                board_tool_glyph(tool),
-                                "Stroke type",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    for (value, label) in [
-                                        (BoardTool::Pen, "Pen"),
-                                        (BoardTool::Highlighter, "Highlighter"),
-                                    ] {
-                                        if board_tool_button(
-                                            ui,
-                                            board_tool_glyph(value),
-                                            label,
-                                            value == tool,
-                                            false,
-                                            row_height,
-                                        )
-                                        .1
-                                        {
-                                            command = Some(Cmd::BoardTool(value));
-                                            ui.close_kind(egui::UiKind::Menu);
-                                        }
-                                    }
-                                },
-                            );
-                            board_tool_popup(
-                                ui,
-                                icons::OPACITY.into(),
-                                "Opacity",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.add(
-                                        egui::DragValue::new(&mut ink_settings.opacity)
-                                            .range(0.0..=1.0)
-                                            .speed(0.01),
-                                    )
-                                    .accessible_name(t("Opacity"));
-                                },
-                            );
-                            if auto_color {
-                                ink_settings.color = default_ink_color;
-                            }
-                            ui.separator();
-                        } else if matches!(tool, BoardTool::ObjectEraser | BoardTool::PixelEraser) {
-                            board_tool_popup(
-                                ui,
-                                icons::STROKE_WIDTH.into(),
-                                "Eraser radius",
-                                collapsed,
-                                false,
-                                row_height,
-                                |ui| {
-                                    ui.add(
-                                        egui::DragValue::new(&mut ink_settings.eraser_radius)
-                                            .range(0.1..=200.0),
-                                    )
-                                    .accessible_name(t("Eraser radius"));
-                                },
-                            );
-                            ui.separator();
-                        }
                         for (value, label) in [
                             (BoardTool::Select, "Select tool"),
                             (BoardTool::Hand, "Hand tool"),
@@ -681,16 +846,33 @@ impl ThinodaApp {
                         }
                         board_tool_popup(
                             ui,
-                            icons::BOARD_SHAPES.into(),
+                            board_tool_glyph(BoardTool::Shape(ShapeKind::Rectangle)),
                             "Shape library",
                             collapsed,
                             matches!(tool, BoardTool::Shape(_)),
                             row_height,
                             |ui| {
-                                if let Some(shape) = shape_library(ui, canvas, tool, t) {
-                                    command = Some(Cmd::BoardTool(BoardTool::Shape(shape)));
-                                    ui.close_kind(egui::UiKind::Menu);
+                                let current = match tool {
+                                    BoardTool::Shape(shape) => Some(shape),
+                                    _ => None,
+                                };
+                                match shape_grid(ui, canvas, current, t, true) {
+                                    Some(ShapePick::Choose(shape)) => {
+                                        // Choosing the armed tile again finishes placing shapes.
+                                        command = Some(Cmd::BoardTool(
+                                            if tool == BoardTool::Shape(shape) {
+                                                BoardTool::Select
+                                            } else {
+                                                BoardTool::Shape(shape)
+                                            },
+                                        ));
+                                    }
+                                    Some(ShapePick::Insert(shape)) => insert_shape = Some(shape),
+                                    // The board takes the drop, so get the menu out of the way.
+                                    Some(ShapePick::Dragged) => {}
+                                    None => return,
                                 }
+                                ui.close_kind(egui::UiKind::Menu);
                             },
                         );
                         for (value, label) in [
@@ -717,7 +899,7 @@ impl ThinodaApp {
                         }
                         if board_tool_button(
                             ui,
-                            icons::IMAGE.into(),
+                            CommandIcon::from(icons::IMAGE).with_tone(ribbon::IconTone::Create),
                             "Image card",
                             false,
                             collapsed,
@@ -744,24 +926,126 @@ impl ThinodaApp {
                     });
                 });
             });
-        ctx.data_mut(|data| {
-            data.insert_temp(collapsed_id, collapsed);
-            data.insert_temp(auto_color_id, auto_color);
-            data.insert_temp(last_tool_id, tool);
-            data.insert_temp(last_connector_id, connector_owner);
-        });
-        if let Some(doc) = self.doc_mut() {
-            doc.view.ink_settings = ink_settings;
+        ctx.data_mut(|data| data.insert_temp(collapsed_id, collapsed));
+        if let Some(command) = command {
+            self.exec(ctx, command);
         }
-        if let Some(connector) = connector.filter(|value| value.enabled) {
-            let mut target = connector.target;
-            if let Some(change) = connector_change {
-                match self.apply_connector_change(&target, change) {
-                    Ok(updated) => target = updated,
+        if let Some(shape) = insert_shape {
+            self.insert_board_shape(ctx, shape);
+        }
+        Some(toolbar.response.rect)
+    }
+
+    pub(crate) fn board_object_options_toolbar(
+        &mut self,
+        ctx: &Context,
+        canvas: Rect,
+        card_text_open: bool,
+    ) -> Option<Rect> {
+        let viewport = self.current_viewport;
+        let Some(context) = self.board_object_context() else {
+            Self::close_connector_popups(ctx, viewport);
+            return None;
+        };
+        let target = context.target().clone();
+        let enabled = context.enabled();
+        let (area_id, scroll_id, heading) = match &context {
+            BoardObjectContext::Connector(_) => (
+                "thinoda_connector_options",
+                "board_connector_options",
+                "Connector options",
+            ),
+            BoardObjectContext::Shape(_) => (
+                "thinoda_shape_options",
+                "board_shape_options",
+                "Shape options",
+            ),
+        };
+        let popup_slot = connector_popup_slot(viewport);
+        let previous = ctx.data(|data| data.get_temp::<ConnectorPopups>(popup_slot));
+        if previous
+            .as_ref()
+            .is_some_and(|previous| !enabled || previous.target != target)
+        {
+            Self::close_connector_popups(ctx, viewport);
+        }
+        let format_panel_open = self.settings.show_format_panel
+            && self.sidebar_family == crate::app::SidebarFamily::Format;
+        let strip = context_strip_rects(canvas, card_text_open, true).1?;
+        let mut connector_change = None;
+        let mut shape_change = None;
+        let mut popups = Vec::new();
+        let mut action = None;
+        let area = egui::Area::new(egui::Id::unique((area_id, viewport)))
+            .order(egui::Order::Middle)
+            .fixed_pos(strip.min)
+            .constrain_to(strip)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.set_min_size(strip.size());
+                ui.set_max_width(strip.width());
+                ui.shrink_clip_rect(strip);
+                egui::Frame::new()
+                    .fill(thinoda_ui::Palette::of_ui(ui).surface)
+                    .inner_margin(egui::Margin::symmetric(6, 3))
+                    .show(ui, |ui| {
+                        ui.set_width((strip.width() - 12.0).max(0.0));
+                        ui.set_min_height((strip.height() - 6.0).max(0.0));
+                        ui.push_id(&target.owner, |ui| {
+                            egui::ScrollArea::horizontal()
+                                .id_salt(scroll_id)
+                                .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                                .scroll_bar_visibility(
+                                    egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                )
+                                .max_width(ui.available_width())
+                                .min_scrolled_width(0.0)
+                                .max_height((strip.height() - 6.0).max(0.0))
+                                .min_scrolled_height(34.0)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.horizontal_centered(|ui| {
+                                        ui.label(egui::RichText::new(t(heading)).small());
+                                        ui.add_enabled_ui(enabled, |ui| match &context {
+                                            BoardObjectContext::Connector(connector) => {
+                                                (connector_change, popups) =
+                                                    connector_context_controls(
+                                                        ui, canvas, true, 34.0, connector,
+                                                    );
+                                            }
+                                            BoardObjectContext::Shape(shape) => {
+                                                (shape_change, popups) = shape_context_controls(
+                                                    ui, canvas, true, 34.0, shape,
+                                                );
+                                            }
+                                        });
+                                        action = context_action_controls(
+                                            ui,
+                                            true,
+                                            34.0,
+                                            enabled,
+                                            format_panel_open,
+                                        );
+                                    });
+                                    crate::ui::reveal_changed_focus(ui);
+                                });
+                        });
+                    });
+            });
+        if enabled {
+            let mut updated_target = target.clone();
+            let result = if let Some(change) = connector_change {
+                Some(self.apply_connector_change(&updated_target, change))
+            } else {
+                shape_change.map(|change| self.apply_shape_change(&updated_target, change))
+            };
+            if let Some(result) = result {
+                match result {
+                    Ok(updated) => updated_target = updated,
                     Err(error) => {
                         Self::close_connector_popups(ctx, viewport);
                         self.toasts.warning(error);
-                        return Some(toolbar.response.rect);
+                        return Some(area.response.rect);
                     }
                 }
             }
@@ -769,16 +1053,429 @@ impl ThinodaApp {
                 data.insert_temp(
                     popup_slot,
                     ConnectorPopups {
-                        target,
-                        ids: connector_popups,
+                        target: updated_target,
+                        ids: popups,
                     },
                 );
             });
         }
+        match action {
+            Some(ContextAction::EditLabel) => {
+                Self::close_connector_popups(ctx, viewport);
+                if let Err(error) = self.edit_board_label(&target) {
+                    self.toasts.warning(error);
+                }
+            }
+            Some(ContextAction::FormatPanel) => self.exec(ctx, Cmd::ToggleFormatPanel),
+            None => {}
+        }
+        let toolbar_focused = ctx
+            .memory(|memory| memory.focused())
+            .and_then(|id| ctx.read_response(id))
+            .is_some_and(|response| {
+                response.enabled() && response.layer_id == area.response.layer_id
+            });
+        if enabled
+            && toolbar_focused
+            && !ctx.text_edit_focused()
+            && !egui::Popup::is_any_open(ctx)
+            && let Some((shortcut, Cmd::Canvas(action @ (Action::Undo | Action::Redo)))) = self
+                .profile_bindings(&self.settings.keymaps, self.mode, ctx.os())
+                .into_iter()
+                .find(|(shortcut, _)| crate::keymaps::pressed(ctx, *shortcut))
+            && ctx.input_mut(|input| input.consume_shortcut(&shortcut))
+        {
+            self.exec(ctx, Cmd::Canvas(action));
+        }
+        Some(area.response.rect)
+    }
+
+    pub(crate) fn close_ink_option_popups(ctx: &Context, viewport: egui::ViewportId) {
+        let slot = ink_popup_slot(viewport);
+        let popups = ctx.data_mut(|data| {
+            let popups = data.get_temp::<InkOptionsPopups>(slot);
+            data.remove::<InkOptionsPopups>(slot);
+            popups
+        });
+        if let Some(popups) = popups {
+            for id in popups.ids {
+                egui::Popup::close_id(ctx, id);
+            }
+        }
+    }
+
+    pub(crate) fn ink_options_toolbar(
+        &mut self,
+        ctx: &Context,
+        canvas: Rect,
+        card_text_open: bool,
+    ) -> Option<Rect> {
+        let viewport = self.current_viewport;
+        let doc = self.doc()?;
+        let tool = doc.view.board_tool;
+        if !has_ink_options(tool) {
+            Self::close_ink_option_popups(ctx, viewport);
+            return None;
+        }
+        let owner = InkOptionsOwner {
+            document: doc.key.clone(),
+            instance: doc.doc.instance_id(),
+            sheet: doc.doc.active_index(),
+            root: doc.doc.sheet().root,
+            tool,
+        };
+        let popup_slot = ink_popup_slot(viewport);
+        if ctx
+            .data(|data| data.get_temp::<InkOptionsPopups>(popup_slot))
+            .is_some_and(|previous| previous.owner != owner)
+        {
+            Self::close_ink_option_popups(ctx, viewport);
+        }
+        let auto_color_id = egui::Id::unique(("board_ink_auto_color", &doc.key));
+        let mut ink_settings = doc.view.ink_settings;
+        let mut auto_color = ctx
+            .data(|data| data.get_temp::<bool>(auto_color_id))
+            .unwrap_or(ink_settings.color == Color::BLACK);
+        let background = thinoda_core::theme::Theme::for_settings(&doc.doc.sheet().theme)
+            .background(&doc.doc.sheet().theme, doc.view.dark);
+        let default_ink_color = Color::highest_contrast_on(background);
+        if auto_color {
+            ink_settings.color = default_ink_color;
+        }
+        let strip = context_strip_rects(canvas, card_text_open, true).1?;
+        let mut command = None;
+        let mut popups = Vec::new();
+        let area = egui::Area::new(egui::Id::unique(("thinoda_ink_options", viewport)))
+            .order(egui::Order::Middle)
+            .fixed_pos(strip.min)
+            .constrain_to(strip)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.set_min_size(strip.size());
+                ui.set_max_width(strip.width());
+                ui.shrink_clip_rect(strip);
+                egui::Frame::new()
+                    .fill(thinoda_ui::Palette::of_ui(ui).surface)
+                    .inner_margin(egui::Margin::symmetric(6, 3))
+                    .show(ui, |ui| {
+                        ui.set_width((strip.width() - 12.0).max(0.0));
+                        ui.set_min_height((strip.height() - 6.0).max(0.0));
+                        ui.push_id(
+                            (&owner.document, owner.instance, owner.sheet, owner.root),
+                            |ui| {
+                                egui::ScrollArea::horizontal()
+                                    .id_salt("board_ink_options")
+                                    .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                                    .scroll_bar_visibility(
+                                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                    )
+                                    .max_width(ui.available_width())
+                                    .min_scrolled_width(0.0)
+                                    .max_height((strip.height() - 6.0).max(0.0))
+                                    .min_scrolled_height(34.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.horizontal_centered(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(t("Ink options")).small(),
+                                            );
+                                            if matches!(tool, BoardTool::Pen | BoardTool::Highlighter)
+                                            {
+                                                let color_control = board_tool_popup(
+                                                    ui,
+                                                    icons::FORMAT.into(),
+                                                    "Ink color",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.set_width(
+                                                            (canvas.width() - 24.0)
+                                                                .clamp(1.0, 164.0),
+                                                        );
+                                                        reserve_popup_scrollbar_space(ui);
+                                                        let max_height = (canvas.height() - 32.0)
+                                                            .clamp(1.0, 180.0);
+                                                        egui::ScrollArea::vertical()
+                                                            .id_salt("board_ink_color_choices")
+                                                            .min_scrolled_height(
+                                                                max_height.min(120.0),
+                                                            )
+                                                            .max_height(max_height)
+                                                            .show(ui, |ui| {
+                                                                ui.checkbox(
+                                                                    &mut auto_color,
+                                                                    t("Auto"),
+                                                                );
+                                                                let selected = (!auto_color)
+                                                                    .then(|| {
+                                                                        Color32::from_rgb(
+                                                                            ink_settings.color.r,
+                                                                            ink_settings.color.g,
+                                                                            ink_settings.color.b,
+                                                                        )
+                                                                    });
+                                                                if let Some(color) =
+                                                                    widgets::color_swatches(
+                                                                        ui,
+                                                                        &crate::ui::SWATCHES,
+                                                                        selected,
+                                                                    )
+                                                                {
+                                                                    let [r, g, b, _] = color
+                                                                        .to_srgba_unmultiplied();
+                                                                    ink_settings.color =
+                                                                        Color::rgba(
+                                                                            r,
+                                                                            g,
+                                                                            b,
+                                                                            ink_settings.color.a,
+                                                                        );
+                                                                    auto_color = false;
+                                                                }
+                                                                if !auto_color {
+                                                                    let mut color = crate::ui::from_color(
+                                                                        ink_settings.color,
+                                                                    );
+                                                                    if ui
+                                                                        .color_edit_button_srgba(
+                                                                            &mut color,
+                                                                        )
+                                                                        .accessible_name(t("Ink color"))
+                                                                        .changed()
+                                                                    {
+                                                                        let [r, g, b, a] = color
+                                                                            .to_srgba_unmultiplied();
+                                                                        ink_settings.color =
+                                                                            Color::rgba(r, g, b, a);
+                                                                    }
+                                                                }
+                                                            });
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&color_control).get_id(),
+                                                );
+                                                let color = if auto_color {
+                                                    default_ink_color
+                                                } else {
+                                                    ink_settings.color
+                                                };
+                                                let swatch = Rect::from_min_size(
+                                                    color_control.rect.left_bottom()
+                                                        + vec2(8.0, -6.0),
+                                                    vec2(16.0, 3.0),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    swatch,
+                                                    1,
+                                                    Color32::from_rgba_unmultiplied(
+                                                        color.r, color.g, color.b, color.a,
+                                                    ),
+                                                );
+                                                ui.painter().rect_stroke(
+                                                    swatch,
+                                                    1,
+                                                    egui::Stroke::new(
+                                                        1.0,
+                                                        thinoda_ui::Palette::of_ui(ui).border,
+                                                    ),
+                                                    egui::StrokeKind::Inside,
+                                                );
+                                                let width_control = board_tool_popup(
+                                                    ui,
+                                                    icons::STROKE_WIDTH.into(),
+                                                    "Ink width",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.set_width(
+                                                            (canvas.width() - 24.0)
+                                                                .clamp(1.0, 206.0),
+                                                        );
+                                                        reserve_popup_scrollbar_space(ui);
+                                                        let max_height = (canvas.height() - 32.0)
+                                                            .clamp(1.0, 180.0);
+                                                        egui::ScrollArea::vertical()
+                                                            .id_salt("board_ink_width_choices")
+                                                            .min_scrolled_height(
+                                                                max_height.min(120.0),
+                                                            )
+                                                            .max_height(max_height)
+                                                            .show(ui, |ui| {
+                                                                width_presets(
+                                                                    ui,
+                                                                    &mut ink_settings.width,
+                                                                    "Ink width",
+                                                                );
+                                                                ui.add(
+                                                                    egui::DragValue::new(
+                                                                        &mut ink_settings.width,
+                                                                    )
+                                                                    .range(
+                                                                        thinoda_core::board::MIN_STROKE_WIDTH
+                                                                            ..=thinoda_core::board::MAX_STROKE_WIDTH,
+                                                                    ),
+                                                                )
+                                                                .accessible_name(t("Ink width"));
+                                                            });
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&width_control).get_id(),
+                                                );
+                                                let stroke_control = board_tool_popup(
+                                                    ui,
+                                                    board_tool_glyph(tool),
+                                                    "Stroke type",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        for (value, label) in [
+                                                            (BoardTool::Pen, "Pen"),
+                                                            (BoardTool::Highlighter, "Highlighter"),
+                                                        ] {
+                                                            if board_tool_button(
+                                                                ui,
+                                                                board_tool_glyph(value),
+                                                                label,
+                                                                value == tool,
+                                                                false,
+                                                                34.0,
+                                                            )
+                                                            .1
+                                                            {
+                                                                command = Some(Cmd::BoardTool(value));
+                                                                ui.close_kind(egui::UiKind::Menu);
+                                                            }
+                                                        }
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&stroke_control).get_id(),
+                                                );
+                                                let opacity_control = board_tool_popup(
+                                                    ui,
+                                                    icons::OPACITY.into(),
+                                                    "Opacity",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.add(
+                                                            egui::DragValue::new(
+                                                                &mut ink_settings.opacity,
+                                                            )
+                                                            .range(0.0..=1.0)
+                                                            .speed(0.01),
+                                                        )
+                                                        .accessible_name(t("Opacity"));
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&opacity_control).get_id(),
+                                                );
+                                            } else {
+                                                let radius_control = board_tool_popup(
+                                                    ui,
+                                                    icons::STROKE_WIDTH.into(),
+                                                    "Eraser radius",
+                                                    true,
+                                                    false,
+                                                    34.0,
+                                                    |ui| {
+                                                        ui.add(
+                                                            egui::DragValue::new(
+                                                                &mut ink_settings.eraser_radius,
+                                                            )
+                                                            .range(0.1..=200.0),
+                                                        )
+                                                        .accessible_name(t("Eraser radius"));
+                                                    },
+                                                );
+                                                popups.push(
+                                                    egui::Popup::menu(&radius_control).get_id(),
+                                                );
+                                            }
+                                        });
+                                        crate::ui::reveal_changed_focus(ui);
+                                    });
+                            },
+                        );
+                    });
+            });
+        if auto_color {
+            ink_settings.color = default_ink_color;
+        }
+        ctx.data_mut(|data| {
+            data.insert_temp(auto_color_id, auto_color);
+            data.insert_temp(popup_slot, InkOptionsPopups { owner, ids: popups });
+        });
+        if let Some(doc) = self.doc_mut() {
+            doc.view.ink_settings = ink_settings;
+        }
         if let Some(command) = command {
             self.exec(ctx, command);
         }
-        Some(toolbar.response.rect)
+        Some(area.response.rect)
+    }
+
+    /// Shift+Enter on a library tile: places the shape in free space beside
+    /// the selection (or near the viewport centre) without changing the tool.
+    fn insert_board_shape(&mut self, ctx: &Context, shape: ShapeKind) {
+        if !self.command_available(&Cmd::BoardTool(BoardTool::Shape(shape))) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if !self.finish_canvas_text_edit() {
+            return;
+        }
+        let Some(doc) = self.doc_mut() else { return };
+        match doc.view.insert_board_shape(&mut doc.doc, shape) {
+            Ok(_) => {
+                ctx.memory_mut(|memory| memory.request_focus(thinoda_canvas::MapCanvas::id()));
+            }
+            Err(error) => {
+                self.toasts
+                    .error(format!("{}: {error}", t("Not possible here")));
+            }
+        }
+    }
+
+    /// Bottom-centre hint while a shape is armed; dismissible for the session.
+    pub(crate) fn armed_shape_hint(&mut self, ctx: &Context, canvas: Rect) -> Option<Rect> {
+        let doc = self.doc()?;
+        if !matches!(doc.view.board_tool, BoardTool::Shape(_))
+            || doc.view.editing_board_object().is_some()
+            || doc.view.editing_topic().is_some()
+            || canvas.width() < ARMED_SHAPE_HINT_MIN_WIDTH
+            || canvas.height() < 160.0
+            || ctx.data(|data| data.get_temp::<bool>(armed_shape_hint_dismissed_id())) == Some(true)
+        {
+            return None;
+        }
+        let mut dismiss = false;
+        let area = egui::Area::new(egui::Id::unique("thinoda_armed_shape_hint"))
+            .order(egui::Order::Middle)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(canvas.center().x, canvas.bottom() - 12.0))
+            .constrain_to(canvas)
+            .movable(false)
+            .show(ctx, |ui| {
+                widgets::card(ui).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        widgets::caption(ui, t(ARMED_SHAPE_HINT));
+                        let close = widgets::icon_button(ui, icons::CLOSE, t("Dismiss"), false);
+                        dismiss = close.clicked() && widgets::touch_activation_allowed(ctx);
+                    });
+                });
+            });
+        if dismiss {
+            ctx.data_mut(|data| data.insert_temp(armed_shape_hint_dismissed_id(), true));
+        }
+        Some(area.response.rect)
     }
 
     /// Shows properties for a selected free object instead of topic styling.
@@ -803,7 +1500,15 @@ impl ThinodaApp {
                     .iter()
                     .any(|member| sheet.is_board_member_locked(*member))
             });
+        let inspector_owner = (
+            doc.doc.instance_id(),
+            doc.doc.active_index(),
+            doc.doc.state_id(),
+            id,
+        );
+        let gesture_active = doc.view.has_active_canvas_gesture();
         let mut edited = original.clone();
+        let mut clear_waypoints = false;
         ui.label(
             egui::RichText::new(t(match &original.kind {
                 CanvasObjectKind::Shape { shape, .. } => shape_name(*shape),
@@ -824,6 +1529,7 @@ impl ThinodaApp {
             });
             match &mut edited.kind {
                 CanvasObjectKind::Shape { shape, .. } => {
+                    let previous_shape = *shape;
                     widgets::property_field(ui, t("Shape"), |ui| {
                         egui::ComboBox::from_id_salt(("board_object_shape", id))
                             .selected_text(t(shape_name(*shape)))
@@ -834,6 +1540,70 @@ impl ThinodaApp {
                             })
                             .response
                     });
+                    if *shape != previous_shape {
+                        edited.rounding = None;
+                        edited.rectangle_sides = None;
+                        edited.double_ellipse_margin = None;
+                    }
+                    if let Some(rounding) = &mut edited.rounding {
+                        let response = widgets::property_field(ui, t("Corner radius"), |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut rounding.radius)
+                                    .range(0.0..=MAX_BOARD_COORDINATE)
+                                    .speed(1.0)
+                                    .fixed_decimals(0),
+                            )
+                        });
+                        if response.changed() {
+                            rounding.radius = rounding.radius.round();
+                        }
+                    }
+                    if *shape == ShapeKind::Rectangle && edited.rounding.is_none() {
+                        let mut sides = edited.rectangle_sides.unwrap_or_default();
+                        ui.label(t("Outline sides"));
+                        let changed = ui
+                            .horizontal_wrapped(|ui| {
+                                let mut changed = false;
+                                changed |= ui.checkbox(&mut sides.top, t("Top outline")).changed();
+                                changed |=
+                                    ui.checkbox(&mut sides.right, t("Right outline")).changed();
+                                changed |= ui
+                                    .checkbox(&mut sides.bottom, t("Bottom outline"))
+                                    .changed();
+                                changed |=
+                                    ui.checkbox(&mut sides.left, t("Left outline")).changed();
+                                changed
+                            })
+                            .inner;
+                        if changed {
+                            edited.rectangle_sides = Some(sides);
+                        }
+                        widgets::caption(ui, t("Sides rotate with the shape."));
+                    }
+                    if *shape == ShapeKind::DoubleEllipse {
+                        let mut automatic = edited.double_ellipse_margin.is_none();
+                        if ui
+                            .checkbox(&mut automatic, t("Automatic inner inset"))
+                            .changed()
+                        {
+                            edited.double_ellipse_margin = (!automatic).then(|| {
+                                thinoda_core::board::double_ellipse_inset(
+                                    edited.rect,
+                                    edited.style.effective_shape_stroke_width(),
+                                    None,
+                                )
+                            });
+                        }
+                        if let Some(inset) = &mut edited.double_ellipse_margin {
+                            widgets::property_field(ui, t("Inner outline inset"), |ui| {
+                                ui.add(
+                                    egui::DragValue::new(inset)
+                                        .range(0.0..=MAX_BOARD_COORDINATE)
+                                        .speed(0.5),
+                                )
+                            });
+                        }
+                    }
                     optional_color(ui, "Fill", &mut edited.style.fill, Color::WHITE);
                     optional_color(ui, "Stroke", &mut edited.style.stroke, Color::BLACK);
                     width_field(ui, &mut edited.style.stroke_width);
@@ -857,8 +1627,67 @@ impl ThinodaApp {
                             })
                             .response
                     });
-                    ui.checkbox(&mut connector.arrow_start, t("Arrow at start"));
-                    ui.checkbox(&mut connector.arrow_end, t("Arrow at end"));
+                    clear_waypoints = ui
+                        .push_id(("clear-connector-waypoints", inspector_owner), |ui| {
+                            ui.add_enabled(
+                                !gesture_active && !connector.waypoints.is_empty(),
+                                egui::Button::new(t("Clear connector waypoints")),
+                            )
+                            .clicked()
+                        })
+                        .inner;
+                    let mut arrow_start = connector.arrow_start;
+                    if ui.checkbox(&mut arrow_start, t("Arrow at start")).changed() {
+                        connector.set_arrow_start(arrow_start);
+                    }
+                    marker_field(
+                        ui,
+                        "Start arrow style",
+                        id,
+                        arrow_start,
+                        &mut connector.start_marker,
+                        &mut connector.start_marker_size,
+                        &mut connector.start_marker_unfilled,
+                    );
+                    marker_size_field(
+                        ui,
+                        "Start arrow size",
+                        arrow_start && connector.start_marker.is_some(),
+                        &mut connector.start_marker_size,
+                    );
+                    marker_fill_field(
+                        ui,
+                        "Fill start arrow",
+                        arrow_start,
+                        connector.start_marker,
+                        &mut connector.start_marker_unfilled,
+                    );
+                    let mut arrow_end = connector.arrow_end;
+                    if ui.checkbox(&mut arrow_end, t("Arrow at end")).changed() {
+                        connector.set_arrow_end(arrow_end);
+                    }
+                    marker_field(
+                        ui,
+                        "End arrow style",
+                        id,
+                        arrow_end,
+                        &mut connector.end_marker,
+                        &mut connector.end_marker_size,
+                        &mut connector.end_marker_unfilled,
+                    );
+                    marker_size_field(
+                        ui,
+                        "End arrow size",
+                        arrow_end && connector.end_marker.is_some(),
+                        &mut connector.end_marker_size,
+                    );
+                    marker_fill_field(
+                        ui,
+                        "Fill end arrow",
+                        arrow_end,
+                        connector.end_marker,
+                        &mut connector.end_marker_unfilled,
+                    );
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
                     width_field(ui, &mut connector.width);
                 }
@@ -868,7 +1697,7 @@ impl ThinodaApp {
                 }
             }
         });
-        if edited != original {
+        if edited != original || clear_waypoints {
             let result = (|| {
                 let doc = self
                     .doc_mut()
@@ -878,6 +1707,9 @@ impl ThinodaApp {
                     .update_canvas_object("Board properties", id, |current| {
                         current.alt_text = edited.alt_text;
                         current.style = edited.style;
+                        current.rounding = edited.rounding;
+                        current.rectangle_sides = edited.rectangle_sides;
+                        current.double_ellipse_margin = edited.double_ellipse_margin;
                         match (&mut current.kind, edited.kind) {
                             (
                                 CanvasObjectKind::Shape { shape, .. },
@@ -890,8 +1722,17 @@ impl ThinodaApp {
                                 current.route = value.route;
                                 current.arrow_start = value.arrow_start;
                                 current.arrow_end = value.arrow_end;
+                                current.start_marker = value.start_marker;
+                                current.end_marker = value.end_marker;
+                                current.start_marker_size = value.start_marker_size;
+                                current.end_marker_size = value.end_marker_size;
+                                current.start_marker_unfilled = value.start_marker_unfilled;
+                                current.end_marker_unfilled = value.end_marker_unfilled;
                                 current.color = value.color;
                                 current.width = value.width;
+                                if clear_waypoints {
+                                    current.waypoints = Default::default();
+                                }
                             }
                             (CanvasObjectKind::Ink(current), CanvasObjectKind::Ink(value)) => {
                                 current.color = value.color;
@@ -1074,6 +1915,15 @@ fn connector_context_controls(
                             }
                         }
                     });
+                    if ui
+                        .add_enabled(
+                            properties.has_waypoints,
+                            egui::Button::new(t("Clear connector waypoints")),
+                        )
+                        .clicked()
+                    {
+                        change = Some(ConnectorChange::ClearWaypoints);
+                    }
                     crate::ui::reveal_changed_focus(ui);
                 });
         },
@@ -1103,72 +1953,259 @@ fn connector_context_controls(
     {
         change = Some(ConnectorChange::ArrowEnd(!properties.arrow_end));
     }
-    let color = board_tool_popup(
+    let (color, picked) = color_popup(
         ui,
-        icons::FORMAT.into(),
-        "Connector color",
+        canvas,
+        collapsed,
+        row_height,
+        CONNECTOR_COLOR,
+        &context.target,
+        properties.color,
+        properties.effective_color,
+        Some(properties.effective_color),
+    );
+    popups.push(color);
+    if let Some(color) = picked {
+        change = Some(ConnectorChange::Color(color));
+    }
+    let (width, picked) = width_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        CONNECTOR_WIDTH,
+        &context.target,
+        properties.width,
+    );
+    popups.push(width);
+    if let Some(width) = picked {
+        change = Some(ConnectorChange::Width(width));
+    }
+    (change, popups)
+}
+
+fn shape_context_controls(
+    ui: &mut Ui,
+    canvas: Rect,
+    collapsed: bool,
+    row_height: f32,
+    context: &ShapeContext,
+) -> (Option<ShapeChange>, Vec<egui::Id>) {
+    let properties = context.properties;
+    let mut change = None;
+    let mut popups = Vec::with_capacity(5);
+    let shape = board_tool_popup(
+        ui,
+        icons::BOARD_SHAPES.into(),
+        "Change shape",
+        collapsed,
+        false,
+        row_height,
+        |ui| {
+            if let Some(shape) = shape_library(ui, canvas, Some(properties.shape), t)
+                && shape != properties.shape
+            {
+                change = Some(ShapeChange::Shape(shape));
+            }
+        },
+    );
+    popups.push(egui::Popup::menu(&shape).get_id());
+    let (fill, picked) = color_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        SHAPE_FILL,
+        &context.target,
+        properties.fill,
+        properties.fill.unwrap_or(Color::WHITE),
+        properties.fill,
+    );
+    popups.push(fill);
+    if let Some(color) = picked {
+        change = Some(ShapeChange::Fill(color));
+    }
+    let (outline, picked) = color_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        SHAPE_OUTLINE,
+        &context.target,
+        properties.stroke,
+        properties.stroke.unwrap_or(properties.auto_stroke),
+        properties.visible_stroke(),
+    );
+    popups.push(outline);
+    if let Some(color) = picked {
+        change = Some(ShapeChange::Stroke(color));
+    }
+    let (width, picked) = width_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        SHAPE_OUTLINE_WIDTH,
+        &context.target,
+        properties.stroke_width,
+    );
+    popups.push(width);
+    if let Some(width) = picked {
+        change = Some(ShapeChange::StrokeWidth(width));
+    }
+    let effective_text = properties.text_color.unwrap_or(properties.auto_text_color);
+    let (text, picked) = color_popup(
+        ui,
+        canvas,
+        collapsed,
+        row_height,
+        SHAPE_TEXT_COLOR,
+        &context.target,
+        properties.text_color,
+        effective_text,
+        Some(effective_text),
+    );
+    popups.push(text);
+    if let Some(color) = picked {
+        change = Some(ShapeChange::TextColor(color));
+    }
+    (change, popups)
+}
+
+/// "Edit label" and "More formatting options" shortcuts shared by shapes and connectors.
+fn context_action_controls(
+    ui: &mut Ui,
+    collapsed: bool,
+    row_height: f32,
+    enabled: bool,
+    format_panel_open: bool,
+) -> Option<ContextAction> {
+    let mut action = None;
+    ui.add_enabled_ui(enabled, |ui| {
+        if board_tool_button(
+            ui,
+            icons::EDIT.into(),
+            "Edit label",
+            false,
+            collapsed,
+            row_height,
+        )
+        .1
+        {
+            action = Some(ContextAction::EditLabel);
+        }
+    });
+    if board_tool_button(
+        ui,
+        icons::TUNE.into(),
+        "More formatting options",
+        format_panel_open,
+        collapsed,
+        row_height,
+    )
+    .1
+    {
+        action = Some(ContextAction::FormatPanel);
+    }
+    action
+}
+
+/// Board-toolbar color menu: a "none" choice, swatches and a custom picker.
+#[allow(clippy::too_many_arguments)]
+fn color_popup(
+    ui: &mut Ui,
+    canvas: Rect,
+    collapsed: bool,
+    row_height: f32,
+    control: ColorControl,
+    target: &ConnectorTarget,
+    current: Option<Color>,
+    picker_start: Color,
+    swatch: Option<Color>,
+) -> (egui::Id, Option<Option<Color>>) {
+    let mut change = None;
+    let response = board_tool_popup(
+        ui,
+        control.icon.into(),
+        control.label,
         collapsed,
         false,
         row_height,
         |ui| {
             ui.set_width((canvas.width() - 24.0).clamp(1.0, 275.0));
             reserve_popup_scrollbar_space(ui);
-            let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
-            egui::ScrollArea::vertical()
-                .id_salt("connector_color_choices")
-                .min_scrolled_height(0.0)
-                .max_height(max_height)
-                .show(ui, |ui| {
-                    let auto = ui
-                        .selectable_label(properties.color.is_none(), t("Auto"))
-                        .accessible_name(format!("{} · {}", t("Connector color"), t("Auto")));
-                    if auto.clicked()
-                        && widgets::touch_activation_allowed(ui.ctx())
-                        && properties.color.is_some()
+            crate::ui::scroll_menu(ui, |ui| {
+                let none = ui
+                    .selectable_label(current.is_none(), t(control.none))
+                    .accessible_name(format!("{} · {}", t(control.label), t(control.none)));
+                if none.clicked()
+                    && widgets::touch_activation_allowed(ui.ctx())
+                    && current.is_some()
+                {
+                    change = Some(None);
+                }
+                let selected = current.map(|color| Color32::from_rgb(color.r, color.g, color.b));
+                if let Some(color) = widgets::color_swatches(ui, &crate::ui::SWATCHES, selected) {
+                    let [r, g, b, _] = color.to_srgba_unmultiplied();
+                    let alpha = current.map_or(255, |color| color.a);
+                    let color = Some(Color::rgba(r, g, b, alpha));
+                    if color != current {
+                        change = Some(color);
+                    }
+                }
+                let custom = ui.collapsing(t("Custom color"), |ui| {
+                    ui.spacing_mut().slider_width = ui.available_width().min(260.0);
+                    if let Some(color) = custom_color_picker(ui, control.key, target, picker_start)
+                        && Some(color) != current
                     {
-                        change = Some(ConnectorChange::Color(None));
+                        change = Some(Some(color));
                     }
-                    let selected = properties
-                        .color
-                        .map(|color| Color32::from_rgb(color.r, color.g, color.b));
-                    if let Some(color) = widgets::color_swatches(ui, &crate::ui::SWATCHES, selected)
-                    {
-                        let [r, g, b, _] = color.to_srgba_unmultiplied();
-                        let alpha = properties.color.map_or(255, |color| color.a);
-                        let color = Some(Color::rgba(r, g, b, alpha));
-                        if color != properties.color {
-                            change = Some(ConnectorChange::Color(color));
-                        }
-                    }
-                    let custom = ui.collapsing(t("Custom color"), |ui| {
-                        ui.spacing_mut().slider_width = ui.available_width().min(260.0);
-                        if let Some(color) = connector_color_picker(ui, &context.target, properties)
-                            && Some(color) != properties.color
-                        {
-                            change = Some(ConnectorChange::Color(Some(color)));
-                        }
-                    });
-                    if custom.header_response.clicked() && custom.body_response.is_some() {
-                        custom.header_response.scroll_to_me(Some(egui::Align::Min));
-                    }
-                    crate::ui::reveal_changed_focus(ui);
                 });
+                if custom.header_response.clicked() && custom.body_response.is_some() {
+                    custom.header_response.scroll_to_me(Some(egui::Align::Min));
+                }
+            });
         },
     );
-    popups.push(egui::Popup::menu(&color).get_id());
-    let swatch = Rect::from_min_size(color.rect.left_bottom() + vec2(8.0, -6.0), vec2(16.0, 3.0));
-    ui.painter()
-        .rect_filled(swatch, 1, crate::ui::from_color(properties.effective_color));
+    let rect = Rect::from_min_size(
+        response.rect.left_bottom() + vec2(8.0, -6.0),
+        vec2(16.0, 3.0),
+    );
+    let border = thinoda_ui::Palette::of_ui(ui).border;
+    if let Some(color) = swatch {
+        ui.painter()
+            .rect_filled(rect, 1, crate::ui::from_color(color));
+    } else {
+        // A diagonal slash marks "no color", as in common design tools.
+        ui.painter().line_segment(
+            [rect.left_bottom(), rect.right_top()],
+            egui::Stroke::new(1.0, border),
+        );
+    }
     ui.painter().rect_stroke(
-        swatch,
+        rect,
         1,
-        egui::Stroke::new(1.0, thinoda_ui::Palette::of_ui(ui).border),
+        egui::Stroke::new(1.0, border),
         egui::StrokeKind::Inside,
     );
-    let width = board_tool_popup(
+    (egui::Popup::menu(&response).get_id(), change)
+}
+
+/// Board-toolbar width menu: presets plus an exact field committed on Enter or focus loss.
+fn width_popup(
+    ui: &mut Ui,
+    canvas: Rect,
+    collapsed: bool,
+    row_height: f32,
+    control: WidthControl,
+    target: &ConnectorTarget,
+    current: f32,
+) -> (egui::Id, Option<f32>) {
+    let mut change = None;
+    let response = board_tool_popup(
         ui,
         icons::STROKE_WIDTH.into(),
-        "Connector width",
+        control.label,
         collapsed,
         false,
         row_height,
@@ -1177,21 +2214,21 @@ fn connector_context_controls(
             reserve_popup_scrollbar_space(ui);
             let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
             egui::ScrollArea::vertical()
-                .id_salt("connector_width_choices")
+                .id_salt((control.key, "width_choices"))
                 .min_scrolled_height(0.0)
                 .max_height(max_height)
                 .show(ui, |ui| {
-                    let mut width = properties.width;
-                    width_presets(ui, &mut width, "Connector width");
-                    let preset_changed = width != properties.width;
+                    let mut width = current;
+                    width_presets(ui, &mut width, control.label);
+                    let preset_changed = width != current;
                     if preset_changed {
-                        change = Some(ConnectorChange::Width(width));
+                        change = Some(width);
                     }
-                    let id = ui.make_persistent_id("connector_width_text_draft");
+                    let id = ui.make_persistent_id((control.key, "width_text_draft"));
                     let frame = ui.ctx().cumulative_frame_nr();
                     let allowed = widgets::touch_activation_allowed(ui.ctx());
-                    let owner = egui::Id::unique(("connector_width", &context.target));
-                    let pending = ui.data(|data| data.get_temp::<ConnectorWidthDraft>(id));
+                    let owner = egui::Id::unique((control.key, "width", target));
+                    let pending = ui.data(|data| data.get_temp::<WidthDraft>(id));
                     let pending = pending.filter(|draft| {
                         allowed && draft.owner == owner && frame <= draft.frame.saturating_add(1)
                     });
@@ -1203,7 +2240,7 @@ fn connector_context_controls(
                     let (response, commit) = crate::ui::touch_numeric_value(
                         ui,
                         &mut width,
-                        "connector-width",
+                        control.salt,
                         Some(owner),
                         |ui, value| {
                             ui.add(
@@ -1214,7 +2251,7 @@ fn connector_context_controls(
                                     )
                                     .speed(0.5),
                             )
-                            .accessible_name(t("Connector width"))
+                            .accessible_name(t(control.label))
                         },
                     );
                     if response.gained_focus() {
@@ -1228,13 +2265,13 @@ fn connector_context_controls(
                     }
                     let editing = response.has_focus() && ui.ctx().text_edit_focused();
                     if preset_changed || escape || !allowed {
-                        ui.data_mut(|data| data.remove::<ConnectorWidthDraft>(id));
+                        ui.data_mut(|data| data.remove::<WidthDraft>(id));
                     } else if editing && !enter {
                         if commit || pending.is_some() {
                             ui.data_mut(|data| {
                                 data.insert_temp(
                                     id,
-                                    ConnectorWidthDraft {
+                                    WidthDraft {
                                         owner,
                                         value: width,
                                         frame,
@@ -1243,20 +2280,19 @@ fn connector_context_controls(
                             });
                         }
                     } else {
-                        ui.data_mut(|data| data.remove::<ConnectorWidthDraft>(id));
+                        ui.data_mut(|data| data.remove::<WidthDraft>(id));
                         if (commit || pending.is_some() && (enter || response.lost_focus()))
-                            && width != properties.width
+                            && width != current
                             && width.is_finite()
                         {
-                            change = Some(ConnectorChange::Width(width));
+                            change = Some(width);
                         }
                     }
                     crate::ui::reveal_changed_focus(ui);
                 });
         },
     );
-    popups.push(egui::Popup::menu(&width).get_id());
-    (change, popups)
+    (egui::Popup::menu(&response).get_id(), change)
 }
 
 fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRoute) -> bool {
@@ -1313,15 +2349,16 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
     activated
 }
 
-fn connector_color_picker(
+fn custom_color_picker(
     ui: &mut Ui,
+    key: &'static str,
     target: &ConnectorTarget,
-    properties: ConnectorProperties,
+    start: Color,
 ) -> Option<Color> {
-    let id = ui.make_persistent_id("connector_color_draft");
-    let owner = egui::Id::unique(("connector_color", target));
+    let id = ui.make_persistent_id((key, "color_draft"));
+    let owner = egui::Id::unique((key, "color", target));
     let frame = ui.ctx().cumulative_frame_nr();
-    let pending = ui.data(|data| data.get_temp::<ConnectorColorDraft>(id));
+    let pending = ui.data(|data| data.get_temp::<ColorDraft>(id));
     let allowed = widgets::touch_activation_allowed(ui.ctx());
     let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
     let canceled = !ui.is_enabled()
@@ -1332,7 +2369,7 @@ fn connector_color_picker(
         });
     let mut value = pending.filter(|_| !canceled).map_or_else(
         || {
-            let color = properties.effective_color;
+            let color = start;
             let mut value = egui::ecolor::Hsva::from_srgb([color.r, color.g, color.b]);
             value.a = f32::from(color.a) / 255.0;
             value
@@ -1355,7 +2392,7 @@ fn connector_color_picker(
             if pointer_down {
                 data.insert_temp(
                     id,
-                    ConnectorColorDraft {
+                    ColorDraft {
                         owner,
                         value,
                         frame,
@@ -1363,7 +2400,7 @@ fn connector_color_picker(
                     },
                 );
             } else {
-                data.remove::<ConnectorColorDraft>(id);
+                data.remove::<ColorDraft>(id);
             }
         });
         return None;
@@ -1373,7 +2410,7 @@ fn connector_color_picker(
             ui.data_mut(|data| {
                 data.insert_temp(
                     id,
-                    ConnectorColorDraft {
+                    ColorDraft {
                         owner,
                         value,
                         frame,
@@ -1385,19 +2422,46 @@ fn connector_color_picker(
         return None;
     }
     if changed || pending.is_some() {
-        ui.data_mut(|data| data.remove::<ConnectorColorDraft>(id));
+        ui.data_mut(|data| data.remove::<ColorDraft>(id));
         let [r, g, b, a] = value.to_srgba_unmultiplied();
-        return Some(Color::rgba(r, g, b, a));
+        let color = Color::rgba(r, g, b, a);
+        return (pending.is_some() || color != start).then_some(color);
     }
     None
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShapePick {
+    /// Click, tap, Enter or Space.
+    Choose(ShapeKind),
+    /// Shift+Enter on a tile of the inserting library.
+    Insert(ShapeKind),
+    /// A tile started dragging a [`thinoda_canvas::ShapeDrop`] payload.
+    Dragged,
+}
+
+/// Searchable shape grid that only picks a shape (e.g. Change shape).
 fn shape_library(
     ui: &mut Ui,
     canvas: Rect,
-    tool: BoardTool,
+    current: Option<ShapeKind>,
     translate: fn(&'static str) -> &'static str,
 ) -> Option<ShapeKind> {
+    match shape_grid(ui, canvas, current, translate, false)? {
+        ShapePick::Choose(shape) => Some(shape),
+        ShapePick::Insert(_) | ShapePick::Dragged => None,
+    }
+}
+
+/// Shape grid; with `inserting`, mouse and pen drag tiles onto the board and
+/// Shift+Enter inserts the focused tile's shape.
+fn shape_grid(
+    ui: &mut Ui,
+    canvas: Rect,
+    current: Option<ShapeKind>,
+    translate: fn(&'static str) -> &'static str,
+    inserting: bool,
+) -> Option<ShapePick> {
     const TILE: f32 = 44.0;
     const GAP: f32 = 4.0;
     const COLUMNS: f32 = 6.0;
@@ -1421,6 +2485,13 @@ fn shape_library(
         )
         .accessible_name(translate("Search shapes"));
     ui.data_mut(|data| data.insert_temp(id, query.clone()));
+    // The hint is supplementary; tiny popups keep their rows for the tiles.
+    if inserting && width >= 160.0 && available.y >= 240.0 {
+        widgets::caption(
+            ui,
+            translate("Drag onto the board or press Shift+Enter to insert"),
+        );
+    }
     let query = query.to_lowercase();
     let shapes: Vec<_> = ShapeKind::ALL
         .into_iter()
@@ -1454,15 +2525,19 @@ fn shape_library(
                 let mut focused = None;
                 let mut ids = Vec::with_capacity(shapes.len());
                 for (index, (shape, name)) in shapes.iter().copied().enumerate() {
-                    let (response, activated) =
-                        shape_tile(ui, shape, name, tool == BoardTool::Shape(shape), tile_size);
+                    let (response, pick) = shape_tile(
+                        ui,
+                        shape,
+                        name,
+                        current == Some(shape),
+                        tile_size,
+                        inserting,
+                    );
                     ids.push(response.id);
                     if response.has_focus() {
                         focused = Some(index);
                     }
-                    if activated {
-                        selected = Some(shape);
-                    }
+                    selected = selected.or(pick);
                 }
                 if let Some(index) = focused {
                     let direction = ui.input_mut(|input| {
@@ -1510,12 +2585,19 @@ fn shape_tile(
     name: &str,
     selected: bool,
     size: f32,
-) -> (egui::Response, bool) {
+    inserting: bool,
+) -> (egui::Response, Option<ShapePick>) {
     let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
     let palette = thinoda_ui::Palette::of_ui(ui);
     let (_, rect) = ui.allocate_space(egui::Vec2::splat(size));
     let id = ui.make_persistent_id(("board_shape_tile", shape.id()));
-    let response = ui.interact(rect, id, egui::Sense::click());
+    // Touch swipes keep scrolling the grid instead of dragging a tile.
+    let sense = if inserting && !ui.input(|input| input.any_touches()) {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let response = ui.interact(rect, id, sense);
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, name)
     });
@@ -1571,6 +2653,18 @@ fn shape_tile(
             ));
         }
     }
+    if inserting && ui.is_enabled() && response.drag_started() {
+        response.dnd_set_drag_payload(thinoda_canvas::ShapeDrop(shape));
+        return (response, Some(ShapePick::Dragged));
+    }
+    // egui also reports Shift+Enter as a click, so take it first.
+    let insert = inserting
+        && ui.is_enabled()
+        && response.has_focus()
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter));
+    if insert {
+        return (response.on_hover_text(name), Some(ShapePick::Insert(shape)));
+    }
     let keyboard = ui.is_enabled()
         && response.has_focus()
         && ui.input_mut(|input| {
@@ -1578,7 +2672,10 @@ fn shape_tile(
                 || input.consume_key(egui::Modifiers::NONE, egui::Key::Space)
         });
     let activated = ui.is_enabled() && ((touch_allowed && response.clicked()) || keyboard);
-    (response.on_hover_text(name), activated)
+    (
+        response.on_hover_text(name),
+        activated.then_some(ShapePick::Choose(shape)),
+    )
 }
 
 fn reserve_popup_scrollbar_space(ui: &mut Ui) {
@@ -1623,6 +2720,143 @@ fn route_name(route: ConnectorRoute) -> &'static str {
     }
 }
 
+fn marker_field(
+    ui: &mut Ui,
+    label: &'static str,
+    id: CanvasObjectId,
+    enabled: bool,
+    marker: &mut Option<ConnectorMarker>,
+    size: &mut Option<f32>,
+    unfilled: &mut bool,
+) {
+    let name = |marker: Option<ConnectorMarker>| match marker.map(|marker| marker.kind) {
+        None => "Legacy triangle",
+        Some(ConnectorMarkerKind::Classic) => "Classic arrow",
+        Some(ConnectorMarkerKind::ClassicThin) => "Thin classic arrow",
+        Some(ConnectorMarkerKind::Open) => "Open arrow",
+        Some(ConnectorMarkerKind::OpenThin) => "Thin open arrow",
+        Some(ConnectorMarkerKind::Block) => "Block arrow",
+        Some(ConnectorMarkerKind::BlockThin) => "Thin block arrow",
+        Some(ConnectorMarkerKind::Diamond) => "Diamond",
+        Some(ConnectorMarkerKind::DiamondThin) => "Thin diamond",
+        Some(ConnectorMarkerKind::Oval) => "Oval",
+        Some(ConnectorMarkerKind::HalfCircle) => "Half circle",
+        Some(ConnectorMarkerKind::BaseDash) => "Bar",
+        Some(ConnectorMarkerKind::Dash) => "Diagonal bar",
+    };
+    ui.add_enabled_ui(enabled, |ui| {
+        widgets::property_field(ui, t(label), |ui| {
+            egui::ComboBox::from_id_salt(("board_connector_marker", id, label))
+                .selected_text(t(name(*marker)))
+                .show_ui(ui, |ui| {
+                    for choice in [
+                        None,
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Classic,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ClassicThin,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Open,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::OpenThin,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Block,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::BlockThin,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Diamond,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::DiamondThin,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Oval,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::HalfCircle,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::BaseDash,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Dash,
+                        }),
+                    ] {
+                        ui.selectable_value(marker, choice, t(name(choice)));
+                    }
+                })
+                .response
+        });
+    });
+    if marker.is_none() {
+        *size = None;
+        *unfilled = false;
+    }
+}
+
+fn marker_size_field(ui: &mut Ui, label: &'static str, enabled: bool, size: &mut Option<f32>) {
+    let mut value = size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE);
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            widgets::property_field(ui, t(label), |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut value)
+                        .range(0.0..=MAX_CONNECTOR_MARKER_SIZE)
+                        .speed(0.1),
+                )
+            })
+        })
+        .inner;
+    if enabled && response.changed() {
+        *size = (value != DEFAULT_CONNECTOR_MARKER_SIZE).then_some(value);
+    }
+    if !enabled {
+        response.on_disabled_hover_text(t(
+            "Enable an arrow and select a draw.io arrow style to set its size.",
+        ));
+    }
+}
+
+fn marker_fill_field(
+    ui: &mut Ui,
+    label: &'static str,
+    enabled: bool,
+    marker: Option<ConnectorMarker>,
+    unfilled: &mut bool,
+) {
+    let open = marker.is_some_and(|marker| {
+        matches!(
+            marker.kind,
+            ConnectorMarkerKind::Open
+                | ConnectorMarkerKind::OpenThin
+                | ConnectorMarkerKind::HalfCircle
+                | ConnectorMarkerKind::BaseDash
+                | ConnectorMarkerKind::Dash
+        )
+    });
+    let can_fill = enabled && marker.is_some() && !open;
+    let mut filled = !*unfilled;
+    let response = ui.add_enabled(can_fill, egui::Checkbox::new(&mut filled, t(label)));
+    if response.changed() {
+        *unfilled = !filled;
+    }
+    if !enabled || marker.is_none() {
+        response.on_disabled_hover_text(t(
+            "Enable an arrow and select a draw.io arrow style to set its fill.",
+        ));
+    } else if open {
+        response.on_disabled_hover_text(t(
+            "Open markers cannot be filled. The fill setting is retained when changing to a fillable marker.",
+        ));
+    }
+}
+
 fn width_field(ui: &mut Ui, width: &mut f32) {
     widgets::property_field(ui, t("Width"), |ui| {
         ui.add(egui::DragValue::new(width).range(0.1..=200.0))
@@ -1657,6 +2891,14 @@ fn optional_color(ui: &mut Ui, label: &'static str, color: &mut Option<Color>, f
 mod connector_context_tests;
 
 #[cfg(test)]
+#[path = "shape_context_tests.rs"]
+mod shape_context_tests;
+
+#[cfg(test)]
+#[path = "shape_insert_tests.rs"]
+mod shape_insert_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use egui_kittest::{
@@ -1680,6 +2922,7 @@ mod tests {
     fn expanded_toolbar(ui: &mut Ui, app: &mut ThinodaApp) {
         start_expanded(ui.ctx(), app);
         app.board_toolbar(ui.ctx(), ui.max_rect(), None);
+        app.ink_options_toolbar(ui.ctx(), ui.max_rect(), false);
     }
 
     fn shape_test_theme(ctx: &Context, dark: bool) {
@@ -1859,6 +3102,627 @@ mod tests {
     }
 
     #[test]
+    fn armed_shape_hint_explains_placement_and_the_armed_tile_disarms() {
+        let mut harness = harness();
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+        let arm = |harness: &mut Harness<'_, ThinodaApp>| {
+            harness.get_by_label("Shape library").click();
+            harness.run_steps(4);
+            harness
+                .get_by_role_and_label(egui::Role::Button, "Pentagon")
+                .click();
+            harness.run_steps(3);
+        };
+        arm(&mut harness);
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Shape(ShapeKind::Pentagon)
+        );
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_some());
+
+        arm(&mut harness);
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Select
+        );
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+
+        arm(&mut harness);
+        harness.get_by_label("Dismiss").click();
+        harness.run_steps(3);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Shape(ShapeKind::Pentagon)
+        );
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Select);
+        harness.run_steps(2);
+        arm(&mut harness);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+    }
+
+    #[test]
+    fn armed_shape_hint_yields_to_label_editing_guidance() {
+        let mut harness = harness();
+        let shape = {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            let shape = doc
+                .doc
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::RoundedRectangle,
+                    BoardRect::from_center_size(Vec2::ZERO, Vec2::new(240.0, 150.0)),
+                ))
+                .unwrap();
+            doc.view
+                .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle));
+            shape
+        };
+        harness.run_steps(3);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_some());
+
+        {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            assert!(doc.view.begin_board_label(&doc.doc, shape));
+        }
+        harness.run_steps(3);
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_none());
+        assert!(harness.query_by_label("Editing label").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Editing label").is_none());
+        assert!(harness.query_by_label(ARMED_SHAPE_HINT).is_some());
+    }
+
+    fn label_focus_harness() -> (
+        Harness<'static, ThinodaApp>,
+        thinoda_core::CanvasObjectId,
+        egui::Pos2,
+    ) {
+        let mut sheet = thinoda_core::Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let shape = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_center_size(Vec2::new(50.0, 40.0), Vec2::new(120.0, 80.0)),
+            ))
+            .unwrap();
+        let mut app = ThinodaApp::headless();
+        app.settings.show_format_panel = false;
+        app.new_doc(thinoda_core::Workbook::new(sheet));
+        app.doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle));
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(6);
+        let view = &harness.state().doc().unwrap().view;
+        let position = view.canvas_rect().center() + view.offset + vec2(50.0, 40.0) * view.zoom;
+        (harness, shape, position)
+    }
+
+    fn double_click_without_followup_frame(
+        harness: &mut Harness<'_, ThinodaApp>,
+        position: egui::Pos2,
+    ) {
+        click_point(harness, position);
+        harness.event(egui::Event::PointerMoved(position));
+        harness.run_steps(1);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(1);
+        }
+    }
+
+    #[test]
+    fn double_clicked_shape_label_receives_keyboard_focus_in_the_app() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().doc().unwrap().view.editing_board_object(),
+            Some(shape)
+        );
+        let focused = harness.ctx.memory(|memory| memory.focused());
+        assert_eq!(
+            focused,
+            Some(thinoda_canvas::MapCanvas::board_label_editor_id()),
+            "double-clicking must focus the label editor; canvas id: {:?}",
+            thinoda_canvas::MapCanvas::id()
+        );
+    }
+
+    #[test]
+    fn text_queued_for_the_focus_retry_is_committed() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        assert_eq!(
+            harness.state().doc().unwrap().view.editing_board_object(),
+            Some(shape)
+        );
+        assert_eq!(
+            harness.ctx.memory(|memory| memory.focused()),
+            None,
+            "this test must exercise the lost opening-click focus"
+        );
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("First".into()));
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(shape)
+                .unwrap()
+                .label(),
+            "First"
+        );
+    }
+
+    #[test]
+    fn focus_retry_does_not_override_a_new_canvas_click() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        assert_eq!(
+            harness.state().doc().unwrap().view.editing_board_object(),
+            Some(shape)
+        );
+        assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+        let empty = harness
+            .state()
+            .doc()
+            .unwrap()
+            .view
+            .canvas_rect()
+            .right_bottom()
+            - vec2(20.0, 20.0);
+        harness.event(egui::Event::PointerMoved(empty));
+        harness.event(egui::Event::PointerButton {
+            pos: empty,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(1);
+        harness.event(egui::Event::PointerButton {
+            pos: empty,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(3);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(doc.view.editing_board_object(), None);
+        assert_eq!(doc.doc.sheet().canvas.objects.len(), 2);
+    }
+
+    #[test]
+    fn focus_retry_does_not_override_another_control_or_the_minimap() {
+        for minimap in [false, true] {
+            let (mut harness, shape, position) = label_focus_harness();
+            if minimap {
+                harness
+                    .state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .view
+                    .set_minimap_visible(true);
+                harness.run_steps(3);
+            }
+            double_click_without_followup_frame(&mut harness, position);
+            assert_eq!(
+                harness.state().doc().unwrap().view.editing_board_object(),
+                Some(shape)
+            );
+            assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+            let name = if minimap {
+                harness
+                    .state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .minimap_labels
+                    .accessible_name
+                    .clone()
+            } else {
+                "Shape library".to_owned()
+            };
+            harness.get_by_label(&name).focus();
+            harness.run_steps(3);
+            assert!(
+                harness.get_by_label(&name).is_focused(),
+                "focus was stolen from {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn pending_label_text_precedes_a_batched_toolbox_click() {
+        let (mut harness, shape, position) = label_focus_harness();
+        double_click_without_followup_frame(&mut harness, position);
+        harness.run_steps(3);
+        assert_eq!(
+            harness.ctx.memory(|memory| memory.focused()),
+            Some(thinoda_canvas::MapCanvas::board_label_editor_id())
+        );
+        let target = harness.get_by_label("Select tool").rect().center();
+        harness.input_mut().events.extend([
+            egui::Event::Text("Pending".into()),
+            egui::Event::PointerMoved(target),
+            egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.run_steps(4);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(
+            doc.doc.sheet().canvas.object(shape).unwrap().label(),
+            "Pending"
+        );
+        assert_eq!(doc.view.board_tool, BoardTool::Select);
+    }
+
+    #[test]
+    fn pending_label_text_precedes_a_batched_topbar_click() {
+        for wait_for_focus in [false, true] {
+            for queued_text in [false, true] {
+                let (mut harness, shape, position) = label_focus_harness();
+                double_click_without_followup_frame(&mut harness, position);
+                if wait_for_focus {
+                    harness.run_steps(3);
+                } else {
+                    assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+                }
+                let target = harness.get_by_label("Main Menu").rect().center();
+                if wait_for_focus {
+                    harness.event(egui::Event::PointerMoved(target));
+                    harness.run_steps(1);
+                }
+                if queued_text {
+                    harness
+                        .input_mut()
+                        .events
+                        .push(egui::Event::Text("Pending".into()));
+                }
+                harness.input_mut().events.extend([
+                    egui::Event::PointerMoved(target),
+                    egui::Event::PointerButton {
+                        pos: target,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+                harness.run_steps(1);
+                harness.event(egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run_steps(4);
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(
+                    doc.doc.sheet().canvas.object(shape).unwrap().label(),
+                    if queued_text { "Pending" } else { "" },
+                    "wait for focus: {wait_for_focus}"
+                );
+                assert_eq!(doc.view.editing_board_object(), None);
+                if wait_for_focus {
+                    assert!(
+                        egui::Popup::is_any_open(&harness.ctx),
+                        "wait for focus: {wait_for_focus}, queued text: {queued_text}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pending_label_text_is_saved_before_switching_documents() {
+        let (mut harness, shape, position) = label_focus_harness();
+        let key = harness.state().doc().unwrap().key.clone();
+        double_click_without_followup_frame(&mut harness, position);
+        harness.run_steps(3);
+        let target = harness.get_by_label("Central Topic").rect().center();
+        harness.event(egui::Event::PointerMoved(target));
+        harness.run_steps(1);
+        harness.input_mut().events.extend([
+            egui::Event::Text("Pending".into()),
+            egui::Event::PointerMoved(target),
+            egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.run_steps(1);
+        harness.event(egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(4);
+        assert_ne!(harness.state().doc().unwrap().key, key);
+        let previous = harness
+            .state()
+            .docs
+            .iter()
+            .find(|document| document.key == key)
+            .unwrap();
+        assert_eq!(
+            previous.doc.sheet().canvas.object(shape).unwrap().label(),
+            "Pending"
+        );
+        assert_eq!(previous.view.editing_board_object(), None);
+    }
+
+    #[test]
+    fn topbar_pointer_harness_can_open_the_main_menu() {
+        let (mut harness, _, _) = label_focus_harness();
+        let target = harness.get_by_label("Main Menu").rect().center();
+        click_point(&mut harness, target);
+        assert!(egui::Popup::is_any_open(&harness.ctx));
+    }
+
+    #[test]
+    fn pending_label_text_precedes_a_batched_minimap_click() {
+        for overlap_editor in [false, true] {
+            for batched_release in [false, true] {
+                let (mut harness, shape, position) = label_focus_harness();
+                harness
+                    .state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .view
+                    .set_minimap_visible(true);
+                harness.run_steps(3);
+                double_click_without_followup_frame(&mut harness, position);
+                harness.run_steps(3);
+                let name = harness
+                    .state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .minimap_labels
+                    .accessible_name
+                    .clone();
+                let target = harness.get_by_label(&name).rect().left_top() + vec2(12.0, 12.0);
+                if overlap_editor {
+                    harness.state_mut().doc_mut().unwrap().view.offset += target - position;
+                    harness.run_steps(3);
+                    let label = &harness
+                        .state()
+                        .doc()
+                        .unwrap()
+                        .view
+                        .board_labels
+                        .label_editor;
+                    assert!(harness.get_by_label(label).rect().contains(target));
+                }
+                let offset_before = harness.state().doc().unwrap().view.offset;
+                let button = |pressed| egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                harness.input_mut().events.extend([
+                    egui::Event::Text("Pending".into()),
+                    egui::Event::PointerMoved(target),
+                    button(true),
+                ]);
+                if !batched_release {
+                    harness.run_steps(1);
+                    assert!(harness.get_by_label(&name).is_focused());
+                }
+                harness.event(button(false));
+                harness.run_steps(4);
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(
+                    doc.doc.sheet().canvas.object(shape).unwrap().label(),
+                    "Pending",
+                    "overlap={overlap_editor}, batched release={batched_release}"
+                );
+                assert_ne!(doc.view.offset, offset_before);
+            }
+        }
+    }
+
+    #[test]
+    fn compact_label_edit_status_preserves_the_canvas_and_armed_warning() {
+        for zen in [false, true] {
+            for armed in [false, true] {
+                let mut sheet = thinoda_core::Sheet::new("Board", "");
+                sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+                let shape = sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::RoundedRectangle,
+                        BoardRect::from_center_size(Vec2::ZERO, Vec2::new(240.0, 150.0)),
+                    ))
+                    .unwrap();
+                let mut app = ThinodaApp::headless();
+                app.settings.show_format_panel = false;
+                app.zen = zen;
+                app.new_doc(thinoda_core::Workbook::new(sheet));
+                if armed {
+                    app.doc_mut()
+                        .unwrap()
+                        .view
+                        .set_board_tool(BoardTool::Shape(ShapeKind::Rectangle));
+                }
+                let mut harness = Harness::builder()
+                    .with_size(vec2(360.0, 240.0))
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                harness.run_steps(4);
+                let view = &harness.state().doc().unwrap().view;
+                let original_center = view.canvas_rect().center() + view.offset;
+                {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    assert!(doc.view.begin_board_label(&doc.doc, shape));
+                }
+                harness.run_steps(4);
+                let hint = if armed {
+                    "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel\nClicking or tapping empty canvas also adds the armed shape."
+                } else {
+                    "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel"
+                };
+                let summary = if armed {
+                    "Empty click/tap adds a shape"
+                } else {
+                    "Enter: finish · Esc: cancel"
+                };
+                let status = format!("Editing label · {summary}");
+                let status_node = harness.get_by_label(&status);
+                assert_eq!(
+                    status_node.accesskit_node().label(),
+                    Some(format!("Editing label: {hint}"))
+                );
+                let status_rect = status_node.rect();
+                let view = &harness.state().doc().unwrap().view;
+                assert!(status_rect.top() >= view.canvas_rect().bottom());
+                assert_eq!(
+                    view.canvas_rect().center() + view.offset,
+                    original_center,
+                    "entering label edit moved the canvas in zen={zen}, armed={armed}"
+                );
+                harness
+                    .get_by_label("Board object label")
+                    .type_text("Label");
+                harness.key_press(egui::Key::Enter);
+                harness.run_steps(4);
+                assert!(harness.query_by_label(&status).is_none());
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(
+                    doc.doc.sheet().canvas.object(shape).unwrap().label(),
+                    "Label"
+                );
+                assert_eq!(
+                    doc.view.canvas_rect().center() + doc.view.offset,
+                    original_center,
+                    "finishing label edit moved the canvas in zen={zen}, armed={armed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn insert_toolbar_yields_only_when_it_would_cover_a_board_label_editor() {
+        for size in [vec2(360.0, 240.0), vec2(1200.0, 700.0)] {
+            for connector in [false, true] {
+                let mut sheet = thinoda_core::Sheet::new("Board", "");
+                sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+                let object = if connector {
+                    CanvasObject::connector(CanvasConnector::new(
+                        Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                        Endpoint::Point(Vec2::new(100.0, 0.0)),
+                    ))
+                } else {
+                    CanvasObject::shape(
+                        ShapeKind::RoundedRectangle,
+                        BoardRect::from_center_size(Vec2::ZERO, Vec2::new(240.0, 150.0)),
+                    )
+                };
+                let id = sheet.add_canvas_object(object).unwrap();
+                let mut app = ThinodaApp::headless();
+                app.settings.show_format_panel = false;
+                app.new_doc(thinoda_core::Workbook::new(sheet));
+                let mut harness = Harness::builder()
+                    .with_size(size)
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                harness.run_steps(4);
+                {
+                    let view = &mut harness.state_mut().doc_mut().unwrap().view;
+                    view.zoom = 1.0;
+                    view.offset = egui::Vec2::ZERO;
+                }
+                harness.run_steps(3);
+                let toolbar_id = egui::Id::unique("thinoda_editing_toolbar");
+                let toolbar = harness
+                    .ctx
+                    .memory(|memory| memory.area_rect(toolbar_id))
+                    .unwrap();
+                {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    assert!(doc.view.begin_board_label(&doc.doc, id));
+                }
+                harness.run_steps(4);
+                let editor = harness.get_by_label("Board object label").rect();
+                let visible = harness.ctx.memory(|memory| {
+                    memory
+                        .areas()
+                        .visible_layer_ids()
+                        .iter()
+                        .any(|layer| layer.id == toolbar_id)
+                });
+                let clearance = 2.0 / harness.ctx.pixels_per_point() + 1.0;
+                assert_eq!(
+                    visible,
+                    !toolbar.expand(clearance).intersects(editor),
+                    "{size:?}, connector={connector}, toolbar={toolbar:?}, editor={editor:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn armed_shape_hint_is_hidden_on_narrow_canvases() {
+        for (width, visible) in [(ARMED_SHAPE_HINT_MIN_WIDTH - 20.0, false), (700.0, true)] {
+            let mut app = ThinodaApp::headless();
+            app.doc_mut()
+                .unwrap()
+                .view
+                .set_board_tool(BoardTool::Shape(ShapeKind::Ellipse));
+            let mut harness = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    move |ui, app: &mut ThinodaApp| {
+                        let canvas = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 500.0));
+                        app.armed_shape_hint(ui.ctx(), canvas);
+                    },
+                    app,
+                );
+            harness.run_steps(3);
+            assert_eq!(
+                harness.query_by_label(ARMED_SHAPE_HINT).is_some(),
+                visible,
+                "{width}"
+            );
+        }
+    }
+
+    #[test]
     fn shape_library_exposes_every_shape_as_a_named_grid_button() {
         let mut harness = Harness::builder()
             .with_size(vec2(800.0, 800.0))
@@ -1903,9 +3767,7 @@ mod tests {
             .with_size(vec2(500.0, 500.0))
             .build_ui_state(
                 |ui, selected: &mut ShapeKind| {
-                    if let Some(shape) =
-                        shape_library(ui, ui.max_rect(), BoardTool::Shape(*selected), german)
-                    {
+                    if let Some(shape) = shape_library(ui, ui.max_rect(), Some(*selected), german) {
                         *selected = shape;
                     }
                 },
@@ -2007,9 +3869,17 @@ mod tests {
         harness.key_press(egui::Key::ArrowRight);
         harness.run_steps(3);
         assert!(harness.get_by_label("Rounded rectangle").is_focused());
+        let rounded = harness.get_by_label("Rounded rectangle").rect();
+        let below_rounded = ShapeKind::ALL
+            .into_iter()
+            .find(|shape| {
+                let rect = harness.get_by_label(shape_name(*shape)).rect();
+                rect.top() > rounded.top() && (rect.left() - rounded.left()).abs() < 1.0
+            })
+            .unwrap();
         harness.key_press(egui::Key::ArrowDown);
         harness.run_steps(3);
-        assert!(harness.get_by_label("Trapezoid").is_focused());
+        assert!(harness.get_by_label(shape_name(below_rounded)).is_focused());
         harness.key_press(egui::Key::ArrowUp);
         harness.run_steps(3);
         assert!(harness.get_by_label("Rounded rectangle").is_focused());
@@ -2100,6 +3970,7 @@ mod tests {
                                     shape_name(shape),
                                     shape == ShapeKind::Star,
                                     44.0,
+                                    false,
                                 );
                             }
                         });
@@ -2306,7 +4177,8 @@ mod tests {
         harness.get_by_label("Shape library").click();
         harness.run_steps(5);
         let wide_first = harness.get_by_label("Rectangle").rect();
-        let wide_sixth = harness.get_by_label("Right triangle").rect();
+        let sixth_shape = shape_name(ShapeKind::ALL[5]);
+        let wide_sixth = harness.get_by_label(sixth_shape).rect();
         assert_eq!(wide_first.top(), wide_sixth.top());
 
         harness.set_size(vec2(180.0, 160.0));
@@ -2314,7 +4186,7 @@ mod tests {
         let bounds = harness.ctx.content_rect();
         let search = harness.get_by_label("Search shapes").rect();
         let first = harness.get_by_label("Rectangle").rect();
-        let sixth = harness.get_by_label("Right triangle").rect();
+        let sixth = harness.get_by_label(sixth_shape).rect();
         assert!(
             bounds.contains_rect(search) && bounds.contains_rect(first),
             "search={search:?} first={first:?} bounds={bounds:?}"
@@ -2584,7 +4456,7 @@ mod tests {
         assert!(harness.query_by_label("Image card").is_some());
 
         harness.get_by_label("Pen").click();
-        harness.run_steps(2);
+        harness.run_steps(5);
         assert_eq!(
             harness.state().doc().unwrap().view.board_tool,
             BoardTool::Pen
@@ -2600,6 +4472,268 @@ mod tests {
         );
         assert!(harness.query_by_label("Eraser radius").is_some());
         assert!(harness.query_by_label("Lasso").is_some());
+    }
+
+    #[test]
+    fn board_action_icons_use_the_same_tone_except_the_minimap() {
+        for dark in [false, true] {
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 1000.0))
+                .build_ui_state(
+                    move |ui, app: &mut ThinodaApp| {
+                        shape_test_theme(ui.ctx(), dark);
+                        expanded_toolbar(ui, app);
+                    },
+                    ThinodaApp::headless(),
+                );
+            harness.run_steps(6);
+            let icon_color = |label: &str, symbol: &str| {
+                let button = harness.get_by_label(label).rect();
+                harness
+                    .output()
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text)
+                            if text.galley.text() == symbol && button.contains(text.pos) =>
+                        {
+                            Some(text.fallback_color)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("missing icon for {label}"))
+            };
+            let action = ribbon::IconTone::Create.color(dark, false);
+            assert_eq!(icon_color("Sticky note", icons::NOTE), action);
+            assert_eq!(icon_color("Shape library", icons::BOARD_SHAPES), action);
+            assert_eq!(icon_color("Image card", icons::IMAGE), action);
+            assert_eq!(
+                icon_color("Board minimap", icons::BOARD_MINIMAP),
+                ribbon::IconTone::Neutral.color(dark, false)
+            );
+            assert_ne!(icon_color("Board minimap", icons::BOARD_MINIMAP), action);
+        }
+    }
+
+    #[test]
+    fn ink_options_overlay_keeps_the_canvas_and_toolbox_stationary() {
+        let mut harness = harness();
+        let canvas = harness.state().doc().unwrap().view.canvas_rect();
+        let toolbar_id = egui::Id::unique("thinoda_board_toolbar");
+        let toolbar = harness
+            .ctx
+            .memory(|memory| memory.area_rect(toolbar_id))
+            .unwrap();
+        let strip_id = egui::Id::unique(("thinoda_ink_options", egui::ViewportId::ROOT));
+        for (label, tool, controls) in [
+            (
+                "Pen",
+                BoardTool::Pen,
+                &["Ink color", "Ink width", "Stroke type", "Opacity"][..],
+            ),
+            (
+                "Highlighter",
+                BoardTool::Highlighter,
+                &["Ink color", "Ink width", "Stroke type", "Opacity"][..],
+            ),
+            (
+                "Object eraser",
+                BoardTool::ObjectEraser,
+                &["Eraser radius"][..],
+            ),
+            (
+                "Pixel eraser",
+                BoardTool::PixelEraser,
+                &["Eraser radius"][..],
+            ),
+        ] {
+            click_scrolled_into_view(&mut harness, label);
+            harness.run_steps(5);
+            assert_eq!(harness.state().doc().unwrap().view.board_tool, tool);
+            assert_eq!(harness.state().doc().unwrap().view.canvas_rect(), canvas);
+            assert_eq!(
+                harness.ctx.memory(|memory| memory.area_rect(toolbar_id)),
+                Some(toolbar)
+            );
+            let strip = harness
+                .ctx
+                .memory(|memory| memory.area_rect(strip_id))
+                .unwrap();
+            assert!(canvas.contains_rect(strip));
+            assert!(!toolbar.intersects(strip), "{label}: {toolbar:?} {strip:?}");
+            for control in controls {
+                assert!(
+                    harness.query_by_label(control).is_some(),
+                    "{label}: {control}"
+                );
+            }
+            let before = harness.state().doc().unwrap().doc.workbook().clone();
+            click_point(
+                &mut harness,
+                egui::pos2(strip.right() - 8.0, strip.top() + 5.0),
+            );
+            assert_eq!(harness.state().doc().unwrap().doc.workbook(), &before);
+            assert!(
+                !harness
+                    .state()
+                    .doc()
+                    .unwrap()
+                    .view
+                    .has_pending_ink_gesture()
+            );
+        }
+    }
+
+    #[test]
+    fn ink_popups_close_when_their_tool_sheet_or_document_changes() {
+        for case in ["tool", "sheet", "instance", "document", "hidden"] {
+            let mut harness = harness();
+            click_scrolled_into_view(&mut harness, "Pen");
+            harness.run_steps(5);
+            harness.get_by_label("Ink width").click();
+            harness.run_steps(4);
+            let old = harness
+                .ctx
+                .data(|data| {
+                    data.get_temp::<InkOptionsPopups>(ink_popup_slot(egui::ViewportId::ROOT))
+                })
+                .unwrap();
+            assert!(
+                old.ids
+                    .iter()
+                    .any(|id| egui::Popup::is_id_open(&harness.ctx, *id))
+            );
+            match case {
+                "tool" => harness
+                    .state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .view
+                    .set_board_tool(BoardTool::Highlighter),
+                "sheet" => {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    doc.doc
+                        .add_sheet(thinoda_core::Sheet::new("Other", "Root"))
+                        .unwrap();
+                }
+                "instance" => {
+                    let doc = harness.state_mut().doc_mut().unwrap();
+                    doc.doc.replace(doc.doc.workbook().clone());
+                }
+                "document" => {
+                    let app = harness.state_mut();
+                    app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+                    app.doc_mut().unwrap().view.set_board_tool(BoardTool::Pen);
+                }
+                "hidden" => harness.state_mut().mode = CenterMode::Outliner,
+                _ => unreachable!(),
+            }
+            harness.run_steps(6);
+            assert!(
+                old.ids
+                    .iter()
+                    .all(|id| !egui::Popup::is_id_open(&harness.ctx, *id)),
+                "old popup remains open after {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn ink_opacity_and_eraser_radius_remain_editable_for_each_tool() {
+        for (tool, label, value) in [
+            (BoardTool::Pen, "Opacity", 0.35),
+            (BoardTool::Highlighter, "Opacity", 0.35),
+            (BoardTool::ObjectEraser, "Eraser radius", 24.0),
+            (BoardTool::PixelEraser, "Eraser radius", 24.0),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.doc_mut().unwrap().view.board_tool = tool;
+            let original = app.doc().unwrap().doc.workbook().clone();
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 800.0))
+                .build_ui_state(expanded_toolbar, app);
+            harness.run_steps(5);
+            harness
+                .get_by_role_and_label(egui::Role::Button, label)
+                .click();
+            harness.run_steps(4);
+            let input = harness.get_by_role_and_label(egui::Role::SpinButton, label);
+            input.click();
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness
+                .get_by_role_and_label(egui::Role::SpinButton, label)
+                .type_text(&value.to_string());
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(4);
+            let doc = harness.state().doc().unwrap();
+            let actual = if label == "Opacity" {
+                doc.view.ink_settings.opacity
+            } else {
+                doc.view.ink_settings.eraser_radius
+            };
+            assert_eq!(actual, value, "{tool:?}");
+            assert_eq!(doc.doc.workbook(), &original);
+        }
+    }
+
+    #[test]
+    fn ink_options_label_is_translated_in_every_supported_language() {
+        for language in i18n::Lang::ALL {
+            let translation = i18n::t_in(language, "Ink options");
+            assert!(!translation.is_empty(), "{language:?}");
+            if language != i18n::Lang::En {
+                assert_ne!(translation, "Ink options", "{language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tiny_canvas_hides_the_toolbox_only_while_an_overlay_is_open() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(320.0, 170.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| app.draw(ui),
+                ThinodaApp::headless(),
+            );
+        harness.run_steps(6);
+        let toolbar_id = egui::Id::unique("thinoda_board_toolbar");
+        let is_visible = |harness: &Harness<'_, ThinodaApp>| {
+            harness.ctx.memory(|memory| {
+                memory
+                    .areas()
+                    .visible_layer_ids()
+                    .iter()
+                    .any(|layer| layer.id == toolbar_id)
+            })
+        };
+        let canvas = harness.state().doc().unwrap().view.canvas_rect();
+        assert!(!board_toolbar_fits_below_context(canvas), "{canvas:?}");
+        assert!(is_visible(&harness));
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Pen);
+        harness.run_steps(6);
+        assert_eq!(harness.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert!(!is_visible(&harness));
+        assert!(harness.query_by_label("Ink color").is_some());
+        assert!(
+            harness
+                .state()
+                .command_available(&Cmd::BoardTool(BoardTool::Select))
+        );
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .view
+            .set_board_tool(BoardTool::Select);
+        harness.run_steps(6);
+        assert_eq!(harness.state().doc().unwrap().view.canvas_rect(), canvas);
+        assert!(is_visible(&harness));
     }
 
     #[test]
@@ -3013,7 +5147,7 @@ mod tests {
     }
 
     #[test]
-    fn toolbox_starts_near_top_when_no_toolbar_blocks_it() {
+    fn toolbox_reserves_space_for_a_context_strip() {
         let mut harness = Harness::builder()
             .with_size(vec2(800.0, 500.0))
             .build_ui_state(expanded_toolbar, ThinodaApp::headless());
@@ -3023,8 +5157,8 @@ mod tests {
             .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")))
             .unwrap();
         assert!(
-            toolbar.top() - harness.ctx.content_rect().top() <= 16.0,
-            "unused space above toolbox: {toolbar:?}"
+            toolbar.top() - harness.ctx.content_rect().top() >= CONTEXT_STRIP_HEIGHT,
+            "context strip would overlap the toolbox: {toolbar:?}"
         );
     }
 
@@ -4324,6 +6458,910 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu-tests")]
+    fn adjustable_rectangle_corners_paint_the_actual_fill_geometry() {
+        use thinoda_core::{DrawioRectangleStencil, ShapeRounding, Sheet, SheetRootMode, Workbook};
+        use thinoda_platform::settings::ThemeMode;
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        for (x, radius) in [(-120.0, 0.0), (120.0, 40.0)] {
+            let mut shape = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_center_size(Vec2::new(x, 0.0), Vec2::new(100.0, 100.0)),
+            );
+            shape.style.fill = Some(Color::rgb(200, 30, 40));
+            shape.style.stroke = Some(Color::TRANSPARENT);
+            shape.rounding = Some(ShapeRounding {
+                radius,
+                stencil: DrawioRectangleStencil::Mockup,
+            });
+            sheet.add_canvas_object(shape).unwrap();
+        }
+        let mut app = ThinodaApp::headless();
+        app.settings.theme = ThemeMode::Light;
+        app.settings.show_format_panel = false;
+        app.new_doc(Workbook::new(sheet));
+        let mut h = Harness::builder()
+            .wgpu()
+            .with_size(vec2(1200.0, 700.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(6);
+        let image = h.render().expect("rounded rectangle render");
+        let view = &h.state().doc().unwrap().view;
+        let center = view.canvas_rect().center() + view.offset;
+        let sample = |x: f32, y: f32| {
+            let point = center + vec2(x, y) * view.zoom;
+            image
+                .get_pixel(point.x.round() as u32, point.y.round() as u32)
+                .0
+        };
+        assert_eq!(&sample(-120.0, 0.0)[..3], &[200, 30, 40]);
+        assert_eq!(&sample(120.0, 0.0)[..3], &[200, 30, 40]);
+        assert_eq!(&sample(-165.0, -45.0)[..3], &[200, 30, 40]);
+        assert_ne!(&sample(75.0, -45.0)[..3], &[200, 30, 40]);
+    }
+
+    #[test]
+    fn shape_rounding_inspector_is_localized() {
+        assert!(i18n::has_translations("Corner radius"));
+        for language in i18n::Lang::ALL {
+            let translated = i18n::t_in(language, "Corner radius");
+            assert!(!translated.is_empty(), "{language:?}");
+            if language != i18n::Lang::En {
+                assert_ne!(translated, "Corner radius", "{language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn double_ellipse_inspector_is_localized_accessible_and_undoable() {
+        for key in [
+            "Double ellipse",
+            "Automatic inner inset",
+            "Inner outline inset",
+        ] {
+            assert!(i18n::has_translations(key), "{key}");
+            for language in i18n::Lang::ALL {
+                assert!(!i18n::t_in(language, key).is_empty(), "{language:?}: {key}");
+            }
+        }
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            BoardRect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.style.stroke_width = 17.0;
+        let id = doc.doc.add_canvas_object(shape).unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(current(harness.state()).double_ellipse_margin, None);
+        let automatic =
+            harness.get_by_role_and_label(egui::Role::CheckBox, "Automatic inner inset");
+        assert!(!automatic.accesskit_node().is_disabled());
+        automatic.click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+
+        harness.get_by_label("Inner outline inset").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Inner outline inset").type_text("8.5");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(8.5));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.redo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+
+        harness.get_by_label("Shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Ellipse").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, None);
+        assert!(harness.query_by_label("Automatic inner inset").is_none());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[id], true)
+            .unwrap();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_role_and_label(egui::Role::CheckBox, "Automatic inner inset")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            harness
+                .get_by_label("Inner outline inset")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
+
+    #[test]
+    fn rectangle_sides_inspector_is_localized_keyboard_accessible_and_undoable() {
+        use thinoda_core::RectangleSides;
+
+        for key in [
+            "Outline sides",
+            "Top outline",
+            "Right outline",
+            "Bottom outline",
+            "Left outline",
+            "Sides rotate with the shape.",
+        ] {
+            assert!(i18n::has_translations(key), "{key}");
+            for language in i18n::Lang::ALL {
+                let translated = i18n::t_in(language, key);
+                assert!(!translated.is_empty(), "{language:?}: {key}");
+                if language != i18n::Lang::En {
+                    assert_ne!(translated, key, "{language:?}: {key}");
+                }
+            }
+        }
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(current(harness.state()).rectangle_sides, None);
+        for label in [
+            "Top outline",
+            "Right outline",
+            "Bottom outline",
+            "Left outline",
+        ] {
+            assert!(
+                !harness
+                    .get_by_role_and_label(egui::Role::CheckBox, label)
+                    .accesskit_node()
+                    .is_disabled(),
+                "{label}"
+            );
+        }
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Top outline")
+            .click();
+        harness.run_steps(3);
+        let partial = RectangleSides {
+            top: false,
+            ..RectangleSides::default()
+        };
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Top outline")
+            .focus();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Space);
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).rectangle_sides,
+            Some(RectangleSides::default())
+        );
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.redo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+
+        harness.get_by_label("Shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Ellipse").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rectangle_sides, None);
+        assert!(harness.query_by_label("Top outline").is_none());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[id], true)
+            .unwrap();
+        harness.run_steps(3);
+        for label in [
+            "Top outline",
+            "Right outline",
+            "Bottom outline",
+            "Left outline",
+        ] {
+            assert!(
+                harness
+                    .get_by_role_and_label(egui::Role::CheckBox, label)
+                    .accesskit_node()
+                    .is_disabled(),
+                "{label}"
+            );
+        }
+        assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+    }
+
+    #[test]
+    fn shape_rounding_inspector_is_accessible_and_undoable() {
+        use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
+
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            BoardRect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        let rounding = ShapeRounding {
+            radius: 15.0,
+            stencil: DrawioRectangleStencil::Forms,
+        };
+        shape.rounding = Some(rounding);
+        let id = doc.doc.add_canvas_object(shape).unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        assert!(
+            !harness
+                .get_by_label("Corner radius")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Corner radius").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Corner radius").type_text("28");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(current(harness.state()).rounding.unwrap().radius, 28.0);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rounding, Some(rounding));
+        for (text, expected) in [
+            ("15.6", 16.0),
+            ("-10", 0.0),
+            ("1000001", MAX_BOARD_COORDINATE),
+        ] {
+            harness.get_by_label("Corner radius").click();
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.get_by_label("Corner radius").type_text(text);
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(3);
+            assert_eq!(current(harness.state()).rounding.unwrap().radius, expected);
+            assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+            harness.run_steps(3);
+            assert_eq!(current(harness.state()).rounding, Some(rounding));
+        }
+        harness.get_by_label("Shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Ellipse").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rounding, None);
+        assert!(harness.query_by_label("Corner radius").is_none());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).rounding, Some(rounding));
+    }
+
+    #[test]
+    fn connector_marker_inspector_is_accessible_and_undoable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Start arrow style")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Block arrow").click();
+        harness.run_steps(3);
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Block);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Arrow at end")
+            .click();
+        harness.run_steps(3);
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert!(!current.arrow_end);
+        assert_eq!(current.end_marker, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        let current = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind;
+        let CanvasObjectKind::Connector(current) = current else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Open);
+    }
+
+    #[test]
+    fn connector_inspector_selects_classic_thin_and_legacy_arrows() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        for (label, kind) in [
+            ("Classic arrow", Some(ConnectorMarkerKind::Classic)),
+            ("Thin classic arrow", Some(ConnectorMarkerKind::ClassicThin)),
+            ("Thin open arrow", Some(ConnectorMarkerKind::OpenThin)),
+            ("Thin block arrow", Some(ConnectorMarkerKind::BlockThin)),
+            ("Diamond", Some(ConnectorMarkerKind::Diamond)),
+            ("Thin diamond", Some(ConnectorMarkerKind::DiamondThin)),
+            ("Oval", Some(ConnectorMarkerKind::Oval)),
+            ("Half circle", Some(ConnectorMarkerKind::HalfCircle)),
+            ("Bar", Some(ConnectorMarkerKind::BaseDash)),
+            ("Diagonal bar", Some(ConnectorMarkerKind::Dash)),
+            ("Legacy triangle", None),
+        ] {
+            harness.get_by_label("End arrow style").click();
+            harness.run_steps(3);
+            harness.get_by_label(label).scroll_to_me();
+            harness.run_steps(3);
+            harness.get_by_label(label).click();
+            harness.run_steps(3);
+            let CanvasObjectKind::Connector(current) = &harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            assert_eq!(current.end_marker.map(|marker| marker.kind), kind);
+        }
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        let CanvasObjectKind::Connector(current) = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind
+        else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Dash);
+    }
+
+    #[test]
+    fn connector_marker_menu_scrolls_to_last_bar_with_the_mouse() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        let before = harness.get_by_label("Diagonal bar").rect();
+        harness.hover_at(harness.get_by_label("Legacy triangle").rect().center());
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -1200.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(15);
+        let after = harness.get_by_label("Diagonal bar").rect();
+        assert!(
+            after.top() < before.top(),
+            "before={before:?}, after={after:?}"
+        );
+        assert!(harness.ctx.content_rect().contains(after.center()));
+        harness.get_by_label("Diagonal bar").click();
+        harness.run_steps(3);
+        let CanvasObjectKind::Connector(current) = &harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .kind
+        else {
+            panic!("expected connector");
+        };
+        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Dash);
+    }
+
+    #[test]
+    fn connector_marker_size_inspector_is_accessible_and_undoable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Start arrow size")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("End arrow size").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("End arrow size").type_text("12.5");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.clone()
+        };
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Classic arrow").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Legacy triangle").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Arrow at end")
+            .click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).end_marker_size, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(current(harness.state()).end_marker_size, Some(12.5));
+        harness.run_steps(3);
+        for (text, expected) in [
+            ("6", None),
+            ("-10", Some(0.0)),
+            ("1000", Some(MAX_CONNECTOR_MARKER_SIZE)),
+        ] {
+            harness.get_by_label("End arrow size").click();
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.get_by_label("End arrow size").type_text(text);
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(3);
+            assert_eq!(current(harness.state()).end_marker_size, expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn connector_marker_fill_inspector_is_independent_and_undoable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_start = true;
+        connector.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.clone()
+        };
+        for label in ["Fill start arrow", "Fill end arrow"] {
+            assert!(!harness.get_by_label(label).accesskit_node().is_disabled());
+        }
+        harness.get_by_label("Fill start arrow").click();
+        harness.run_steps(3);
+        assert!(current(harness.state()).start_marker_unfilled);
+        assert!(!current(harness.state()).end_marker_unfilled);
+        harness.get_by_label("Fill end arrow").click();
+        harness.run_steps(3);
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert!(current(harness.state()).start_marker_unfilled);
+        assert!(!current(harness.state()).end_marker_unfilled);
+        harness.get_by_label("Fill end arrow").click();
+        harness.run_steps(3);
+
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Open arrow").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        for (label, kind) in [
+            ("Bar", ConnectorMarkerKind::BaseDash),
+            ("Diagonal bar", ConnectorMarkerKind::Dash),
+        ] {
+            harness.get_by_label("End arrow style").click();
+            harness.run_steps(3);
+            harness.get_by_label(label).scroll_to_me();
+            harness.run_steps(3);
+            harness.get_by_label(label).click();
+            harness.run_steps(3);
+            assert!(
+                harness
+                    .get_by_label("Fill end arrow")
+                    .accesskit_node()
+                    .is_disabled(),
+                "{label}"
+            );
+            assert!(current(harness.state()).end_marker_unfilled);
+            assert_eq!(current(harness.state()).end_marker.unwrap().kind, kind);
+        }
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Oval").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Oval").click();
+        harness.run_steps(3);
+        assert!(
+            !harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::Oval
+        );
+
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Half circle").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Half circle").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::HalfCircle
+        );
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Oval").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Oval").click();
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::Oval
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert!(
+            !harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).end_marker.unwrap().kind,
+            ConnectorMarkerKind::HalfCircle
+        );
+        assert!(current(harness.state()).end_marker_unfilled);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+
+        harness.get_by_label("End arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Legacy triangle").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Legacy triangle").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(!current(harness.state()).end_marker_unfilled);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert!(current(harness.state()).end_marker_unfilled);
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Arrow at end")
+            .click();
+        harness.run_steps(3);
+        assert!(!current(harness.state()).end_marker_unfilled);
+        assert!(
+            harness
+                .get_by_label("Fill end arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        assert!(current(harness.state()).end_marker_unfilled);
+
+        harness.run_steps(3);
+        harness.get_by_label("Start arrow style").click();
+        harness.run_steps(3);
+        harness.get_by_label("Bar").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Bar").click();
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).start_marker.unwrap().kind,
+            ConnectorMarkerKind::BaseDash
+        );
+        assert!(current(harness.state()).start_marker_unfilled);
+        assert!(
+            harness
+                .get_by_label("Fill start arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(
+            current(harness.state()).start_marker.unwrap().kind,
+            ConnectorMarkerKind::Block
+        );
+        assert!(current(harness.state()).start_marker_unfilled);
+        assert!(
+            !harness
+                .get_by_label("Fill start arrow")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
+
+    #[test]
     fn object_styles_copy_atomically_without_copying_content_or_geometry() {
         let mut app = ThinodaApp::headless();
         let ctx = Context::default();
@@ -4419,6 +7457,16 @@ mod tests {
         );
         source.route = ConnectorRoute::Curve;
         source.arrow_start = true;
+        source.start_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Block,
+        });
+        source.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Open,
+        });
+        source.start_marker_size = Some(12.5);
+        source.end_marker_size = Some(0.0);
+        source.start_marker_unfilled = true;
+        source.end_marker_unfilled = true;
         source.color = Some(Color::rgba(30, 60, 90, 255));
         source.width = 4.0;
         let source = doc
@@ -4479,7 +7527,31 @@ mod tests {
         );
         assert_eq!(connector.route, ConnectorRoute::Curve);
         assert!(connector.arrow_start);
+        assert_eq!(
+            connector.start_marker.unwrap().kind,
+            ConnectorMarkerKind::Block
+        );
+        assert_eq!(
+            connector.end_marker.unwrap().kind,
+            ConnectorMarkerKind::Open
+        );
+        assert_eq!(connector.start_marker_size, Some(12.5));
+        assert_eq!(connector.end_marker_size, Some(0.0));
+        assert!(connector.start_marker_unfilled);
+        assert!(connector.end_marker_unfilled);
         assert_eq!(connector.width, 4.0);
+        assert!(app.doc_mut().unwrap().doc.undo());
+        assert_eq!(
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(target)
+                .unwrap(),
+            &before_target
+        );
+        assert!(app.doc_mut().unwrap().doc.redo());
         app.doc_mut().unwrap().view.select_board_object(ink_source);
         app.exec(&ctx, Cmd::CopyStyle);
         app.doc_mut().unwrap().view.select_board_object(ink_target);

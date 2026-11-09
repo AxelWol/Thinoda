@@ -65,30 +65,6 @@ impl ThinodaApp {
             .collect()
     }
 
-    pub(crate) fn board_tool_commands() -> Vec<(Cmd, &'static str)> {
-        Self::board_commands()
-            .into_iter()
-            .filter(|(command, _)| matches!(command, Cmd::BoardTool(_)))
-            .collect()
-    }
-
-    pub(crate) fn context_board_commands() -> Vec<(Cmd, &'static str)> {
-        Self::board_commands()
-            .into_iter()
-            .filter(|(command, _)| !matches!(command, Cmd::BoardTool(_)))
-            .chain(
-                Self::arrangement_commands().into_iter().filter_map(
-                    |(action, label)| match action {
-                        Action::AlignFloating(arrangement) => {
-                            Some((Cmd::BoardAction(BoardAction::Arrange(arrangement)), label))
-                        }
-                        _ => None,
-                    },
-                ),
-            )
-            .collect()
-    }
-
     pub(crate) fn menu_entries_available(&self, entries: &[MenuEntry]) -> bool {
         // Preserve the disabled Export group without hiding discoverable editing
         // groups whose individual actions depend on the current selection.
@@ -149,6 +125,7 @@ impl ThinodaApp {
             ("Save As…", Cmd::SaveAs),
             ("Save All", Cmd::SaveAll),
             ("Import", Cmd::Import),
+            ("Import draw.io link…", Cmd::ImportDrawioLink),
         ]));
         #[cfg(not(target_arch = "wasm32"))]
         file.push(item("Move to New Window", Cmd::MoveToNewWindow));
@@ -179,6 +156,7 @@ impl ThinodaApp {
             ("Redo", Cmd::Canvas(Action::Redo)),
             ("Cut", Cmd::Canvas(Action::Cut)),
             ("Copy", Cmd::Canvas(Action::Copy)),
+            ("Copy as draw.io", Cmd::CopyAsDrawio),
             ("Paste", Cmd::MenuPaste),
             ("Duplicate", Cmd::Canvas(Action::Duplicate)),
             ("Delete", Cmd::Canvas(Action::Delete)),
@@ -317,34 +295,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn board_tool_commands_move_only_from_the_canvas_context_board_menu() {
-        let board_commands = ThinodaApp::board_commands();
-        let tool_commands = ThinodaApp::board_tool_commands();
-        let context_board_commands = ThinodaApp::context_board_commands();
-
-        assert_eq!(
-            tool_commands,
-            board_commands
-                .iter()
-                .filter(|(command, _)| matches!(command, Cmd::BoardTool(_)))
-                .cloned()
-                .collect::<Vec<_>>()
-        );
-        assert!(
-            context_board_commands
-                .iter()
-                .all(|(command, _)| !matches!(command, Cmd::BoardTool(_)))
-        );
-        for (command, _) in board_commands
-            .iter()
-            .filter(|(command, _)| !matches!(command, Cmd::BoardTool(_)))
-        {
-            assert!(
-                context_board_commands
-                    .iter()
-                    .any(|(actual, _)| actual == command)
-            );
-        }
+    fn main_board_menu_keeps_its_tool_commands() {
         assert!(
             ThinodaApp::board_menu_commands()
                 .iter()

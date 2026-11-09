@@ -1,8 +1,49 @@
-# Regional wording for pending freehand input.
+# Regional wording overrides.
+Corner radius|Raio dos cantos
+Double ellipse|Elipse dupla
+Automatic inner inset|Espaçamento interno automático
+Inner outline inset|Espaçamento do contorno interno
+Outline sides|Lados do contorno
+Top outline|Contorno superior
+Right outline|Contorno direito
+Bottom outline|Contorno inferior
+Left outline|Contorno esquerdo
+Sides rotate with the shape.|Os lados giram com a forma.
+Start arrow style|Estilo da seta inicial
+End arrow style|Estilo da seta final
+Start arrow size|Tamanho da seta inicial
+End arrow size|Tamanho da seta final
+Fill start arrow|Preencher seta inicial
+Fill end arrow|Preencher seta final
+Enable an arrow and select a draw.io arrow style to set its size.|Ative uma seta e selecione um estilo de seta do draw.io para definir o tamanho.
+Enable an arrow and select a draw.io arrow style to set its fill.|Ative uma seta e selecione um estilo de seta do draw.io para definir o preenchimento.
+Open markers cannot be filled. The fill setting is retained when changing to a fillable marker.|Marcadores abertos não podem ser preenchidos. A configuração de preenchimento é mantida ao mudar para um marcador preenchível.
+Legacy triangle|Triângulo anterior
+Classic arrow|Seta clássica
+Thin classic arrow|Seta clássica estreita
+Open arrow|Seta aberta
+Thin open arrow|Seta aberta estreita
+Block arrow|Seta preenchida
+Thin block arrow|Seta preenchida estreita
+Diamond|Losango
+Thin diamond|Losango estreito
+Oval|Oval
+Half circle|Semicírculo
+Bar|Barra
+Diagonal bar|Barra diagonal
+Legacy arrowheads approximated in draw.io|Pontas de seta anteriores aproximadas no draw.io
 Ink settings|Configurações da entrada à mão livre
-Ink is not saved or included in crash recovery until it is finished.|A entrada à mão livre não é salva nem incluída na recuperação após falha até o gesto terminar.
+Shape options|Opções da forma
+Input source|Origem de entrada detectada
+Copied sheet and SVG to clipboard|Folha e SVG copiados para a área de transferência
+Copied sheet as text only; SVG was not copied|Folha copiada apenas como texto; o SVG não foi copiado
+Pending ink is not in the saved file. Crash recovery may miss recent samples.|A entrada à mão livre pendente não está no arquivo salvo. A recuperação após falha pode não incluir as amostras recentes.
+Recovered ink may be incomplete. Review it before retrying.|A entrada à mão livre recuperada pode estar incompleta. Revise-a antes de tentar novamente.
+Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.|A entrada recuperada da borracha ou do laço não pode ser tentada novamente. Copie as amostras ou descarte-a.
 The pointer is still down. Release it before retrying.|O ponteiro ainda está pressionado. Solte-o antes de tentar novamente.
 Accepted samples|Amostras aceitas
+Pen input could not be matched. No stroke was started; dismiss this message and try again.|Não foi possível identificar a entrada da caneta. Nenhum traço foi iniciado; feche esta mensagem e tente novamente.
+Touch pointer input could not be matched. Check the gesture or dismiss this message.|Não foi possível identificar a entrada do ponteiro de toque. Verifique o gesto ou feche esta mensagem.
 # Regional wording for the offline board guide.
 On boards, Alt-drag or Alt+arrow duplicates movable items (Shift makes arrow steps larger). Ctrl+Alt+Left/Right rotates by 1° (Shift: 15°); use Command+Option on macOS. Locked items and groups cannot be duplicated by these gestures.|Nos quadros, Alt+arrastar ou Alt+seta duplica itens móveis (Shift aumenta o passo das setas). Ctrl+Alt+Esquerda/Direita gira 1° (Shift: 15°); no macOS, use Command+Option. Itens e grupos bloqueados não podem ser duplicados por esses gestos.
 Pen and Highlighter draw freehand. Adjust Ink color, Ink width and Opacity, or Eraser radius for erasing; settings are captured when each gesture begins.|Caneta e Marca-texto desenham à mão livre. Ajuste Cor da tinta, Espessura do traço e Opacidade ou, para apagar, Raio da borracha; as configurações são capturadas no início de cada gesto.
@@ -12,7 +53,31 @@ Use the board toolbar to add sticky notes, text cards, shapes, connectors and fr
 Board > Hide central topic moves any central-topic content to a floating topic. Board > Show central topic shows the central topic again; floating topics stay separate. FIM sheets always show a central topic.|Quadro > Ocultar tópico central move o conteúdo do tópico central, se houver, para um tópico flutuante. Quadro > Mostrar tópico central exibe o tópico central novamente; os tópicos flutuantes permanecem separados. As folhas FIM sempre exibem um tópico central.
 Save boards as .thinoda to preserve cards, shapes, connectors, frames and board settings. Other formats may change or omit board content; review the export warnings.|Salve os quadros como .thinoda para preservar cartões, formas, conectores, molduras e configurações do quadro. Outros formatos podem alterar ou omitir conteúdo do quadro; confira os avisos de exportação.
 Inline card text and list formatting omitted|Formatação e listas do texto dos cartões omitidas
+Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa mental convertidos em formas
+Connector-to-connector attachments detached|Conexões entre conectores desfeitas
+Fixed connector attachments detached|Pontos de conexão fixos desconectados
+Fixed connector positions may differ in draw.io|A posição dos pontos de conexão fixos pode ser diferente no draw.io
+Fixed attachment|Ponto de conexão fixo
+Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.|Arraste para reconectar; solte em uma cruz ou arraste com Shift sobre uma forma ou tópico para fixar o ponto. Enter alterna a fixação; as setas movem um ponto fixo, Ctrl+setas mudam o destino (Command no macOS) e Início/Fim percorre os pontos de conexão visíveis.
+Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.|Segure Shift ao soltar para fixar a conexão ou Alt para deixar um ponto livre; Alt+Shift conecta sem fixar.
+No visible connection points on this target.|Não há pontos de conexão visíveis neste destino.
+Fixed connector ports require a shape or topic.|Pontos de conexão fixos exigem uma forma ou um tópico.
+Fixed connector port exceeds supported limits.|O ponto de conexão fixo ultrapassa os limites permitidos.
+Cannot preserve the fixed connector attachment before deletion.|Não é possível preservar o ponto de conexão fixo antes da exclusão.
+Label color or opacity may differ in draw.io|A cor ou opacidade dos rótulos pode ser diferente no draw.io
+Rectangle colors or automatic outlines may differ in draw.io|As cores ou os contornos automáticos dos retângulos podem ser diferentes no draw.io
+Double-ellipse appearance may differ in draw.io|As elipses duplas podem ter uma aparência diferente no draw.io
+Collapsed process outlines may be omitted in draw.io|Os contornos de processos sem largura ou altura podem ser omitidos no draw.io
+Grid or snapping may differ in draw.io|A grade ou o encaixe na grade podem ser diferentes no draw.io
+Page background may differ in draw.io|O fundo da página pode ser diferente no draw.io
+Cards may show folded corners in draw.io|Os cartões podem exibir cantos dobrados no draw.io
+Translucent connector labels may render differently|Rótulos translúcidos de conexões podem ser exibidos de forma diferente
+Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
+Presentation slides omitted|Slides de apresentação omitidos
+Thinoda on GitHub|Thinoda no GitHub
+Click empty space to add · Esc to finish|Clique em um espaço vazio para adicionar · Esc para concluir
 Formatted card titles cannot be changed until rich-text editing is supported|Não é possível alterar títulos de cartões formatados até que a edição de texto formatado seja compatível.
+Formatted card text must remain on a floating sticky note or text card.|O texto formatado do cartão deve permanecer em uma nota adesiva flutuante ou em um cartão de texto.
 Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.|O recorte da moldura é apenas visual e não remove dados de forma segura. O conteúdo fora da moldura pode permanecer nos arquivos salvos ou exportados, e algumas exportações podem não aplicar o recorte.
 # Regional wording for the freeform board; other labels share Portuguese.
 Highlighter|Marca-texto
@@ -30,7 +95,30 @@ Bring to front|Trazer para frente
 Rotate left|Girar para a esquerda
 Rotate right|Girar para a direita
 Rotate board item|Girar elemento do quadro
+Connector waypoint|Ponto de controle do conector
+Add connector waypoint|Adicionar ponto de controle ao conector
+Drag or use arrow keys to move; double-click or press Delete to remove.|Arraste ou use as setas para mover; clique duas vezes ou pressione Delete para remover.
+Drag, press Enter, or use arrow keys to add a waypoint.|Arraste, pressione Enter ou use as setas para adicionar um ponto de controle.
+Clear connector waypoints|Remover pontos de controle do conector
+Connector is locked.|O conector está bloqueado.
+Connector no longer exists.|O conector não existe mais.
+Connector waypoint no longer exists.|O ponto de controle do conector não existe mais.
+A connector can have at most 1,024 waypoints.|Um conector pode ter no máximo 1.024 pontos de controle.
+A sheet can have at most 200,000 connector waypoints.|Uma folha pode ter no máximo 200.000 pontos de controle de conectores.
+The connector waypoint is outside the permitted board coordinates.|O ponto de controle do conector está fora das coordenadas permitidas do quadro.
+Add connected shape above|Adicionar forma conectada acima
+Add connected shape to the right|Adicionar forma conectada à direita
+Add connected shape below|Adicionar forma conectada abaixo
+Add connected shape to the left|Adicionar forma conectada à esquerda
+Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.|Clique para adicionar uma cópia conectada; Ctrl+clique adiciona apenas uma cópia; Shift+clique adiciona apenas um conector. Arraste para conectar a outro item; Ctrl+arrastar solta uma cópia conectada. No macOS, use Command.
+Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.|Mantenha uma seta pressionada, ou pressione Shift+F10 em uma seta focada, para escolher a forma.
 Board object label|Rótulo do objeto do quadro
+Editing label|Editando rótulo
+Enter: finish · Esc: cancel|Enter: concluir · Esc: cancelar
+Empty click/tap adds a shape|Clique/toque no vazio adiciona forma
+Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel|Enter ou clique/toque fora para concluir · Shift+Enter: nova linha · Esc: cancelar
+Clicking or tapping empty canvas also adds the armed shape.|Clicar/tocar em uma área vazia também adiciona a forma ativa.
+Type a label|Digite um rótulo
 Select one board object to edit its properties.|Selecione um objeto do quadro para editar suas propriedades.
 Replaces topic titles, board labels and descriptions.|Substitui títulos de tópicos, rótulos e descrições do quadro.
 Slides|Slides
@@ -83,6 +171,9 @@ Strikethrough notes|Tachar notas
 Cannot apply strikethrough here. Select text within one paragraph outside code, or shorten the note.|Não é possível tachar aqui. Selecione texto em um parágrafo fora de código ou encurte a nota.
 Cannot apply formatting to this selection. The formatting action was canceled.|Não é possível aplicar formatação a esta seleção. A ação de formatação foi cancelada.
 Board export changes|Alterações na exportação do quadro
+Editable image export|Exportar imagem editável
+Only the current sheet is included; other sheets are not exported.|Somente a planilha atual é incluída; as demais planilhas não são exportadas.
+This image contains the editable diagram, including content outside the visible preview. It is not redacted.|Esta imagem contém o diagrama editável, incluindo conteúdo fora da prévia visível. Os dados não foram ocultados.
 The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.|O formato selecionado altera ou omite conteúdo do quadro. O quadro na memória permanece inalterado; salve-o como Thinoda para preservá-lo.
 Shapes omitted|Formas omitidas
 Camera image metadata or color profiles may be omitted|Metadados ou perfis de cor das imagens da câmera podem ser omitidos
@@ -381,10 +472,18 @@ MindManager saves one sheet. Export the current sheet or save the complete workb
 Choose a different destination to preserve the imported source.|Escolha outro destino para preservar o arquivo de origem importado.
 This import may omit unsupported content. The source file is preserved.|Esta importação pode omitir conteúdo não suportado. O arquivo de origem é preservado.
 Converted outline preview|Pré-visualização da estrutura convertida
+Converted drawing labels (up to 8)|Rótulos do desenho convertido (até 8)
+Conversion warnings|Avisos de conversão
 showing the first 8 topics|exibindo os 8 primeiros tópicos
 MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.|A exportação para MindManager não pode preservar todo o conteúdo. Use Exportar com confirmação ou salve como .thinoda.
 Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged.|Só é exportada a folha atual. Podem ser omitidos cores, recursos, relações, layout avançado e dados não suportados. A pasta de trabalho de origem não é alterada.
 Additional or unsupported links|Links adicionais ou não suportados
+Connector attachments were detached|As conexões foram separadas de seus pontos de ancoragem
+Connector attachments may have been detached|As conexões podem ter sido separadas de seus pontos de ancoragem
+Unsupported shapes or styles in the draw.io source may appear as rectangles|Formas ou estilos não compatíveis na origem do draw.io podem aparecer como retângulos
+draw.io grid settings were adjusted|As configurações de grade do draw.io foram ajustadas
+draw.io page background was approximated or omitted|O fundo da página do draw.io foi aproximado ou omitido
+draw.io folded notes may be flattened or simplified|As notas dobradas do draw.io podem ser achatadas ou simplificadas
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão
@@ -674,9 +773,17 @@ Close|Fechar
 Formatting and styles|Formatação e estilos
 Images and attachments|Imagens e anexos
 Import requires confirmation|A importação exige confirmação
+Import draw.io link…|Importar link do draw.io…
+draw.io link or #R fragment|Link do draw.io ou fragmento #R
+Paste a self-contained link. The link contains the diagram and is decoded locally; no website is contacted.|Cole um link independente. O link contém o diagrama e é decodificado localmente; nenhum site é acessado.
+Could not import draw.io link|Não foi possível importar o link do draw.io
+This draw.io link exceeds the supported size limit.|Este link do draw.io excede o limite de tamanho suportado.
+This import may omit unsupported content. Your original link is unchanged.|Esta importação pode omitir conteúdo não suportado. Seu link original permanece inalterado.
 Markers and task data|Marcadores e dados de tarefas
 None|Nenhum
 Not possible here|Não é possível aqui
+Cut cancelled; original content was kept|Recorte cancelado; o conteúdo original foi mantido
+Some surrounding board, annotation or task context remains only in the original sheet|Parte do contexto do quadro, das anotações ou das tarefas permanece apenas na folha original
 Other unsupported map data|Outros dados de mapa não compatíveis
 Rich notes|Notas formatadas
 Version|Versão
@@ -870,3 +977,25 @@ Default value|Valor padrão
 Maximum file size (bytes)|Tamanho máximo do arquivo (bytes)
 Allowed media types|Tipos de mídia permitidos
 Review hierarchy changes|Revisar alterações da hierarquia
+Grid|Grade
+Canvas settings|Configurações da tela
+No counts recorded yet.|Ainda não há contagens registradas.
+Edit label|Editar rótulo
+More formatting options|Mais opções de formatação
+Change shape|Alterar forma
+Fill color|Cor de preenchimento
+No fill|Sem preenchimento
+Outline color|Cor do contorno
+Outline width|Espessura do contorno
+Drag onto the board or press Shift+Enter to insert|Arraste para o quadro ou pressione Shift+Enter para inserir
+Copy as draw.io|Copiar como draw.io
+Copied for draw.io; paste it into a diagram|Copiado para o draw.io; cole em um diagrama
+Pasted from draw.io; some content may have been omitted or simplified|Colado do draw.io; parte do conteúdo pode ter sido omitida ou simplificada
+Container frames omitted|Molduras de contêineres omitidas
+Additional draw.io pages omitted|Páginas adicionais do draw.io omitidas
+The first draw.io page has no pasteable items; additional pages were not pasted.|A primeira página do draw.io não contém itens que possam ser colados; as páginas adicionais não foram coladas.
+The draw.io page has no pasteable items.|A página do draw.io não contém itens que possam ser colados.
+Could not paste draw.io content|Não foi possível colar o conteúdo do draw.io
+This HTML contains multiple draw.io diagrams. Export each diagram separately.|Este arquivo HTML contém vários diagramas draw.io. Exporte cada diagrama separadamente.
+This HTML viewer has no embedded diagram. Remote references are not loaded.|Este visualizador HTML não tem um diagrama incorporado. As referências remotas não são carregadas.
+Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.|Não foi possível ler um diagrama draw.io incorporado neste arquivo HTML. Ele pode ser inválido, grande demais ou inseguro.

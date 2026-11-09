@@ -11,6 +11,7 @@ publish = false
 egui = { workspace = true }
 earcutr = { workspace = true }
 thinoda-core = { path = "../thinoda-core" }
+serde.workspace = true
 
 [dev-dependencies]
 image.workspace = true

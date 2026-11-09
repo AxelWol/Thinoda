@@ -1,4 +1,4 @@
-_Last updated: 2026-11-04 12:48:11 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-06 07:56:21 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda — phased plan
 
@@ -8,6 +8,117 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 (official user guide, used as the verification checklist).
 
 Legend: ✅ done · 🟡 partial · ⬜ open
+
+## draw.io diagram support (2026-11-05)
+
+🟡 In progress (Milestone A — codec, import, export — landed; see DRAWIO.md §4.1).
+[DRAWIO.md](DRAWIO.md) holds the research (app.diagrams.net 32.6.10,
+file format), the concept (native board model + lossless round-trip contract,
+`.drawio` editable in place, Apache-2.0 generic libraries bundled, vendor sets
+downloaded on demand) and phases 0–14. Phase 1 changes shape placement on all
+boards to draw.io behaviour and ships independently of file support.
+
+## Combined draw.io, Freeform, ink and presentation continuation
+
+The Freeform and draw.io plans continue together; neither supersedes the
+other. Preserve existing mind maps, the newer target-specific context menus,
+localized controls and light/dark themes. The Freeform research, F0–F6 phases,
+implemented features and phase critiques remain in [FREEFORM.md](FREEFORM.md).
+The following are outstanding priorities, not claims of release acceptance:
+
+1. Pending or rejected ink now has a bounded crash-recovery snapshot with
+   explicit review rather than automatic commit. Continue validating incomplete
+   input, storage failures, ownership and device behavior; see the
+   [recovery critique](FREEFORM.md#pending-ink-recovery-checkpoint-critique).
+2. Define quantitative ink/image workload and latency budgets and verify them
+   on representative native, browser, GPU, touch and stylus devices. Pressure
+   is currently persisted metadata, not pressure-dependent stroke width;
+   synthetic tests do not establish device acceptance.
+3. Finish scene and export acceptance across crops, browsers, PDF viewers and
+   current Office versions. View slides are spatial; Branch and Zone slides use
+   source isolation. Viewport PowerPoint slides are flattened, and visual
+   clipping is not secure redaction. See [PRESENTATIONS.md](PRESENTATIONS.md).
+4. Complete integrated board accessibility and device/IME acceptance, and the
+   rich-aware editing, history, clipboard, rendering, export and accessibility
+   needed for selected-range card formatting and lists. Existing card controls
+   apply to the whole card.
+5. Keep integrated cloud accounts disabled until publisher registration,
+   local-save-equivalent draft and export-loss safeguards, revision/cancellation
+   tests and live-provider acceptance are complete. Browser recovery races,
+   large-board limits and real OS clipboard behavior remain open; see
+   [CLOUD-STORAGE.md](CLOUD-STORAGE.md) and [WEB-STARTUP.md](WEB-STARTUP.md).
+
+## Latest task and release continuation
+
+The latest status screenshots mix complete implementation slices with partially
+accepted work. The [draw.io phase table](DRAWIO.md#4-phase-plan) tracks each
+parent phase separately; a completed slice does not close its parent. Retain the
+following work until its stated tests, written critique and acceptance gates are
+complete:
+
+| Screenshot task or follow-up | Status | Evidence or remaining work |
+|---|---|---|
+| Context-menu organization, FIM visibility, icon colors, separate pen options, stationary canvas and reserved toolbar space | Complete locally | Committed slices and critiques in [DRAWIO.md](DRAWIO.md#4-phase-plan); physical-device and assistive-technology acceptance remains a separate gate |
+| Bar-marker geometry, persistence, controls and validation | Complete locally | The bar-marker checkpoint in [DRAWIO.md](DRAWIO.md#41-implementation-progress) records compatibility, tests and critique; other marker and connector work remains |
+| Adjustable mockup rectangle radii | Complete locally | The absolute-radius checkpoint records persistence gates, tests, critique and limitations; generic stencils remain open |
+| Invisible draw.io anchors | Complete locally | The anchor checkpoint records transparent proxies, conversion warnings, tests and remaining source-fidelity limits; generic stencils remain open |
+| Draw.io standalone partial-rectangle sides | Complete locally | Four sides, direction and rotation are retained and editable; persistence, canvas and export checks, the critique and remaining adaptive-color limitations are recorded in [DRAWIO.md](DRAWIO.md#41-implementation-progress) |
+| Draw.io shaped containers | Partial | Non-swimlane shapes, including partial rectangles, become frames with a formatting warning; preserve their appearance, editable hierarchy and connector behavior in the scene model |
+| Draw.io clipboard omissions | Partial | Pasting counts omitted frames and additional pages, and scopes content warnings to the first page; preserving omitted content and real-host clipboard acceptance remain open |
+| Draw.io connector attachments | Partial | Group/frame and unresolved terminal detachments are reported on import and paste; retain editable attachments and accurate perimeter/port routing |
+| Draw.io malformed point safeguards | Complete locally | Invalid coordinates and out-of-range translated connector or ink points are discarded with a conversion warning; arbitrary geometry fidelity remains open |
+| Draw.io malformed vertex geometry | Complete locally | Invalid frame coordinates or negative dimensions omit the vertex and its subtree with a conversion warning; other geometry fidelity and source preservation remain open |
+| Draw.io explicit appearance diagnostics | Complete locally | Unresolved explicit colors and invalid opacity or stroke width now trigger a formatting warning; theme preservation and comprehensive appearance diagnostics remain open |
+| Draw.io CSS colors | Partial | Common static CSS colors are converted to editable sRGB; adaptive/dynamic color preservation, wider color spaces and full appearance fidelity remain open |
+| Draw.io double ellipses | Partial | Standalone shapes retain editable outlines, insets and eight default connector points; full text fidelity, shaped containers, adaptive colors, external-viewer acceptance and source-preserving save-back remain open |
+| Draw.io standalone double-ellipse outlines | Complete locally | Editable automatic/custom insets, persistence and clipboard gates, renderer checks, cross-browser paste/copy and the critique are recorded in [DRAWIO.md](DRAWIO.md#41-implementation-progress) |
+| Draw.io flowchart annotations | Partial | Annotation 1 brackets import as editable open-sided rectangles with a formatting warning; exact paths, labels, ports and stencil identity remain open |
+| Draw.io flowchart processes | Partial | Rounded source stencils import as square editable processes with a warning; native processes export as tagged square rectangles. Exact source appearance, identity, ports and save-back remain open |
+| Draw.io unsupported shapes and styles | Partial | Rectangle fallbacks are identified in import and persistent paste warnings; unresolved named label styles report formatting loss. Source data, counts, exact geometry and lossless save-back remain open |
+| Draw.io grid and snapping | Partial | Ordinary grid visibility, spacing and snapping import consistently; direct Thinoda exports retain independent settings and warn where draw.io cannot. Other editors may discard the extension, line-grid appearance is approximate, and source-preserving save-back remains open |
+| Draw.io page backgrounds | Partial | Explicit colors import as sheet backgrounds; finite pages, adaptive or translucent colors, gradients and images are disclosed when approximated or omitted. Page geometry, dynamic themes, gradients, images and source-preserving save-back remain open |
+| Draw.io folded notes | Partial | Ordinary instances of both built-in note variants import as editable flat cards with a warning; exports and clipboard copies disclose folded-corner differences. Containers and images can simplify differently; faithful folds, label bounds and source-preserving save-back remain open |
+| Draw.io folders and floorplan stencils | Open | Supplied examples use folder tabs, bounded labels and nested containers as well as floorplan chairs. Ensure approximations report their appearance loss until faithful rendering and editing are implemented |
+| Draw.io label colors and transparency | Partial | Removed colors and fully transparent text are distinguished; editor contrast and visual-export warnings are improved. Independent text opacity, adaptive defaults and label backgrounds still require versioned model and renderer work |
+| Draw.io label sizes and connector-label cells | Partial | Size loss and folded child-label formatting are disclosed; labeled board connector and flattened relationship exports use the 12-unit canvas size. Independent label placement, styling, rich text and source preservation remain open |
+| Draw.io label-size and folded-label diagnostics | Complete locally | Shape and connector size loss, named text styling and merged child labels are disclosed; the export adjustment, tests and critique are recorded in [DRAWIO.md](DRAWIO.md#41-implementation-progress) |
+| Windows pen ink | Partial | Pen-first browser interruption mitigation is implemented; native Windows pen identity, ambiguous or touch-first streams and physical-device acceptance remain |
+| SVG sheet clipboard | Partial | Windows and supported browsers publish SVG with editable sheet text; real system clipboard, recipient and cross-platform acceptance remain |
+| Ink input and performance | Partial | Define budgets and verify representative native, browser, GPU, touch and stylus workloads |
+| Presentation scenes and exports | Partial | Finish browser, PDF viewer and current Office acceptance; clipping is not redaction |
+| Board accessibility and rich editing | Partial | Complete browser/assistive-technology and IME acceptance, plus rich-aware range/list editing and its persistence and exports |
+| Storage and clipboard safeguards | Partial | Keep cloud providers gated; finish revision, cancellation, recovery, real-host and provider acceptance |
+| Preserve Ink and Slides artifacts | Blocked | A consistent backup of the separate worktree and session artifacts needs a suitable destination and a quiescent snapshot; do not delete or archive the source as a substitute |
+| Bounded draw.io PDF import | Research in progress | Metadata and attachments require strict aggregate decoding limits; the evaluated parser limits are per stream and do not yet meet that requirement |
+| Whole-card text alignment | Complete locally | Sticky and text card rows now align on canvas and in the editor and supported exports; tests and remaining limits are recorded in [FREEFORM.md](FREEFORM.md#card-alignment-and-color-mixer-checkpoint-and-rubber-duck-critique) |
+| Expanded custom-color mixer | Complete locally | Shape and connector pickers expand to fit when possible, retain constrained-window scrolling, and preserve automatic-color transactions; validation and critique are recorded in [FREEFORM.md](FREEFORM.md#card-alignment-and-color-mixer-checkpoint-and-rubber-duck-critique) |
+| Windows Vulkan overlay references | Complete locally | The user removed the stale Epic Games and Steam registrations; fresh app and `vulkaninfo` startups no longer report those missing manifests |
+| Generic Windows Vulkan layer warning | Investigated; warning remains | The loader trace reports no explicit-layer registry files and continues successfully. This is separate from the removed overlay references; retain GPU diagnostics and the Vulkan fallback |
+
+The [Vulkan loader's Windows discovery](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderLayerInterface.md#windows-layer-discovery)
+reads enabled implicit-layer manifests from system registry values. The user
+removed the previously observed stale Epic and Steam entries from this review
+machine; neither appears in either machine registry view on recheck. A fresh
+isolated app startup and `vulkaninfo --summary` no longer reported the missing
+manifests, though both still emitted a generic registry lookup warning. A
+temporary layer-debug trace attributed that warning to explicit-layer
+enumeration with no registry files found. The installed 1.4.341 loader's
+[source](https://github.com/KhronosGroup/Vulkan-Loader/blob/vulkan-sdk-1.4.341.0/loader/loader_windows.c#L765-L785)
+reports this as noncritical for layers and continues; `vulkaninfo` enumerated
+both GPUs and the app remained responsive. This does not rule out unrelated
+driver problems. Thinoda did not change the registry, and no layers were added
+merely to silence the warning.
+
+**User-directed release goal:** finish the remaining tasks in this plan and the
+draw.io plan, including their tests and rubber-duck critiques, before declaring
+them complete. Then integrate the completed work into `develop`, stage and
+commit only owned files, push the reviewed result, and open the requested
+`develop` → `main` pull request for a new release. Monitor the required actions
+and approval gates, address failures, and verify the resulting release
+artifacts. Respect branch protection and required human approvals; missing
+access, hosts, credentials, backup capacity or failed gates are blockers, not
+passes. Do not force-push, move an existing release tag, or claim a release
+before its artifacts have been verified.
 
 ## Current Freeform and web-startup status
 
@@ -39,6 +150,23 @@ commands and document semantics. Deliver in independently verified slices:
    pointer targets. Additional brush appearances require real rendering and
    persistence support rather than decorative placeholders.
 
+**F5/F6 continuation:** touch stroke pressure and atomic rejection have focused
+host coverage. A conservative web bridge preserves Chromium-synthesized pen
+pressure through a saved stroke and distinguishes correlated touch pointers
+from mouse input; ambiguous streams are rejected or interrupted. Only a
+verified absent touch force becomes optional. Pressure remains metadata rather
+than rendered width. Physical-device and non-Chromium pen verification remain
+open.
+Source-only scene isolation uses the same object and connector policy in the
+editor, Pitch and exports. Unassigned objects remain crop-visible without
+expanding source auto-fit; a fixed-crop browser fixture covers Pitch, PDF,
+slide-image and PowerPoint exports. Clipping is not redaction. See the critiques
+in [FREEFORM.md](FREEFORM.md#f5-ink-checkpoint-critique) and
+[PRESENTATIONS.md](PRESENTATIONS.md#scene-object-isolation-follow-up).
+Pending-ink recovery has focused coverage but still has storage, timing and
+device limitations. Realistic performance, accessibility and broader
+browser/Office/device acceptance remain open.
+
 All slices must fit light/dark themes and constrained windows, retain localized
 accessible names and keyboard navigation, and test selection ownership,
 undo/redo, native save/reopen and visual/export parity where behavior changes.
@@ -48,10 +176,36 @@ open gates; integrated cloud providers remain paused.
 The [selected-range and list contract](FREEFORM.md#selected-range-text-and-lists-bounded-model-foundation-controls-disabled)
 now has a bounded core representation for Sticky/Text card titles, validation,
 history-memory accounting, native v8 gating, non-native export-loss reporting,
-and atomic scalar-range replacement that preserves surrounding style runs.
+internal clipboard/recovery versioning, and atomic scalar-range replacement that
+preserves surrounding style runs.
 Replacement rejects paragraph-boundary changes while list metadata exists.
+Structured browser cuts now require bounded rich clipboard readback and time
+out without deleting the original when verification fails. Browser permission,
+sanitization and non-atomic clipboard ownership still require real-host
+acceptance; see the [cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
+Native cuts also verify both text and rich data across a stable HTML read;
+the [native critique](FREEFORM.md#native-cut-verification-checkpoint-critique)
+records their synchronous and non-atomic limitations. Portable ordinary-topic
+clipboard work replaces the old session-only token for new copies, checks task
+compatibility with the destination calendar, and retains explicit privacy and
+host-acceptance caveats in the
+[topic critique](FREEFORM.md#portable-topic-clipboard-checkpoint-critique).
+Mixed-board clipboard ownership now has a 256-edge bound, including summary
+trees, checked before copy/cut/duplicate layout and before codec or paste
+mutation. The [checkpoint critique](FREEFORM.md#mixed-board-clipboard-depth-checkpoint-critique)
+records its conservative limits and remaining layout caveats. The clipboard
+safety audit's subsequent
+[plain-text checkpoint](FREEFORM.md#plain-text-clipboard-safety-checkpoint-critique)
+now bounds external outline parsing and the legacy copy API, checks destination
+ancestry and reports rejections;
+it also records the public Rust API changes and remaining import, memory and
+real-clipboard limitations.
+New Sheet from Topic preserves card branches as rootless sheets, including
+summary-owned resources, while reporting surrounding context left in the
+source; the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)
+records its deliberate board-context exclusions and draft-commit ordering.
 No editor controls are enabled: rich-aware undo/IME, grapheme-aware selection,
-list editing, clipboard behavior, accessibility and mixed-style
+list editing, external clipboard and loss handling, accessibility and mixed-style
 measurement/rendering remain open. An isolated, non-application span-editing
 experiment still tests broader Unicode-scalar operations and rejection of
 over-budget edits. A separate experimental draft history tests snapshot
@@ -183,21 +337,17 @@ Generated PNG/JPEG fixtures cover pixel order, visual sizing, native round-trips
 exported media and insufficient output budgets. Real-camera, external Office,
 browser accessibility and physical-device acceptance remain open.
 
-**2026-11-03 menu and recovery continuation (implemented locally):** Board is
-at the first level of the shared main menu. The canvas context menu groups
-Indent, Outdent and the four style actions under Styles, places Board between
-Select and Arrange, and ends with New Sheet from Topic. The main menu, ribbon,
-native menu and context menu reuse Board commands, availability and shortcuts.
-Localized short-window navigation, command dispatch and selection ownership have
-focused coverage. Failed recovery-copy cleanup is reported and retried after a
-saved document closes without discarding newer edits or changing the recovery
-manager's ownership and pending-write contracts.
-
-**Completed user-directed context-menu change:** the canvas context menu now
-places board-tool commands in a scrollable Tools submenu between Arrange and AI.
-The Board submenu retains non-tool commands, the first-level main Board menu
-remains unchanged, and each command keeps the existing availability and dispatch
-rules. A short-viewport interaction test verifies Tools and Pen stay reachable.
+**Menu and recovery continuation:** Board remains at the first level of the
+shared main menu. The earlier uniform canvas context menu has since been
+replaced by the develop branch's target-specific Blank, Topic, Board,
+Annotation and Zone menus. On blank canvas, Add provides object tools and Draw
+provides pen, highlighter, lasso and erasers; selected targets expose their
+relevant commands, with the command palette as an escape hatch. Optional local
+usage counts do not reorder the menus. Localized short-window navigation,
+command dispatch and selection ownership have focused coverage. Failed
+recovery-copy cleanup is reported and retried after a saved document closes
+without discarding newer edits or changing the recovery manager's ownership and
+pending-write contracts.
 
 **Completed user-directed Zone-color change:** the Zone editor now controls
 frame and background colors independently. New Zones receive a deterministic
@@ -302,7 +452,7 @@ implemented feature is not treated as fully validated.
 | F5 ink | 🟡 Implemented locally | Define measurable budgets and representative hardware; realistic GPU/browser, touch/pen and accessibility acceptance |
 | F6 scenes | 🟡 Implemented locally | Final scene/PDF/PowerPoint and cross-platform acceptance; optional pressure device spike |
 | F1/F2 board UI | 🟡 Implemented locally | Broader integration, browser accessibility/screen-reader and physical-device acceptance |
-| Selected-range text and lists | 🟡 Bounded model and safety gates implemented | Rich-aware editing/history/IME, measurement/rendering, clipboard and accessibility remain; controls stay disabled |
+| Selected-range text and lists | 🟡 Bounded model, internal clipboard/recovery and safety gates implemented | Rich-aware editing/history/IME, measurement/rendering, external clipboard/loss handling and accessibility remain; controls stay disabled |
 | Profile browser archive loading | ✅ Recorded | The mixed-resource Wasm profile is retained; archive-import timing showed no material change |
 | Durable browser recovery | ⬜ Open | The asynchronous draft remains unintegrated until same-origin writer races, bounded discovery and rescue behavior are safe |
 | Validate large browser boards | 🟡 Partial | Synthetic 50-image/10,000-stroke save round-trips exist; representative resources, measured memory, quota/recovery and device acceptance remain |
@@ -314,7 +464,7 @@ implemented feature is not treated as fully validated.
 | Final integration | ⬜ Open | Re-run the integrated native/Wasm/browser matrix after the remaining acceptance gates |
 | Publish reviewed checkpoints | ⬜ Open | Publish a reviewed, tested checkpoint without claiming the open workstreams complete |
 | Add Moodboard starter | ✅ Complete locally | Six independent image cards and an ideas note; richer collage behavior remains out of scope |
-| Move board tools to context menu | ✅ Complete locally | Tools are in the scrollable canvas context-menu submenu |
+| Move board tools to context menu | ✅ Complete locally | Target-specific menus group drawing and card tools under Tools, with separate Board, Grid and Align groups |
 | Add editable and automatic Zone colors | ✅ Complete locally | Independent frame/background colors and deterministic new-Zone accents preserve legacy behavior |
 
 ## Current next-value state (2026-10-30)

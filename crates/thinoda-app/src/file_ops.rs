@@ -342,7 +342,11 @@ impl ThinodaApp {
             return;
         }
         if self.activate_open_path(path)
-            || self.dialogs.imports.iter().any(|(p, ..)| p == path)
+            || self
+                .dialogs
+                .imports
+                .iter()
+                .any(|(p, ..)| p.as_deref() == Some(path))
             || self.file_ops.opening_path(path)
         {
             return;
@@ -583,7 +587,7 @@ impl ThinodaApp {
                         .success(format!("{} {}", t("Saved to"), save.target.display()));
                     if index.is_some_and(|index| self.docs[index].has_unresolved_ink()) {
                         self.toasts.warning(t(
-                            "Ink is not saved or included in crash recovery until it is finished.",
+                            "Pending ink is not in the saved file. Crash recovery may miss recent samples.",
                         ));
                     }
                 }

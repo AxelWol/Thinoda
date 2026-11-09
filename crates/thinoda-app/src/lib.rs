@@ -10,7 +10,9 @@ mod cloud_changes;
 mod cloud_program;
 mod command_icons;
 mod command_ids;
+mod context_menus;
 pub mod doc;
+mod drawio_link;
 mod equations;
 mod export_preflight;
 pub mod file_ops;
@@ -30,6 +32,7 @@ mod labels;
 mod legal;
 mod legal_markdown;
 mod map_shot;
+mod menu_usage;
 pub mod menus;
 pub mod native_menus;
 mod navigation;
@@ -42,6 +45,7 @@ mod quick_styles;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 mod ribbon;
 mod save_all;
+mod sheet_clipboard;
 mod shortcut_browser;
 pub mod shortcut_conflicts;
 pub mod startup;
@@ -99,6 +103,8 @@ impl eframe::App for ThinodaApp {
         if root_native_menu_focused {
             self.sync_native_menus(ui.ctx());
         }
+        #[cfg(target_os = "windows")]
+        self.run_native_sheet_copy(frame, ui.ctx());
         self.run_native_print(frame, ui.ctx());
         for url in ThinodaApp::take_open_urls(ui.ctx()) {
             self.open_link(&url);

@@ -418,6 +418,13 @@ impl Topic {
     pub fn has_notes(&self) -> bool {
         self.notes.as_deref().is_some_and(|n| !n.trim().is_empty())
     }
+
+    pub(crate) fn ensure_can_be_child(&self) -> Result<(), String> {
+        if !self.inline_text.is_empty() {
+            return Err(crate::rich_text::FORMATTED_CARD_REQUIRED.into());
+        }
+        Ok(())
+    }
 }
 
 /// Free connection line between two topics.
@@ -588,7 +595,25 @@ pub struct Subtree {
     pub resources: crate::resources::ResourceStore,
 }
 
+/// A rejected child attachment returns the unchanged subtree to its caller.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct AttachChildError {
+    pub message: String,
+    pub subtree: Box<Subtree>,
+}
+
 impl Subtree {
+    pub(crate) fn ensure_can_be_child(&self) -> Result<(), String> {
+        if !self.topics.iter().any(|topic| topic.id == self.root) {
+            return Err("subtree root missing".to_owned());
+        }
+        for topic in &self.topics {
+            topic.ensure_can_be_child()?;
+        }
+        Ok(())
+    }
+
     /// Gives every topic in the subtree a fresh id from `sheet`.
     pub fn reassign_ids(&mut self, sheet: &mut Sheet) {
         let map: BTreeMap<TopicId, TopicId> = self
@@ -711,6 +736,78 @@ impl Sheet {
             board: Default::default(),
             next_id: 2,
         }
+    }
+
+    /// Whether this sheet needs inline-card-text-aware persistence.
+    pub fn has_inline_text(&self) -> bool {
+        self.topics
+            .values()
+            .any(|topic| !topic.inline_text.is_empty())
+    }
+
+    /// Whether the sheet needs waypoint-aware persistence.
+    pub fn has_connector_waypoints(&self) -> bool {
+        self.canvas.has_connector_waypoints()
+    }
+
+    /// Whether the sheet needs fixed-connector-port-aware persistence.
+    pub fn has_fixed_connector_ports(&self) -> bool {
+        self.canvas.has_fixed_connector_ports()
+    }
+
+    /// Whether the sheet needs marker-aware persistence.
+    pub fn has_connector_markers(&self) -> bool {
+        self.canvas.has_connector_markers()
+    }
+
+    /// Whether the sheet needs the extended connector-marker format.
+    pub fn has_extended_connector_markers(&self) -> bool {
+        self.canvas.has_extended_connector_markers()
+    }
+
+    /// Whether the sheet needs marker-size-aware persistence.
+    pub fn has_connector_marker_sizes(&self) -> bool {
+        self.canvas.has_connector_marker_sizes()
+    }
+
+    /// Whether the sheet needs marker-fill-aware persistence.
+    pub fn has_connector_marker_fills(&self) -> bool {
+        self.canvas.has_connector_marker_fills()
+    }
+
+    /// Whether the sheet needs diamond-marker-aware persistence.
+    pub fn has_diamond_connector_markers(&self) -> bool {
+        self.canvas.has_diamond_connector_markers()
+    }
+
+    /// Whether the sheet needs oval-marker-aware persistence.
+    pub fn has_oval_connector_markers(&self) -> bool {
+        self.canvas.has_oval_connector_markers()
+    }
+
+    /// Whether the sheet needs half-circle-marker-aware persistence.
+    pub fn has_half_circle_connector_markers(&self) -> bool {
+        self.canvas.has_half_circle_connector_markers()
+    }
+
+    /// Whether the sheet needs bar-marker-aware persistence.
+    pub fn has_bar_connector_markers(&self) -> bool {
+        self.canvas.has_bar_connector_markers()
+    }
+
+    /// Whether the sheet needs adjustable-corner-aware persistence.
+    pub fn has_shape_rounding(&self) -> bool {
+        self.canvas.has_shape_rounding()
+    }
+
+    /// Whether the sheet needs partial-rectangle-aware persistence.
+    pub fn has_rectangle_sides(&self) -> bool {
+        self.canvas.has_rectangle_sides()
+    }
+
+    /// Whether the sheet needs double-ellipse-aware persistence.
+    pub fn has_double_ellipses(&self) -> bool {
+        self.canvas.has_double_ellipses()
     }
 
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
@@ -950,29 +1047,9 @@ impl Sheet {
             topics,
             tasks,
             dependencies,
-            resources: crate::resources::ResourceStore {
-                entries: ids
-                    .iter()
-                    .flat_map(|id| {
-                        let topic = &self.topics[id];
-                        topic
-                            .image
-                            .as_deref()
-                            .into_iter()
-                            .chain(topic.attachment.as_ref().map(|a| a.resource.as_str()))
-                    })
-                    .filter_map(|reference| {
-                        reference.strip_prefix(crate::resources::RESOURCE_PREFIX)
-                    })
-                    .filter_map(|id| {
-                        self.resources
-                            .entries
-                            .get(id)
-                            .map(|resource| (id.to_owned(), resource.clone()))
-                    })
-                    .collect(),
-                ..Default::default()
-            },
+            resources: self
+                .resources
+                .for_topics(ids.iter().map(|id| &self.topics[id])),
         })
     }
 
@@ -1053,7 +1130,24 @@ impl Sheet {
     }
 
     /// Re-inserts a detached subtree as a child of `parent` at `index` (clamped).
-    pub fn attach_child(&mut self, parent: TopicId, index: usize, sub: Subtree) -> TopicId {
+    /// On rejection, neither the sheet nor the returned subtree is changed.
+    pub fn attach_child(
+        &mut self,
+        parent: TopicId,
+        index: usize,
+        sub: Subtree,
+    ) -> Result<TopicId, AttachChildError> {
+        let validation = if self.contains(parent) {
+            sub.ensure_can_be_child()
+        } else {
+            Err(format!("parent topic {parent} not found"))
+        };
+        if let Err(message) = validation {
+            return Err(AttachChildError {
+                message,
+                subtree: Box::new(sub),
+            });
+        }
         let Subtree {
             root,
             topics,
@@ -1079,7 +1173,7 @@ impl Sheet {
         p.children.insert(idx, root);
         self.on_child_inserted(parent, idx);
         self.bump_next_id();
-        root
+        Ok(root)
     }
 
     /// Re-inserts a detached subtree as a floating topic.
@@ -2186,6 +2280,80 @@ impl Workbook {
         }
     }
 
+    /// Whether any sheet needs inline-card-text-aware persistence.
+    pub fn has_inline_text(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_inline_text)
+    }
+
+    /// Whether any sheet needs waypoint-aware persistence.
+    pub fn has_connector_waypoints(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_waypoints)
+    }
+
+    /// Whether any sheet needs fixed-connector-port-aware persistence.
+    pub fn has_fixed_connector_ports(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_fixed_connector_ports)
+    }
+
+    /// Whether any sheet needs marker-aware persistence.
+    pub fn has_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_markers)
+    }
+
+    /// Whether any sheet needs the extended connector-marker format.
+    pub fn has_extended_connector_markers(&self) -> bool {
+        self.sheets
+            .iter()
+            .any(Sheet::has_extended_connector_markers)
+    }
+
+    /// Whether any sheet needs marker-size-aware persistence.
+    pub fn has_connector_marker_sizes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_marker_sizes)
+    }
+
+    /// Whether any sheet needs marker-fill-aware persistence.
+    pub fn has_connector_marker_fills(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_marker_fills)
+    }
+
+    /// Whether any sheet needs diamond-marker-aware persistence.
+    pub fn has_diamond_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_diamond_connector_markers)
+    }
+
+    /// Whether any sheet needs oval-marker-aware persistence.
+    pub fn has_oval_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_oval_connector_markers)
+    }
+
+    /// Whether any sheet needs half-circle-marker-aware persistence.
+    pub fn has_half_circle_connector_markers(&self) -> bool {
+        self.sheets
+            .iter()
+            .any(Sheet::has_half_circle_connector_markers)
+    }
+
+    /// Whether any sheet needs bar-marker-aware persistence.
+    pub fn has_bar_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_bar_connector_markers)
+    }
+
+    /// Whether any sheet needs adjustable-corner-aware persistence.
+    pub fn has_shape_rounding(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_shape_rounding)
+    }
+
+    /// Whether any sheet needs partial-rectangle-aware persistence.
+    pub fn has_rectangle_sides(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_rectangle_sides)
+    }
+
+    /// Whether any sheet needs double-ellipse-aware persistence.
+    pub fn has_double_ellipses(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_double_ellipses)
+    }
+
     pub fn active(&self) -> &Sheet {
         &self.sheets[self.active_sheet.min(self.sheets.len() - 1)]
     }
@@ -2423,7 +2591,7 @@ mod tests {
         assert_eq!(sub.len(), 2);
         assert!(!s.contains(a1));
         s.validate().unwrap();
-        s.attach_child(b, 0, sub);
+        s.attach_child(b, 0, sub).unwrap();
         assert_eq!(s.parent(a), Some(b));
         assert_eq!(s.depth(a1), 3);
         s.validate().unwrap();
@@ -2491,7 +2659,7 @@ mod tests {
         sub.reassign_ids(&mut s);
         assert_ne!(sub.root, a);
         let root = sub.root;
-        s.attach_child(s.root, 0, sub);
+        s.attach_child(s.root, 0, sub).unwrap();
         assert_eq!(s.children(root).len(), 1);
         s.validate().unwrap();
     }

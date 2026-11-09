@@ -158,5 +158,69 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 800, height: 600 
                 style: { bold: true, font_size: 27 },
             });
         });
+
+        test("whole-card alignment moves a single-line title in exported SVG", async ({ page }) => {
+            const url = process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/";
+            const origin = new URL(url).origin;
+            await page.route("**/*", (route) =>
+                new URL(route.request().url()).origin === origin
+                    ? route.continue()
+                    : route.abort(),
+            );
+            await page.goto(url);
+            await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+            const canvas = page.locator("#thinoda_canvas");
+            await canvas.focus();
+            await page.keyboard.press("Control+n");
+            await frames(page);
+            await command(page, "Hide central topic");
+            await page.keyboard.press("Escape");
+            await frames(page);
+            await insertCard(page, "Sticky note", "Browser alignment");
+
+            const positions: number[] = [];
+            for (const [align, tabs] of [["left", 4], ["right", 6]] as const) {
+                if (align === "right") {
+                    await canvas.focus();
+                    await page.keyboard.press("F2");
+                    await frames(page);
+                }
+                await page.keyboard.press("Alt+F10");
+                await frames(page);
+                for (let index = 0; index < tabs; index++) {
+                    await page.keyboard.press("Tab");
+                    await frames(page);
+                }
+                await page.keyboard.press("Space");
+                await frames(page);
+                await page.keyboard.press("Alt+F10");
+                await frames(page);
+                await expect(page.locator("input[type='text']")).toBeFocused();
+                await page.keyboard.press("Enter");
+                await frames(page);
+
+                const archive = await saveAs(page, `alignment-${align}.thinoda`);
+                const saved: {
+                    sheets: { topics: Record<string, { title: string; style?: { align?: string } }> }[];
+                } = JSON.parse(zipEntry(archive, "content.json").toString("utf8"));
+                expect(Object.values(saved.sheets[0].topics).find(
+                    (topic) => topic.title === "Browser alignment",
+                )?.style?.align).toBe(align);
+
+                const name = `alignment-${align}.svg`;
+                await page.evaluate((fileName) => { window.prompt = () => fileName; }, name);
+                const pending = page.waitForEvent("download", { timeout: 30_000 });
+                await command(page, "Export SVG");
+                const download = await pending;
+                expect(download.suggestedFilename()).toBe(name);
+                const svg = (await readFile(await download.path())).toString("utf8");
+                const text = svg.match(/<text\b[^>]*>Browser alignment<\/text>/)?.[0];
+                expect(text).toBeDefined();
+                const x = text?.match(/\bx="([^"]+)"/)?.[1];
+                expect(x).toBeDefined();
+                positions.push(Number(x));
+            }
+            expect(positions[1] - positions[0]).toBeGreaterThan(10);
+        });
     });
 }

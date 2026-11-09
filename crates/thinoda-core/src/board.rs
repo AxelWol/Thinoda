@@ -25,12 +25,21 @@ pub const MAX_CARD_STATES: usize = MAX_CANVAS_OBJECTS;
 pub const MAX_STROKE_POINTS: usize = 20_000;
 /// Ink points of all strokes of a sheet.
 pub const MAX_TOTAL_INK_POINTS: usize = 2_000_000;
+/// Explicit bend or control points of one connector.
+pub const MAX_CONNECTOR_WAYPOINTS: usize = 1_024;
+/// Explicit connector points across one sheet.
+pub const MAX_TOTAL_CONNECTOR_WAYPOINTS: usize = 200_000;
 /// Absolute limit for board coordinates and sizes.
 pub const MAX_BOARD_COORDINATE: f32 = 1_000_000.0;
 /// Characters of a shape/connector label or an alt text.
 pub const MAX_BOARD_TEXT_CHARS: usize = 10_000;
+/// Canvas font size for shape, connector and relationship labels at normal zoom.
+pub const CANVAS_LABEL_FONT_SIZE: f32 = 12.0;
 pub const MIN_STROKE_WIDTH: f32 = 0.1;
 pub const MAX_STROKE_WIDTH: f32 = 200.0;
+/// draw.io marker size in board units, before adding the stroke width.
+pub const DEFAULT_CONNECTOR_MARKER_SIZE: f32 = 6.0;
+pub const MAX_CONNECTOR_MARKER_SIZE: f32 = 999.0;
 pub const MIN_GRID_SIZE: f32 = 4.0;
 pub const MAX_GRID_SIZE: f32 = 512.0;
 pub const DEFAULT_GRID_SIZE: f32 = 24.0;
@@ -183,6 +192,126 @@ impl CanvasLayer {
             })
             .sum()
     }
+
+    /// Total number of explicit connector points.
+    pub fn connector_waypoint_count(&self) -> usize {
+        self.objects
+            .iter()
+            .map(|o| match &o.kind {
+                CanvasObjectKind::Connector(connector) => connector.waypoints.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Whether this layer needs waypoint-aware persistence.
+    pub fn has_connector_waypoints(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if !c.waypoints.is_empty())
+        })
+    }
+
+    /// Whether this layer needs fixed-connector-port-aware persistence.
+    pub fn has_fixed_connector_ports(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.from_port.is_some() || c.to_port.is_some())
+        })
+    }
+
+    /// Whether this layer needs marker-aware persistence.
+    pub fn has_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.start_marker.is_some() || c.end_marker.is_some())
+        })
+    }
+
+    /// Whether this layer needs the extended connector-marker format.
+    pub fn has_extended_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.requires_extended_format()))
+        })
+    }
+
+    /// Whether this layer needs marker-size-aware persistence.
+    pub fn has_connector_marker_sizes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.start_marker_size.is_some() || c.end_marker_size.is_some())
+        })
+    }
+
+    /// Whether this layer needs marker-fill-aware persistence.
+    pub fn has_connector_marker_fills(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.start_marker_unfilled || c.end_marker_unfilled)
+        })
+    }
+
+    /// Whether this layer needs diamond-marker-aware persistence.
+    pub fn has_diamond_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.is_diamond()))
+        })
+    }
+
+    /// Whether this layer needs oval-marker-aware persistence.
+    pub fn has_oval_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind == ConnectorMarkerKind::Oval))
+        })
+    }
+
+    /// Whether this layer needs half-circle-marker-aware persistence.
+    pub fn has_half_circle_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind == ConnectorMarkerKind::HalfCircle))
+        })
+    }
+
+    /// Whether this layer needs bar-marker-aware persistence.
+    pub fn has_bar_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.is_bar()))
+        })
+    }
+
+    /// Whether this layer needs adjustable-corner-aware persistence.
+    pub fn has_shape_rounding(&self) -> bool {
+        self.objects.iter().any(|object| object.rounding.is_some())
+    }
+
+    /// Whether this layer needs partial-rectangle-aware persistence.
+    pub fn has_rectangle_sides(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.rectangle_sides.is_some())
+    }
+
+    /// Whether this layer needs double-ellipse-aware persistence.
+    pub fn has_double_ellipses(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::DoubleEllipse,
+                    ..
+                }
+            ) || object.double_ellipse_margin.is_some()
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -237,6 +366,93 @@ impl Default for ObjectStyle {
     }
 }
 
+impl ObjectStyle {
+    /// Width used for a shape's automatic outline when neither color is set.
+    pub fn effective_shape_stroke_width(&self) -> f32 {
+        if self.stroke.is_none() && self.fill.is_none() {
+            2.0
+        } else {
+            self.stroke_width
+        }
+    }
+}
+
+/// draw.io rounded-rectangle stencil identifiers with the same radius behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DrawioRectangleStencil {
+    Mockup,
+    Forms,
+    Containers,
+    Misc,
+    Graphics,
+    Text,
+    Ios,
+}
+
+/// An absolute, integer corner radius and its draw.io stencil identity.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ShapeRounding {
+    pub radius: f32,
+    pub stencil: DrawioRectangleStencil,
+}
+
+/// Visible outline sides of a draw.io partial rectangle, before rotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RectangleSides {
+    pub top: bool,
+    pub right: bool,
+    pub bottom: bool,
+    pub left: bool,
+}
+
+impl Default for RectangleSides {
+    fn default() -> Self {
+        Self {
+            top: true,
+            right: true,
+            bottom: true,
+            left: true,
+        }
+    }
+}
+
+/// One connected sequence of visible rectangle sides.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RectangleSidePath {
+    pub points: Vec<Vec2>,
+}
+
+/// Visible outline paths in sheet coordinates, in draw.io's paint order.
+/// Its outline returns to the start without closing the path, which matters
+/// when a rectangle has a zero-width or zero-height frame.
+pub fn rectangle_side_paths(
+    rect: Rect,
+    rotation: f32,
+    sides: RectangleSides,
+) -> Vec<RectangleSidePath> {
+    let corners = rotated_corners(rect, rotation);
+    let visible = [sides.top, sides.right, sides.bottom, sides.left];
+    let mut paths = Vec::new();
+    let mut points = Vec::new();
+    for (side, is_visible) in visible.into_iter().enumerate() {
+        if is_visible {
+            if points.is_empty() {
+                points.push(corners[side]);
+            }
+            points.push(corners[(side + 1) % 4]);
+        } else if !points.is_empty() {
+            paths.push(RectangleSidePath {
+                points: std::mem::take(&mut points),
+            });
+        }
+    }
+    if !points.is_empty() {
+        paths.push(RectangleSidePath { points });
+    }
+    paths
+}
+
 /// A free object on the board.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanvasObject {
@@ -258,6 +474,15 @@ pub struct CanvasObject {
     pub alt_text: String,
     #[serde(default)]
     pub style: ObjectStyle,
+    /// Optional absolute corner radius for an imported draw.io rectangle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounding: Option<ShapeRounding>,
+    /// Optional per-side outline for an imported draw.io partial rectangle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rectangle_sides: Option<RectangleSides>,
+    /// Explicit inset of a double ellipse's inner outline; `None` uses the automatic inset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub double_ellipse_margin: Option<f32>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -277,6 +502,9 @@ impl CanvasObject {
             locked: false,
             alt_text: String::new(),
             style: ObjectStyle::default(),
+            rounding: None,
+            rectangle_sides: None,
+            double_ellipse_margin: None,
         }
     }
 
@@ -299,11 +527,7 @@ impl CanvasObject {
 
     /// Free connector; its frame is updated from the endpoints when possible.
     pub fn connector(connector: CanvasConnector) -> Self {
-        let rect = match (connector.from, connector.to) {
-            (Endpoint::Point(a), Endpoint::Point(b)) => points_bounds(&[a, b]).unwrap_or_default(),
-            (Endpoint::Point(a), _) | (_, Endpoint::Point(a)) => Rect::from_min_size(a, Vec2::ZERO),
-            _ => Rect::default(),
-        };
+        let rect = connector_bounds(&connector).unwrap_or_default();
         Self::new(CanvasObjectKind::Connector(connector), rect)
     }
 
@@ -345,6 +569,7 @@ pub enum ShapeKind {
     Rectangle,
     RoundedRectangle,
     Ellipse,
+    DoubleEllipse,
     Diamond,
     Triangle,
     RightTriangle,
@@ -374,10 +599,11 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
-    pub const ALL: [ShapeKind; 29] = [
+    pub const ALL: [ShapeKind; 30] = [
         ShapeKind::Rectangle,
         ShapeKind::RoundedRectangle,
         ShapeKind::Ellipse,
+        ShapeKind::DoubleEllipse,
         ShapeKind::Diamond,
         ShapeKind::Triangle,
         ShapeKind::RightTriangle,
@@ -430,6 +656,7 @@ impl ShapeKind {
             ShapeKind::Rectangle => "rectangle",
             ShapeKind::RoundedRectangle => "rounded-rectangle",
             ShapeKind::Ellipse => "ellipse",
+            ShapeKind::DoubleEllipse => "double-ellipse",
             ShapeKind::Diamond => "diamond",
             ShapeKind::Triangle => "triangle",
             ShapeKind::RightTriangle => "right-triangle",
@@ -469,7 +696,9 @@ impl ShapeKind {
             }
             ShapeKind::RoundedRectangle => rounded_rect(0.15, 0.15),
             ShapeKind::Terminator => rounded_rect(0.5, 0.5),
-            ShapeKind::Ellipse => ellipse_arc(0.5, 0.5, 0.5, 0.5, 0.0, 360.0, 48),
+            ShapeKind::Ellipse | ShapeKind::DoubleEllipse => {
+                ellipse_arc(0.5, 0.5, 0.5, 0.5, 0.0, 360.0, 48)
+            }
             ShapeKind::Diamond | ShapeKind::Decision => {
                 vec![p(0.5, 0.0), p(1.0, 0.5), p(0.5, 1.0), p(0.0, 0.5)]
             }
@@ -625,6 +854,11 @@ impl ShapeKind {
     pub fn unit_details(self) -> Vec<Vec<Vec2>> {
         let p = Vec2::new;
         match self {
+            ShapeKind::DoubleEllipse => {
+                let mut inner = ellipse_arc(0.5, 0.5, 0.4, 0.4, 0.0, 360.0, 48);
+                inner.push(inner[0]);
+                vec![inner]
+            }
             ShapeKind::Cylinder => vec![ellipse_arc(0.5, 0.12, 0.5, 0.12, 0.0, 180.0, 16)],
             ShapeKind::PredefinedProcess => vec![
                 vec![p(0.1, 0.0), p(0.1, 1.0)],
@@ -638,6 +872,7 @@ impl ShapeKind {
     pub fn unit_label_rect(self) -> Rect {
         let (x0, y0, x1, y1) = match self {
             ShapeKind::Ellipse | ShapeKind::Cloud => (0.15, 0.15, 0.85, 0.85),
+            ShapeKind::DoubleEllipse => (0.05, 0.05, 0.95, 0.95),
             ShapeKind::Diamond | ShapeKind::Decision => (0.25, 0.25, 0.75, 0.75),
             ShapeKind::Triangle => (0.25, 0.45, 0.75, 0.95),
             ShapeKind::RightTriangle => (0.05, 0.5, 0.5, 0.95),
@@ -710,6 +945,28 @@ pub struct ShapeGeometry {
 /// Maps a unit-square shape onto `rect` and rotates it by `rotation` degrees around the
 /// centre. Shared by rendering, hit-testing and export.
 pub fn shape_geometry(kind: ShapeKind, rect: Rect, rotation: f32) -> ShapeGeometry {
+    shape_geometry_with_rounding(kind, rect, rotation, None)
+}
+
+/// Shape geometry with an optional absolute rectangle corner radius.
+pub fn shape_geometry_with_rounding(
+    kind: ShapeKind,
+    rect: Rect,
+    rotation: f32,
+    rounding: Option<ShapeRounding>,
+) -> ShapeGeometry {
+    shape_geometry_with_style(kind, rect, rotation, rounding, 2.0, None)
+}
+
+/// Shape geometry with an optional double-ellipse inset and the current stroke width.
+pub fn shape_geometry_with_style(
+    kind: ShapeKind,
+    rect: Rect,
+    rotation: f32,
+    rounding: Option<ShapeRounding>,
+    stroke_width: f32,
+    double_ellipse_margin: Option<f32>,
+) -> ShapeGeometry {
     let center = rect.center();
     let map = |u: Vec2| {
         rotate_around(
@@ -721,18 +978,74 @@ pub fn shape_geometry(kind: ShapeKind, rect: Rect, rotation: f32) -> ShapeGeomet
             rotation,
         )
     };
-    ShapeGeometry {
-        outline: kind.unit_outline().into_iter().map(map).collect(),
-        details: kind
-            .unit_details()
+    let outline = match rounding {
+        Some(rounding) if rect.size.x > 0.0 && rect.size.y > 0.0 && rounding.radius > 0.0 => {
+            let rx = (rounding.radius / rect.size.x).min(0.5);
+            let ry = (rounding.radius / rect.size.y).min(0.5);
+            rounded_rect(rx, ry)
+        }
+        Some(_) => ShapeKind::Rectangle.unit_outline(),
+        None => kind.unit_outline(),
+    };
+    let details = if kind == ShapeKind::DoubleEllipse {
+        let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
+        let rx = rect.size.x / 2.0 - inset;
+        let ry = rect.size.y / 2.0 - inset;
+        if rx > 0.0 && ry > 0.0 {
+            let mut inner = ellipse_arc(center.x, center.y, rx, ry, 0.0, 360.0, 48);
+            inner.push(inner[0]);
+            vec![
+                inner
+                    .into_iter()
+                    .map(|point| rotate_around(point, center, rotation))
+                    .collect(),
+            ]
+        } else {
+            Vec::new()
+        }
+    } else {
+        kind.unit_details()
             .into_iter()
             .map(|line| line.into_iter().map(map).collect())
-            .collect(),
+            .collect()
+    };
+    ShapeGeometry {
+        outline: outline.into_iter().map(map).collect(),
+        details,
     }
+}
+
+/// Absolute inner-outline inset used by draw.io double ellipses.
+pub fn double_ellipse_inset(rect: Rect, stroke_width: f32, margin: Option<f32>) -> f32 {
+    margin.unwrap_or_else(|| {
+        (3.0 + stroke_width)
+            .min(rect.size.x / 5.0)
+            .min(rect.size.y / 5.0)
+    })
 }
 
 /// Unrotated text area of a shape inside `rect`.
 pub fn shape_label_rect(kind: ShapeKind, rect: Rect) -> Rect {
+    shape_label_rect_with_style(kind, rect, 2.0, None)
+}
+
+/// Unrotated text area with the current double-ellipse inset.
+pub fn shape_label_rect_with_style(
+    kind: ShapeKind,
+    rect: Rect,
+    stroke_width: f32,
+    double_ellipse_margin: Option<f32>,
+) -> Rect {
+    if kind == ShapeKind::DoubleEllipse {
+        let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
+        return Rect::from_center_size(
+            rect.center(),
+            Vec2::new(
+                (rect.size.x - 2.0 * inset).max(0.0),
+                (rect.size.y - 2.0 * inset).max(0.0),
+            ),
+        );
+    }
     let u = kind.unit_label_rect();
     Rect::from_min_size(
         Vec2::new(
@@ -786,6 +1099,23 @@ pub enum Endpoint {
     Point(Vec2),
 }
 
+/// A fixed attachment in the unrotated bounds of an endpoint target.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorPort {
+    pub position: Vec2,
+    pub offset: Vec2,
+    pub perimeter: bool,
+}
+
+impl ConnectorPort {
+    pub fn is_valid(self) -> bool {
+        (0.0..=1.0).contains(&self.position.x)
+            && (0.0..=1.0).contains(&self.position.y)
+            && valid_board_position(self.offset)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectorRoute {
@@ -795,22 +1125,169 @@ pub enum ConnectorRoute {
     Curve,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Non-default connector marker shapes. A missing marker uses the legacy
+/// filled arrow indicated by the corresponding arrow boolean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectorMarkerKind {
+    Open,
+    Block,
+    Classic,
+    ClassicThin,
+    OpenThin,
+    BlockThin,
+    Diamond,
+    DiamondThin,
+    Oval,
+    HalfCircle,
+    BaseDash,
+    Dash,
+}
+
+impl ConnectorMarkerKind {
+    /// Open and block markers were introduced before the extended marker set.
+    pub fn requires_extended_format(self) -> bool {
+        !matches!(self, Self::Open | Self::Block)
+    }
+
+    pub fn is_diamond(self) -> bool {
+        matches!(self, Self::Diamond | Self::DiamondThin)
+    }
+
+    pub fn is_bar(self) -> bool {
+        matches!(self, Self::BaseDash | Self::Dash)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorMarker {
+    pub kind: ConnectorMarkerKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanvasConnector {
     pub from: Endpoint,
     pub to: Endpoint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_port: Option<ConnectorPort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_port: Option<ConnectorPort>,
     #[serde(default)]
     pub route: ConnectorRoute,
+    /// Explicit bend points or curve controls in sheet coordinates.
+    #[serde(default, skip_serializing_if = "waypoints_are_empty")]
+    pub waypoints: Arc<[Vec2]>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub arrow_start: bool,
     #[serde(default = "default_true")]
     pub arrow_end: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_marker: Option<ConnectorMarker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_marker: Option<ConnectorMarker>,
+    /// Size overrides apply only to explicit draw.io-compatible markers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_marker_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_marker_size: Option<f32>,
+    /// Unfilled overrides apply only to explicit draw.io-compatible markers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start_marker_unfilled: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub end_marker_unfilled: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
     #[serde(default = "default_connector_width")]
     pub width: f32,
+}
+
+#[derive(Deserialize)]
+struct StoredCanvasConnector {
+    from: Endpoint,
+    to: Endpoint,
+    #[serde(default)]
+    from_port: Option<ConnectorPort>,
+    #[serde(default)]
+    to_port: Option<ConnectorPort>,
+    #[serde(default)]
+    route: ConnectorRoute,
+    #[serde(default)]
+    waypoints: Arc<[Vec2]>,
+    #[serde(default)]
+    arrow_start: bool,
+    #[serde(default = "default_true")]
+    arrow_end: bool,
+    #[serde(default)]
+    start_marker: Option<ConnectorMarker>,
+    #[serde(default)]
+    end_marker: Option<ConnectorMarker>,
+    #[serde(default)]
+    start_marker_size: Option<f32>,
+    #[serde(default)]
+    end_marker_size: Option<f32>,
+    #[serde(default)]
+    start_marker_unfilled: bool,
+    #[serde(default)]
+    end_marker_unfilled: bool,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    color: Option<Color>,
+    #[serde(default = "default_connector_width")]
+    width: f32,
+}
+
+impl<'de> Deserialize<'de> for CanvasConnector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let stored = StoredCanvasConnector::deserialize(deserializer)?;
+        if (stored.start_marker.is_some() && !stored.arrow_start)
+            || (stored.end_marker.is_some() && !stored.arrow_end)
+        {
+            return Err(serde::de::Error::custom(
+                "connector marker conflicts with its arrow flag",
+            ));
+        }
+        if !valid_marker_size(stored.start_marker_size, stored.start_marker)
+            || !valid_marker_size(stored.end_marker_size, stored.end_marker)
+        {
+            return Err(serde::de::Error::custom("invalid connector marker size"));
+        }
+        if (stored.start_marker_unfilled && stored.start_marker.is_none())
+            || (stored.end_marker_unfilled && stored.end_marker.is_none())
+        {
+            return Err(serde::de::Error::custom("invalid connector marker fill"));
+        }
+        if !valid_connector_port(stored.from, stored.from_port)
+            || !valid_connector_port(stored.to, stored.to_port)
+        {
+            return Err(serde::de::Error::custom("invalid fixed connector port"));
+        }
+        Ok(Self {
+            from: stored.from,
+            to: stored.to,
+            from_port: stored.from_port,
+            to_port: stored.to_port,
+            route: stored.route,
+            waypoints: stored.waypoints,
+            arrow_start: stored.arrow_start,
+            arrow_end: stored.arrow_end,
+            start_marker: stored.start_marker,
+            end_marker: stored.end_marker,
+            start_marker_size: stored.start_marker_size,
+            end_marker_size: stored.end_marker_size,
+            start_marker_unfilled: stored.start_marker_unfilled,
+            end_marker_unfilled: stored.end_marker_unfilled,
+            label: stored.label,
+            color: stored.color,
+            width: stored.width,
+        })
+    }
 }
 
 fn default_true() -> bool {
@@ -821,19 +1298,73 @@ fn default_connector_width() -> f32 {
     2.0
 }
 
+fn waypoints_are_empty(waypoints: &Arc<[Vec2]>) -> bool {
+    waypoints.is_empty()
+}
+
 impl CanvasConnector {
     pub fn new(from: Endpoint, to: Endpoint) -> Self {
         Self {
             from,
             to,
+            from_port: None,
+            to_port: None,
             route: ConnectorRoute::Straight,
+            waypoints: Arc::default(),
             arrow_start: false,
             arrow_end: true,
+            start_marker: None,
+            end_marker: None,
+            start_marker_size: None,
+            end_marker_size: None,
+            start_marker_unfilled: false,
+            end_marker_unfilled: false,
             label: String::new(),
             color: None,
             width: default_connector_width(),
         }
     }
+
+    pub fn set_arrow_start(&mut self, enabled: bool) {
+        self.arrow_start = enabled;
+        if !enabled {
+            self.start_marker = None;
+            self.start_marker_size = None;
+            self.start_marker_unfilled = false;
+        }
+    }
+
+    pub fn set_arrow_end(&mut self, enabled: bool) {
+        self.arrow_end = enabled;
+        if !enabled {
+            self.end_marker = None;
+            self.end_marker_size = None;
+            self.end_marker_unfilled = false;
+        }
+    }
+}
+
+fn valid_connector_port(end: Endpoint, port: Option<ConnectorPort>) -> bool {
+    port.is_none_or(|port| !matches!(end, Endpoint::Point(_)) && port.is_valid())
+}
+
+/// Whether a numeric draw.io marker size can be represented safely.
+pub fn valid_connector_marker_size(size: f32) -> bool {
+    size.is_finite() && (0.0..=MAX_CONNECTOR_MARKER_SIZE).contains(&size)
+}
+
+fn valid_marker_size(size: Option<f32>, marker: Option<ConnectorMarker>) -> bool {
+    size.is_none_or(|size| marker.is_some() && valid_connector_marker_size(size))
+}
+
+fn connector_bounds(connector: &CanvasConnector) -> Option<Rect> {
+    let mut points = connector.waypoints.to_vec();
+    for end in [connector.from, connector.to] {
+        if let Endpoint::Point(point) = end {
+            points.push(point);
+        }
+    }
+    points_bounds(&points)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -943,6 +1474,20 @@ pub fn points_bounds(points: &[Vec2]) -> Option<Rect> {
     Some(Rect::from_min_size(min, max - min))
 }
 
+/// Point halfway along an open polyline, measured by length.
+pub fn polyline_midpoint(points: &[Vec2]) -> Option<Vec2> {
+    let total: f32 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    let mut left = total / 2.0;
+    for w in points.windows(2) {
+        let len = (w[1] - w[0]).length();
+        if len >= left && len > 0.0 {
+            return Some(w[0] + (w[1] - w[0]) * (left / len));
+        }
+        left -= len;
+    }
+    points.last().copied()
+}
+
 pub fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let len2 = ab.x * ab.x + ab.y * ab.y;
@@ -996,6 +1541,11 @@ fn valid_coordinate(v: f32) -> bool {
     v.is_finite() && v.abs() <= MAX_BOARD_COORDINATE
 }
 
+/// Whether a point is representable as a board position.
+pub fn valid_board_position(position: Vec2) -> bool {
+    valid_position(position)
+}
+
 fn valid_rect(rect: Rect) -> bool {
     valid_position(rect.min)
         && valid_coordinate(rect.size.x)
@@ -1036,6 +1586,46 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
     if !style.opacity.is_finite() || !(0.0..=1.0).contains(&style.opacity) {
         return Err(format!("canvas object {id} has an invalid opacity"));
     }
+    if let Some(rounding) = object.rounding
+        && (!matches!(
+            object.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Rectangle | ShapeKind::RoundedRectangle,
+                ..
+            }
+        ) || !rounding.radius.is_finite()
+            || !(0.0..=MAX_BOARD_COORDINATE).contains(&rounding.radius)
+            || rounding.radius.fract() != 0.0)
+    {
+        return Err(format!("canvas object {id} has invalid shape rounding"));
+    }
+    if object.rectangle_sides.is_some()
+        && (!matches!(
+            object.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Rectangle,
+                ..
+            }
+        ) || object.rounding.is_some())
+    {
+        return Err(format!(
+            "canvas object {id} has invalid rectangle outline sides"
+        ));
+    }
+    if let Some(margin) = object.double_ellipse_margin
+        && (!matches!(
+            object.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::DoubleEllipse,
+                ..
+            }
+        ) || !margin.is_finite()
+            || !(0.0..=MAX_BOARD_COORDINATE).contains(&margin))
+    {
+        return Err(format!(
+            "canvas object {id} has invalid double-ellipse inset"
+        ));
+    }
     match &object.kind {
         CanvasObjectKind::Shape { label, .. } => valid_text(label, "shape label")?,
         CanvasObjectKind::Ink(ink) => {
@@ -1062,8 +1652,37 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
         }
         CanvasObjectKind::Connector(c) => {
             valid_text(&c.label, "connector label")?;
+            if !valid_connector_port(c.from, c.from_port) || !valid_connector_port(c.to, c.to_port)
+            {
+                return Err(format!("connector {id} has an invalid fixed port"));
+            }
             if !valid_width(c.width) {
                 return Err(format!("connector {id} has an invalid width"));
+            }
+            if (c.start_marker.is_some() && !c.arrow_start)
+                || (c.end_marker.is_some() && !c.arrow_end)
+            {
+                return Err(format!(
+                    "connector {id} marker conflicts with its arrow flag"
+                ));
+            }
+            if !valid_marker_size(c.start_marker_size, c.start_marker)
+                || !valid_marker_size(c.end_marker_size, c.end_marker)
+            {
+                return Err(format!("connector {id} has an invalid marker size"));
+            }
+            if (c.start_marker_unfilled && c.start_marker.is_none())
+                || (c.end_marker_unfilled && c.end_marker.is_none())
+            {
+                return Err(format!("connector {id} has an invalid marker fill"));
+            }
+            if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
+                return Err(format!(
+                    "connector {id} exceeds {MAX_CONNECTOR_WAYPOINTS} waypoints"
+                ));
+            }
+            if c.waypoints.iter().any(|point| !valid_position(*point)) {
+                return Err(format!("connector {id} has an invalid waypoint"));
             }
             for end in [c.from, c.to] {
                 match end {
@@ -1137,11 +1756,15 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             return Err(format!("duplicate canvas group id {}", g.id));
         }
     }
-    let mut ids = HashSet::new();
+    let mut ids = HashMap::new();
     let mut group_counts: HashMap<CanvasGroupId, usize> = HashMap::new();
     let mut total_points = 0usize;
+    let mut total_waypoints = 0usize;
     for o in &canvas.objects {
-        if !ids.insert(o.id) {
+        if ids
+            .insert(o.id, matches!(o.kind, CanvasObjectKind::Shape { .. }))
+            .is_some()
+        {
             return Err(format!("duplicate canvas object id {}", o.id));
         }
         validate_object(o)?;
@@ -1150,6 +1773,14 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             if total_points > MAX_TOTAL_INK_POINTS {
                 return Err(format!(
                     "ink exceeds {MAX_TOTAL_INK_POINTS} points per sheet"
+                ));
+            }
+        }
+        if let CanvasObjectKind::Connector(connector) = &o.kind {
+            total_waypoints = total_waypoints.saturating_add(connector.waypoints.len());
+            if total_waypoints > MAX_TOTAL_CONNECTOR_WAYPOINTS {
+                return Err(format!(
+                    "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
                 ));
             }
         }
@@ -1200,13 +1831,16 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     }
     for o in &canvas.objects {
         if let CanvasObjectKind::Connector(c) = &o.kind {
-            for end in [c.from, c.to] {
+            for (end, port) in [(c.from, c.from_port), (c.to, c.to_port)] {
                 match end {
                     Endpoint::Topic(t) if !sheet.contains(t) || sheet.is_anchor(t) => {
                         return Err(format!("connector {} references missing topic {t}", o.id));
                     }
-                    Endpoint::Object(x) if !ids.contains(&x) => {
+                    Endpoint::Object(x) if !ids.contains_key(&x) => {
                         return Err(format!("connector {} references missing object {x}", o.id));
+                    }
+                    Endpoint::Object(x) if port.is_some() && ids.get(&x) == Some(&false) => {
+                        return Err(format!("fixed connector port target {x} is not a shape"));
                     }
                     _ => {}
                 }
@@ -1765,6 +2399,11 @@ impl Sheet {
         if current.card.is_some() {
             self.require_unlocked_board_selection(&[BoardMember::Card(id)])?;
         }
+        if !current.inline_text.is_empty()
+            && !card.is_some_and(|card| matches!(card.kind, CardKind::Sticky | CardKind::Text))
+        {
+            return Err(crate::rich_text::FORMATTED_CARD_REQUIRED.into());
+        }
         if let Some(card) = &card {
             validate_card(card)?;
             if id == self.root || self.parent(id).is_some() || !self.floating.contains(&id) {
@@ -1820,8 +2459,20 @@ impl Sheet {
             ));
         }
         if let CanvasObjectKind::Connector(c) = &object.kind {
-            for end in [c.from, c.to] {
+            if !c.waypoints.is_empty()
+                && self
+                    .canvas
+                    .connector_waypoint_count()
+                    .saturating_add(c.waypoints.len())
+                    > MAX_TOTAL_CONNECTOR_WAYPOINTS
+            {
+                return Err(format!(
+                    "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
+                ));
+            }
+            for (end, port) in [(c.from, c.from_port), (c.to, c.to_port)] {
                 self.check_endpoint(end)?;
+                self.check_connector_port_target(end, port)?;
             }
         }
         let id = object.id;
@@ -1842,6 +2493,23 @@ impl Sheet {
         }
     }
 
+    fn check_connector_port_target(
+        &self,
+        end: Endpoint,
+        port: Option<ConnectorPort>,
+    ) -> Result<(), String> {
+        if port.is_some()
+            && let Endpoint::Object(id) = end
+            && !self
+                .canvas
+                .object(id)
+                .is_some_and(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        {
+            return Err(format!("fixed connector port target {id} is not a shape"));
+        }
+        Ok(())
+    }
+
     fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
         for id in ids {
             if self.canvas.object(*id).is_none() {
@@ -1858,8 +2526,9 @@ impl Sheet {
         Ok(())
     }
 
-    /// Removes objects. Connectors attached to them keep a free end at the removed
-    /// object's centre; emptied groups are dissolved.
+    /// Removes objects. Attached connectors keep a free end at their fixed point,
+    /// the removed shape's centre, or the connector's path midpoint; emptied
+    /// groups are dissolved.
     pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> Result<(), String> {
         if ids.is_empty() {
             return Err("nothing selected".into());
@@ -1881,6 +2550,29 @@ impl Sheet {
                 _ => None,
             })
             .collect();
+        let fixed_connectors: HashSet<_> = self
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| !removed.contains(&object.id))
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector)
+                    if [
+                        (connector.from, connector.from_port),
+                        (connector.to, connector.to_port),
+                    ]
+                    .into_iter()
+                    .any(|(end, port)| {
+                        port.is_some()
+                            && matches!(end, Endpoint::Object(id) if removed.contains(&id))
+                    }) =>
+                {
+                    Some(object.id)
+                }
+                _ => None,
+            })
+            .collect();
+        let mut fixed_points = HashMap::new();
         let centers = if referenced.is_empty() {
             HashMap::new()
         } else {
@@ -1889,8 +2581,50 @@ impl Sheet {
             if centers.len() != referenced.len() {
                 return Err("cannot resolve a deleted connector target".into());
             }
+            fixed_points =
+                crate::scene::resolved_connector_endpoints(self, &layout, &fixed_connectors);
+            if fixed_points.len() != fixed_connectors.len() {
+                return Err("cannot resolve a fixed connector port before deletion".into());
+            }
             centers
         };
+        let mut detached = HashMap::new();
+        for object in &self.canvas.objects {
+            if removed.contains(&object.id) {
+                continue;
+            }
+            if let CanvasObjectKind::Connector(connector) = &object.kind {
+                for (side, (end, port)) in [
+                    (connector.from, connector.from_port),
+                    (connector.to, connector.to_port),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if let Endpoint::Object(target) = end
+                        && let Some(center) = centers.get(&target)
+                    {
+                        let point = if port.is_some() {
+                            let points = fixed_points
+                                .get(&object.id)
+                                .ok_or("cannot resolve a fixed connector port before deletion")?;
+                            if side == 0 { points.0 } else { points.1 }
+                        } else {
+                            *center
+                        };
+                        if !valid_position(point) {
+                            return Err(if port.is_some() {
+                                "fixed connector port exceeds supported limits"
+                            } else {
+                                "deleted connector endpoint is outside the board"
+                            }
+                            .into());
+                        }
+                        detached.insert((object.id, side), point);
+                    }
+                }
+            }
+        }
         self.canvas.objects.retain(|o| !removed.contains(&o.id));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
@@ -1900,11 +2634,14 @@ impl Sheet {
         }
         for o in &mut self.canvas.objects {
             if let CanvasObjectKind::Connector(c) = &mut o.kind {
-                for end in [&mut c.from, &mut c.to] {
-                    if let Endpoint::Object(x) = *end
-                        && let Some(center) = centers.get(&x)
-                    {
-                        *end = Endpoint::Point(*center);
+                for (side, (end, port)) in
+                    [(&mut c.from, &mut c.from_port), (&mut c.to, &mut c.to_port)]
+                        .into_iter()
+                        .enumerate()
+                {
+                    if let Some(point) = detached.get(&(o.id, side)) {
+                        *end = Endpoint::Point(*point);
+                        *port = None;
                     }
                 }
             }
@@ -1946,6 +2683,9 @@ impl Sheet {
                         if let Endpoint::Point(p) = end {
                             *p = *p + delta;
                         }
+                    }
+                    if !c.waypoints.is_empty() {
+                        c.waypoints = c.waypoints.iter().map(|point| *point + delta).collect();
                     }
                 }
                 CanvasObjectKind::Shape { .. } => {}
@@ -2061,17 +2801,16 @@ impl Sheet {
                         *point = rotate_around(*point, pivot, degrees);
                     }
                 }
+                if !connector.waypoints.is_empty() {
+                    connector.waypoints = connector
+                        .waypoints
+                        .iter()
+                        .map(|point| rotate_around(*point, pivot, degrees))
+                        .collect();
+                }
                 // The stored connector frame is only a fallback; the scene uses
-                // resolved paths. Keep it consistent with its free endpoints.
-                object.rect = match (connector.from, connector.to) {
-                    (Endpoint::Point(a), Endpoint::Point(b)) => {
-                        points_bounds(&[a, b]).expect("two points")
-                    }
-                    (Endpoint::Point(point), _) | (_, Endpoint::Point(point)) => {
-                        Rect::from_min_size(point, Vec2::ZERO)
-                    }
-                    _ => object.rect,
-                };
+                // resolved paths. Keep it consistent with its explicit points.
+                object.rect = connector_bounds(connector).unwrap_or(object.rect);
             } else {
                 let center = object.rect.center();
                 let translation = rotate_around(center, pivot, degrees) - center;
@@ -2203,8 +2942,25 @@ impl Sheet {
         object.rotation = normalize_rotation(object.rotation);
         validate_object(&object)?;
         if let CanvasObjectKind::Connector(c) = &object.kind {
-            for end in [c.from, c.to] {
+            let old_waypoints = match &self.canvas.object(id).expect("checked").kind {
+                CanvasObjectKind::Connector(old) => old.waypoints.len(),
+                _ => 0,
+            };
+            if c.waypoints.len() > old_waypoints
+                && self
+                    .canvas
+                    .connector_waypoint_count()
+                    .saturating_sub(old_waypoints)
+                    .saturating_add(c.waypoints.len())
+                    > MAX_TOTAL_CONNECTOR_WAYPOINTS
+            {
+                return Err(format!(
+                    "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
+                ));
+            }
+            for (end, port) in [(c.from, c.from_port), (c.to, c.to_port)] {
                 self.check_endpoint(end)?;
+                self.check_connector_port_target(end, port)?;
             }
         }
         if let CanvasObjectKind::Ink(ink) = &object.kind {
@@ -2572,13 +3328,14 @@ impl Sheet {
         })
     }
 
-    /// Converts connector ends whose topic or object was deleted into free points at the
-    /// target's centre in `before` (the sheet state before the deletion). Used by every
-    /// deletion path so a deletion and its endpoint conversion form one edit.
-    /// Returns the number of converted ends.
-    pub fn fix_dangling_endpoints(&mut self, before: &Sheet) -> usize {
+    /// Converts connector ends whose topic or object was deleted into free points
+    /// at their fixed point, the target's centre, or a connector's path midpoint
+    /// in `before` (the sheet state before deletion).
+    /// Returns the number of converted ends. No ends are changed if a fixed
+    /// attachment cannot be represented as a valid free point.
+    pub fn fix_dangling_endpoints(&mut self, before: &Sheet) -> Result<usize, String> {
         if !self.has_dangling_endpoints() {
-            return 0;
+            return Ok(0);
         }
         let layout = crate::layout::layout_sheet(before, &crate::layout::ApproxMeasure, false);
         let objects: HashSet<_> = self.canvas.objects.iter().map(|o| o.id).collect();
@@ -2599,12 +3356,42 @@ impl Sheet {
         let centers = crate::scene::resolved_object_centers(before, &layout, &missing_objects);
         let mut converted = 0;
         let alive_topic = |t: TopicId| self.contains(t) && !self.is_anchor(t);
+        let fixed_connectors: HashSet<_> = self
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector)
+                    if [
+                        (connector.from, connector.from_port),
+                        (connector.to, connector.to_port),
+                    ]
+                    .into_iter()
+                    .any(|(end, port)| {
+                        port.is_some()
+                            && match end {
+                                Endpoint::Topic(id) => !alive_topic(id),
+                                Endpoint::Object(id) => !objects.contains(&id),
+                                Endpoint::Point(_) => false,
+                            }
+                    }) =>
+                {
+                    Some(object.id)
+                }
+                _ => None,
+            })
+            .collect();
+        let fixed_points =
+            crate::scene::resolved_connector_endpoints(before, &layout, &fixed_connectors);
         let mut ends = Vec::new();
         for (index, o) in self.canvas.objects.iter().enumerate() {
             let CanvasObjectKind::Connector(c) = &o.kind else {
                 continue;
             };
-            for (side, end) in [c.from, c.to].into_iter().enumerate() {
+            for (side, (end, port)) in [(c.from, c.from_port), (c.to, c.to_port)]
+                .into_iter()
+                .enumerate()
+            {
                 let center = match end {
                     Endpoint::Topic(t) if !alive_topic(t) => Some(
                         crate::scene::topic_anchor_rect(before, &layout, t)
@@ -2618,18 +3405,35 @@ impl Sheet {
                     _ => None,
                 };
                 if let Some(center) = center {
-                    ends.push((index, side, center));
+                    let point = if port.is_some() {
+                        let points = fixed_points
+                            .get(&o.id)
+                            .ok_or("cannot resolve a fixed connector port before deletion")?;
+                        let point = if side == 0 { points.0 } else { points.1 };
+                        if !valid_position(point) {
+                            return Err("fixed connector port exceeds supported limits".into());
+                        }
+                        point
+                    } else {
+                        center
+                    };
+                    ends.push((index, side, point));
                 }
             }
         }
         for (index, side, center) in ends {
             if let CanvasObjectKind::Connector(c) = &mut self.canvas.objects[index].kind {
-                let end = if side == 0 { &mut c.from } else { &mut c.to };
+                let (end, port) = if side == 0 {
+                    (&mut c.from, &mut c.from_port)
+                } else {
+                    (&mut c.to, &mut c.to_port)
+                };
                 *end = Endpoint::Point(center);
+                *port = None;
                 converted += 1;
             }
         }
-        converted
+        Ok(converted)
     }
 
     /// Zone of a floating root, if any.

@@ -21,6 +21,11 @@ pub fn is_native(format: Format) -> bool {
     matches!(format, Format::Thinoda | Format::XMind)
 }
 
+/// Formats a document can be saved to; non-native targets go through a loss preflight.
+pub fn is_save_target(format: Format) -> bool {
+    is_native(format) || matches!(format, Format::MindManager | Format::DrawIo)
+}
+
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn oversized_import_error(path: &Path) -> Option<thinoda_io::IoError> {
     let limit = import_read_limit(path)?;
@@ -153,6 +158,15 @@ impl InspectorEdit {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct InkSnapshotVersion {
+    gesture: u64,
+    feedback: u64,
+    source_current: bool,
+    retry_tolerance_bits: u32,
+    retry_smooth: bool,
+}
+
 /// One open document (a tab).
 pub struct OpenDoc {
     /// App-local chat binding, never serialized into the workbook or recovery.
@@ -188,6 +202,8 @@ pub struct OpenDoc {
     snapshot_board_label: Option<(CanvasObjectId, String, String)>,
     last_seen_board_label: Option<(CanvasObjectId, String, String)>,
     snapshot_saw_ink: bool,
+    snapshot_ink_version: Option<InkSnapshotVersion>,
+    last_ink_snapshot_attempt: Option<Instant>,
     fim_draft_revision: u64,
     snapshot_fim_revision: u64,
 }
@@ -228,6 +244,8 @@ impl OpenDoc {
             snapshot_board_label: None,
             last_seen_board_label: None,
             snapshot_saw_ink: false,
+            snapshot_ink_version: None,
+            last_ink_snapshot_attempt: None,
             fim_draft_revision: 0,
             snapshot_fim_revision: 0,
         }
@@ -491,8 +509,27 @@ impl OpenDoc {
         self.last_change = earlier.unwrap_or(self.last_change);
     }
 
+    #[cfg(test)]
+    pub(crate) fn backdate_ink_recovery_attempt(&mut self, secs: u64) {
+        if let Some(attempt) = &mut self.last_ink_snapshot_attempt {
+            *attempt = attempt
+                .checked_sub(std::time::Duration::from_secs(secs))
+                .unwrap_or(*attempt);
+        }
+    }
+
     pub fn idle_secs(&self) -> f32 {
         self.last_change.elapsed().as_secs_f32()
+    }
+
+    pub(crate) fn recovery_due(&self, interval_secs: f32) -> bool {
+        let interval = interval_secs.min(2.0);
+        if self.has_unresolved_ink() || self.snapshot_saw_ink {
+            self.last_ink_snapshot_attempt
+                .is_none_or(|attempt| attempt.elapsed().as_secs_f32() >= interval)
+        } else {
+            self.idle_secs() >= interval
+        }
     }
 
     /// Whether the file changed or its identity cannot be verified.
@@ -616,8 +653,10 @@ impl OpenDoc {
         self.commit_inspector_edit()?;
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
-            .filter(|f| is_native(*f) || *f == Format::MindManager)
-            .ok_or_else(|| t("Choose a .thinoda, .xmind or .mmap destination.").to_string())?;
+            .filter(|f| is_save_target(*f))
+            .ok_or_else(|| {
+                t("Choose a .thinoda, .xmind, .mmap or .drawio destination.").to_string()
+            })?;
         if format == Format::MindManager && self.doc.workbook().sheets.len() != 1 {
             return Err(t("MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.").into());
         }
@@ -662,8 +701,10 @@ impl OpenDoc {
     ) -> Result<(), String> {
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
-            .filter(|format| is_native(*format) || *format == Format::MindManager)
-            .ok_or_else(|| t("Choose a .thinoda, .xmind or .mmap destination.").to_string())?;
+            .filter(|format| is_save_target(*format))
+            .ok_or_else(|| {
+                t("Choose a .thinoda, .xmind, .mmap or .drawio destination.").to_string()
+            })?;
         if self.targets_current_file(path)? {
             return Err("choose a different path to preserve the source workbook".into());
         }
@@ -683,7 +724,11 @@ impl OpenDoc {
             &workbook,
             format,
             &ExportOptions::default(),
-            allow_mindmanager_loss,
+            crate::export_preflight::SaveConsent {
+                board: allow_board_loss,
+                mindmanager: allow_mindmanager_loss,
+            }
+            .for_io(format),
         )
         .map_err(export_error)?;
         atomic_write(path, &bytes, backup).map_err(|e| e.to_string())
@@ -699,6 +744,10 @@ impl OpenDoc {
 
     pub(crate) fn document_with_drafts(&self) -> Result<Document, String> {
         self.ensure_no_pending_ink()?;
+        self.document_with_drafts_for_recovery()
+    }
+
+    fn document_with_drafts_for_recovery(&self) -> Result<Document, String> {
         let board_label = if self.view.has_board_label_changes() {
             self.view
                 .validated_board_label_draft(&self.doc)
@@ -805,12 +854,19 @@ impl OpenDoc {
 
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
-        // Never replace an earlier complete snapshot with one that silently
-        // omits retained canvas input. The recovery panel explains the gap.
-        if self.has_unresolved_ink() {
-            self.snapshot_saw_ink = true;
-            return;
+        let ink_version = self.has_unresolved_ink().then(|| InkSnapshotVersion {
+            gesture: self.view.pending_ink_recovery_revision(),
+            feedback: self.ink_feedback.revision(),
+            source_current: self.view.pending_ink_source_is_current(&self.doc),
+            retry_tolerance_bits: self.view.ink_settings.finish.tolerance.to_bits(),
+            retry_smooth: self.view.ink_settings.finish.smooth,
+        });
+        if ink_version.is_some() || self.snapshot_saw_ink {
+            self.last_ink_snapshot_attempt = Some(Instant::now());
+        } else {
+            self.last_ink_snapshot_attempt = None;
         }
+        self.snapshot_saw_ink |= ink_version.is_some();
         let s = self.doc.state_id();
         let title_draft = self
             .view
@@ -827,7 +883,8 @@ impl OpenDoc {
             && title_draft == self.snapshot_title
             && board_label == self.snapshot_board_label
             && self.fim_draft_revision == self.snapshot_fim_revision
-            && !self.snapshot_saw_ink
+            && ink_version == self.snapshot_ink_version
+            && (ink_version.is_some() || !self.snapshot_saw_ink)
             && !self.recovery_cleanup_failed
         {
             self.recovery_snapshot_failed = false;
@@ -843,6 +900,8 @@ impl OpenDoc {
                 self.snapshot_board_label = board_label;
                 self.snapshot_fim_revision = self.fim_draft_revision;
                 self.snapshot_saw_ink = false;
+                self.snapshot_ink_version = None;
+                self.last_ink_snapshot_attempt = None;
             }
             return;
         }
@@ -853,14 +912,34 @@ impl OpenDoc {
             dirty: true,
             ..Default::default()
         };
-        let snapshot = match self.document_with_drafts() {
+        let snapshot = match self.document_with_drafts_for_recovery() {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 self.record_recovery_snapshot_failure(error);
                 return;
             }
         };
-        match Snapshot::to_bytes(meta, snapshot.workbook()) {
+        let pending_ink = if ink_version.is_some() {
+            let has_other_drafts = self.view.has_title_changes()
+                || self.view.has_board_label_changes()
+                || self.has_inspector_changes()
+                || self.fim_edit.is_some();
+            match self.pending_ink_for_recovery(has_other_drafts) {
+                Ok(pending_ink) => Some(pending_ink),
+                Err(error) => {
+                    self.record_recovery_snapshot_failure(error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let bytes = if let Some(pending_ink) = &pending_ink {
+            Snapshot::to_bytes_with_pending_ink(meta, snapshot.workbook(), pending_ink)
+        } else {
+            Snapshot::to_bytes(meta, snapshot.workbook())
+        };
+        match bytes {
             Ok(bytes) => match recovery.queue_snapshot(&self.key, bytes) {
                 Ok(()) => {
                     self.snapshot_state = s;
@@ -869,7 +948,11 @@ impl OpenDoc {
                     self.snapshot_title = title_draft;
                     self.snapshot_board_label = board_label;
                     self.snapshot_fim_revision = self.fim_draft_revision;
-                    self.snapshot_saw_ink = false;
+                    self.snapshot_saw_ink = ink_version.is_some();
+                    self.snapshot_ink_version = ink_version;
+                    if ink_version.is_none() {
+                        self.last_ink_snapshot_attempt = None;
+                    }
                     self.recovery_snapshot_failed = false;
                     self.recovery_cleanup_failed = false;
                 }
@@ -908,11 +991,13 @@ pub fn convert_with_consent(
         .ok_or_else(|| format!("unknown output format: {}", output.display()))?;
     if !format.can_export() {
         if format == Format::MindManagerXml {
-            return Err(t("Choose a .thinoda, .xmind or .mmap destination.").into());
+            return Err(t("Choose a .thinoda, .xmind, .mmap or .drawio destination.").into());
         }
         return Err(format!("{} cannot be exported", format.label()));
     }
-    if thinoda_io::symbol_color_loss(&report.workbook, format) && !opts.allow_symbol_color_loss {
+    if thinoda_io::symbol_color_loss_with_options(&report.workbook, format, opts)
+        && !opts.allow_symbol_color_loss
+    {
         return Err(format!(
             "{} (--allow-symbol-color-loss)",
             t(crate::symbols::EXPORT_WARNING)
@@ -957,6 +1042,13 @@ pub fn convert_with_consent(
             )
         );
     }
+    if format.is_drawio_image() {
+        log::warn!(
+            "{} {}",
+            t(crate::export_preflight::EDITABLE_IMAGE_SCOPE),
+            t(crate::export_preflight::EDITABLE_IMAGE_NOTICE)
+        );
+    }
     let bytes = thinoda_io::export_bytes_with_consent(&report.workbook, format, opts, allow_lossy)
         .map_err(|error| if matches!(error, thinoda_io::IoError::MindManagerExportNeedsConfirmation) {
             t("MindManager export cannot preserve all content. Use --allow-lossy only if you accept omitted content.").into()
@@ -992,7 +1084,11 @@ pub(crate) fn write_workbook(
         workbook,
         format,
         &ExportOptions::default(),
-        allow_mindmanager_loss,
+        crate::export_preflight::SaveConsent {
+            board: allow_board_loss,
+            mindmanager: allow_mindmanager_loss,
+        }
+        .for_io(format),
     )
     .map_err(export_error)?;
     atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
@@ -1044,7 +1140,7 @@ pub(crate) async fn write_workbook_async(
         workbook,
         format,
         &ExportOptions::default(),
-        consent.mindmanager,
+        consent.for_io(format),
     )
     .map_err(|error| StorageError::Remote(export_error(error)))?;
     let provider = document_provider(path, backup, backup_directory.as_deref());
@@ -1183,6 +1279,24 @@ pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, Str
 }
 
 pub(crate) fn import_error(path: &Path, error: thinoda_io::IoError) -> String {
+    match error {
+        thinoda_io::IoError::DrawIoHtml(thinoda_io::DrawIoHtmlError::MultipleViewers) => {
+            return t(
+                "This HTML contains multiple draw.io diagrams. Export each diagram separately.",
+            )
+            .into();
+        }
+        thinoda_io::IoError::DrawIoHtml(thinoda_io::DrawIoHtmlError::NoEmbeddedDiagram) => {
+            return t(
+                "This HTML viewer has no embedded diagram. Remote references are not loaded.",
+            )
+            .into();
+        }
+        thinoda_io::IoError::DrawIoHtml(_) => {
+            return t("Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.").into();
+        }
+        _ => {}
+    }
     if matches!(error, thinoda_io::IoError::MindManager(_))
         || matches!(
             Format::from_path(path),
@@ -1222,6 +1336,20 @@ pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
             format!("{}: {topic}", t(message))
         }
         thinoda_io::IoError::MindManagerExportNeedsConfirmation => t("MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.").into(),
+        thinoda_io::IoError::DrawioConnectorAttachmentsNeedConfirmation(count) => {
+            let report = crate::export_preflight::LossReport {
+                losses: vec![thinoda_io::ExportLoss::ConnectorAttachmentsDetached(count)],
+                ..Default::default()
+            };
+            crate::export_preflight::loss_message(&report, Format::DrawIo)
+        }
+        thinoda_io::IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(losses) => {
+            let report = crate::export_preflight::LossReport {
+                losses,
+                ..Default::default()
+            };
+            crate::export_preflight::loss_message(&report, Format::DrawIo)
+        }
         thinoda_io::IoError::MindManagerExport(detail) => {
             log::warn!("MindManager export failed: {detail}");
             t("Could not write this MindManager file. The map may be too large or contain invalid data.").into()
@@ -1517,6 +1645,329 @@ mod tests {
         let doc = OpenDoc::new(Workbook::new(sheet));
         assert_eq!(doc.view.primary(), Some(first));
         assert!(!doc.view.selection.contains(&doc.doc.sheet().root));
+    }
+
+    #[test]
+    fn drawio_html_import_preserves_its_source_and_requires_warning_consent() {
+        let directory = tempfile::tempdir().unwrap();
+        let current =
+            include_str!("../../thinoda-io/tests/fixtures/published-rectangle.drawio.html")
+                .replace("rounded=0;", "rounded=0;dashed=1;");
+        let xml = r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="Legacy" style="rounded=0;dashed=1;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#;
+        let encoded: String = xml.bytes().map(|byte| format!("%{byte:02X}")).collect();
+        let legacy = format!(r#"<div class="mxgraph"><div>{encoded}</div></div>"#);
+
+        for (name, html) in [("current", current), ("legacy", legacy)] {
+            let path = directory.path().join(format!("{name}.html"));
+            std::fs::write(&path, &html).unwrap();
+
+            assert_eq!(
+                OpenDoc::open(&path).err().unwrap(),
+                t("Import requires confirmation")
+            );
+            let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+            assert!(warnings.contains(&thinoda_io::ImportWarning::Formatting));
+            assert!(document.path.is_none());
+            assert!(document.is_dirty());
+            assert!(same_destination(document.import_source.as_deref().unwrap(), &path).unwrap());
+            assert_eq!(
+                document.save_to(&path, false).unwrap_err(),
+                t("Choose a different destination to preserve the imported source.")
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+
+            let native = directory.path().join(format!("{name}.thinoda"));
+            document.save_to(&native, false).unwrap();
+            assert!(native.exists());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
+        }
+    }
+
+    #[test]
+    fn drawio_connector_approximations_require_consent_and_preserve_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, style) in [("marker", "endArrow=cross;"), ("port", "exitX=0.25;")] {
+            let path = directory.path().join(format!("{name}.drawio"));
+            let xml = format!(
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" value="Connector" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#
+            );
+            std::fs::write(&path, &xml).unwrap();
+
+            assert_eq!(
+                OpenDoc::open(&path).err().unwrap(),
+                t("Import requires confirmation")
+            );
+            let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+            assert_eq!(warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            assert!(document.path.is_none());
+            assert!(document.is_dirty());
+            assert!(same_destination(document.import_source.as_deref().unwrap(), &path).unwrap());
+            assert_eq!(
+                document.save_to(&path, false).unwrap_err(),
+                t("Choose a different destination to preserve the imported source.")
+            );
+            let native = directory.path().join(format!("{name}.thinoda"));
+            document.save_to(&native, false).unwrap();
+            assert!(native.exists());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
+        }
+    }
+
+    #[test]
+    fn adjusted_drawio_grid_requires_consent_and_preserves_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("grid.drawio");
+        let xml = r#"<mxGraphModel grid="1" gridSize="3"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(
+            warnings,
+            vec![thinoda_io::ImportWarning::DrawioGridAdjusted]
+        );
+        assert_eq!(document.doc.sheet().board.grid_size, 4.0);
+        assert!(document.doc.sheet().board.snap);
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), xml);
+    }
+
+    #[test]
+    fn adjusted_drawio_background_requires_consent_and_preserves_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("background.drawio");
+        let xml = r##"<mxGraphModel page="1" background="light-dark(#F4C27A,#F4C27A)"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"##;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(
+            warnings,
+            vec![thinoda_io::ImportWarning::DrawioBackgroundAdjusted]
+        );
+        assert_eq!(
+            document.doc.sheet().theme.background,
+            Some(thinoda_core::Color::rgb(244, 194, 122))
+        );
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        let native = directory.path().join("background.thinoda");
+        document.save_to(&native, false).unwrap();
+        let reopened = OpenDoc::open(&native).unwrap();
+        assert_eq!(
+            reopened.doc.sheet().theme.background,
+            Some(thinoda_core::Color::rgb(244, 194, 122))
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), xml);
+    }
+
+    #[test]
+    fn folded_drawio_note_requires_consent_and_preserves_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("note.drawio");
+        let xml = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="note" value="Note" style="shape=note2;boundedLbl=1;size=15;" vertex="1" parent="1"><mxGeometry width="180" height="120" as="geometry"/></mxCell></root></mxGraphModel>"#;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(
+            warnings,
+            vec![thinoda_io::ImportWarning::DrawioFoldedNotesApproximated]
+        );
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        let native = directory.path().join("note.thinoda");
+        document.save_to(&native, false).unwrap();
+        let reopened = OpenDoc::open(&native).unwrap();
+        let note = reopened
+            .doc
+            .sheet()
+            .topics
+            .values()
+            .find(|topic| topic.title == "Note")
+            .unwrap();
+        assert_eq!(note.card.unwrap().kind, thinoda_core::CardKind::Sticky);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), xml);
+    }
+
+    #[test]
+    fn supported_drawio_markers_open_without_confirmation_and_save_as_native() {
+        use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
+
+        let directory = tempfile::tempdir().unwrap();
+        for (name, style, start, end, start_size, end_size, start_unfilled, end_unfilled) in [
+            (
+                "markers",
+                "startArrow=block;endArrow=open;",
+                ConnectorMarkerKind::Block,
+                ConnectorMarkerKind::Open,
+                None,
+                None,
+                false,
+                false,
+            ),
+            (
+                "thin-markers",
+                "startArrow=classicThin;endArrow=openThin;",
+                ConnectorMarkerKind::ClassicThin,
+                ConnectorMarkerKind::OpenThin,
+                None,
+                None,
+                false,
+                false,
+            ),
+            (
+                "sized-markers",
+                "startArrow=classic;startSize=12.5;endArrow=open;endSize=0;",
+                ConnectorMarkerKind::Classic,
+                ConnectorMarkerKind::Open,
+                Some(12.5),
+                Some(0.0),
+                false,
+                false,
+            ),
+            (
+                "hollow-start",
+                "startArrow=block;startFill=0;endArrow=classic;endFill=1;",
+                ConnectorMarkerKind::Block,
+                ConnectorMarkerKind::Classic,
+                None,
+                None,
+                true,
+                false,
+            ),
+            (
+                "hollow-end",
+                "startArrow=classic;startFill=1;endArrow=open;endFill=0;",
+                ConnectorMarkerKind::Classic,
+                ConnectorMarkerKind::Open,
+                None,
+                None,
+                false,
+                true,
+            ),
+            (
+                "diamond-markers",
+                "startArrow=diamond;startSize=12.5;startFill=0;endArrow=diamondThin;endSize=8;",
+                ConnectorMarkerKind::Diamond,
+                ConnectorMarkerKind::DiamondThin,
+                Some(12.5),
+                Some(8.0),
+                true,
+                false,
+            ),
+            (
+                "oval-markers",
+                "startArrow=oval;startSize=12.5;startFill=0;endArrow=oval;endSize=8;",
+                ConnectorMarkerKind::Oval,
+                ConnectorMarkerKind::Oval,
+                Some(12.5),
+                Some(8.0),
+                true,
+                false,
+            ),
+            (
+                "half-circle-markers",
+                "startArrow=halfCircle;startSize=12.5;startFill=0;endArrow=oval;endSize=8;",
+                ConnectorMarkerKind::HalfCircle,
+                ConnectorMarkerKind::Oval,
+                Some(12.5),
+                Some(8.0),
+                true,
+                false,
+            ),
+            (
+                "bar-markers",
+                "startArrow=baseDash;startSize=12.5;startFill=0;endArrow=dash;endSize=0;",
+                ConnectorMarkerKind::BaseDash,
+                ConnectorMarkerKind::Dash,
+                Some(12.5),
+                Some(0.0),
+                true,
+                false,
+            ),
+        ] {
+            let source = directory.path().join(format!("{name}.drawio"));
+            let xml = format!(
+                r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" style="{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>"#
+            );
+            std::fs::write(&source, &xml).unwrap();
+            let mut document = OpenDoc::open(&source).unwrap();
+            assert!(document.path.is_none());
+            assert!(document.is_dirty());
+            assert!(same_destination(document.import_source.as_deref().unwrap(), &source).unwrap());
+            let native = directory.path().join(format!("{name}.thinoda"));
+            document.save_to(&native, false).unwrap();
+            assert_eq!(std::fs::read_to_string(&source).unwrap(), xml);
+            let restored = OpenDoc::open(&native).unwrap();
+            let connector = restored
+                .doc
+                .sheet()
+                .canvas
+                .objects
+                .iter()
+                .find_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) => Some(connector),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(connector.start_marker.unwrap().kind, start);
+            assert_eq!(connector.end_marker.unwrap().kind, end);
+            assert_eq!(connector.start_marker_size, start_size);
+            assert_eq!(connector.end_marker_size, end_size);
+            assert_eq!(connector.start_marker_unfilled, start_unfilled);
+            assert_eq!(connector.end_marker_unfilled, end_unfilled);
+        }
+    }
+
+    #[test]
+    fn drawio_html_errors_are_actionable_and_localized() {
+        let cases = [
+            (
+                thinoda_io::DrawIoHtmlError::MultipleViewers,
+                "This HTML contains multiple draw.io diagrams. Export each diagram separately.",
+            ),
+            (
+                thinoda_io::DrawIoHtmlError::NoEmbeddedDiagram,
+                "This HTML viewer has no embedded diagram. Remote references are not loaded.",
+            ),
+            (
+                thinoda_io::DrawIoHtmlError::InvalidViewer,
+                "Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.",
+            ),
+        ];
+        for (error, message) in cases {
+            assert_eq!(
+                import_error(Path::new("diagram.html"), error.into()),
+                t(message)
+            );
+            for language in crate::i18n::Lang::ALL {
+                let translation = crate::i18n::t_in(language, message);
+                assert!(!translation.trim().is_empty(), "{language:?}: {message}");
+                if language != crate::i18n::Lang::En {
+                    assert_ne!(translation, message, "{language:?}: {message}");
+                }
+            }
+        }
     }
 
     // macOS filesystems reject this deliberately invalid UTF-8 filename.

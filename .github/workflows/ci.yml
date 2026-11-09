@@ -68,6 +68,9 @@ jobs:
     env:
       # UI tests share the process-wide language and cannot run concurrently.
       RUST_TEST_THREADS: "1"
+      # Retain line tables for backtraces without exhausting hosted runner disks.
+      CARGO_PROFILE_DEV_DEBUG: "1"
+      CARGO_PROFILE_TEST_DEBUG: "1"
       THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID }}
       THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI }}
       THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID }}
@@ -253,9 +256,11 @@ jobs:
       - name: Check fuzz target formatting and lints
         run: |
           cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
-          cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --locked --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked -p thinoda-io --test drawio_fuzz_seeds
       - name: Run bounded importer campaigns
         run: |
           cargo fuzz run --release xmind -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/xmind.dict
           cargo fuzz run --release freemind -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/freemind.dict
           cargo fuzz run --release opml -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/opml.dict
+          cargo fuzz run --release drawio_import -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/drawio_import.dict

@@ -1,4 +1,4 @@
-_Last updated: 2026-11-05 22:49:55 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-06 07:56:21 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda backlog
 
@@ -24,6 +24,17 @@ remain open. An opt-in synthetic 50-image/ink fixture verifies browser save
 round trips, but does not close those gates. An isolated AccessKit probe
 identifies mixed-event focus, dropped input, selection/IME and rapid-refocus
 text-replacement hazards; it is not an application bridge.
+The F5 follow-up verifies touch stroke persistence, rejects ambiguous touch
+pointer ownership and preserves pressure for a Chromium-synthesized pen
+through a conservative browser input bridge.
+Pressure-dependent rendering, native pen identity and real-device/browser-engine
+fidelity remain open.
+F6 source-only scenes now share object visibility across editor, Pitch and
+exports; a fixed-crop browser fixture covers branch/Zone isolation, while
+broader browser, PDF-viewer, real-device and updated Office acceptance remain
+open. The fixture checks Pitch, PDF, slide images and PowerPoint; exported PDF
+pages are inspected in Chromium's viewer. Pending ink is still excluded from
+crash recovery.
 Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
 limitations. A separate asynchronous discovery draft remains gated by
@@ -33,12 +44,13 @@ Integrated cloud providers stay
 disabled and paused until publisher registrations are complete; see
 [FREEFORM.md](FREEFORM.md) for phase critiques.
 
-**Completed user requests:** board tools are available from a scrollable canvas
-context-menu Tools submenu between Arrange and AI, while other Board actions
-and the first-level Board menu remain unchanged. The Zone editor exposes separate
-frame/background colors and uses a deterministic accent cycle for new Zones;
-template frames keep their explicit palettes and older Zone data retains its
-previous fill semantics. See the completed design and critique in [PLAN.md](PLAN.md).
+**Completed user requests:** the first-level Board menu remains available; the
+target-specific canvas context menus place drawing and card creation under
+Tools, with separate Board, Grid and Align groups. Where Styles is relevant,
+Zones follows it. The Zone editor exposes separate frame/background colors and
+uses a deterministic accent cycle for new Zones; template frames keep their
+explicit palettes and older Zone data retains its previous fill semantics. See
+the design and critique in [PLAN.md](PLAN.md).
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout
@@ -51,9 +63,35 @@ Conflicting drafts retain their text without taking focus or keyboard and IME
 input from the minimap and other editors.
 Selected-range formatting and lists remain open. A bounded Sticky/Text-card
 inline-style and paragraph-list model now has validation, history-memory
-accounting, native v8 gating and non-native export-loss reporting, but no
-editor, undo/IME, clipboard, rendering or accessibility integration; plain
+accounting, native v8 gating, non-native export-loss reporting, and versioned
+internal clipboard and recovery propagation. It has no rich-aware editor,
+undo/IME, external rich clipboard, rendering or accessibility integration; plain
 title edits and search/replace retain draft/data and reject formatted titles.
+Reparenting or converting formatted cards to unsupported topic types is rejected
+atomically. Clipboard sanitization, plain-text loss handling, real-host cut/paste
+acceptance, and the public attachment API change are covered in the
+[checkpoint critique](FREEFORM.md#internal-clipboard-and-recovery-checkpoint-critique).
+Structured browser cuts now fail closed on missing, changed, denied or
+timed-out rich readback, but cannot lock or cancel the system clipboard;
+compatibility and remaining host acceptance are described in the
+[cut critique](FREEFORM.md#browser-cut-verification-checkpoint-critique).
+Native cuts also fail closed when text or rich readback differs, with remaining
+OS-ownership limitations in the
+[native critique](FREEFORM.md#native-cut-verification-checkpoint-critique).
+The portable-topic continuation replaces session-only tokens for new copies,
+validates destination scheduling, and records metadata exposure, older-version
+fallback and real-host gaps in the
+[topic critique](FREEFORM.md#portable-topic-clipboard-checkpoint-critique).
+Mixed-board depth is bounded, including summary ownership and grouped cards;
+see the [depth critique](FREEFORM.md#mixed-board-clipboard-depth-checkpoint-critique).
+Plain-text clipboard parsing and the legacy copy API now have bounded
+preflights and explicit errors; see the
+[plain-text critique](FREEFORM.md#plain-text-clipboard-safety-checkpoint-critique)
+for API migration and the remaining non-clipboard import and real-host gaps.
+New Sheet from Topic now preserves card branches and owned resources in a
+rootless destination, while warning about surrounding context left in the
+source. See the [branch critique](FREEFORM.md#card-branch-to-sheet-checkpoint-critique)
+for exclusions, lock restrictions and draft ordering.
 An isolated history experiment estimates retained snapshot bytes but does not
 implement rich-aware board-card editing. An egui frame-rollback experiment
 preserves the draft on rejection but can discard other input and briefly expose
@@ -304,6 +342,21 @@ Markdown-source bold/italic/list tools and an explicit, bounded, offline preview
 over the existing recovery-backed notes field. Existing notes are not
 automatically converted. Structured rich-note persistence, plain-text search
 projection, export fidelity and rendered equations remain open; see PLAN.
+
+### P1 — draw.io diagram support (user request, 2026-11-05)
+
+🟡 In progress; concept, support matrix and 15-phase plan in [DRAWIO.md](DRAWIO.md)
+(reviewed twice, findings resolved in its §7). Milestone A landed: `.drawio`,
+`.dio`, `.drawio.svg` and `.drawio.png` open as imported copies; File › Export ›
+draw.io and Save As `.drawio` write after the loss preflight (DRAWIO.md §4.1).
+A draw.io-style GitHub corner mark (status bar and home screen, translated tooltip,
+opens the project page) landed with it. Shape placement, hover actions,
+quick-shape selection, shape-aware connector perimeters, waypoint editing and
+a subset of draw.io markers are implemented. The bar-marker slice adds the
+`baseDash` and `dash` styles with versioned persistence. Full support remains
+open, including source-preserving save-back, fixed ports, advanced routing,
+remaining markers, stencils, layers and fidelity hardening; see the phase
+progress and critiques in DRAWIO.md.
 
 ### P1 — CLI generation providers (user request, 2026-10-26)
 
@@ -1139,7 +1192,7 @@ dependencies before improving existing offline workflows.
   This is bounded regression coverage, not coverage-guided fuzzing or proof that
   arbitrary inputs are safe; longer campaigns remain open.
 - Coverage-guided importer fuzzing: separate `cargo-fuzz` targets cover XMind,
-  FreeMind and OPML with original generated seeds and dictionaries. Linux CI runs
+  FreeMind, OPML and draw.io with original seeds and dictionaries. Linux CI runs
   each target for 20 seconds with input, timeout, RSS and job-duration limits.
   See [`fuzz/README.md`](../fuzz/README.md) for commands, dependency isolation
   and limits; this smoke does not prove arbitrary inputs safe.
@@ -1316,7 +1369,9 @@ dependencies before improving existing offline workflows.
   rejects unrelated/invalid data. Payloads are validated and capped at 16 MiB;
   late responses, document switches and empty clipboard responses are handled.
   Pasting adds a sheet in one undo step. This is Thinoda clipboard interoperability,
-  not compatibility with XMind's private clipboard format.
+  not compatibility with XMind's private clipboard format. On Windows and in
+  browsers that support it, Copy Sheet also places SVG alongside the editable
+  text; unsupported platforms or rejected SVG writes report a text-only fallback.
 - Save Sheet As writes only the active sheet to `.thinoda` or `.xmind`, retaining
   workbook metadata without retargeting or marking the source document saved.
   The source path and its canonical aliases are protected from accidental overwrite.

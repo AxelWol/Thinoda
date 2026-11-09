@@ -165,6 +165,99 @@ pub fn t(en: &'static str) -> &'static str {
     t_in(lang(), en)
 }
 
+pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'static str {
+    use thinoda_io::ImportWarning;
+
+    match warning {
+        ImportWarning::Formatting => "Formatting and styles",
+        ImportWarning::Notes => "Rich notes",
+        ImportWarning::Resources => "Images and attachments",
+        ImportWarning::Markers => "Markers and task data",
+        ImportWarning::Links => "Additional or unsupported links",
+        ImportWarning::DetachedConnectors => "Connector attachments were detached",
+        ImportWarning::UnsupportedDrawioShapes => {
+            "Unsupported shapes or styles in the draw.io source may appear as rectangles"
+        }
+        ImportWarning::DrawioGridAdjusted => "draw.io grid settings were adjusted",
+        ImportWarning::DrawioBackgroundAdjusted => {
+            "draw.io page background was approximated or omitted"
+        }
+        ImportWarning::DrawioFoldedNotesApproximated => {
+            "draw.io folded notes may be flattened or simplified"
+        }
+        ImportWarning::Other => "Other unsupported map data",
+    }
+}
+
+pub(crate) fn localize_model_error(error: &str) -> &str {
+    localize_model_error_in(lang(), error)
+}
+
+fn localize_model_error_in(language: Lang, error: &str) -> &str {
+    match error {
+        thinoda_core::rich_text::FORMATTED_CARD_REQUIRED => t_in(
+            language,
+            "Formatted card text must remain on a floating sticky note or text card.",
+        ),
+        "Formatted card titles cannot be changed until rich-text editing is supported" => t_in(
+            language,
+            "Formatted card titles cannot be changed until rich-text editing is supported",
+        ),
+        "clipboard text exceeds 16 MiB"
+        | "topic clipboard payload exceeds 16 MiB"
+        | "board clipboard payload exceeds 16 MiB" => {
+            t_in(language, "Clipboard data exceeds 16 MiB.")
+        }
+        "topic clipboard exceeds 20000 topics" | "board clipboard exceeds 20000 topics" => {
+            t_in(language, "Clipboard selection exceeds 20,000 topics.")
+        }
+        "topic clipboard subtree depth exceeds 256" | "board clipboard topic depth exceeds 256" => {
+            t_in(language, "Clipboard topic depth exceeds 256 levels.")
+        }
+        "pasted topic depth exceeds 256" => {
+            t_in(language, "Paste would exceed a topic depth of 256 levels.")
+        }
+        "connector is locked" => t_in(language, "Connector is locked."),
+        "connector no longer exists" => t_in(language, "Connector no longer exists."),
+        "fixed connector ports require a shape or topic" => {
+            t_in(language, "Fixed connector ports require a shape or topic.")
+        }
+        "no visible connection points on this target" => {
+            t_in(language, "No visible connection points on this target.")
+        }
+        "fixed connector port exceeds supported limits" => {
+            t_in(language, "Fixed connector port exceeds supported limits.")
+        }
+        "cannot resolve a fixed connector port before deletion" => t_in(
+            language,
+            "Cannot preserve the fixed connector attachment before deletion.",
+        ),
+        "connector waypoint no longer exists" => {
+            t_in(language, "Connector waypoint no longer exists.")
+        }
+        "connectors exceed 200000 waypoints per sheet" => t_in(
+            language,
+            "A sheet can have at most 200,000 connector waypoints.",
+        ),
+        _ if error.starts_with("connector ") && error.ends_with(" exceeds 1024 waypoints") => {
+            t_in(language, "A connector can have at most 1,024 waypoints.")
+        }
+        _ if error.starts_with("connector ") && error.ends_with(" has an invalid waypoint") => {
+            t_in(
+                language,
+                "The connector waypoint is outside the permitted board coordinates.",
+            )
+        }
+        _ => error,
+    }
+}
+
+/// Whether a dynamic label key has German and all additional-locale entries.
+#[cfg(test)]
+pub(crate) fn has_translations(en: &str) -> bool {
+    german().contains_key(en) && additional().contains_key(en)
+}
+
 /// Translated title-row button labels for [`thinoda_ui::Dialog`].
 pub fn dialog_labels() -> thinoda_ui::DialogLabels {
     thinoda_ui::DialogLabels {
@@ -319,8 +412,16 @@ const DE: &[(&str, &str)] = &[
     ),
     ("Pending ink gesture", "Ausstehende Freihandgeste"),
     (
-        "Ink is not saved or included in crash recovery until it is finished.",
-        "Die Freihandeingabe wird nicht gespeichert und nicht in die Wiederherstellung nach einem Absturz aufgenommen, bis die Geste abgeschlossen ist.",
+        "Pending ink is not in the saved file. Crash recovery may miss recent samples.",
+        "Die ausstehende Freihandeingabe ist nicht in der gespeicherten Datei enthalten. Bei der Wiederherstellung nach einem Absturz können die neuesten Messwerte fehlen.",
+    ),
+    (
+        "Recovered ink may be incomplete. Review it before retrying.",
+        "Wiederhergestellte Freihandeingabe kann unvollständig sein. Prüfen Sie sie, bevor Sie es erneut versuchen.",
+    ),
+    (
+        "Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.",
+        "Eine wiederhergestellte Radierer- oder Lasso-Geste kann nicht erneut ausgeführt werden. Kopieren Sie ihre Messwerte oder verwerfen Sie sie.",
     ),
     (
         "Finish the pending ink gesture before continuing. Retry it or discard it.",
@@ -339,6 +440,14 @@ const DE: &[(&str, &str)] = &[
         "Ein Teil der Freihandeingabe wurde abgelehnt. Diese Geste kann nicht erneut ausgeführt werden; kopieren Sie ihre Messwerte oder verwerfen Sie sie.",
     ),
     (
+        "Pen input could not be matched. No stroke was started; dismiss this message and try again.",
+        "Die Stifteingabe konnte nicht zugeordnet werden. Es wurde kein Strich begonnen; schließen Sie diese Meldung und versuchen Sie es erneut.",
+    ),
+    (
+        "Touch pointer input could not be matched. Check the gesture or dismiss this message.",
+        "Die Berührungszeigereingabe konnte nicht zugeordnet werden. Prüfen Sie die Geste oder schließen Sie diese Meldung.",
+    ),
+    (
         "The ink gesture could not be completed. Retry it or discard it.",
         "Die Freihandgeste konnte nicht abgeschlossen werden. Versuchen Sie es erneut oder verwerfen Sie sie.",
     ),
@@ -347,6 +456,7 @@ const DE: &[(&str, &str)] = &[
         "Die Freihandgeste wurde unterbrochen. Versuchen Sie es erneut oder verwerfen Sie sie.",
     ),
     ("Ink input details", "Details zur Freihandeingabe"),
+    ("Input source", "Erkannte Eingabequelle"),
     ("Ink settings", "Einstellungen der Freihandeingabe"),
     ("Retry ink", "Freihandgeste erneut versuchen"),
     ("Discard ink", "Freihandgeste verwerfen"),
@@ -417,8 +527,68 @@ const DE: &[(&str, &str)] = &[
         "Formatierung und Listen im Kartentext ausgelassen",
     ),
     (
+        "Mind-map topics and links flattened to shapes",
+        "Mind-Map-Themen und -Verbindungen in Formen umgewandelt",
+    ),
+    (
+        "Connector-to-connector attachments detached",
+        "Verbindungen zwischen Verbindungslinien gelöst",
+    ),
+    (
+        "Fixed connector attachments detached",
+        "Feste Verbindungspunkte gelöst",
+    ),
+    (
+        "Fixed connector positions may differ in draw.io",
+        "Feste Verbindungspunkte können in draw.io anders positioniert sein",
+    ),
+    (
+        "Label color or opacity may differ in draw.io",
+        "Farbe oder Deckkraft der Beschriftung können in draw.io abweichen",
+    ),
+    (
+        "Rectangle colors or automatic outlines may differ in draw.io",
+        "Rechteckfarben oder automatische Konturen können in draw.io abweichen",
+    ),
+    (
+        "Double-ellipse appearance may differ in draw.io",
+        "Doppelte Ellipsen können in draw.io anders aussehen",
+    ),
+    (
+        "Collapsed process outlines may be omitted in draw.io",
+        "Konturen von Prozessen ohne Breite oder Höhe können in draw.io fehlen",
+    ),
+    (
+        "Grid or snapping may differ in draw.io",
+        "Raster oder Einrasten können in draw.io abweichen",
+    ),
+    (
+        "Page background may differ in draw.io",
+        "Der Seitenhintergrund kann in draw.io abweichen",
+    ),
+    (
+        "Cards may show folded corners in draw.io",
+        "Karten können in draw.io gefaltete Ecken zeigen",
+    ),
+    (
+        "Translucent connector labels may render differently",
+        "Halbtransparente Verbindungsbeschriftungen können anders dargestellt werden",
+    ),
+    (
+        "Topic notes, labels, markers or tasks omitted",
+        "Notizen, Beschriftungen, Markierungen oder Aufgaben von Themen ausgelassen",
+    ),
+    (
+        "Presentation slides omitted",
+        "Präsentationsfolien ausgelassen",
+    ),
+    (
         "Formatted card titles cannot be changed until rich-text editing is supported",
         "Formatierte Kartentitel können erst geändert werden, wenn die Rich-Text-Bearbeitung unterstützt wird.",
+    ),
+    (
+        "Formatted card text must remain on a floating sticky note or text card.",
+        "Formatierter Kartentext muss auf einer frei schwebenden Haftnotiz oder Textkarte bleiben.",
     ),
     (
         "Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.",
@@ -446,9 +616,20 @@ const DE: &[(&str, &str)] = &[
     ("Pixel eraser", "Pixelradierer"),
     ("Lasso", "Lasso"),
     ("Stroke type", "Strichart"),
+    ("Ink options", "Tintenoptionen"),
     ("Ink color", "Tintenfarbe"),
     ("Ink width", "Strichbreite"),
     ("Eraser radius", "Radius des Radierers"),
+    ("Corner radius", "Eckenradius"),
+    ("Outline sides", "Konturseiten"),
+    ("Top outline", "Obere Kontur"),
+    ("Right outline", "Rechte Kontur"),
+    ("Bottom outline", "Untere Kontur"),
+    ("Left outline", "Linke Kontur"),
+    (
+        "Sides rotate with the shape.",
+        "Die Seiten drehen sich mit der Form.",
+    ),
     ("Collapse board toolbar", "Board-Werkzeugleiste einklappen"),
     ("Expand board toolbar", "Board-Werkzeugleiste ausklappen"),
     ("Hide central topic", "Zentrales Thema ausblenden"),
@@ -509,10 +690,115 @@ const DE: &[(&str, &str)] = &[
     ("Locked", "Gesperrt"),
     ("From", "Von"),
     ("To", "Nach"),
+    ("Fixed attachment", "Fester Verbindungspunkt"),
+    (
+        "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.",
+        "Zum Neuverbinden ziehen; auf einem Kreuz oder mit Umschalt auf einer Form oder einem Thema ablegen, um den Verbindungspunkt zu fixieren. Eingabe schaltet die Fixierung um; Pfeiltasten verschieben einen festen Punkt, Strg+Pfeiltasten wechseln das Ziel (Befehlstaste auf macOS), Pos1/Ende wechseln sichtbare Verbindungspunkte.",
+    ),
+    (
+        "Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.",
+        "Beim Ablegen Umschalt für einen festen Verbindungspunkt oder Alt für einen freien Punkt halten; Alt+Umschalt verbindet ohne Fixierung.",
+    ),
+    (
+        "No visible connection points on this target.",
+        "An diesem Ziel sind keine Verbindungspunkte sichtbar.",
+    ),
+    (
+        "Fixed connector ports require a shape or topic.",
+        "Feste Verbindungspunkte benötigen eine Form oder ein Thema.",
+    ),
+    (
+        "Fixed connector port exceeds supported limits.",
+        "Der feste Verbindungspunkt überschreitet die zulässigen Grenzen.",
+    ),
+    (
+        "Cannot preserve the fixed connector attachment before deletion.",
+        "Der feste Verbindungspunkt kann vor dem Löschen nicht erhalten werden.",
+    ),
     ("Free point", "Freier Punkt"),
     ("Resize board item", "Größe des Board-Elements ändern"),
     ("Rotate board item", "Board-Element drehen"),
+    ("Connector waypoint", "Wegpunkt der Verbindungslinie"),
+    (
+        "Add connector waypoint",
+        "Wegpunkt der Verbindungslinie hinzufügen",
+    ),
+    (
+        "Drag or use arrow keys to move; double-click or press Delete to remove.",
+        "Zum Verschieben ziehen oder die Pfeiltasten verwenden; zum Entfernen doppelklicken oder Entf drücken.",
+    ),
+    (
+        "Drag, press Enter, or use arrow keys to add a waypoint.",
+        "Ziehen, die Eingabetaste oder eine Pfeiltaste drücken, um einen Wegpunkt hinzuzufügen.",
+    ),
+    (
+        "Clear connector waypoints",
+        "Wegpunkte der Verbindungslinie entfernen",
+    ),
+    ("Connector is locked.", "Die Verbindungslinie ist gesperrt."),
+    (
+        "Connector no longer exists.",
+        "Die Verbindungslinie existiert nicht mehr.",
+    ),
+    (
+        "Connector waypoint no longer exists.",
+        "Der Wegpunkt der Verbindungslinie existiert nicht mehr.",
+    ),
+    (
+        "A connector can have at most 1,024 waypoints.",
+        "Eine Verbindungslinie kann höchstens 1.024 Wegpunkte haben.",
+    ),
+    (
+        "A sheet can have at most 200,000 connector waypoints.",
+        "Ein Blatt kann höchstens 200.000 Wegpunkte für Verbindungslinien haben.",
+    ),
+    (
+        "The connector waypoint is outside the permitted board coordinates.",
+        "Der Wegpunkt der Verbindungslinie liegt außerhalb der zulässigen Board-Koordinaten.",
+    ),
+    (
+        "Add connected shape above",
+        "Verbundene Form oberhalb hinzufügen",
+    ),
+    (
+        "Add connected shape to the right",
+        "Verbundene Form rechts hinzufügen",
+    ),
+    (
+        "Add connected shape below",
+        "Verbundene Form unterhalb hinzufügen",
+    ),
+    (
+        "Add connected shape to the left",
+        "Verbundene Form links hinzufügen",
+    ),
+    (
+        "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.",
+        "Klicken fügt eine verbundene Kopie hinzu; Strg+Klick fügt nur eine Kopie hinzu; Umschalt+Klick fügt nur einen Verbinder hinzu. Ziehen verbindet mit einem anderen Element; Strg+Ziehen legt eine verbundene Kopie ab. Unter macOS Befehlstaste verwenden.",
+    ),
+    (
+        "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.",
+        "Einen Pfeil gedrückt halten oder auf einem fokussierten Pfeil Umschalt+F10 drücken, um die Form zu wählen.",
+    ),
     ("Board object label", "Beschriftung des Board-Objekts"),
+    ("Editing label", "Beschriftung bearbeiten"),
+    (
+        "Enter: finish · Esc: cancel",
+        "Eingabe: Fertig · Esc: Abbrechen",
+    ),
+    (
+        "Empty click/tap adds a shape",
+        "Klick/Tipp ins Leere setzt Form",
+    ),
+    (
+        "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel",
+        "Eingabe oder außerhalb klicken/tippen zum Abschließen · Umschalt+Eingabe: neue Zeile · Esc: Abbrechen",
+    ),
+    (
+        "Clicking or tapping empty canvas also adds the armed shape.",
+        "Ein Klick/Tipp auf eine freie Stelle fügt außerdem die aktive Form hinzu.",
+    ),
+    ("Type a label", "Beschriftung eingeben"),
     (
         "Select one board object to edit its properties.",
         "Wählen Sie ein Board-Objekt aus, um seine Eigenschaften zu bearbeiten.",
@@ -520,11 +806,58 @@ const DE: &[(&str, &str)] = &[
     ("Description", "Beschreibung"),
     ("Opacity", "Deckkraft"),
     ("Stroke", "Strich"),
+    ("Connector options", "Verbindungsoptionen"),
+    ("Shape options", "Formoptionen"),
     ("Connector route", "Verlauf der Verbindungslinie"),
     ("Connector color", "Farbe der Verbindungslinie"),
     ("Connector width", "Breite der Verbindungslinie"),
     ("Arrow at start", "Pfeil am Anfang"),
     ("Arrow at end", "Pfeil am Ende"),
+    ("Start arrow style", "Pfeilform am Anfang"),
+    ("End arrow style", "Pfeilform am Ende"),
+    ("Start arrow size", "Pfeilgröße am Anfang"),
+    ("End arrow size", "Pfeilgröße am Ende"),
+    ("Fill start arrow", "Anfangspfeil füllen"),
+    ("Fill end arrow", "Endpfeil füllen"),
+    (
+        "Enable an arrow and select a draw.io arrow style to set its size.",
+        "Aktivieren Sie einen Pfeil und wählen Sie eine draw.io-Pfeilform, um seine Größe einzustellen.",
+    ),
+    (
+        "Enable an arrow and select a draw.io arrow style to set its fill.",
+        "Aktivieren Sie einen Pfeil und wählen Sie eine draw.io-Pfeilform, um seine Füllung einzustellen.",
+    ),
+    (
+        "Open markers cannot be filled. The fill setting is retained when changing to a fillable marker.",
+        "Offene Markierungen können nicht gefüllt werden. Die Fülleinstellung bleibt beim Wechsel zu einer füllbaren Markierung erhalten.",
+    ),
+    ("Legacy triangle", "Bisheriges Dreieck"),
+    ("Classic arrow", "Klassischer Pfeil"),
+    ("Thin classic arrow", "Schmaler klassischer Pfeil"),
+    ("Open arrow", "Offener Pfeil"),
+    ("Thin open arrow", "Schmaler offener Pfeil"),
+    ("Block arrow", "Blockpfeil"),
+    ("Thin block arrow", "Schmaler Blockpfeil"),
+    ("Thin diamond", "Schmale Raute"),
+    ("Oval", "Oval"),
+    ("Half circle", "Halbkreis"),
+    ("Bar", "Querstrich"),
+    ("Diagonal bar", "Schrägstrich"),
+    (
+        "Legacy arrowheads approximated in draw.io",
+        "Bisherige Pfeilspitzen in draw.io angenähert",
+    ),
+    ("Edit label", "Beschriftung bearbeiten"),
+    ("More formatting options", "Weitere Formatierungsoptionen"),
+    ("Change shape", "Form ändern"),
+    ("Fill color", "Füllfarbe"),
+    ("No fill", "Keine Füllung"),
+    ("Outline color", "Konturfarbe"),
+    ("Outline width", "Konturbreite"),
+    (
+        "Drag onto the board or press Shift+Enter to insert",
+        "Auf das Board ziehen oder mit Umschalt+Eingabe einfügen",
+    ),
     ("Card", "Karte"),
     ("Rotation", "Drehung"),
     ("Custom color", "Benutzerdefinierte Farbe"),
@@ -1042,8 +1375,8 @@ const DE: &[(&str, &str)] = &[
         "Diese MindManager-Datei konnte nicht gelesen werden. Sie ist möglicherweise ungültig, verschlüsselt, zu groß oder unsicher.",
     ),
     (
-        "Choose a .thinoda, .xmind or .mmap destination.",
-        "Ein Ziel mit .thinoda, .xmind oder .mmap wählen.",
+        "Choose a .thinoda, .xmind, .mmap or .drawio destination.",
+        "Ein Ziel mit .thinoda, .xmind, .mmap oder .drawio wählen.",
     ),
     (
         "MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.",
@@ -1076,6 +1409,11 @@ const DE: &[(&str, &str)] = &[
         "Vorschau der konvertierten Gliederung",
     ),
     (
+        "Converted drawing labels (up to 8)",
+        "Beschriftungen der konvertierten Zeichnung (bis zu 8)",
+    ),
+    ("Conversion warnings", "Konvertierungswarnungen"),
+    (
         "showing the first 8 topics",
         "die ersten 8 Themen werden angezeigt",
     ),
@@ -1086,6 +1424,30 @@ const DE: &[(&str, &str)] = &[
     (
         "Additional or unsupported links",
         "Zusätzliche oder nicht unterstützte Links",
+    ),
+    (
+        "Connector attachments were detached",
+        "Verbindungen wurden von ihren Ankerpunkten gelöst",
+    ),
+    (
+        "Connector attachments may have been detached",
+        "Verbindungen wurden möglicherweise von ihren Ankerpunkten gelöst",
+    ),
+    (
+        "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+        "Nicht unterstützte Formen oder Stile in der draw.io-Quelle können als Rechtecke erscheinen",
+    ),
+    (
+        "draw.io grid settings were adjusted",
+        "draw.io-Rastereinstellungen wurden angepasst",
+    ),
+    (
+        "draw.io page background was approximated or omitted",
+        "Der draw.io-Seitenhintergrund wurde angenähert oder ausgelassen",
+    ),
+    (
+        "draw.io folded notes may be flattened or simplified",
+        "Gefaltete draw.io-Notizen können abgeflacht oder vereinfacht werden",
     ),
     (
         "Other unsupported map data",
@@ -1120,6 +1482,22 @@ const DE: &[(&str, &str)] = &[
     ("Markdown", "Markdown"),
     ("MindManager", "MindManager"),
     ("TextBundle", "TextBundle"),
+    ("draw.io", "draw.io"),
+    ("draw.io SVG (editable)", "draw.io SVG (bearbeitbar)"),
+    ("draw.io PNG (editable)", "draw.io PNG (bearbeitbar)"),
+    ("draw.io HTML (editable)", "draw.io HTML (bearbeitbar)"),
+    (
+        "This HTML contains multiple draw.io diagrams. Export each diagram separately.",
+        "Diese HTML-Datei enthält mehrere draw.io-Diagramme. Exportiere jedes Diagramm einzeln.",
+    ),
+    (
+        "This HTML viewer has no embedded diagram. Remote references are not loaded.",
+        "Dieser HTML-Viewer enthält kein eingebettetes Diagramm. Entfernte Verweise werden nicht geladen.",
+    ),
+    (
+        "Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.",
+        "Ein eingebettetes draw.io-Diagramm konnte aus dieser HTML-Datei nicht gelesen werden. Sie ist möglicherweise ungültig, zu groß oder unsicher.",
+    ),
     ("SVG", "SVG"),
     ("PNG", "PNG"),
     ("JPEG", "JPEG"),
@@ -1139,6 +1517,9 @@ const DE: &[(&str, &str)] = &[
     ("Rounded rectangle", "Abgerundetes Rechteck"),
     ("Rectangle", "Rechteck"),
     ("Ellipse", "Ellipse"),
+    ("Double ellipse", "Doppelte Ellipse"),
+    ("Automatic inner inset", "Automatischer Innenabstand"),
+    ("Inner outline inset", "Innenabstand der Kontur"),
     ("Capsule", "Kapselform"),
     ("Diamond", "Raute"),
     ("Curve", "Kurve"),
@@ -1809,6 +2190,10 @@ const DE: &[(&str, &str)] = &[
         "External relationships remain only in the original sheet",
         "Externe Beziehungen verbleiben nur im ursprünglichen Blatt",
     ),
+    (
+        "Some surrounding board, annotation or task context remains only in the original sheet",
+        "Ein Teil des umgebenden Board-, Anmerkungs- oder Aufgabenkontexts verbleibt nur im ursprünglichen Blatt",
+    ),
     ("Copy Sheet", "Blatt kopieren"),
     ("Paste Sheet", "Blatt einfügen"),
     (
@@ -1820,7 +2205,23 @@ const DE: &[(&str, &str)] = &[
         "Copied sheet to clipboard",
         "Blatt in die Zwischenablage kopiert",
     ),
+    (
+        "Copied sheet and SVG to clipboard",
+        "Blatt und SVG in die Zwischenablage kopiert",
+    ),
+    (
+        "Copied sheet as text only; SVG was not copied",
+        "Blatt nur als Text kopiert; SVG wurde nicht kopiert",
+    ),
     ("Could not copy sheet", "Blatt konnte nicht kopiert werden"),
+    (
+        "Cut cancelled; original content was kept",
+        "Ausschneiden abgebrochen; der ursprüngliche Inhalt bleibt erhalten",
+    ),
+    (
+        "Older Thinoda clipboard data is unavailable; pasted text only",
+        "Ältere Thinoda-Zwischenablagedaten sind nicht verfügbar; nur Text wurde eingefügt",
+    ),
     (
         "Could not paste sheet",
         "Blatt konnte nicht eingefügt werden",
@@ -1861,6 +2262,11 @@ const DE: &[(&str, &str)] = &[
     ("Contact", "Kontakt"),
     ("Write an email", "E-Mail schreiben"),
     ("Open in web browser", "Im Webbrowser öffnen"),
+    ("Thinoda on GitHub", "Thinoda auf GitHub"),
+    (
+        "Click empty space to add · Esc to finish",
+        "Zum Hinzufügen auf eine freie Stelle klicken · Esc zum Beenden",
+    ),
     ("All sheets", "Alle Blätter"),
     ("Include labels", "Beschriftungen einbeziehen"),
     ("Replaces topic titles only.", "Ersetzt nur Thementitel."),
@@ -1907,6 +2313,15 @@ const DE: &[(&str, &str)] = &[
         "Diese Auswahl kann nicht formatiert werden. Die Formatierungsaktion wurde abgebrochen.",
     ),
     ("Board export changes", "Änderungen beim Board-Export"),
+    ("Editable image export", "Bearbeitbares Bild exportieren"),
+    (
+        "Only the current sheet is included; other sheets are not exported.",
+        "Nur das aktuelle Blatt ist enthalten; andere Blätter werden nicht exportiert.",
+    ),
+    (
+        "This image contains the editable diagram, including content outside the visible preview. It is not redacted.",
+        "Dieses Bild enthält das bearbeitbare Diagramm, einschließlich Inhalten außerhalb der sichtbaren Vorschau. Es ist nicht geschwärzt.",
+    ),
     (
         "The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.",
         "Das gewählte Format verändert Board-Inhalte oder lässt sie weg. Das Board im Arbeitsspeicher bleibt unverändert; speichern Sie es als Thinoda, um es zu erhalten.",
@@ -2174,6 +2589,27 @@ const DE: &[(&str, &str)] = &[
     ("Save All", "Alle speichern"),
     ("Close", "Schließen"),
     ("Import", "Importieren"),
+    ("Import draw.io link…", "draw.io-Link importieren…"),
+    (
+        "draw.io link or #R fragment",
+        "draw.io-Link oder #R-Fragment",
+    ),
+    (
+        "Paste a self-contained link. The link contains the diagram and is decoded locally; no website is contacted.",
+        "Fügen Sie einen eigenständigen Link ein. Der Link enthält das Diagramm und wird lokal dekodiert; es wird keine Website kontaktiert.",
+    ),
+    (
+        "Could not import draw.io link",
+        "Der draw.io-Link konnte nicht importiert werden",
+    ),
+    (
+        "This draw.io link exceeds the supported size limit.",
+        "Dieser draw.io-Link überschreitet die unterstützte Größenbegrenzung.",
+    ),
+    (
+        "This import may omit unsupported content. Your original link is unchanged.",
+        "Beim Import können nicht unterstützte Inhalte entfallen. Ihr ursprünglicher Link bleibt unverändert.",
+    ),
     ("Export", "Exportieren"),
     ("Settings…", "Einstellungen…"),
     ("Settings", "Einstellungen"),
@@ -3681,6 +4117,86 @@ const DE: &[(&str, &str)] = &[
         "Hierarchieänderungen sind vorgemerkt. „Übernehmen“ validiert das gesamte Dokument; „Abbrechen“ behält die ursprüngliche Hierarchie bei.",
     ),
     ("Review hierarchy changes", "Hierarchieänderungen prüfen"),
+    ("Add", "Hinzufügen"),
+    ("Format", "Format"),
+    ("Layers", "Ebenen"),
+    ("Protection", "Schutz"),
+    ("Draw", "Zeichnen"),
+    ("Canvas settings", "Zeichenflächeneinstellungen"),
+    ("Grid", "Raster"),
+    ("Menu usage", "Menünutzung"),
+    ("Count context-menu use", "Kontextmenü-Nutzung zählen"),
+    (
+        "Optional. Counts stay on this device, are never uploaded and never reorder menus.",
+        "Optional. Die Zählungen bleiben auf diesem Gerät, werden nie hochgeladen und ändern nie die Menüreihenfolge.",
+    ),
+    ("Show counts", "Zählungen anzeigen"),
+    ("Hide counts", "Zählungen ausblenden"),
+    ("Clear counts", "Zählungen löschen"),
+    (
+        "Clear all menu usage counts?",
+        "Alle Menünutzungszählungen löschen?",
+    ),
+    ("No counts recorded yet.", "Noch keine Zählungen erfasst."),
+    (
+        "Could not update menu usage counts",
+        "Menünutzungszählungen konnten nicht aktualisiert werden",
+    ),
+    (
+        "Could not read menu usage counts",
+        "Menünutzungszählungen konnten nicht gelesen werden",
+    ),
+    (
+        "Could not clear menu usage counts",
+        "Menünutzungszählungen konnten nicht gelöscht werden",
+    ),
+    ("Could not copy", "Kopieren fehlgeschlagen"),
+    (
+        "Could not paste clipboard data",
+        "Zwischenablagedaten konnten nicht eingefügt werden",
+    ),
+    (
+        "Clipboard data exceeds 16 MiB.",
+        "Die Zwischenablagedaten überschreiten 16 MiB.",
+    ),
+    (
+        "Clipboard selection exceeds 20,000 topics.",
+        "Die Auswahl enthält mehr als 20.000 Themen.",
+    ),
+    (
+        "Clipboard topic depth exceeds 256 levels.",
+        "Die Thementiefe der Auswahl überschreitet 256 Ebenen.",
+    ),
+    (
+        "Paste would exceed a topic depth of 256 levels.",
+        "Das Einfügen würde eine Thementiefe von 256 Ebenen überschreiten.",
+    ),
+    ("Copy as draw.io", "Als draw.io kopieren"),
+    (
+        "Copied for draw.io; paste it into a diagram",
+        "Für draw.io kopiert; in ein Diagramm einfügen",
+    ),
+    (
+        "Pasted from draw.io; some content may have been omitted or simplified",
+        "Aus draw.io eingefügt; Inhalte wurden möglicherweise ausgelassen oder vereinfacht",
+    ),
+    ("Container frames omitted", "Containerrahmen ausgelassen"),
+    (
+        "Additional draw.io pages omitted",
+        "Weitere draw.io-Seiten ausgelassen",
+    ),
+    (
+        "The first draw.io page has no pasteable items; additional pages were not pasted.",
+        "Die erste draw.io-Seite enthält keine einfügbaren Elemente; weitere Seiten wurden nicht eingefügt.",
+    ),
+    (
+        "The draw.io page has no pasteable items.",
+        "Die draw.io-Seite enthält keine einfügbaren Elemente.",
+    ),
+    (
+        "Could not paste draw.io content",
+        "draw.io-Inhalt konnte nicht eingefügt werden",
+    ),
 ];
 
 #[cfg(test)]
@@ -3698,6 +4214,135 @@ mod tests {
         Lang::Pl,
         Lang::PtBr,
     ];
+
+    #[test]
+    fn formatted_card_errors_are_localized_without_changing_other_errors() {
+        for language in TRANSLATED {
+            for error in [
+                thinoda_core::rich_text::FORMATTED_CARD_REQUIRED,
+                "Formatted card titles cannot be changed until rich-text editing is supported",
+            ] {
+                assert_eq!(
+                    localize_model_error_in(language, error),
+                    t_in(language, error)
+                );
+                assert_ne!(localize_model_error_in(language, error), error);
+            }
+            assert_eq!(
+                localize_model_error_in(language, "Unknown error"),
+                "Unknown error"
+            );
+        }
+    }
+
+    #[test]
+    fn clipboard_limit_errors_and_actions_are_localized() {
+        let depth = thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
+        let topics = thinoda_core::clipboard::MAX_TOPIC_CLIPBOARD_TOPICS;
+        let cases = [
+            (
+                "clipboard text exceeds 16 MiB".to_owned(),
+                "Clipboard data exceeds 16 MiB.",
+            ),
+            (
+                "topic clipboard payload exceeds 16 MiB".to_owned(),
+                "Clipboard data exceeds 16 MiB.",
+            ),
+            (
+                "board clipboard payload exceeds 16 MiB".to_owned(),
+                "Clipboard data exceeds 16 MiB.",
+            ),
+            (
+                format!("topic clipboard exceeds {topics} topics"),
+                "Clipboard selection exceeds 20,000 topics.",
+            ),
+            (
+                format!("board clipboard exceeds {topics} topics"),
+                "Clipboard selection exceeds 20,000 topics.",
+            ),
+            (
+                format!("topic clipboard subtree depth exceeds {depth}"),
+                "Clipboard topic depth exceeds 256 levels.",
+            ),
+            (
+                format!("board clipboard topic depth exceeds {depth}"),
+                "Clipboard topic depth exceeds 256 levels.",
+            ),
+            (
+                format!("pasted topic depth exceeds {depth}"),
+                "Paste would exceed a topic depth of 256 levels.",
+            ),
+        ];
+        for language in TRANSLATED {
+            for (error, key) in &cases {
+                assert_eq!(
+                    localize_model_error_in(language, error),
+                    t_in(language, key)
+                );
+                assert_ne!(localize_model_error_in(language, error), *key);
+            }
+            for key in ["Could not copy", "Could not paste clipboard data"] {
+                assert_ne!(t_in(language, key), key);
+            }
+        }
+    }
+
+    #[test]
+    fn waypoint_edit_errors_are_localized_in_every_catalog() {
+        assert_eq!(thinoda_core::board::MAX_CONNECTOR_WAYPOINTS, 1_024);
+        assert_eq!(thinoda_core::board::MAX_TOTAL_CONNECTOR_WAYPOINTS, 200_000);
+        let cases = [
+            ("connector is locked", "Connector is locked."),
+            ("connector no longer exists", "Connector no longer exists."),
+            (
+                "fixed connector ports require a shape or topic",
+                "Fixed connector ports require a shape or topic.",
+            ),
+            (
+                "no visible connection points on this target",
+                "No visible connection points on this target.",
+            ),
+            (
+                "fixed connector port exceeds supported limits",
+                "Fixed connector port exceeds supported limits.",
+            ),
+            (
+                "cannot resolve a fixed connector port before deletion",
+                "Cannot preserve the fixed connector attachment before deletion.",
+            ),
+            (
+                "connector waypoint no longer exists",
+                "Connector waypoint no longer exists.",
+            ),
+            (
+                "connector 42 exceeds 1024 waypoints",
+                "A connector can have at most 1,024 waypoints.",
+            ),
+            (
+                "connectors exceed 200000 waypoints per sheet",
+                "A sheet can have at most 200,000 connector waypoints.",
+            ),
+            (
+                "connector 42 has an invalid waypoint",
+                "The connector waypoint is outside the permitted board coordinates.",
+            ),
+        ];
+        for language in Lang::ALL {
+            for (error, key) in cases {
+                assert_eq!(
+                    localize_model_error_in(language, error),
+                    t_in(language, key)
+                );
+                if language != Lang::En {
+                    assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+                }
+            }
+        }
+        assert_eq!(
+            localize_model_error_in(Lang::De, "connector 42 has an unknown failure"),
+            "connector 42 has an unknown failure"
+        );
+    }
 
     #[test]
     fn fim_wizard_dynamic_labels_are_in_every_catalog() {
@@ -4221,10 +4866,34 @@ mod tests {
             "Locked",
             "From",
             "To",
+            "Fixed attachment",
+            "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.",
+            "Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.",
+            "No visible connection points on this target.",
+            "Fixed connector ports require a shape or topic.",
+            "Fixed connector port exceeds supported limits.",
+            "Cannot preserve the fixed connector attachment before deletion.",
             "Free point",
             "Resize board item",
             "Rotate board item",
+            "Connector waypoint",
+            "Add connector waypoint",
+            "Drag or use arrow keys to move; double-click or press Delete to remove.",
+            "Drag, press Enter, or use arrow keys to add a waypoint.",
+            "Clear connector waypoints",
+            "Add connected shape above",
+            "Add connected shape to the right",
+            "Add connected shape below",
+            "Add connected shape to the left",
+            "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.",
+            "Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.",
             "Board object label",
+            "Editing label",
+            "Enter: finish · Esc: cancel",
+            "Empty click/tap adds a shape",
+            "Enter or click/tap outside to finish · Shift+Enter: new line · Esc: cancel",
+            "Clicking or tapping empty canvas also adds the armed shape.",
+            "Type a label",
             "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
             "Click or drag to pan. Arrow keys move the view; Shift makes larger steps.",
             "The current view is outside the minimap.",
@@ -4241,6 +4910,37 @@ mod tests {
             "Curve",
             "Arrow at start",
             "Arrow at end",
+            "Start arrow style",
+            "End arrow style",
+            "Start arrow size",
+            "End arrow size",
+            "Fill start arrow",
+            "Fill end arrow",
+            "Enable an arrow and select a draw.io arrow style to set its size.",
+            "Enable an arrow and select a draw.io arrow style to set its fill.",
+            "Open markers cannot be filled. The fill setting is retained when changing to a fillable marker.",
+            "Legacy triangle",
+            "Classic arrow",
+            "Thin classic arrow",
+            "Open arrow",
+            "Thin open arrow",
+            "Block arrow",
+            "Thin block arrow",
+            "Diamond",
+            "Thin diamond",
+            "Oval",
+            "Half circle",
+            "Bar",
+            "Diagonal bar",
+            "Legacy arrowheads approximated in draw.io",
+            "Edit label",
+            "More formatting options",
+            "Change shape",
+            "Fill color",
+            "No fill",
+            "Outline color",
+            "Outline width",
+            "Drag onto the board or press Shift+Enter to insert",
             "Card",
             "Width",
             "Height",
@@ -4258,6 +4958,22 @@ mod tests {
             "Eraser radius",
             "Collapse board toolbar",
             "Expand board toolbar",
+            "Copy as draw.io",
+            "Copied for draw.io; paste it into a diagram",
+            "Pasted from draw.io; some content may have been omitted or simplified",
+            "Container frames omitted",
+            "Additional draw.io pages omitted",
+            "Connector attachments were detached",
+            "Connector attachments may have been detached",
+            "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+            "draw.io grid settings were adjusted",
+            "draw.io page background was approximated or omitted",
+            "Page background may differ in draw.io",
+            "draw.io folded notes may be flattened or simplified",
+            "Cards may show folded corners in draw.io",
+            "The first draw.io page has no pasteable items; additional pages were not pasted.",
+            "The draw.io page has no pasteable items.",
+            "Could not paste draw.io content",
         ];
 
         for key in shape_names.chain(command_names).chain(other_labels) {
@@ -4281,11 +4997,15 @@ mod tests {
     fn pending_ink_feedback_exists_in_every_catalog() {
         let keys = [
             "Pending ink gesture",
-            "Ink is not saved or included in crash recovery until it is finished.",
+            "Pending ink is not in the saved file. Crash recovery may miss recent samples.",
+            "Recovered ink may be incomplete. Review it before retrying.",
+            "Recovered eraser or lasso input cannot be retried. Copy its samples or discard it.",
             "Finish the pending ink gesture before continuing. Retry it or discard it.",
             "Resolve pending ink before continuing. Retry, copy, or discard it.",
             "The pointer is still down. Release it before retrying.",
             "Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it.",
+            "Pen input could not be matched. No stroke was started; dismiss this message and try again.",
+            "Touch pointer input could not be matched. Check the gesture or dismiss this message.",
             "The ink gesture could not be completed. Retry it or discard it.",
             "The ink gesture was interrupted. Retry it or discard it.",
             "Ink input details",
@@ -4480,6 +5200,18 @@ mod tests {
             "Relationships omitted",
             "Boundaries omitted",
             "Inline card text and list formatting omitted",
+            "Mind-map topics and links flattened to shapes",
+            "Connector-to-connector attachments detached",
+            "Fixed connector attachments detached",
+            "Fixed connector positions may differ in draw.io",
+            "Label color or opacity may differ in draw.io",
+            "Rectangle colors or automatic outlines may differ in draw.io",
+            "Double-ellipse appearance may differ in draw.io",
+            "Collapsed process outlines may be omitted in draw.io",
+            "Grid or snapping may differ in draw.io",
+            "Translucent connector labels may render differently",
+            "Topic notes, labels, markers or tasks omitted",
+            "Presentation slides omitted",
         ];
         for key in outline_export_losses {
             assert!(
@@ -4491,8 +5223,10 @@ mod tests {
             );
         }
         keys.extend(outline_export_losses);
-        let formatted_title_errors =
-            ["Formatted card titles cannot be changed until rich-text editing is supported"];
+        let formatted_title_errors = [
+            "Formatted card titles cannot be changed until rich-text editing is supported",
+            "Formatted card text must remain on a floating sticky note or text card.",
+        ];
         for key in formatted_title_errors {
             assert!(
                 include_str!("pt-BR.txt")

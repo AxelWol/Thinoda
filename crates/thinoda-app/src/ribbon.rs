@@ -116,10 +116,11 @@ fn command_groups<'a>(
                 Cmd::AiSettings => t("AI settings"),
                 Cmd::New | Cmd::Open => t("Open…"),
                 Cmd::Save | Cmd::SaveAs | Cmd::SaveAll => t("Save"),
-                Cmd::Import | Cmd::Print | Cmd::ShowInFolder => t("Export"),
+                Cmd::Import | Cmd::ImportDrawioLink | Cmd::Print | Cmd::ShowInFolder => t("Export"),
                 Cmd::Canvas(Action::Undo | Action::Redo) => t("Editing"),
                 Cmd::Canvas(Action::Copy | Action::Cut | Action::Duplicate | Action::Delete)
-                | Cmd::MenuPaste => t("Clipboard"),
+                | Cmd::MenuPaste
+                | Cmd::CopyAsDrawio => t("Clipboard"),
                 Cmd::Canvas(Action::SelectAll) | Cmd::Find | Cmd::FindReplace | Cmd::Palette => {
                     t("Select")
                 }

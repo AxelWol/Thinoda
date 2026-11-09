@@ -2,10 +2,13 @@
 //! with rotated hit testing shared by the canvas, exports and tests. See
 //! `docs/FREEFORM.md`.
 
+#[cfg(test)]
+use crate::board::shape_geometry;
 use crate::board::{
-    Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorRoute,
-    Endpoint, GridKind, distance_to_outline, distance_to_polyline, point_in_polygon, points_bounds,
-    rotate_around, rotated_bounds, rotated_rect_contains, shape_geometry,
+    Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorMarkerKind,
+    ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, ShapeKind,
+    ShapeRounding, distance_to_outline, distance_to_polyline, point_in_polygon, points_bounds,
+    rotate_around, rotated_bounds, rotated_rect_contains, shape_geometry_with_rounding,
 };
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rotated_rect, cubic};
@@ -19,6 +22,8 @@ use std::{
 pub const HIT_TOLERANCE: f32 = 3.0;
 /// Segments used to flatten curved connectors.
 const CURVE_SEGMENTS: usize = 16;
+/// Segments per quadratic span of an explicitly controlled curve.
+const WAYPOINT_CURVE_SEGMENTS: usize = 8;
 
 /// Paint bands, bottom to top. UI overlays are drawn above `AboveMap` and are not part
 /// of the scene.
@@ -50,6 +55,368 @@ pub enum SceneHit {
     Object(CanvasObjectId),
 }
 
+/// Paint geometry for a non-default connector marker, in sheet coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConnectorMarkerGeometry {
+    shape: ConnectorMarkerShape,
+    pub closed: bool,
+    pub filled: bool,
+    pub line_inset: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConnectorMarkerShape {
+    Polygon {
+        points: [Vec2; 4],
+        point_count: usize,
+    },
+    Circle(Vec2, f32),
+    Curve([Vec2; 5]),
+}
+
+fn quadratic_point(points: [Vec2; 3], t: f64) -> [f64; 2] {
+    let coordinate = |a: f32, b: f32, c: f32| {
+        let a = f64::from(a);
+        let b = f64::from(b);
+        let c = f64::from(c);
+        let first = a + (b - a) * t;
+        let second = b + (c - b) * t;
+        first + (second - first) * t
+    };
+    [
+        coordinate(points[0].x, points[1].x, points[2].x),
+        coordinate(points[0].y, points[1].y, points[2].y),
+    ]
+}
+
+fn quadratic_bounds(points: [Vec2; 3]) -> Rect {
+    let mut min = [
+        f64::from(points[0].x.min(points[2].x)),
+        f64::from(points[0].y.min(points[2].y)),
+    ];
+    let mut max = [
+        f64::from(points[0].x.max(points[2].x)),
+        f64::from(points[0].y.max(points[2].y)),
+    ];
+    for (a, b, c) in [
+        (points[0].x, points[1].x, points[2].x),
+        (points[0].y, points[1].y, points[2].y),
+    ] {
+        let (a, b, c) = (f64::from(a), f64::from(b), f64::from(c));
+        let denominator = a - 2.0 * b + c;
+        if denominator != 0.0 {
+            let t = (a - b) / denominator;
+            if t > 0.0 && t < 1.0 {
+                let point = quadratic_point(points, t);
+                for axis in 0..2 {
+                    min[axis] = min[axis].min(point[axis]);
+                    max[axis] = max[axis].max(point[axis]);
+                }
+            }
+        }
+    }
+    // Keep the f32 rectangle conservative when extrema are rounded at large coordinates.
+    let magnitude = min
+        .into_iter()
+        .chain(max)
+        .map(f64::abs)
+        .fold(1.0_f64, f64::max) as f32;
+    let padding = magnitude * f32::EPSILON * 2.0;
+    let min = Vec2::new(min[0] as f32 - padding, min[1] as f32 - padding);
+    let max = Vec2::new(max[0] as f32 + padding, max[1] as f32 + padding);
+    Rect::from_min_size(min, max - min)
+}
+
+fn point_near_curve_path(point: Vec2, path: &[Vec2], radius: f64) -> bool {
+    if radius < 0.0 {
+        return false;
+    }
+    let point = [f64::from(point.x), f64::from(point.y)];
+    path.windows(2).any(|segment| {
+        let a = [f64::from(segment[0].x), f64::from(segment[0].y)];
+        let delta = [
+            f64::from(segment[1].x) - a[0],
+            f64::from(segment[1].y) - a[1],
+        ];
+        let length_squared = delta[0] * delta[0] + delta[1] * delta[1];
+        let t = if length_squared == 0.0 {
+            0.0
+        } else {
+            (((point[0] - a[0]) * delta[0] + (point[1] - a[1]) * delta[1]) / length_squared)
+                .clamp(0.0, 1.0)
+        };
+        let dx = point[0] - a[0] - delta[0] * t;
+        let dy = point[1] - a[1] - delta[1] * t;
+        dx * dx + dy * dy <= radius * radius
+    })
+}
+
+impl ConnectorMarkerGeometry {
+    /// The polygonal marker outline, including the notch of a classic arrow.
+    pub fn points(&self) -> &[Vec2] {
+        match &self.shape {
+            ConnectorMarkerShape::Polygon {
+                points,
+                point_count,
+            } => &points[..*point_count],
+            _ => &[],
+        }
+    }
+
+    /// The center and radius of a circular marker, when present.
+    pub fn circle(&self) -> Option<(Vec2, f32)> {
+        match self.shape {
+            ConnectorMarkerShape::Circle(center, radius) => Some((center, radius)),
+            _ => None,
+        }
+    }
+
+    /// Two connected quadratic spans: start, control, join, control, end.
+    pub fn curve(&self) -> Option<[Vec2; 5]> {
+        match self.shape {
+            ConnectorMarkerShape::Curve(points) => Some(points),
+            _ => None,
+        }
+    }
+
+    /// Flatten a marker curve for conservative stroke hit testing.
+    pub fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
+        let points = self.curve()?;
+        let spans = [
+            [points[0], points[1], points[2]],
+            [points[2], points[3], points[4]],
+        ];
+        let curvature = spans
+            .iter()
+            .map(|span| {
+                let second_difference =
+                    |a: f32, b: f32, c: f32| f64::from(a) - 2.0 * f64::from(b) + f64::from(c);
+                second_difference(span[0].x, span[1].x, span[2].x)
+                    .hypot(second_difference(span[0].y, span[1].y, span[2].y))
+            })
+            .fold(0.0_f64, f64::max);
+        let target = (f64::from(width) * 0.01).clamp(0.001, 0.05);
+        let segments = ((curvature / (4.0 * target)).sqrt().ceil() as usize).clamp(1, 512);
+        // Include vertex quantization in the hit-test error, not just curve subdivision.
+        let mut rounding_error_squared = 0.0_f64;
+        let mut path = Vec::with_capacity(2 * segments + 1);
+        path.push(points[0]);
+        for span in spans {
+            for index in 1..=segments {
+                let point = quadratic_point(span, index as f64 / segments as f64);
+                let rounded = Vec2::new(point[0] as f32, point[1] as f32);
+                let dx = point[0] - f64::from(rounded.x);
+                let dy = point[1] - f64::from(rounded.y);
+                rounding_error_squared = rounding_error_squared.max(dx * dx + dy * dy);
+                path.push(rounded);
+            }
+        }
+        let error = (curvature / (4.0 * (segments * segments) as f64)
+            + rounding_error_squared.sqrt()) as f32;
+        let error = error.next_up();
+        Some((path, error))
+    }
+}
+
+fn connector_marker_geometry(
+    points: &[Vec2],
+    at_start: bool,
+    kind: ConnectorMarkerKind,
+    width: f32,
+    marker_size: f32,
+    fill: bool,
+) -> Option<ConnectorMarkerGeometry> {
+    let tip = if at_start {
+        *points.first()?
+    } else {
+        *points.last()?
+    };
+    let toward = if at_start {
+        points
+            .iter()
+            .find(|point| (**point - tip).length() > f32::EPSILON)
+    } else {
+        points
+            .iter()
+            .rev()
+            .find(|point| (**point - tip).length() > f32::EPSILON)
+    }?;
+    let delta = tip - *toward;
+    let direction = delta * (1.0 / delta.length());
+    let normal = Vec2::new(-direction.y, direction.x);
+    if kind == ConnectorMarkerKind::Oval {
+        let radius = marker_size * 0.5;
+        return Some(ConnectorMarkerGeometry {
+            shape: ConnectorMarkerShape::Circle(tip, radius),
+            closed: true,
+            filled: fill,
+            line_inset: radius,
+        });
+    }
+    if kind == ConnectorMarkerKind::HalfCircle {
+        let radius = marker_size + width + 1.0;
+        let apex = tip - direction * radius;
+        let side = normal * radius;
+        return Some(ConnectorMarkerGeometry {
+            shape: ConnectorMarkerShape::Curve([
+                tip + side,
+                apex + side,
+                apex,
+                apex - side,
+                tip - side,
+            ]),
+            closed: false,
+            filled: false,
+            line_inset: radius,
+        });
+    }
+    if kind.is_bar() {
+        let length = marker_size + width + 1.0;
+        let side = normal * (length * 0.5);
+        let (first, last) = if kind == ConnectorMarkerKind::BaseDash {
+            (tip + side, tip - side)
+        } else {
+            (
+                tip - direction * (length * 0.5) + side,
+                tip - direction * (length * 1.5) - side,
+            )
+        };
+        return Some(ConnectorMarkerGeometry {
+            shape: ConnectorMarkerShape::Polygon {
+                points: [first, last, last, last],
+                point_count: 2,
+            },
+            closed: false,
+            filled: false,
+            line_inset: 0.0,
+        });
+    }
+    // Keep draw.io's rounded coefficients for stroke-width-dependent tip offsets.
+    let offset = width
+        * match kind {
+            ConnectorMarkerKind::Diamond => 7071.0 / 10_000.0,
+            ConnectorMarkerKind::DiamondThin => 0.9862,
+            _ => 1.118,
+        };
+    let size = marker_size + width;
+    let tip = tip - direction * offset;
+    let base = tip - direction * size;
+    if kind.is_diamond() {
+        let midpoint = tip - direction * (size * 0.5);
+        let wing = size
+            / if kind == ConnectorMarkerKind::Diamond {
+                2.0
+            } else {
+                3.4
+            };
+        return Some(ConnectorMarkerGeometry {
+            shape: ConnectorMarkerShape::Polygon {
+                points: [
+                    midpoint + normal * wing,
+                    tip,
+                    midpoint - normal * wing,
+                    base,
+                ],
+                point_count: 4,
+            },
+            closed: true,
+            filled: fill,
+            line_inset: offset + size,
+        });
+    }
+    let classic = matches!(
+        kind,
+        ConnectorMarkerKind::Classic | ConnectorMarkerKind::ClassicThin
+    );
+    let thin = matches!(
+        kind,
+        ConnectorMarkerKind::ClassicThin
+            | ConnectorMarkerKind::OpenThin
+            | ConnectorMarkerKind::BlockThin
+    );
+    let closed = !matches!(
+        kind,
+        ConnectorMarkerKind::Open | ConnectorMarkerKind::OpenThin
+    );
+    let wing = size / if thin { 3.0 } else { 2.0 };
+    Some(ConnectorMarkerGeometry {
+        shape: ConnectorMarkerShape::Polygon {
+            points: [
+                base + normal * wing,
+                tip,
+                base - normal * wing,
+                tip - direction * (size * 0.75),
+            ],
+            point_count: if classic { 4 } else { 3 },
+        },
+        closed,
+        filled: closed && fill,
+        line_inset: if classic {
+            size * 0.75 + offset
+        } else if closed {
+            size + offset
+        } else {
+            offset * 2.0
+        },
+    })
+}
+
+/// Trim a connector stroke to the inside of its non-default markers.
+/// If the markers overlap on a short path, the remaining stroke collapses to a point.
+pub fn connector_stroke_path(
+    points: &[Vec2],
+    markers: &[Option<ConnectorMarkerGeometry>; 2],
+) -> Vec<Vec2> {
+    if markers.iter().all(Option::is_none) || points.len() < 2 {
+        return points.to_vec();
+    }
+    let total: f32 = points
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).length())
+        .sum();
+    if total <= f32::EPSILON {
+        return points.to_vec();
+    }
+    let mut start = markers[0].map_or(0.0, |marker| marker.line_inset);
+    let mut end = markers[1].map_or(0.0, |marker| marker.line_inset);
+    if start + end > total {
+        let scale = total / (start + end);
+        start *= scale;
+        end *= scale;
+    }
+    let stop = (total - end).max(start).min(total);
+    let mut result = Vec::new();
+    let mut offset = 0.0;
+    for pair in points.windows(2) {
+        let delta = pair[1] - pair[0];
+        let length = delta.length();
+        if length <= f32::EPSILON {
+            continue;
+        }
+        let segment_end = offset + length;
+        if segment_end >= start && offset <= stop {
+            let first = ((start - offset) / length).clamp(0.0, 1.0);
+            let last = ((stop - offset) / length).clamp(0.0, 1.0);
+            let a = pair[0] + delta * first;
+            let b = pair[0] + delta * last;
+            if result.last() != Some(&a) {
+                result.push(a);
+            }
+            if result.last() != Some(&b) {
+                result.push(b);
+            }
+        }
+        offset = segment_end;
+        if offset > stop {
+            break;
+        }
+    }
+    if result.len() == 1 {
+        result.push(result[0]);
+    }
+    result
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneGeometry {
     /// Unrotated rect turned by `rotation` degrees around its centre.
@@ -67,7 +434,11 @@ pub enum SceneGeometry {
         rotation: f32,
     },
     /// Free connector path.
-    Polyline { points: Vec<Vec2>, width: f32 },
+    Polyline {
+        points: Vec<Vec2>,
+        width: f32,
+        markers: [Option<ConnectorMarkerGeometry>; 2],
+    },
 }
 
 impl SceneGeometry {
@@ -88,8 +459,39 @@ impl SceneGeometry {
                 let local = rotate_around(p, *center, -*rotation);
                 distance_to_polyline(local, points) <= width / 2.0 + tolerance
             }
-            SceneGeometry::Polyline { points, width } => {
-                distance_to_polyline(p, points) <= width / 2.0 + tolerance
+            SceneGeometry::Polyline {
+                points,
+                width,
+                markers,
+            } => {
+                let radius = width / 2.0 + tolerance;
+                let stroke_hit = if markers.iter().any(Option::is_some) {
+                    distance_to_polyline(p, &connector_stroke_path(points, markers)) <= radius
+                } else {
+                    distance_to_polyline(p, points) <= radius
+                };
+                stroke_hit
+                    || markers.iter().flatten().any(|marker| {
+                        if let Some((center, marker_radius)) = marker.circle() {
+                            let distance = (p - center).length();
+                            marker_radius > 0.0
+                                && ((marker.filled && distance <= marker_radius + radius)
+                                    || (distance - marker_radius).abs() <= radius)
+                        } else if let Some((path, error)) = marker.flattened_curve(*width) {
+                            point_near_curve_path(
+                                p,
+                                &path,
+                                f64::from(*width) / 2.0 + f64::from(tolerance) + f64::from(error),
+                            )
+                        } else {
+                            (marker.filled && point_in_polygon(p, marker.points()))
+                                || if marker.closed {
+                                    distance_to_outline(p, marker.points()) <= radius
+                                } else {
+                                    distance_to_polyline(p, marker.points()) <= radius
+                                }
+                        }
+                    })
             }
         }
     }
@@ -195,7 +597,14 @@ fn object_item(
     };
     let geometry = match &object.kind {
         CanvasObjectKind::Shape { shape, .. } => {
-            let g = shape_geometry(*shape, object.rect, object.rotation);
+            let g = crate::board::shape_geometry_with_style(
+                *shape,
+                object.rect,
+                object.rotation,
+                object.rounding,
+                object.style.effective_shape_stroke_width(),
+                object.double_ellipse_margin,
+            );
             SceneGeometry::Polygon {
                 outline: g.outline,
                 details: g.details,
@@ -213,12 +622,47 @@ fn object_item(
                 return None;
             }
             SceneGeometry::Polyline {
+                markers: [
+                    c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
+                        connector_marker_geometry(
+                            &points,
+                            true,
+                            marker.kind,
+                            c.width,
+                            c.start_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                            !c.start_marker_unfilled,
+                        )
+                    }),
+                    c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
+                        connector_marker_geometry(
+                            &points,
+                            false,
+                            marker.kind,
+                            c.width,
+                            c.end_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                            !c.end_marker_unfilled,
+                        )
+                    }),
+                ],
                 points,
                 width: c.width,
             }
         }
     };
-    let bounds = geometry_bounds(&geometry)?;
+    let mut bounds = geometry_bounds(&geometry)?;
+    if let Some(sides) = object.rectangle_sides
+        && (sides.top || sides.right || sides.bottom || sides.left)
+        && object.style.opacity > 0.0
+    {
+        let stroke_width = match object.style.stroke {
+            Some(color) if color.a > 0 => Some(object.style.stroke_width),
+            None if object.style.fill.is_none() => Some(2.0),
+            _ => None,
+        };
+        if let Some(width) = stroke_width {
+            bounds = bounds.expand(width * std::f32::consts::FRAC_1_SQRT_2);
+        }
+    }
     let clip = match &object.kind {
         CanvasObjectKind::Connector(_) => object_clip_at(sheet, object.id, bounds.center()),
         _ => object_clip_rect(sheet, object),
@@ -309,8 +753,30 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
                 crate::board::rotated_corners(r, 0.0).map(|c| rotate_around(c, *center, *rotation));
             points_bounds(&corners)
         }
-        SceneGeometry::Polyline { points, width } => {
-            Some(points_bounds(points)?.expand(width / 2.0))
+        SceneGeometry::Polyline {
+            points,
+            width,
+            markers,
+        } => {
+            let mut bounds = points_bounds(points)?.expand(width / 2.0);
+            for marker in markers.iter().flatten() {
+                let marker_bounds = if let Some((center, radius)) = marker.circle() {
+                    (radius > 0.0).then(|| {
+                        Rect::from_center_size(center, Vec2::new(2.0 * radius, 2.0 * radius))
+                    })
+                } else if let Some(curve) = marker.curve() {
+                    Some(
+                        quadratic_bounds([curve[0], curve[1], curve[2]])
+                            .union(&quadratic_bounds([curve[2], curve[3], curve[4]])),
+                    )
+                } else {
+                    points_bounds(marker.points())
+                };
+                if let Some(marker_bounds) = marker_bounds {
+                    bounds = bounds.union(&marker_bounds.expand(width / 2.0));
+                }
+            }
+            Some(bounds)
         }
     }
 }
@@ -346,11 +812,32 @@ pub(crate) fn resolved_object_centers(
         .filter_map(|object| {
             let center = match &object.kind {
                 CanvasObjectKind::Connector(connector) => {
-                    points_bounds(&connectors.path(object.id, connector)?)?.center()
+                    crate::board::polyline_midpoint(&connectors.path(object.id, connector)?)?
                 }
                 _ => object.rect.center(),
             };
             Some((object.id, center))
+        })
+        .collect()
+}
+
+pub(crate) fn resolved_connector_endpoints(
+    sheet: &Sheet,
+    layout: &Layout,
+    ids: &HashSet<CanvasObjectId>,
+) -> HashMap<CanvasObjectId, (Vec2, Vec2)> {
+    let mut connectors = ConnectorResolver::new(sheet, layout);
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| ids.contains(&object.id))
+        .filter_map(|object| {
+            let CanvasObjectKind::Connector(connector) = &object.kind else {
+                return None;
+            };
+            let path = connectors.path(object.id, connector)?;
+            Some((object.id, (*path.first()?, *path.last()?)))
         })
         .collect()
 }
@@ -363,7 +850,20 @@ impl Scene {
 
     /// Top-most topic or object within `tolerance` of `p`.
     pub fn hit_test_tolerance(&self, p: Vec2, tolerance: f32) -> Option<SceneHit> {
+        self.hit_test_tolerance_excluding(p, tolerance, None)
+    }
+
+    /// Top-most hit within `tolerance`, excluding an item being manipulated.
+    pub fn hit_test_tolerance_excluding(
+        &self,
+        p: Vec2,
+        tolerance: f32,
+        excluded: Option<SceneId>,
+    ) -> Option<SceneHit> {
         self.items.iter().rev().find_map(|item| {
+            if excluded == Some(item.id) {
+                return None;
+            }
             let hit = match item.id {
                 SceneId::Zone(_) => return None,
                 SceneId::Topic(id) => SceneHit::Topic(id),
@@ -425,25 +925,221 @@ fn topic_anchor(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<(TopicId,
     None
 }
 
-fn routed_path(connector: &CanvasConnector, a: (Rect, f32), b: (Rect, f32)) -> Vec<Vec2> {
-    let ((ra, rot_a), (rb, rot_b)) = (a, b);
-    let (ca, cb) = (ra.center(), rb.center());
-    match connector.route {
-        ConnectorRoute::Straight => {
-            vec![
-                clip_to_rotated_rect(ra, rot_a, cb),
-                clip_to_rotated_rect(rb, rot_b, ca),
-            ]
+/// What a connector end attaches to: a (rotated) box and, for shapes, the outline
+/// the end lands on.
+#[derive(Clone, Copy)]
+struct EndTarget {
+    rect: Rect,
+    rotation: f32,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+}
+
+impl EndTarget {
+    fn boxed(rect: Rect, rotation: f32) -> Self {
+        Self {
+            rect,
+            rotation,
+            shape: None,
         }
+    }
+
+    fn with_port(self, port: Option<ConnectorPort>) -> Self {
+        let Some(port) = port else {
+            return self;
+        };
+        let point = Vec2::new(
+            self.rect.min.x + self.rect.size.x * port.position.x + port.offset.x,
+            self.rect.min.y + self.rect.size.y * port.position.y + port.offset.y,
+        );
+        let point = if port.perimeter {
+            if let Some(projected) =
+                fixed_port_perimeter(self.rect, self.shape.map(|(kind, _)| kind), point)
+            {
+                rotate_around(projected, self.rect.center(), self.rotation)
+            } else {
+                self.clip(rotate_around(point, self.rect.center(), self.rotation))
+            }
+        } else {
+            rotate_around(point, self.rect.center(), self.rotation)
+        };
+        Self::boxed(Rect::from_center_size(point, Vec2::ZERO), 0.0)
+    }
+
+    /// Point on the visible perimeter in the direction of `toward`, like draw.io's
+    /// shape perimeters; boxes and rectangular shapes clip to their rotated rect.
+    fn clip(self, toward: Vec2) -> Vec2 {
+        let rectangular = |kind| {
+            matches!(
+                kind,
+                ShapeKind::Rectangle | ShapeKind::Process | ShapeKind::PredefinedProcess
+            )
+        };
+        self.shape
+            .filter(|(kind, rounding)| {
+                !rectangular(*kind) || rounding.is_some_and(|rounding| rounding.radius > 0.0)
+            })
+            .and_then(|(kind, rounding)| {
+                let outline =
+                    shape_geometry_with_rounding(kind, self.rect, self.rotation, rounding).outline;
+                // Shapes like the right triangle have the box centre on their edge;
+                // cast from the area centroid there so the ray still leaves the inside.
+                let center = self.rect.center();
+                let origin = if point_in_polygon(center, &outline)
+                    && distance_to_outline(center, &outline) > 0.5
+                {
+                    center
+                } else {
+                    polygon_centroid(&outline)
+                };
+                clip_to_polygon(&outline, origin, toward)
+            })
+            .unwrap_or_else(|| clip_to_rotated_rect(self.rect, self.rotation, toward))
+    }
+}
+
+/// Resolves a fixed connector port with the same geometry used by scene routing.
+pub fn fixed_connector_port_position(
+    rect: Rect,
+    rotation: f32,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    port: ConnectorPort,
+) -> Vec2 {
+    EndTarget {
+        rect,
+        rotation,
+        shape,
+    }
+    .with_port(Some(port))
+    .rect
+    .center()
+}
+
+/// draw.io applies a constraint to the unrotated perimeter before rotating it.
+fn fixed_port_perimeter(rect: Rect, shape: Option<ShapeKind>, point: Vec2) -> Option<Vec2> {
+    let half = rect.size * 0.5;
+    if half.x <= 0.0 || half.y <= 0.0 {
+        return None;
+    }
+    let center = rect.center();
+    let delta = point - center;
+    match shape {
+        None
+        | Some(
+            ShapeKind::Rectangle
+            | ShapeKind::RoundedRectangle
+            | ShapeKind::Process
+            | ShapeKind::PredefinedProcess,
+        ) => {
+            if delta == Vec2::ZERO {
+                return Some(Vec2::new(rect.max().x, center.y));
+            }
+            let x = f64::from(delta.x);
+            let y = f64::from(delta.y);
+            let scale = (f64::from(half.x) / x.abs()).min(f64::from(half.y) / y.abs());
+            Some(Vec2::new(
+                center.x + (x * scale) as f32,
+                center.y + (y * scale) as f32,
+            ))
+        }
+        Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse) => {
+            // The published ellipse perimeter truncates center-relative distances.
+            let x = delta.x.trunc();
+            let y = delta.y.trunc();
+            if x == 0.0 && y == 0.0 {
+                return Some(point);
+            }
+            let scale = half.x * half.y / (half.y * x).hypot(half.x * y);
+            Some(center + Vec2::new(x, y) * scale)
+        }
+        Some(ShapeKind::Diamond) => {
+            if delta.x == 0.0 {
+                return Some(Vec2::new(
+                    center.x,
+                    if delta.y < 0.0 {
+                        rect.min.y
+                    } else {
+                        rect.max().y
+                    },
+                ));
+            }
+            if delta.y == 0.0 {
+                return Some(Vec2::new(
+                    if delta.x < 0.0 {
+                        rect.min.x
+                    } else {
+                        rect.max().x
+                    },
+                    center.y,
+                ));
+            }
+            let distance = delta.x.abs() / half.x + delta.y.abs() / half.y;
+            Some(if distance < 1.0 {
+                center
+            } else {
+                center + delta * (1.0 / distance)
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Area centroid of a closed polygon; the vertex mean for degenerate outlines.
+fn polygon_centroid(outline: &[Vec2]) -> Vec2 {
+    let (mut area, mut sum) = (0.0, Vec2::ZERO);
+    for (i, &a) in outline.iter().enumerate() {
+        let b = outline[(i + 1) % outline.len()];
+        let cross = a.x * b.y - b.x * a.y;
+        area += cross;
+        sum = sum + (a + b) * cross;
+    }
+    if area.abs() > 1e-6 {
+        sum * (1.0 / (3.0 * area))
+    } else {
+        outline.iter().fold(Vec2::ZERO, |acc, &p| acc + p) * (1.0 / outline.len().max(1) as f32)
+    }
+}
+
+/// Outermost crossing of the ray from `center` towards `toward` with the closed
+/// `outline`, so concave outlines (stars, clouds) end on their outer edge.
+fn clip_to_polygon(outline: &[Vec2], center: Vec2, toward: Vec2) -> Option<Vec2> {
+    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
+    let direction = toward - center;
+    if direction.length() < 1e-3 {
+        return None;
+    }
+    let mut best: Option<f32> = None;
+    for (i, &a) in outline.iter().enumerate() {
+        let edge = outline[(i + 1) % outline.len()] - a;
+        let denominator = cross(direction, edge);
+        if denominator.abs() < 1e-9 {
+            continue;
+        }
+        let offset = a - center;
+        let t = cross(offset, edge) / denominator;
+        let u = cross(offset, direction) / denominator;
+        if t > 1e-6 && (-1e-6..=1.0 + 1e-6).contains(&u) {
+            best = Some(best.map_or(t, |best: f32| best.max(t)));
+        }
+    }
+    best.map(|t| center + direction * t)
+}
+
+fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    if !connector.waypoints.is_empty() {
+        return routed_waypoints(connector, a, b);
+    }
+    let (ca, cb) = (a.rect.center(), b.rect.center());
+    match connector.route {
+        ConnectorRoute::Straight => vec![a.clip(cb), b.clip(ca)],
         ConnectorRoute::Elbow => {
-            let a = clip_to_rotated_rect(ra, rot_a, Vec2::new(cb.x, ca.y));
-            let b = clip_to_rotated_rect(rb, rot_b, Vec2::new(ca.x, cb.y));
+            let a = a.clip(Vec2::new(cb.x, ca.y));
+            let b = b.clip(Vec2::new(ca.x, cb.y));
             let mx = (a.x + b.x) / 2.0;
             vec![a, Vec2::new(mx, a.y), Vec2::new(mx, b.y), b]
         }
         ConnectorRoute::Curve => {
-            let a = clip_to_rotated_rect(ra, rot_a, cb);
-            let b = clip_to_rotated_rect(rb, rot_b, ca);
+            let a = a.clip(cb);
+            let b = b.clip(ca);
             let dx = (b.x - a.x) / 2.0;
             let (c1, c2) = (a + Vec2::new(dx, 0.0), b - Vec2::new(dx, 0.0));
             (0..=CURVE_SEGMENTS)
@@ -451,6 +1147,142 @@ fn routed_path(connector: &CanvasConnector, a: (Rect, f32), b: (Rect, f32)) -> V
                 .collect()
         }
     }
+}
+
+fn push_distinct(points: &mut Vec<Vec2>, point: Vec2) {
+    if points.last() != Some(&point) {
+        points.push(point);
+    }
+}
+
+fn quadratic(start: Vec2, control: Vec2, end: Vec2, t: f32) -> Vec2 {
+    start * ((1.0 - t) * (1.0 - t)) + control * (2.0 * (1.0 - t) * t) + end * (t * t)
+}
+
+#[derive(Clone, Copy)]
+struct WaypointVertex {
+    point: Vec2,
+    passed: usize,
+}
+
+fn push_waypoint_vertex(points: &mut Vec<WaypointVertex>, point: Vec2, passed: usize) {
+    if let Some(last) = points.last_mut()
+        && last.point == point
+    {
+        last.passed = passed;
+    } else {
+        points.push(WaypointVertex { point, passed });
+    }
+}
+
+fn routed_waypoint_vertices(
+    connector: &CanvasConnector,
+    a: EndTarget,
+    b: EndTarget,
+) -> Vec<WaypointVertex> {
+    let mut points = Vec::with_capacity(connector.waypoints.len() + 2);
+    points.push(WaypointVertex {
+        point: a.rect.center(),
+        passed: 0,
+    });
+    for (index, &waypoint) in connector.waypoints.iter().enumerate() {
+        if connector.route == ConnectorRoute::Curve {
+            points.push(WaypointVertex {
+                point: waypoint,
+                passed: index + 1,
+            });
+        } else {
+            push_waypoint_vertex(&mut points, waypoint, index + 1);
+        }
+    }
+    if connector.route == ConnectorRoute::Curve {
+        points.push(WaypointVertex {
+            point: b.rect.center(),
+            passed: connector.waypoints.len(),
+        });
+    } else {
+        push_waypoint_vertex(&mut points, b.rect.center(), connector.waypoints.len());
+    }
+    if points.len() == 1 {
+        points.push(points[0]);
+    }
+
+    if connector.route == ConnectorRoute::Elbow {
+        let mut orthogonal = Vec::with_capacity(points.len() * 2);
+        orthogonal.push(points[0]);
+        for &next in &points[1..] {
+            let previous = *orthogonal.last().expect("path starts with a point");
+            if previous.point.x != next.point.x && previous.point.y != next.point.y {
+                push_waypoint_vertex(
+                    &mut orthogonal,
+                    Vec2::new(next.point.x, previous.point.y),
+                    previous.passed,
+                );
+            }
+            push_waypoint_vertex(&mut orthogonal, next.point, next.passed);
+        }
+        if orthogonal.len() == 1 {
+            orthogonal.push(orthogonal[0]);
+        }
+        points = orthogonal;
+    }
+
+    let last = points.len() - 1;
+    let first_toward = points[1..]
+        .iter()
+        .map(|vertex| vertex.point)
+        .find(|point| *point != points[0].point)
+        .unwrap_or(points[last].point);
+    let last_toward = points[..last]
+        .iter()
+        .rev()
+        .map(|vertex| vertex.point)
+        .find(|point| *point != points[last].point)
+        .unwrap_or(points[0].point);
+    points[0].point = a.clip(first_toward);
+    points[last].point = b.clip(last_toward);
+
+    if connector.route != ConnectorRoute::Curve || points.len() == 2 {
+        let mut distinct = Vec::with_capacity(points.len());
+        for vertex in points {
+            push_waypoint_vertex(&mut distinct, vertex.point, vertex.passed);
+        }
+        if distinct.len() == 1 {
+            distinct.push(distinct[0]);
+        }
+        return distinct;
+    }
+    points
+}
+
+fn routed_waypoints(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let points = routed_waypoint_vertices(connector, a, b);
+    if connector.route != ConnectorRoute::Curve || points.len() == 2 {
+        return points.into_iter().map(|vertex| vertex.point).collect();
+    }
+    let last = points.len() - 1;
+
+    // draw.io's curved polylines use each control point as the handle of a
+    // quadratic span, with intermediate spans meeting halfway between handles.
+    let mut curved = vec![points[0].point];
+    let mut start = points[0].point;
+    for index in 1..last {
+        let control = points[index].point;
+        let end = if index + 1 == last {
+            points[last].point
+        } else {
+            (control + points[index + 1].point) * 0.5
+        };
+        for step in 1..=WAYPOINT_CURVE_SEGMENTS {
+            let t = step as f32 / WAYPOINT_CURVE_SEGMENTS as f32;
+            push_distinct(&mut curved, quadratic(start, control, end, t));
+        }
+        start = end;
+    }
+    if curved.len() == 1 {
+        curved.push(curved[0]);
+    }
+    curved
 }
 
 struct ConnectorResolver<'a> {
@@ -470,9 +1302,11 @@ impl<'a> ConnectorResolver<'a> {
         }
     }
 
-    fn endpoint(&self, end: Endpoint) -> Option<(Rect, f32)> {
-        match end {
-            Endpoint::Point(p) => Some((Rect::from_center_size(p, Vec2::ZERO), 0.0)),
+    fn endpoint(&self, end: Endpoint, port: Option<ConnectorPort>) -> Option<EndTarget> {
+        let target = match end {
+            Endpoint::Point(p) => {
+                Some(EndTarget::boxed(Rect::from_center_size(p, Vec2::ZERO), 0.0))
+            }
             Endpoint::Topic(t) => {
                 let (anchor, rect) = topic_anchor(self.sheet, self.layout, t)?;
                 let rotation = self
@@ -480,19 +1314,34 @@ impl<'a> ConnectorResolver<'a> {
                     .topic(anchor)
                     .and_then(|topic| topic.card.as_ref())
                     .map_or(0.0, |card| card.rotation);
-                Some((rect, rotation))
+                Some(EndTarget::boxed(rect, rotation))
             }
             Endpoint::Object(id) => {
                 let object = self.objects.get(&id)?;
                 if object.is_connector() {
+                    // Edge-to-edge ends meet the target path halfway along it,
+                    // where its label sits, even when the route bends.
                     let points = self.paths.get(&id)?.as_ref()?;
-                    let center = points_bounds(points)?.center();
-                    Some((Rect::from_center_size(center, Vec2::ZERO), 0.0))
+                    let center = crate::board::polyline_midpoint(points)?;
+                    Some(EndTarget::boxed(
+                        Rect::from_center_size(center, Vec2::ZERO),
+                        0.0,
+                    ))
                 } else {
-                    Some((object.rect, object.rotation))
+                    Some(EndTarget {
+                        rect: object.rect,
+                        rotation: object.rotation,
+                        shape: match &object.kind {
+                            CanvasObjectKind::Shape { shape, .. } => {
+                                Some((*shape, object.rounding))
+                            }
+                            _ => None,
+                        },
+                    })
                 }
             }
-        }
+        }?;
+        Some(target.with_port(port))
     }
 
     fn resolve(&mut self, id: CanvasObjectId) -> bool {
@@ -511,8 +1360,8 @@ impl<'a> ConnectorResolver<'a> {
             if exit {
                 active.remove(&id);
                 let path = self
-                    .endpoint(connector.from)
-                    .zip(self.endpoint(connector.to))
+                    .endpoint(connector.from, connector.from_port)
+                    .zip(self.endpoint(connector.to, connector.to_port))
                     .map(|(from, to)| routed_path(connector, from, to));
                 self.paths.insert(id, path);
                 continue;
@@ -548,8 +1397,8 @@ impl<'a> ConnectorResolver<'a> {
                     return None;
                 }
             }
-            self.endpoint(connector.from)
-                .zip(self.endpoint(connector.to))
+            self.endpoint(connector.from, connector.from_port)
+                .zip(self.endpoint(connector.to, connector.to_port))
                 .map(|(from, to)| routed_path(connector, from, to))
         }
     }
@@ -604,21 +1453,101 @@ pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
     }
 }
 
-/// Polyline of a free connector, clipped to its endpoint targets. Empty if an endpoint
-/// cannot be resolved (dangling reference, hidden anchor or invalid connector cycle).
-pub fn connector_path(sheet: &Sheet, layout: &Layout, connector: &CanvasConnector) -> Vec<Vec2> {
+fn connector_targets(
+    sheet: &Sheet,
+    layout: &Layout,
+    connector: &CanvasConnector,
+) -> Option<(EndTarget, EndTarget)> {
     let mut resolver = ConnectorResolver::new(sheet, layout);
     for end in [connector.from, connector.to] {
         if let Endpoint::Object(id) = end
             && !resolver.resolve(id)
         {
-            return Vec::new();
+            return None;
         }
     }
     resolver
-        .endpoint(connector.from)
-        .zip(resolver.endpoint(connector.to))
+        .endpoint(connector.from, connector.from_port)
+        .zip(resolver.endpoint(connector.to, connector.to_port))
+}
+
+/// Polyline of a free connector, clipped to its endpoint targets. Empty if an endpoint
+/// cannot be resolved (dangling reference, hidden anchor or invalid connector cycle).
+pub fn connector_path(sheet: &Sheet, layout: &Layout, connector: &CanvasConnector) -> Vec<Vec2> {
+    connector_targets(sheet, layout, connector)
         .map_or_else(Vec::new, |(from, to)| routed_path(connector, from, to))
+}
+
+/// A point on a rendered connector where another waypoint can be inserted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConnectorInsertHandle {
+    pub point: Vec2,
+    /// Index before which the new waypoint is inserted.
+    pub insert_at: usize,
+}
+
+/// Insertion handles for the supplied rendered path, in path order.
+///
+/// Elbow bends introduced by the router retain the insertion index of their
+/// logical span. Curve controls are not generally on the path, so their
+/// handles use sampled positions on either side of each control.
+pub fn connector_insert_handles(
+    sheet: &Sheet,
+    layout: &Layout,
+    connector: &CanvasConnector,
+) -> Vec<ConnectorInsertHandle> {
+    let Some((from, to)) = connector_targets(sheet, layout, connector) else {
+        return Vec::new();
+    };
+    if connector.waypoints.is_empty() {
+        let path = routed_path(connector, from, to);
+        if connector.route == ConnectorRoute::Curve {
+            return crate::board::polyline_midpoint(&path)
+                .map(|point| {
+                    vec![ConnectorInsertHandle {
+                        point,
+                        insert_at: 0,
+                    }]
+                })
+                .unwrap_or_default();
+        }
+        return path
+            .windows(2)
+            .filter(|segment| segment[0] != segment[1])
+            .map(|segment| ConnectorInsertHandle {
+                point: (segment[0] + segment[1]) * 0.5,
+                insert_at: 0,
+            })
+            .collect();
+    }
+    let vertices = routed_waypoint_vertices(connector, from, to);
+    if connector.route == ConnectorRoute::Curve {
+        let mut handles = Vec::with_capacity(connector.waypoints.len() * 2);
+        let mut start = vertices[0].point;
+        let last = vertices[vertices.len() - 1].point;
+        for (index, &control) in connector.waypoints.iter().enumerate() {
+            let end = connector
+                .waypoints
+                .get(index + 1)
+                .map_or(last, |next| (control + *next) * 0.5);
+            for (t, insert_at) in [(0.25, index), (0.75, index + 1)] {
+                handles.push(ConnectorInsertHandle {
+                    point: quadratic(start, control, end, t),
+                    insert_at,
+                });
+            }
+            start = end;
+        }
+        return handles;
+    }
+    vertices
+        .windows(2)
+        .filter(|segment| segment[0].point != segment[1].point)
+        .map(|segment| ConnectorInsertHandle {
+            point: (segment[0].point + segment[1].point) * 0.5,
+            insert_at: segment[0].passed,
+        })
+        .collect()
 }
 
 #[cfg(test)]

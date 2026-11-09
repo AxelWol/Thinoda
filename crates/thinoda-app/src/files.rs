@@ -387,6 +387,20 @@ pub fn set_repaint_context(ctx: &egui::Context) {
     let _ = ctx;
 }
 
+fn is_drawio_png_name(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".drawio.png")
+    })
+}
+
+/// Explicit draw.io PNG exports open as documents; other supported images keep
+/// the existing image-drop behavior.
+pub(crate) fn is_dropped_image_path(path: &Path) -> bool {
+    crate::images::is_supported_image_path(path) && !is_drawio_png_name(path)
+}
+
 /// Files dropped onto the window. Desktop: their paths. Web: browsers only expose
 /// contents, which are returned later by [`take_picked`].
 pub(crate) fn dropped_files(
@@ -443,12 +457,25 @@ pub fn import_workbook(path: &Path) -> Result<Workbook, thinoda_io::IoError> {
 /// Normalizes a file name typed into the browser save prompt. Keeps an allowed
 /// extension the user typed, otherwise appends the first allowed one.
 pub fn web_save_name(input: &str, allowed: &[&str]) -> Option<String> {
+    let name = thinoda_platform::web::sanitize_file_name(input, "")?;
+    let lower = name.to_ascii_lowercase();
+    if allowed
+        .iter()
+        .any(|ext| lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())))
+    {
+        return Some(name);
+    }
     let default = allowed.first().copied().unwrap_or_default();
-    let keeps = input
-        .trim()
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| allowed.iter().any(|a| a.eq_ignore_ascii_case(ext)));
-    thinoda_platform::web::sanitize_file_name(input, if keeps { "" } else { default })
+    if default.is_empty() {
+        return Some(name);
+    }
+    if let Some((_, last)) = default.rsplit_once('.') {
+        let suffix = format!(".{}", last.to_ascii_lowercase());
+        if lower.ends_with(&suffix) && name.len() > suffix.len() {
+            return Some(format!("{}.{default}", &name[..name.len() - suffix.len()]));
+        }
+    }
+    Some(format!("{name}.{default}"))
 }
 
 /// Safe upload names in deduplication order: `name`, then `stem (2).ext` … `(999)`.
@@ -489,8 +516,9 @@ pub fn store_upload_in(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathB
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn is_dropped_image(name: &str) -> bool {
-    thinoda_platform::web::sanitize_file_name(name, "")
-        .is_some_and(|name| crate::images::is_supported_image_path(Path::new(&name)))
+    !is_drawio_png_name(Path::new(name))
+        && thinoda_platform::web::sanitize_file_name(name, "")
+            .is_some_and(|name| is_dropped_image_path(Path::new(&name)))
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -1084,6 +1112,29 @@ mod tests {
     }
 
     #[test]
+    fn explicitly_named_drawio_png_drops_are_documents() {
+        for name in [
+            "diagram.drawio.png",
+            "diagram.DRAWIO.PNG",
+            ".drawio.png",
+            "diagram.drawio?.p?ng",
+        ] {
+            assert!(!is_dropped_image(name), "{name}");
+        }
+        for name in [
+            "diagram.png",
+            "drawio.png",
+            "diagram.drawio.jpg",
+            "diagram.jpg",
+        ] {
+            assert!(is_dropped_image(name), "{name}");
+        }
+        assert!(crate::images::is_supported_image_path(Path::new(
+            "diagram.drawio.png"
+        )));
+    }
+
+    #[test]
     fn document_upload_limits_use_the_staged_name_and_only_document_purposes() {
         let archive_limit = 64 * 1024 * 1024;
         for purpose in [
@@ -1137,6 +1188,14 @@ mod tests {
         assert_eq!(
             document_upload_size_error(Purpose::Dropped, "image.png", u64::MAX),
             None
+        );
+        assert_eq!(
+            document_upload_size_error(Purpose::Dropped, "diagram.DRAWIO.PNG", archive_limit),
+            None
+        );
+        assert_eq!(
+            document_upload_size_error(Purpose::Dropped, "diagram.DRAWIO.PNG", archive_limit + 1),
+            Some(crate::i18n::t(crate::file_ops::DOCUMENT_TOO_LARGE).into())
         );
         assert_eq!(
             document_upload_size_error(Purpose::Image(1), "image.xdf2", u64::MAX),
@@ -1438,6 +1497,9 @@ mod tests {
                 ("before.j?pg", vec![1]),
                 ("map.thinoda", vec![2]),
                 ("after.PNG", vec![3]),
+                ("diagram.DRAWIO.PNG", vec![4]),
+                ("diagram.DRAWIO.PNG", vec![5]),
+                (".drawio.png", vec![6]),
             ] {
                 store_browser_upload_with(&mut dropped, name, Ok(bytes), &provider, |_, _, _| {
                     panic!("dropped images stay in memory and documents use durable storage")
@@ -1446,7 +1508,7 @@ mod tests {
             }
             assert!(dropped.paths.is_empty());
             assert!(dropped.errors.is_empty());
-            assert_eq!(dropped.dropped_uploads.len(), 3);
+            assert_eq!(dropped.dropped_uploads.len(), 6);
             assert!(matches!(
                 &dropped.dropped_uploads[0],
                 DroppedUpload::Image(image) if image.name == "before.jpg" && image.bytes == [1]
@@ -1459,10 +1521,37 @@ mod tests {
                 &dropped.dropped_uploads[2],
                 DroppedUpload::Image(image) if image.name == "after.PNG" && image.bytes == [3]
             ));
+            assert!(matches!(
+                &dropped.dropped_uploads[3],
+                DroppedUpload::Document(path) if path == &Path::new(WEB_DOCUMENTS).join("diagram.DRAWIO.PNG")
+            ));
+            assert!(matches!(
+                &dropped.dropped_uploads[4],
+                DroppedUpload::Document(path) if path == &Path::new(WEB_DOCUMENTS).join("diagram.DRAWIO (2).PNG")
+            ));
+            assert!(matches!(
+                &dropped.dropped_uploads[5],
+                DroppedUpload::Document(path) if path == &Path::new(WEB_DOCUMENTS).join("drawio.png")
+            ));
             assert_eq!(
                 vfs.read(&Path::new(WEB_DOCUMENTS).join("map.thinoda"))
                     .unwrap(),
                 [2]
+            );
+            assert_eq!(
+                vfs.read(&Path::new(WEB_DOCUMENTS).join("diagram.DRAWIO.PNG"))
+                    .unwrap(),
+                [4]
+            );
+            assert_eq!(
+                vfs.read(&Path::new(WEB_DOCUMENTS).join("diagram.DRAWIO (2).PNG"))
+                    .unwrap(),
+                [5]
+            );
+            assert_eq!(
+                vfs.read(&Path::new(WEB_DOCUMENTS).join("drawio.png"))
+                    .unwrap(),
+                [6]
             );
             store_browser_upload_with(
                 &mut dropped,
@@ -1472,7 +1561,7 @@ mod tests {
                 |_, _, _| panic!("unreadable drops must not enter the VFS"),
             )
             .await;
-            assert_eq!(dropped.dropped_uploads.len(), 3);
+            assert_eq!(dropped.dropped_uploads.len(), 6);
             assert_eq!(
                 dropped.errors,
                 ["unreadable.thinoda: could not read local document"]
@@ -1760,6 +1849,27 @@ mod tests {
         );
         assert_eq!(web_save_name("  ..  ", &allowed), None);
         assert_eq!(web_save_name("shot", &["png"]).as_deref(), Some("shot.png"));
+        for (input, expected) in [
+            ("Plan", "Plan.drawio.png"),
+            ("Plan.drawio.png", "Plan.drawio.png"),
+            ("Plan.DRAWIO.PNG", "Plan.DRAWIO.PNG"),
+            ("Plan.png", "Plan.drawio.png"),
+            ("Plan.PNG", "Plan.drawio.png"),
+            ("Plan.jpeg", "Plan.jpeg.drawio.png"),
+        ] {
+            assert_eq!(
+                web_save_name(input, &["drawio.png"]).as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            web_save_name("Plan.svg", &["drawio.svg"]).as_deref(),
+            Some("Plan.drawio.svg")
+        );
+        assert_eq!(
+            web_save_name("Plan.DRAWIO.SVG", &["drawio.svg"]).as_deref(),
+            Some("Plan.DRAWIO.SVG")
+        );
     }
 
     #[test]

@@ -668,7 +668,9 @@ pub fn apply_action(
             return Ok(doc.redo());
         }
         Action::Copy | Action::Cut => {
-            let Some(payload) = clipboard::copy_topics(doc.sheet(), &sel) else {
+            let Some(payload) =
+                clipboard::try_copy_topics(doc.sheet(), &sel).map_err(EditError::Invalid)?
+            else {
                 return Ok(false);
             };
             view.clipboard_out = Some(payload.text.clone());
@@ -687,11 +689,14 @@ pub fn apply_action(
             }
         }
         Action::Paste(text) => {
-            let subtrees = clipboard::resolve_paste(view.clipboard.as_ref(), text.as_deref());
+            let subtrees = clipboard::resolve_paste(view.clipboard.as_ref(), text.as_deref())
+                .map_err(EditError::Invalid)?;
             if subtrees.is_empty() {
                 return Ok(false);
             }
             let target = primary.unwrap_or(doc.sheet().root);
+            clipboard::validate_topic_destination(doc.sheet(), target, &subtrees)
+                .map_err(EditError::Invalid)?;
             let ids = doc.edit_sheet("Paste", |s| s.paste(target, &subtrees))?;
             view.selection = ids;
             view.board_selection.clear();

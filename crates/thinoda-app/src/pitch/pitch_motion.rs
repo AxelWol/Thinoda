@@ -425,6 +425,160 @@ mod tests {
     }
 
     #[test]
+    fn pitch_source_scenes_filter_other_zones_objects_in_editor_and_player() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, Color, Endpoint, InkStroke, InkTool, PresentationScope,
+            ShapeKind, SheetRootMode, Vec2,
+        };
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let root = sheet.add_floating("Root", Vec2::new(80.0, 80.0));
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(400.0, 300.0));
+        let zone = sheet.create_zone("First", vec![root], frame).unwrap();
+        let other = sheet.create_board_frame("Other", frame).unwrap();
+        let ink = sheet
+            .add_canvas_object(CanvasObject::ink(InkStroke::new(
+                InkTool::Pen,
+                Color::rgb(10, 20, 30),
+                4.0,
+                vec![Vec2::new(20.0, 20.0), Vec2::new(60.0, 20.0)],
+            )))
+            .unwrap();
+        let foreign = sheet
+            .add_canvas_object(CanvasObject::shape(ShapeKind::Rectangle, frame))
+            .unwrap();
+        let free = sheet
+            .add_canvas_object(CanvasObject::shape(ShapeKind::Ellipse, frame))
+            .unwrap();
+        let connector = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(30.0, 30.0)),
+                Endpoint::Object(foreign),
+            )))
+            .unwrap();
+        let free_connector = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(40.0, 40.0)),
+                Endpoint::Object(free),
+            )))
+            .unwrap();
+        let indirect = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(50.0, 50.0)),
+                Endpoint::Object(connector),
+            )))
+            .unwrap();
+        let free_indirect = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(60.0, 60.0)),
+                Endpoint::Object(free_connector),
+            )))
+            .unwrap();
+        sheet
+            .set_zone_members(zone, vec![root], vec![ink, connector, indirect])
+            .unwrap();
+        sheet
+            .set_zone_members(other, vec![], vec![foreign])
+            .unwrap();
+        for source in [
+            PresentationSource::Zone(zone),
+            PresentationSource::Branch(root),
+            PresentationSource::Zone(zone),
+            PresentationSource::Viewport,
+        ] {
+            sheet
+                .add_presentation_slide("Scene", source, frame)
+                .unwrap();
+        }
+        sheet.presentation.slides[0].scope = PresentationScope::Source;
+        sheet.presentation.slides[1].scope = PresentationScope::Source;
+        sheet.presentation.slides[2].scope = PresentationScope::Context;
+        sheet.validate().unwrap();
+        let before = sheet.clone();
+        let layout = Arc::new(thinoda_core::layout_sheet(
+            &sheet,
+            &thinoda_core::ApproxMeasure,
+            false,
+        ));
+
+        for (index, expected) in [
+            HashSet::from([ink, free, free_connector, free_indirect]),
+            HashSet::from([free, free_connector, free_indirect]),
+            HashSet::from([
+                ink,
+                foreign,
+                free,
+                connector,
+                free_connector,
+                indirect,
+                free_indirect,
+            ]),
+            HashSet::from([
+                ink,
+                foreign,
+                free,
+                connector,
+                free_connector,
+                indirect,
+                free_indirect,
+            ]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let resolved = thinoda_core::resolve_presentation_slide(
+                &sheet,
+                &sheet.presentation.slides[index],
+                &layout,
+            )
+            .unwrap();
+            let editor_sheet = presentation_paint_sheet(&sheet, &resolved);
+            let editor_objects: HashSet<_> = editor_sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| object.id)
+                .collect();
+            let scene = Playback::default().scene(&sheet, &layout, index).unwrap();
+            let player_objects: HashSet<_> = scene
+                .canvas
+                .objects
+                .iter()
+                .map(|object| object.id)
+                .collect();
+            assert_eq!(editor_objects, expected, "editor slide {index}");
+            assert_eq!(player_objects, expected, "player slide {index}");
+            let expected_order: Vec<_> = sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| object.id)
+                .filter(|id| expected.contains(id))
+                .collect();
+            assert_eq!(
+                editor_sheet
+                    .canvas
+                    .objects
+                    .iter()
+                    .map(|object| object.id)
+                    .collect::<Vec<_>>(),
+                expected_order
+            );
+            assert_eq!(
+                scene
+                    .canvas
+                    .objects
+                    .iter()
+                    .map(|object| object.id)
+                    .collect::<Vec<_>>(),
+                expected_order
+            );
+        }
+        assert_eq!(sheet, before);
+    }
+
+    #[test]
     fn pitch_hidden_and_unrevealed_topics_do_not_reveal_scene_connectors() {
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
@@ -441,6 +595,7 @@ mod tests {
             )
             .unwrap();
         sheet.zones[0].clip = true;
+        sheet.zones[0].background_color = Some(thinoda_core::Color::rgb(190, 30, 70));
         let mut connector = thinoda_core::CanvasConnector::new(
             thinoda_core::Endpoint::Topic(child),
             thinoda_core::Endpoint::Point(thinoda_core::Vec2::new(180.0, 30.0)),
@@ -448,6 +603,14 @@ mod tests {
         connector.label = "Hidden connector".into();
         let connector = sheet
             .add_canvas_object(thinoda_core::CanvasObject::connector(connector))
+            .unwrap();
+        let dependent = sheet
+            .add_canvas_object(thinoda_core::CanvasObject::connector(
+                thinoda_core::CanvasConnector::new(
+                    thinoda_core::Endpoint::Object(connector),
+                    thinoda_core::Endpoint::Point(thinoda_core::Vec2::new(200.0, 40.0)),
+                ),
+            ))
             .unwrap();
         sheet
             .add_presentation_slide(
@@ -466,11 +629,18 @@ mod tests {
         ));
         sheet.presentation.slides[0].hidden_topics.push(child);
         let scene = Playback::default().scene(&sheet, &layout, 0).unwrap();
-        assert!(scene.canvas.objects.iter().all(|item| item.id != connector));
+        assert!(
+            scene
+                .canvas
+                .objects
+                .iter()
+                .all(|item| item.id != connector && item.id != dependent)
+        );
         let retained_clip = scene.zones.iter().find(|item| item.id == zone).unwrap();
         assert!(retained_clip.clip);
         assert!(retained_clip.name.is_empty());
         assert_eq!(retained_clip.color.unwrap().a, 0);
+        assert!(retained_clip.background_color.is_none());
 
         sheet.presentation.slides[0].hidden_topics.clear();
         let mut playback = Playback {
@@ -479,16 +649,18 @@ mod tests {
             ..Default::default()
         };
         let first = playback.scene(&sheet, &layout, 0).unwrap();
-        assert!(first.canvas.objects.iter().all(|item| item.id != connector));
-        playback.step = usize::MAX;
-        let complete = playback.scene(&sheet, &layout, 0).unwrap();
         assert!(
-            complete
+            first
                 .canvas
                 .objects
                 .iter()
-                .any(|item| item.id == connector)
+                .all(|item| item.id != connector && item.id != dependent)
         );
+        playback.step = usize::MAX;
+        let complete = playback.scene(&sheet, &layout, 0).unwrap();
+        for id in [connector, dependent] {
+            assert!(complete.canvas.objects.iter().any(|item| item.id == id));
+        }
     }
 
     fn player_with_builds() -> PitchPlayer {
