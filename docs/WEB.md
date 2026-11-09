@@ -131,6 +131,10 @@ appearance losses may still go unreported.
 Double ellipses import as editable single ellipses with a formatting warning;
 their inner outline and exact label bounds are not preserved.
 
+Flowchart annotation brackets import as editable open-sided rectangles with a
+formatting warning. Their original stencil identity and exact appearance are
+not preserved; keep the original diagram.
+
 Opening editable images also accepts older URI- or base64-encoded SVG diagrams
 and older PNG diagram metadata. Ordinary PNG drops still add an image; a
 `.drawio.png` drop opens the embedded diagram instead.

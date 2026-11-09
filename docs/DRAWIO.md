@@ -1391,6 +1391,47 @@ AddressSanitizer smoke completed 9,223 executions without a reported failure;
 the separate 30-minute acceptance campaign and real system clipboard and
 accessibility acceptance remain open.
 
+**Flowchart annotation approximation and rubber-duck review (partial Phases 6,
+9 and 13).** The published [flowchart stencil](https://app.diagrams.net/stencils/flowchart.xml)
+defines `Annotation 1` as an open, three-sided path that is stroked but not
+filled. An explicit `shape=mxgraph.flowchart.annotation_1` now imports as an
+editable transparent rectangle with its top, bottom and left outline sides
+enabled. Supported stroke color, opacity, frame, direction, rotation, label and
+ordinary object attachments remain editable. A Formatting warning makes the
+approximation subject to the existing import-confirmation flow. The three
+brackets in the supplied requirements-flow diagram now retain their open sides,
+dimensions, rotation and black two-unit stroke instead of becoming filled
+rectangle placeholders.
+
+The review found that an explicit source fill must not fill this stencil, even
+when it is red; the importer therefore makes the converted shape transparent.
+With stylesheet defaults suppressed and no stroke, it retains an invisible
+stroke. A collapsed source frame paints no stencil, so zero-width or zero-height
+imports disable all four sides while keeping the stroke color. If the user
+subsequently enlarges such a shape, the sides must be re-enabled manually.
+Bare named-style tokens are not mistaken for an explicit stencil.
+
+This is not faithful stencil support. The source is one continuous path, while
+the native partial-rectangle paths can differ in caps, joins and translucent
+overlaps. Source label placement, fixed connection constraints and pointer hit
+behavior are not preserved; selection and ordinary attachment routing use the
+full rectangle. Export writes a `partialRectangle`, not the original stencil,
+and does not preserve source identity or provide lossless save-back.
+Formatting warnings are generic and formatting-only clipboard notices are
+temporary. Keep the original file, and retain exact paths, source identity,
+ports, labels and hit testing as open work in the parent phases.
+
+Validation passed 124 selected draw.io library tests plus a separate direction
+regression, seven supplied-corpus tests, six deterministic fuzz-seed tests and
+17 app clipboard tests. Import, strict confirmation, link and clipboard
+conversion, native and draw.io round trips, direction, rotation, collapsed
+frames, transparent fills and PNG/SVG pixels have targeted checks. Synthetic
+paste, outline-side editing and undo passed in Chromium, Firefox and WebKit.
+Formatting and native, WebAssembly and fuzz Clippy passed with warnings denied.
+A 22-second Linux AddressSanitizer smoke completed 10,141 executions without a
+reported failure or reproducer; the separate 30-minute acceptance campaign and
+real system clipboard, accessibility and viewer acceptance remain open.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop

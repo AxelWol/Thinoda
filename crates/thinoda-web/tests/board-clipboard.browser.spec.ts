@@ -61,6 +61,7 @@ type BoardObject = {
         connector?: { from: unknown; to: unknown; waypoints?: { x: number; y: number }[] };
     };
     style: { fill?: string; stroke?: string; text_color?: string };
+    rectangle_sides?: { top: boolean; right: boolean; bottom: boolean; left: boolean };
 };
 
 type BoardSheet = {
@@ -768,6 +769,49 @@ test("draw.io paste warns when a double ellipse is simplified", async ({ page },
     await page.keyboard.press("Control+z");
     await frames(page);
     const undone = archive(await saveAs(page, "drawio-double-ellipse-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
+test("draw.io annotation pastes as an editable open bracket", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" ',
+        'style="shape=mxgraph.flowchart.annotation_1;fillColor=#ff0000;strokeColor=#336699;strokeWidth=4;">',
+        '<mxGeometry width="100" height="100" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-annotation-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-annotation-warning.png") });
+    const after = archive(await saveAs(page, "drawio-annotation-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape?.shape).toBe("rectangle");
+    expect(objects[0].rectangle_sides).toEqual({ top: true, right: false, bottom: true, left: true });
+    expect(objects[0].style).toMatchObject({ fill: "#00000000", stroke: "#336699" });
+
+    // The egui inspector is painted in the canvas rather than exposed as DOM controls.
+    await page.mouse.click(1062, 809);
+    await frames(page);
+    const edited = archive(await saveAs(page, "drawio-annotation-edited.thinoda"));
+    expect(edited.content.sheets[edited.content.active_sheet].canvas?.objects[0].rectangle_sides?.right)
+        .toBe(true);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const restored = archive(await saveAs(page, "drawio-annotation-restored.thinoda"));
+    expect(restored.content.sheets).toEqual(after.content.sheets);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-annotation-undo.thinoda"));
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 

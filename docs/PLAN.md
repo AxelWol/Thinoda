@@ -71,6 +71,7 @@ complete:
 | Draw.io explicit appearance diagnostics | Complete locally | Unresolved explicit colors and invalid opacity or stroke width now trigger a formatting warning; theme preservation and comprehensive appearance diagnostics remain open |
 | Draw.io CSS colors | Partial | Common static CSS colors are converted to editable sRGB; adaptive/dynamic color preservation, wider color spaces and full appearance fidelity remain open |
 | Draw.io double ellipses | Partial | Import warns when a double ellipse is simplified to one outline; faithful outlines, label bounds and source-preserving save-back remain open |
+| Draw.io flowchart annotations | Partial | Annotation 1 brackets import as editable open-sided rectangles with a formatting warning; exact paths, labels, ports and stencil identity remain open |
 | Draw.io folders and floorplan stencils | Open | Supplied examples use folder tabs, bounded labels and nested containers as well as floorplan chairs. Ensure approximations report their appearance loss until faithful rendering and editing are implemented |
 | Draw.io label colors and transparency | Partial | Removed colors and fully transparent text are distinguished; editor contrast and visual-export warnings are improved. Independent text opacity, adaptive defaults and label backgrounds still require versioned model and renderer work |
 | Windows pen ink | Partial | Pen-first browser interruption mitigation is implemented; native Windows pen identity, ambiguous or touch-first streams and physical-device acceptance remain |

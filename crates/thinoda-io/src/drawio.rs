@@ -1393,6 +1393,8 @@ fn is_mockup_rectangle(style: &Style) -> bool {
     mockup_rectangle_stencil(style).is_some()
 }
 
+const FLOWCHART_ANNOTATION_1: &str = "mxgraph.flowchart.annotation_1";
+
 fn mockup_rectangle(style: &Style) -> Kind {
     use std::cmp::Ordering;
 
@@ -1492,6 +1494,9 @@ fn classify(style: &Style) -> Kind {
         | "mxgraph.flowchart.start_2"
         | "mxgraph.flowchart.on-page_reference" => symmetric(S::Ellipse),
         "doubleEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
+        FLOWCHART_ANNOTATION_1 if style.get("shape") == Some(FLOWCHART_ANNOTATION_1) => {
+            Kind::Approx(S::Rectangle, 0.0, false)
+        }
         "partialRectangle" => shape(S::Rectangle, 0.0),
         "mxgraph.basic.rect" | "mxgraph.bootstrap.rect" => symmetric(S::Rectangle),
         "mxgraph.bootstrap.rrect" => symmetric(S::RoundedRectangle),
@@ -1977,6 +1982,29 @@ impl<'a> PageImport<'a> {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
                         stencil,
                     });
+                }
+                if style.get("shape") == Some(FLOWCHART_ANNOTATION_1) {
+                    let has_area = frame.size.x > 0.0 && frame.size.y > 0.0;
+                    object.rectangle_sides = Some(RectangleSides {
+                        top: has_area,
+                        right: false,
+                        bottom: has_area,
+                        left: has_area,
+                    });
+                    object.style.fill = Some(Color::TRANSPARENT);
+                    let default_stroke =
+                        if style.suppress_defaults && style.get("strokeColor").is_none() {
+                            Color::TRANSPARENT
+                        } else {
+                            Color::BLACK
+                        };
+                    object.style.stroke = Some(
+                        style
+                            .color("strokeColor", "strokeOpacity")
+                            .unwrap_or_else(|| {
+                                style.color_with_opacity(default_stroke, "strokeOpacity")
+                            }),
+                    );
                 }
                 if style.shape() == "partialRectangle" {
                     object.rectangle_sides = Some(style.rectangle_sides());

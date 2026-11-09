@@ -2816,6 +2816,63 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_bracket_is_editable_and_undoable() {
+        use crate::app::Cmd;
+        use thinoda_core::{Color, RectangleSides};
+
+        let text = concat!(
+            r#"<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r##"<mxCell id="shape" vertex="1" parent="1" style="shape=mxgraph.flowchart.annotation_1;fillColor=#ff0000;strokeColor=#336699;"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        let object = &app.doc().unwrap().doc.sheet().canvas.objects[0];
+        let id = object.id;
+        let sides = RectangleSides {
+            top: true,
+            right: false,
+            bottom: true,
+            left: true,
+        };
+        assert_eq!(object.rectangle_sides, Some(sides));
+        assert_eq!(object.style.fill, Some(Color::TRANSPARENT));
+        assert_eq!(object.style.stroke, Some(Color::rgb(51, 102, 153)));
+        assert!(app.toasts.texts().any(|text| text
+            == crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
+        let pasted = app.doc().unwrap().doc.workbook().clone();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .update_canvas_object("Outline sides", id, |object| {
+                object.rectangle_sides.as_mut().unwrap().right = true;
+            })
+            .unwrap();
+        assert!(
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .rectangle_sides
+                .unwrap()
+                .right
+        );
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &pasted);
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_preserves_css_colors_and_undoes_paste() {
         use crate::app::Cmd;
         use thinoda_core::Color;

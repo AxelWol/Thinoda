@@ -326,6 +326,44 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
 }
 
 #[test]
+fn supplied_requirements_flow_keeps_its_annotation_brackets() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let path = dir.join("requirements-flow.drawio");
+    if !path.is_file() {
+        return;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
+    let sides = RectangleSides {
+        top: true,
+        right: false,
+        bottom: true,
+        left: true,
+    };
+    let brackets: Vec<_> = report
+        .workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| &sheet.canvas.objects)
+        .filter(|object| object.rectangle_sides == Some(sides))
+        .collect();
+    for (height, rotation) in [(660.0, 0.0), (480.0, 0.0), (480.0, 180.0)] {
+        let bracket = brackets
+            .iter()
+            .find(|object| {
+                object.rect.size == Vec2::new(50.0, height) && object.rotation == rotation
+            })
+            .expect("the supplied annotation bracket should remain editable");
+        assert_eq!(bracket.style.fill, Some(Color::TRANSPARENT));
+        assert_eq!(bracket.style.stroke, Some(Color::BLACK));
+        assert_eq!(bracket.style.stroke_width, 2.0);
+    }
+    report.workbook.validate().unwrap();
+}
+
+#[test]
 fn supplied_uml_activity_keeps_its_rgb_colors() {
     let Some(dir) = corpus_dir() else {
         return;

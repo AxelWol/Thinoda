@@ -202,6 +202,209 @@ fn simple_ellipse_and_flowchart_ellipse_stencils_do_not_gain_the_warning() {
 }
 
 #[test]
+fn flowchart_annotation_imports_as_an_editable_open_bracket() {
+    let xml = page(
+        r##"<mxCell id="a" value="Note" style="shape=mxgraph.flowchart.annotation_1;fillColor=#ff0000;strokeColor=#336699;strokeWidth=4;strokeOpacity=50;rotation=180;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="b" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##,
+    )
+    .replacen(
+        "<mxGraphModel>",
+        r#"<mxGraphModel adaptiveColors="none">"#,
+        1,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let sheet = &report.workbook.sheets[0];
+    let objects = shapes(sheet);
+    let bracket = objects[0];
+    assert!(matches!(
+        bracket.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Rectangle,
+            ..
+        }
+    ));
+    assert_eq!(bracket.label(), "Note");
+    assert_eq!(bracket.rect, rect(10.0, 20.0, 100.0, 60.0));
+    assert_eq!(bracket.rotation, 180.0);
+    assert_eq!(bracket.style.fill, Some(Color::TRANSPARENT));
+    assert_eq!(bracket.style.stroke, Some(Color::rgba(51, 102, 153, 128)));
+    assert_eq!(bracket.style.stroke_width, 4.0);
+    assert_eq!(
+        bracket.rectangle_sides,
+        Some(RectangleSides {
+            top: true,
+            right: false,
+            bottom: true,
+            left: true,
+        })
+    );
+    assert_eq!(connectors(sheet)[0].from, Endpoint::Object(bracket.id));
+    assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
+    report.workbook.validate().unwrap();
+    assert_eq!(crate::required_native_version(&report.workbook), 20);
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings))
+            if warnings == vec![ImportWarning::Formatting]
+    ));
+
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    assert_eq!(
+        crate::import_drawio_link(&link).unwrap().warnings,
+        report.warnings
+    );
+    assert_eq!(
+        crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+        report.warnings
+    );
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+    let drawio = export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let reopened = import(&drawio).unwrap();
+    let restored = shapes(&reopened.workbook.sheets[0])[0];
+    assert_eq!(restored.rectangle_sides, bracket.rectangle_sides);
+    assert_eq!(restored.rect, bracket.rect);
+    assert_eq!(restored.rotation, bracket.rotation);
+    assert_eq!(restored.style.fill, bracket.style.fill);
+    assert_eq!(restored.style.stroke, bracket.style.stroke);
+}
+
+#[test]
+fn flowchart_annotation_resolves_visible_and_removed_strokes() {
+    for (prefix, style, expected) in [
+        ("", "", Color::BLACK),
+        ("", "strokeOpacity=0;", Color::TRANSPARENT),
+        ("", "strokeColor=none;", Color::TRANSPARENT),
+        (
+            "",
+            "strokeColor=#abcdef;strokeOpacity=50;",
+            Color::rgba(171, 205, 239, 128),
+        ),
+        (";", "", Color::TRANSPARENT),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="{prefix}shape=mxgraph.flowchart.annotation_1;{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{prefix}{style}"
+        );
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(
+            object.style.fill,
+            Some(Color::TRANSPARENT),
+            "{prefix}{style}"
+        );
+        assert_eq!(object.style.stroke, Some(expected), "{prefix}{style}");
+    }
+}
+
+#[test]
+fn flowchart_annotation_identifier_is_not_a_named_style() {
+    let xml = page(
+        r#"<mxCell id="a" style="mxgraph.flowchart.annotation_1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].rectangle_sides, None);
+}
+
+#[test]
+fn collapsed_flowchart_annotations_do_not_gain_an_outline() {
+    for (width, height) in [(0, 60), (100, 0), (0, 0)] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" style="shape=mxgraph.flowchart.annotation_1;strokeColor=#336699;" vertex="1" parent="1"><mxGeometry width="{width}" height="{height}" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(
+            object.rectangle_sides,
+            Some(RectangleSides {
+                top: false,
+                right: false,
+                bottom: false,
+                left: false,
+            })
+        );
+        assert_eq!(object.style.stroke, Some(Color::rgb(51, 102, 153)));
+    }
+}
+
+#[test]
+fn flowchart_annotation_direction_preserves_the_drawio_bounds() {
+    for (direction, frame, rotation) in [
+        ("east", rect(10.0, 20.0, 100.0, 60.0), 0.0),
+        ("west", rect(10.0, 20.0, 100.0, 60.0), 180.0),
+        ("south", rect(30.0, 0.0, 60.0, 100.0), 90.0),
+        ("north", rect(30.0, 0.0, 60.0, 100.0), 270.0),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="shape=mxgraph.flowchart.annotation_1;direction={direction};" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.rect, frame, "{direction}");
+        assert_eq!(object.rotation, rotation, "{direction}");
+    }
+}
+
+#[test]
+fn flowchart_annotation_visual_exports_keep_the_open_side_and_transparent_interior() {
+    let options = ExportOptions {
+        transparent: true,
+        ..Default::default()
+    };
+    for rotation in [0, 180] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" style="shape=mxgraph.flowchart.annotation_1;fillColor=#ff0000;strokeColor=#336699;strokeWidth=4;rotation={rotation};" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        let book = load(&xml).workbook;
+        let svg = String::from_utf8(export_bytes(&book, Format::Svg, &options).unwrap()).unwrap();
+        assert!(!svg.contains("#FF0000"));
+        let view_box = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let values: Vec<f32> = view_box
+            .split_whitespace()
+            .map(|part| part.parse().unwrap())
+            .collect();
+        let png = export_bytes(&book, Format::Png, &options).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        let alpha = |x: f32, y: f32| {
+            pixels
+                .get_pixel(
+                    (x - values[0]).floor() as u32,
+                    (y - values[1]).floor() as u32,
+                )
+                .0[3]
+        };
+        assert!(alpha(60.0, 20.0) > 0, "{rotation}: missing top");
+        assert!(alpha(60.0, 80.0) > 0, "{rotation}: missing bottom");
+        let (closed, open) = if rotation == 0 {
+            (10.0, 110.0)
+        } else {
+            (110.0, 10.0)
+        };
+        assert!(alpha(closed, 50.0) > 0, "{rotation}: missing side");
+        assert_eq!(alpha(open, 50.0), 0, "{rotation}: side should be open");
+        assert_eq!(alpha(60.0, 50.0), 0, "{rotation}: unexpected fill");
+    }
+}
+
+#[test]
 fn removed_font_color_uses_the_drawio_default_across_board_items() {
     let xml = page(
         r##"<mxCell id="a" value="Shape" style="shape=rectangle;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="60" as="geometry"/></mxCell>
