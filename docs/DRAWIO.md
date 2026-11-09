@@ -200,10 +200,10 @@ Rules (each backed by a test):
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
-  oval markers, v17 adds half-circle markers, v18 adds bar markers, and v19 adds
-  adjustable rectangle corners; v20 adds rectangle outline sides. Every later
-  field or passthrough representation that a v20 reader cannot preserve must require a
-  higher native version, with
+  oval markers, v17 adds half-circle markers, v18 adds bar markers, v19 adds
+  adjustable rectangle corners, v20 adds rectangle outline sides, and v21 adds
+  double ellipses. Every later field or passthrough representation that a v21
+  reader cannot preserve must require a higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
   dropping data. Version sheet/board clipboard, recovery and private XMind
@@ -1809,6 +1809,33 @@ WebKit; the warning screenshots were inspected. Native, WebAssembly and fuzz
 Clippy passed with warnings denied. A 22-second Linux AddressSanitizer smoke
 completed 7,090 executions without a reported failure; it is not the separate
 30-minute-per-target acceptance campaign.
+
+**HTML-label whitespace disclosure (partial Phases 6, 9 and 11).** draw.io's
+HTML labels can collapse ordinary whitespace even though Thinoda retains it as
+editable plain text. Imports now warn about common cases of potentially
+collapsed leading, trailing, repeated, tab or newline whitespace, including
+runs split across inline elements and decoded character references. Single
+inter-word spaces and nonbreaking spaces do not warn by themselves. File, link
+and clipboard imports share the same warning and keep the original text.
+
+**Rubber-duck self-critique.** The published editor uses normal HTML whitespace
+layout for common labels; an offscreen browser probe confirmed that adjacent
+spans collapse a repeated space while nonbreaking spaces stay distinct. This is
+a conservative diagnostic, not an HTML/CSS renderer: it does not interpret
+`white-space` styles or automatic wrapping, and can warn for content whose CSS
+preserves whitespace. Other layout differences remain possible. Keep the
+source file until rich-text and source-preserving save-back are implemented.
+
+Validation passed 539 I/O tests (10 ignored), including chunk boundaries,
+non-HTML labels and deterministic mutations, and 909 app library tests (two
+ignored). All 88 supplied diagrams passed the corpus checks; none changed its
+number of warning kinds. The new browser regression failed against the previous
+build because no warning appeared. Both HTML-label journeys then passed in
+Chromium, Firefox and WebKit on the production build, and the warning
+screenshots were inspected. Native, WebAssembly and fuzz Clippy passed with
+warnings denied. A 21-second Linux AddressSanitizer smoke completed 8,994
+executions without a reported failure; the longer acceptance campaign remains
+open.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

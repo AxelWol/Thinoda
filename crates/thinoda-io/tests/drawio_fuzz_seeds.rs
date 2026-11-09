@@ -38,6 +38,7 @@ const FOLDED_NOTES: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/f
 const DOUBLE_ELLIPSE: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/double-ellipse");
 const LABEL_SIZES: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/label-sizes");
 const HTML_LABEL: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/html-label");
+const HTML_WHITESPACE: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/html-whitespace");
 const FLOWCHART_ANNOTATION: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/flowchart-annotation");
 const FLOWCHART_PROCESS: &[u8] =
@@ -69,6 +70,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         ("double ellipse", Format::DrawIo, DOUBLE_ELLIPSE),
         ("label sizes", Format::DrawIo, LABEL_SIZES),
         ("html label", Format::DrawIo, HTML_LABEL),
+        ("html whitespace", Format::DrawIo, HTML_WHITESPACE),
         ("flowchart annotation", Format::DrawIo, FLOWCHART_ANNOTATION),
         ("flowchart process", Format::DrawIo, FLOWCHART_PROCESS),
         ("warning", Format::DrawIo, WARNING),
@@ -110,6 +112,13 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
                 report.workbook.sheets[0].canvas.objects[0].label(),
                 "Alpha\n\u{a9} \u{2242}\u{338}\nEnd"
             );
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, report.warnings);
+        }
+        if name == "html whitespace" {
+            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            assert_eq!(report.workbook.sheets[0].canvas.objects[0].label(), "A  B");
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, report.warnings);

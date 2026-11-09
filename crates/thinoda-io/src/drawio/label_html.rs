@@ -19,6 +19,7 @@ struct LabelText {
 impl LabelText {
     fn block_boundary(&mut self, breaks: u8) {
         if !self.output.is_empty() && !self.output.ends_with('\n') {
+            self.formatting_loss |= self.output.ends_with(' ');
             self.pending_breaks = self.pending_breaks.max(breaks);
         }
     }
@@ -31,6 +32,7 @@ impl LabelText {
     }
 
     fn line_break(&mut self) {
+        self.formatting_loss |= self.output.ends_with(' ');
         self.flush_boundary();
         self.output.push('\n');
     }
@@ -44,14 +46,38 @@ impl LabelText {
         if text.is_empty() {
             return;
         }
-        self.flush_boundary();
-        if decode_references {
+        let text = if decode_references {
             self.formatting_loss |= unresolved_entity(&text);
-            self.output.push_str(&decode_entities(&text));
+            decode_entities(&text)
         } else {
-            self.output.push_str(&text);
+            text
+        };
+        let at_line_start =
+            self.pending_breaks > 0 || self.output.is_empty() || self.output.ends_with('\n');
+        let follows_space = self.pending_breaks == 0 && self.output.ends_with(' ');
+        self.formatting_loss |= collapsible_whitespace(&text, at_line_start, follows_space);
+        self.flush_boundary();
+        self.output.push_str(&text);
+    }
+}
+
+fn collapsible_whitespace(text: &str, mut at_line_start: bool, mut follows_space: bool) -> bool {
+    for byte in text.bytes() {
+        match byte {
+            b'\t' | b'\n' | b'\r' | b'\x0c' => return true,
+            b' ' => {
+                if at_line_start || follows_space {
+                    return true;
+                }
+                follows_space = true;
+            }
+            _ => {
+                at_line_start = false;
+                follows_space = false;
+            }
         }
     }
+    false
 }
 
 fn numeric_replacement(value: Option<u32>) -> Option<char> {
@@ -179,10 +205,14 @@ fn strip_html_with_limit(
     memory_limit: usize,
 ) -> String {
     if !text.contains('<') {
-        if unresolved_entity(text) {
+        let decoded = decode_entities(text);
+        if unresolved_entity(text)
+            || collapsible_whitespace(&decoded, true, false)
+            || decoded.ends_with(' ')
+        {
             warnings.insert(ImportWarning::Formatting);
         }
-        return decode_entities(text);
+        return decoded;
     }
 
     let result = Rc::new(RefCell::new(LabelText::default()));
@@ -270,7 +300,11 @@ fn strip_html_with_limit(
         return text.to_owned();
     }
     let mut result = result.borrow_mut();
-    if result.formatting_loss || result.open_blocks > 0 || result.hidden > 0 {
+    if result.formatting_loss
+        || result.open_blocks > 0
+        || result.hidden > 0
+        || result.output.ends_with(' ')
+    {
         warnings.insert(ImportWarning::Formatting);
     }
     std::mem::take(&mut result.output)

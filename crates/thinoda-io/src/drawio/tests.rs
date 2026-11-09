@@ -1160,6 +1160,23 @@ fn html_label_text_retains_visible_entities_and_block_boundaries() {
         ("&notit;", "&notit;", true),
         ("&unknown;", "&unknown;", false),
         ("1 < 2", "1 < 2", false),
+        ("A  B", "A  B", true),
+        (" A ", " A ", true),
+        ("A\nB", "A\nB", true),
+        ("A\tB", "A\tB", true),
+        ("A&#32;&#32;B", "A  B", true),
+        ("A&#10;B", "A\nB", true),
+        ("A&nbsp;&nbsp;B", "A\u{a0}\u{a0}B", false),
+        ("A&nbsp; B", "A\u{a0} B", false),
+        ("A <span>B</span>", "A B", false),
+        ("<span>A</span><span> B</span>", "A B", false),
+        ("A<span> </span><span></span>B", "A B", false),
+        ("A<span> </span><span> B</span>", "A  B", true),
+        ("A<div> B</div> C", "A\n B\n C", true),
+        ("A <br>B", "A \nB", true),
+        ("A<br> B", "A\n B", true),
+        ("<div> A</div>", " A", true),
+        ("<div>A </div><div>B</div>", "A \nB", true),
     ] {
         let mut warnings = BTreeSet::new();
         assert_eq!(strip_html(source, &mut warnings), expected, "{source}");
@@ -1169,6 +1186,30 @@ fn html_label_text_retains_visible_entities_and_block_boundaries() {
             "{source}: {warnings:?}"
         );
     }
+}
+
+#[test]
+fn html_whitespace_loss_is_reported_through_file_link_and_clipboard() {
+    let source = "A<span> </span><span> B</span>";
+    let xml = page(&format!(
+        r##"<mxCell id="a" value="{}" style="shape=rectangle;html=1;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+        esc(source)
+    ));
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), "A  B");
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings))
+            if warnings == vec![ImportWarning::Formatting]
+    ));
+
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert_eq!(pasted.warnings, report.warnings);
+    let linked = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&linked).unwrap();
+    assert_eq!(linked.warnings, report.warnings);
+    assert_eq!(linked.workbook, report.workbook);
 }
 
 #[test]
@@ -1198,14 +1239,27 @@ fn html_label_entities_remain_intact_across_parser_chunks() {
 }
 
 #[test]
+fn html_whitespace_spanning_parser_chunks_is_reported() {
+    let source = format!("<span>{}  B</span>", "a".repeat(16_377));
+    let mut warnings = BTreeSet::new();
+    assert_eq!(
+        strip_html(&source, &mut warnings),
+        format!("{}  B", "a".repeat(16_377))
+    );
+    assert_eq!(warnings, BTreeSet::from([ImportWarning::Formatting]));
+}
+
+#[test]
 fn non_html_labels_remain_literal() {
-    let source = "A &copy;<div>B</div>";
-    let xml = page(&format!(
-        r##"<mxCell id="a" value="{}" style="shape=rectangle;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
-        esc(source)
-    ));
-    let report = load(&xml);
-    assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), source);
+    for source in ["A &copy;<div>B</div>", " A  B "] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="{}" style="shape=rectangle;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+            esc(source)
+        ));
+        let report = load(&xml);
+        assert_eq!(shapes(&report.workbook.sheets[0])[0].label(), source);
+        assert!(!report.warnings.contains(&ImportWarning::Formatting));
+    }
 }
 
 #[test]
