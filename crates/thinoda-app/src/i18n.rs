@@ -696,6 +696,10 @@ const DE: &[(&str, &str)] = &[
         "Zum Neuverbinden ziehen; auf einem Kreuz oder mit Umschalt auf einer Form oder einem Thema ablegen, um den Verbindungspunkt zu fixieren. Eingabe schaltet die Fixierung um; Pfeiltasten verschieben einen festen Punkt, Strg+Pfeiltasten wechseln das Ziel (Befehlstaste auf macOS), Pos1/Ende wechseln sichtbare Verbindungspunkte.",
     ),
     (
+        "Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.",
+        "Beim Ablegen Umschalt für einen festen Verbindungspunkt oder Alt für einen freien Punkt halten; Alt+Umschalt verbindet ohne Fixierung.",
+    ),
+    (
         "No visible connection points on this target.",
         "An diesem Ziel sind keine Verbindungspunkte sichtbar.",
     ),
@@ -4864,6 +4868,7 @@ mod tests {
             "To",
             "Fixed attachment",
             "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.",
+            "Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.",
             "No visible connection points on this target.",
             "Fixed connector ports require a shape or topic.",
             "Fixed connector port exceeds supported limits.",

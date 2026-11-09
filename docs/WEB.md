@@ -121,8 +121,10 @@ and unsupported fill values trigger a formatting warning. Supported fixed
 connector points, offsets and perimeter settings are retained on attached
 shapes and topics. Hover a rectangle, rounded rectangle, ellipse, diamond or
 rectangular topic to reveal connection crosses; drag from or drop onto a cross
-to fix the attachment. Shift-drag also fixes an arbitrary endpoint. Enter or
-Space toggles a focused endpoint; Home/End cycle visible default points.
+to fix the attachment. Hold Shift while connecting to fix an arbitrary point,
+Alt to leave a free point without grid snapping, or Alt+Shift to attach without
+fixing. Enter or Space toggles a focused endpoint; Home/End cycle visible default
+points.
 Unsupported constraints and possible position differences are reported. Export
 requires consent if a fixed point may move or if an unexported collapsed topic
 detaches it.

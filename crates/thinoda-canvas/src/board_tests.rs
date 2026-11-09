@@ -2672,6 +2672,13 @@ fn fixed_connector_attachment_shift_drag_uses_release_modifiers_and_undo() {
             .unwrap()
             .contains("Shift-drag")
     );
+    assert!(
+        h.get_by_label("Connector To, Fixed attachment")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Alt+Shift")
+    );
     let fixed = h.state().doc.workbook().clone();
     assert!(h.state_mut().doc.undo());
     assert_eq!(h.state().doc.workbook(), &original);
@@ -3279,6 +3286,677 @@ fn quick_arrow_and_outline_drops_can_fix_the_destination() {
     assert_eq!(connector(&h, edge).from, Endpoint::Object(source));
     assert_eq!(connector(&h, edge).from_port, None);
     assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connector_drop_modifiers_apply_to_every_creation_gesture() {
+    let shift_alt = Modifiers {
+        shift: true,
+        alt: true,
+        ..Modifiers::NONE
+    };
+    for gesture in ["cross", "tool", "arrow", "outline"] {
+        for (modifiers, at_cross) in [
+            (Modifiers::NONE, true),
+            (Modifiers::SHIFT, false),
+            (Modifiers::ALT, true),
+            (shift_alt, true),
+        ] {
+            let mut sheet = board();
+            sheet.board.snap = true;
+            let source = shape(&mut sheet, 0.0, 0.0, "Source");
+            let target = shape(&mut sheet, 300.0, 250.0, "Target");
+            let mut h = harness(sheet);
+            if gesture == "tool" {
+                set_tool(&mut h, BoardTool::Connector);
+            } else if gesture == "arrow" {
+                select_shape_at(&mut h, Vec2::ZERO);
+            }
+            let before = h.state().doc.workbook().clone();
+            let start = match gesture {
+                "cross" | "tool" => point(&h, Vec2::new(60.0, 0.0)),
+                "arrow" => arrow_center(&h, "Add connected shape to the right"),
+                "outline" => point(&h, Vec2::new(67.0, 0.0)),
+                _ => unreachable!(),
+            };
+            let target_point = if at_cross {
+                Vec2::new(241.25, 251.5)
+            } else {
+                Vec2::new(307.0, 257.0)
+            };
+            let end = point(&h, target_point);
+            drag(&mut h, start, end);
+            h.event(egui::Event::ModifiersChanged(modifiers));
+            h.run_steps(1);
+            if modifiers.alt {
+                assert!(
+                    !h.state().view.board_input.connection_hot,
+                    "{gesture}, {modifiers:?}"
+                );
+            }
+            finish_alt_drag(&mut h, end, modifiers);
+            let [edge] = connectors(h.state().doc.sheet())[..] else {
+                panic!("expected one connector: {gesture}, {modifiers:?}");
+            };
+            let connector = connector(&h, edge);
+            assert_eq!(connector.from, Endpoint::Object(source));
+            assert_eq!(
+                connector.from_port,
+                if matches!(gesture, "cross" | "tool") {
+                    default_port(1.0, 0.5)
+                } else {
+                    None
+                },
+                "{gesture}, {modifiers:?}"
+            );
+            if modifiers.alt && !modifiers.shift {
+                assert_eq!(
+                    connector.to,
+                    Endpoint::Point(target_point),
+                    "{gesture}, {modifiers:?}"
+                );
+                assert_eq!(connector.to_port, None);
+            } else {
+                assert_eq!(connector.to, Endpoint::Object(target));
+                if modifiers.alt {
+                    assert_eq!(connector.to_port, None);
+                } else if at_cross {
+                    assert_eq!(connector.to_port, default_port(0.0, 0.5));
+                } else {
+                    let port = connector.to_port.unwrap();
+                    assert!((port.position.x - (67.0 / 120.0)).abs() < 0.001);
+                    assert!((port.position.y - (47.0 / 80.0)).abs() < 0.001);
+                    assert!(!port.perimeter);
+                }
+            }
+            let after = h.state().doc.workbook().clone();
+            assert!(h.state_mut().doc.undo());
+            assert_eq!(h.state().doc.workbook(), &before);
+            assert!(h.state_mut().doc.redo());
+            assert_eq!(h.state().doc.workbook(), &after);
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
+fn connector_endpoint_alt_drop_uses_release_modifiers_and_clears_the_fixed_port() {
+    for start in [true, false] {
+        let mut sheet = board();
+        sheet.board.snap = true;
+        let original_target = shape(&mut sheet, -200.0, 0.0, "Original");
+        shape(&mut sheet, 300.0, 250.0, "Target");
+        let mut initial = CanvasConnector::new(
+            Endpoint::Object(original_target),
+            Endpoint::Point(Vec2::ZERO),
+        );
+        initial.from_port = default_port(1.0, 0.5);
+        if !start {
+            std::mem::swap(&mut initial.from, &mut initial.to);
+            std::mem::swap(&mut initial.from_port, &mut initial.to_port);
+        }
+        let edge = sheet
+            .add_canvas_object(CanvasObject::connector(initial))
+            .unwrap();
+        let mut h = harness(sheet);
+        h.state_mut().view.board_selection = vec![edge];
+        h.run_steps(3);
+        let before = h.state().doc.workbook().clone();
+        let handle = h
+            .get_by_label(if start {
+                "Connector From, Fixed attachment"
+            } else {
+                "Connector To, Fixed attachment"
+            })
+            .rect()
+            .center();
+        let position = Vec2::new(241.25, 251.5);
+        let end = point(&h, position);
+        drag(&mut h, handle, end);
+        finish_alt_drag(&mut h, end, Modifiers::ALT);
+        let connector = connector(&h, edge);
+        let (endpoint, port) = if start {
+            (connector.from, connector.from_port)
+        } else {
+            (connector.to, connector.to_port)
+        };
+        assert_eq!(endpoint, Endpoint::Point(position));
+        assert_eq!(port, None);
+        let after = h.state().doc.workbook().clone();
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state_mut().doc.redo());
+        assert_eq!(h.state().doc.workbook(), &after);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn connector_click_click_uses_modifiers_on_each_endpoint() {
+    let shift_alt = Modifiers {
+        shift: true,
+        alt: true,
+        ..Modifiers::NONE
+    };
+    for (first, last) in [
+        (Modifiers::NONE, Modifiers::ALT),
+        (Modifiers::NONE, Modifiers::SHIFT),
+        (Modifiers::NONE, shift_alt),
+        (Modifiers::ALT, Modifiers::NONE),
+    ] {
+        let mut sheet = board();
+        sheet.board.snap = true;
+        let source = shape(&mut sheet, -250.0, 0.0, "Source");
+        let target = shape(&mut sheet, 200.0, 100.0, "Target");
+        let mut h = harness(sheet);
+        set_tool(&mut h, BoardTool::Connector);
+        let before = h.state().doc.workbook().clone();
+        let source_point = Vec2::new(-188.75, 1.5);
+        let target_point = if last == Modifiers::SHIFT {
+            Vec2::new(207.0, 107.0)
+        } else {
+            Vec2::new(141.25, 101.5)
+        };
+        let start = point(&h, source_point);
+        let end = point(&h, target_point);
+        click(&mut h, start, first);
+        click(&mut h, end, last);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected one connector: {first:?}, {last:?}");
+        };
+        let connector = connector(&h, edge);
+        if first.alt {
+            assert_eq!(connector.from, Endpoint::Point(source_point));
+            assert_eq!(connector.from_port, None);
+        } else {
+            assert_eq!(connector.from, Endpoint::Object(source));
+            assert_eq!(connector.from_port, default_port(1.0, 0.5));
+        }
+        if last.alt && !last.shift {
+            assert_eq!(connector.to, Endpoint::Point(target_point));
+            assert_eq!(connector.to_port, None);
+        } else {
+            assert_eq!(connector.to, Endpoint::Object(target));
+            if last.alt {
+                assert_eq!(connector.to_port, None);
+            } else if last.shift {
+                let port = connector.to_port.unwrap();
+                assert!((port.position.x - (67.0 / 120.0)).abs() < 0.001);
+                assert!((port.position.y - (47.0 / 80.0)).abs() < 0.001);
+                assert!(!port.perimeter);
+            } else {
+                assert_eq!(connector.to_port, default_port(0.0, 0.5));
+            }
+        }
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn shift_connector_drop_fixes_points_on_central_and_floating_topics() {
+    for central in [true, false] {
+        let mut sheet = if central {
+            Sheet::new("Map", "Central")
+        } else {
+            board()
+        };
+        let target = if central {
+            sheet.root
+        } else {
+            sheet.add_floating("Floating", Vec2::ZERO)
+        };
+        sheet.topic_mut(target).unwrap().style.shape = Some(thinoda_core::TopicShape::Rect);
+        let source = shape(&mut sheet, 300.0, 200.0, "Source");
+        let mut h = harness(sheet);
+        let before = h.state().doc.workbook().clone();
+        let target_rect = h.state().view.cache.as_ref().unwrap().layout.topics[&target].rect;
+        let start = point(&h, Vec2::new(240.0, 200.0));
+        let end = point(&h, target_rect.center());
+        drag(&mut h, start, end);
+        finish_alt_drag(&mut h, end, Modifiers::SHIFT);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected a connector, central: {central}");
+        };
+        let connector = connector(&h, edge);
+        assert_eq!(connector.from, Endpoint::Object(source));
+        assert_eq!(connector.to, Endpoint::Topic(target));
+        let port = connector.to_port.unwrap();
+        assert!((port.position.x - 0.5).abs() < 0.001);
+        assert!((port.position.y - 0.5).abs() < 0.001);
+        assert!(!port.perimeter);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn alt_shift_connector_drop_on_empty_space_remains_unsnapped() {
+    let modifiers = Modifiers {
+        alt: true,
+        shift: true,
+        ..Modifiers::NONE
+    };
+    let mut sheet = board();
+    sheet.board.snap = true;
+    shape(&mut sheet, -200.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    let start = point(&h, Vec2::new(-140.0, 0.0));
+    let position = Vec2::new(173.25, 117.5);
+    let end = point(&h, position);
+    drag(&mut h, start, end);
+    finish_alt_drag(&mut h, end, modifiers);
+    let [edge] = connectors(h.state().doc.sheet())[..] else {
+        panic!("expected one connector");
+    };
+    assert_eq!(connector(&h, edge).to, Endpoint::Point(position));
+    assert_eq!(connector(&h, edge).to_port, None);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connection_cross_source_is_latched_before_alt_is_pressed() {
+    for tool in [BoardTool::Select, BoardTool::Connector] {
+        let mut sheet = board();
+        let source = shape(&mut sheet, 0.0, 0.0, "Source");
+        shape(&mut sheet, 300.0, 250.0, "Target");
+        let mut h = harness(sheet);
+        set_tool(&mut h, tool);
+        let start = point(&h, Vec2::new(60.0, 0.0));
+        let end = point(&h, Vec2::new(241.25, 251.5));
+        h.hover_at(start);
+        h.drag_at(start);
+        h.run_steps(1);
+        h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
+        h.hover_at(start + (end - start) * 0.5);
+        h.run_steps(2);
+        h.hover_at(end);
+        h.run_steps(2);
+        finish_alt_drag(&mut h, end, Modifiers::ALT);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected connector, not duplicate: {tool:?}");
+        };
+        assert_eq!(connector(&h, edge).from, Endpoint::Object(source));
+        assert_eq!(connector(&h, edge).from_port, default_port(1.0, 0.5));
+        assert_eq!(
+            connector(&h, edge).to,
+            Endpoint::Point(Vec2::new(241.25, 251.5))
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn connection_cross_alt_press_stays_a_duplicate_if_alt_is_released_before_moving() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    let cross = point(&h, Vec2::new(60.0, 0.0));
+    let end = cross + vec2(150.0, 80.0);
+    h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
+    h.hover_at(cross);
+    h.event(egui::Event::PointerButton {
+        pos: cross,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::ALT,
+    });
+    h.run_steps(1);
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.hover_at(cross + (end - cross) * 0.5);
+    h.run_steps(2);
+    h.hover_at(end);
+    h.run_steps(2);
+    finish_drag(&mut h, end);
+    assert!(connectors(h.state().doc.sheet()).is_empty());
+    let [copy] = h.state().view.board_selection[..] else {
+        panic!("expected a selected duplicate");
+    };
+    assert_ne!(copy, source);
+    assert!(h.state().doc.sheet().canvas.object(copy).is_some());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn alt_drag_from_projected_shape_connection_points_duplicates() {
+    for kind in [
+        ShapeKind::RoundedRectangle,
+        ShapeKind::Ellipse,
+        ShapeKind::Diamond,
+    ] {
+        let mut sheet = board();
+        let object = CanvasObject::shape(
+            kind,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        let port = default_port(0.0, 0.0).unwrap();
+        let cross = thinoda_core::scene::fixed_connector_port_position(
+            object.rect,
+            object.rotation,
+            Some((kind, object.rounding)),
+            port,
+        );
+        let source = sheet.add_canvas_object(object).unwrap();
+        let mut h = harness(sheet);
+        let start = point(&h, cross);
+        let end = start + vec2(160.0, 120.0);
+        begin_alt_drag(&mut h, start, end);
+        finish_alt_drag(&mut h, end, Modifiers::ALT);
+        assert!(connectors(h.state().doc.sheet()).is_empty(), "{kind:?}");
+        let [copy] = h.state().view.board_selection[..] else {
+            panic!("expected a selected duplicate: {kind:?}");
+        };
+        assert_ne!(copy, source);
+        assert!(h.state().doc.sheet().canvas.object(copy).is_some());
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn connector_tool_uses_press_modifiers_for_the_drag_source() {
+    for modifier in [Modifiers::ALT, Modifiers::SHIFT] {
+        let mut sheet = board();
+        sheet.board.snap = true;
+        let source = shape(&mut sheet, -250.0, 0.0, "Source");
+        let target = shape(&mut sheet, 200.0, 100.0, "Target");
+        let mut h = harness(sheet);
+        set_tool(&mut h, BoardTool::Connector);
+        let source_point = if modifier.alt {
+            Vec2::new(-188.75, 1.5)
+        } else {
+            Vec2::new(-243.0, 7.0)
+        };
+        let start = point(&h, source_point);
+        let end = point(&h, Vec2::new(140.0, 100.0));
+        h.event(egui::Event::ModifiersChanged(modifier));
+        h.hover_at(start);
+        h.event(egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: modifier,
+        });
+        h.run_steps(1);
+        h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+        h.hover_at(start + (end - start) * 0.5);
+        h.run_steps(2);
+        h.hover_at(end);
+        h.run_steps(2);
+        finish_drag(&mut h, end);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected connector: {modifier:?}");
+        };
+        let connector = connector(&h, edge);
+        if modifier.alt {
+            assert_eq!(connector.from, Endpoint::Point(source_point));
+            assert_eq!(connector.from_port, None);
+        } else {
+            assert_eq!(connector.from, Endpoint::Object(source));
+            let port = connector.from_port.unwrap();
+            assert!((port.position.x - (67.0 / 120.0)).abs() < 0.001);
+            assert!((port.position.y - (47.0 / 80.0)).abs() < 0.001);
+            assert!(!port.perimeter);
+        }
+        assert_eq!(connector.to, Endpoint::Object(target));
+        assert_eq!(connector.to_port, default_port(0.0, 0.5));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn connector_drop_follows_the_release_modifiers_after_the_last_move() {
+    for (hover_modifiers, release_modifiers) in [
+        (Modifiers::ALT, Modifiers::NONE),
+        (Modifiers::NONE, Modifiers::ALT),
+    ] {
+        let mut sheet = board();
+        sheet.board.snap = true;
+        shape(&mut sheet, -250.0, 0.0, "Source");
+        let target = shape(&mut sheet, 200.0, 100.0, "Target");
+        let mut h = harness(sheet);
+        let start = point(&h, Vec2::new(-190.0, 0.0));
+        let end_point = Vec2::new(141.25, 101.5);
+        let end = point(&h, end_point);
+        drag(&mut h, start, end);
+        h.event(egui::Event::ModifiersChanged(hover_modifiers));
+        h.run_steps(2);
+        finish_alt_drag(&mut h, end, release_modifiers);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected one connector");
+        };
+        let connector = connector(&h, edge);
+        if release_modifiers.alt {
+            assert_eq!(connector.to, Endpoint::Point(end_point));
+            assert_eq!(connector.to_port, None);
+        } else {
+            assert_eq!(connector.to, Endpoint::Object(target));
+            assert_eq!(connector.to_port, default_port(0.0, 0.5));
+        }
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn alt_connector_drops_over_an_overlay_are_canceled() {
+    let mut sheet = board();
+    shape(&mut sheet, -200.0, 0.0, "Source");
+    shape(&mut sheet, 200.0, 0.0, "Target");
+    let probe = harness(sheet.clone());
+    let target = point(&probe, Vec2::new(140.0, 0.0));
+    let overlay = Rect::from_center_size(target, vec2(80.0, 80.0));
+    for tool in [BoardTool::Select, BoardTool::Connector] {
+        let mut h = harness_with_overlay(sheet.clone(), Some(overlay));
+        set_tool(&mut h, tool);
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, Vec2::new(-140.0, 0.0));
+        let end = point(&h, Vec2::new(140.0, 0.0));
+        drag(&mut h, start, end);
+        finish_alt_drag(&mut h, end, Modifiers::ALT);
+        assert_eq!(h.state().doc.workbook(), &before, "{tool:?}");
+        assert!(!h.state().doc.can_undo());
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn connector_click_alt_over_an_overlay_does_not_finish_the_pending_edge() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, -200.0, 0.0, "Source");
+    let target = shape(&mut sheet, 200.0, 0.0, "Target");
+    let probe = harness(sheet.clone());
+    let covered = point(&probe, Vec2::new(140.0, 0.0));
+    let overlay = Rect::from_center_size(covered, vec2(80.0, 80.0));
+    let mut h = harness_with_overlay(sheet, Some(overlay));
+    set_tool(&mut h, BoardTool::Connector);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-140.0, 0.0));
+    let end = point(&h, Vec2::new(140.0, 0.0));
+    click(&mut h, start, Modifiers::NONE);
+    click(&mut h, end, Modifiers::ALT);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    let other_end = point(&h, Vec2::new(200.0, -40.0));
+    click(&mut h, other_end, Modifiers::NONE);
+    let [edge] = connectors(h.state().doc.sheet())[..] else {
+        panic!("expected the pending edge to remain usable");
+    };
+    assert_eq!(connector(&h, edge).from, Endpoint::Object(source));
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn shift_connector_drop_on_an_unsupported_target_reports_an_error() {
+    let mut sheet = board();
+    shape(&mut sheet, -250.0, 0.0, "Source");
+    sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(100.0, 200.0)),
+            Endpoint::Point(Vec2::new(300.0, 200.0)),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-190.0, 0.0));
+    let end = point(&h, Vec2::new(200.0, 200.0));
+    drag(&mut h, start, end);
+    finish_alt_drag(&mut h, end, Modifiers::SHIFT);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert_eq!(h.state().errors.len(), 1);
+    assert!(
+        h.state().errors[0]
+            .to_string()
+            .contains("fixed connector ports require a shape or topic")
+    );
+}
+
+#[test]
+fn command_alt_arrow_drop_only_clones_over_empty_space() {
+    let command_alt = Modifiers {
+        alt: true,
+        ..Modifiers::COMMAND
+    };
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Source");
+    shape(&mut sheet, 300.0, 250.0, "Target");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let before = h.state().doc.workbook().clone();
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    let target = Vec2::new(241.25, 251.5);
+    let end = point(&h, target);
+    drag(&mut h, arrow, end);
+    finish_alt_drag(&mut h, end, command_alt);
+    let [edge] = connectors(h.state().doc.sheet())[..] else {
+        panic!("expected a connector, not a clone");
+    };
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 3);
+    assert_eq!(connector(&h, edge).from, Endpoint::Object(source));
+    assert_eq!(connector(&h, edge).to, Endpoint::Point(target));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.run_steps(30);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    let empty = point(&h, Vec2::new(320.0, -260.0));
+    drag(&mut h, arrow, empty);
+    finish_alt_drag(&mut h, empty, command_alt);
+    let [clone] = h.state().view.board_selection[..] else {
+        panic!("expected one selected clone");
+    };
+    assert_ne!(clone, source);
+    let [edge] = connectors(h.state().doc.sheet())[..] else {
+        panic!("expected one connected clone");
+    };
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(clone));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn command_alt_arrow_does_not_clone_over_a_projected_cross() {
+    let modifiers = Modifiers {
+        alt: true,
+        ..Modifiers::COMMAND
+    };
+    let mut sheet = board();
+    let source = shape(&mut sheet, -200.0, -100.0, "Source");
+    let target = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        thinoda_core::Rect::from_center_size(Vec2::new(200.0, 100.0), Vec2::new(120.0, 80.0)),
+    );
+    let position = thinoda_core::scene::fixed_connector_port_position(
+        target.rect,
+        target.rotation,
+        Some((ShapeKind::RoundedRectangle, target.rounding)),
+        default_port(0.0, 0.0).unwrap(),
+    );
+    sheet.add_canvas_object(target).unwrap();
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::new(-200.0, -100.0));
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    let end = point(&h, position);
+    drag(&mut h, arrow, end);
+    finish_alt_drag(&mut h, end, modifiers);
+    let [edge] = connectors(h.state().doc.sheet())[..] else {
+        panic!("expected one free-ended connector");
+    };
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 3);
+    assert_eq!(connector(&h, edge).from, Endpoint::Object(source));
+    assert_eq!(connector(&h, edge).to, Endpoint::Point(position));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn arrow_drop_preview_follows_modifier_and_clone_precedence() {
+    fn clone_preview(h: &Harness<'_, State>, center: Vec2) -> bool {
+        let expected = [
+            center + Vec2::new(-60.0, -40.0),
+            center + Vec2::new(60.0, -40.0),
+            center + Vec2::new(60.0, 40.0),
+            center + Vec2::new(-60.0, 40.0),
+        ];
+        h.output().shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Path(path)
+                if path.closed
+                && path.points.len() == expected.len()
+                && expected.iter().all(|corner| path.points.iter()
+                    .any(|vertex| vertex.distance(point(h, *corner)) < 0.1)))
+        })
+    }
+
+    let command_alt = Modifiers {
+        alt: true,
+        ..Modifiers::COMMAND
+    };
+    let shift_alt = Modifiers {
+        shift: true,
+        alt: true,
+        ..Modifiers::NONE
+    };
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Source");
+    shape(&mut sheet, 300.0, 250.0, "Target");
+    let mut h = harness(sheet);
+    select_shape_at(&mut h, Vec2::ZERO);
+    let arrow = arrow_center(&h, "Add connected shape to the right");
+    let target = Vec2::new(241.25, 251.5);
+    let end = point(&h, target);
+    drag(&mut h, arrow, end);
+    let highlight = Rect::from_min_max(
+        point(&h, Vec2::new(240.0, 210.0)),
+        point(&h, Vec2::new(360.0, 290.0)),
+    )
+    .expand(3.0);
+    let highlighted = |h: &Harness<'_, State>| {
+        h.output()
+            .shapes
+            .iter()
+            .any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.rect == highlight))
+    };
+    assert!(highlighted(&h));
+
+    h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
+    h.run_steps(2);
+    assert!(!highlighted(&h));
+    h.event(egui::Event::ModifiersChanged(shift_alt));
+    h.run_steps(2);
+    assert!(highlighted(&h));
+    h.event(egui::Event::ModifiersChanged(command_alt));
+    h.run_steps(2);
+    assert!(!highlighted(&h));
+    assert!(!clone_preview(&h, target));
+
+    let empty = Vec2::new(323.0, -263.0);
+    let empty_screen = point(&h, empty);
+    h.hover_at(empty_screen);
+    h.run_steps(2);
+    assert!(clone_preview(&h, empty));
+    finish_alt_drag(&mut h, empty_screen, command_alt);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
@@ -6697,6 +7375,13 @@ fn direction_arrow_modifiers_clone_only_or_connect_only() {
     let before = h.state().doc.workbook().clone();
 
     let arrow = arrow_center(&h, "Add connected shape below");
+    assert!(
+        h.get_by_label("Add connected shape below")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Alt+Shift")
+    );
     click(&mut h, arrow, Modifiers::COMMAND);
     let sheet = h.state().doc.sheet().clone();
     assert_eq!(sheet.canvas.objects.len(), 2);

@@ -59,6 +59,7 @@ Fixed connector attachments detached|Pontos de conexão fixos desconectados
 Fixed connector positions may differ in draw.io|A posição dos pontos de conexão fixos pode ser diferente no draw.io
 Fixed attachment|Ponto de conexão fixo
 Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.|Arraste para reconectar; solte em uma cruz ou arraste com Shift sobre uma forma ou tópico para fixar o ponto. Enter alterna a fixação; as setas movem um ponto fixo, Ctrl+setas mudam o destino (Command no macOS) e Início/Fim percorre os pontos de conexão visíveis.
+Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.|Segure Shift ao soltar para fixar a conexão ou Alt para deixar um ponto livre; Alt+Shift conecta sem fixar.
 No visible connection points on this target.|Não há pontos de conexão visíveis neste destino.
 Fixed connector ports require a shape or topic.|Pontos de conexão fixos exigem uma forma ou um tópico.
 Fixed connector port exceeds supported limits.|O ponto de conexão fixo ultrapassa os limites permitidos.

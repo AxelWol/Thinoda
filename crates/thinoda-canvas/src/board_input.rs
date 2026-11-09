@@ -18,6 +18,7 @@ pub(super) struct State {
     pub(super) label: Option<LabelEdit>,
     gesture: Option<Gesture>,
     creation_press: Option<CreationPress>,
+    primary_press: Option<(Pos2, Modifiers)>,
     connector: Option<PendingConnector>,
     rotation_pivot: Option<RotationPivot>,
     last_tool: BoardTool,
@@ -88,6 +89,7 @@ impl State {
         self.suppress_until_release |= self.gesture.is_some() || self.creation_press.is_some();
         self.gesture = None;
         self.creation_press = None;
+        self.primary_press = None;
         self.connector = None;
     }
 
@@ -883,11 +885,26 @@ fn attachment_at(
     point: Vec2,
     zoom: f32,
     except: Option<CanvasObjectId>,
-) -> ConnectorAttachment {
-    connection_point_at(sheet, layout, scene, point, zoom, except).map_or_else(
-        || ConnectorAttachment::floating(endpoint_at(sheet, scene, point, except)),
-        |point| point.attachment,
-    )
+    modifiers: Modifiers,
+) -> EditResult<(ConnectorAttachment, Vec2)> {
+    if modifiers.alt && !modifiers.shift {
+        return Ok((ConnectorAttachment::floating(Endpoint::Point(point)), point));
+    }
+    if !modifiers.alt
+        && let Some(point) = connection_point_at(sheet, layout, scene, point, zoom, except)
+    {
+        return Ok((point.attachment, point.position));
+    }
+    let mut endpoint = endpoint_at(sheet, scene, point, except);
+    if modifiers.alt && matches!(endpoint, Endpoint::Point(_)) {
+        endpoint = Endpoint::Point(point);
+    }
+    let port = if modifiers.shift && !modifiers.alt {
+        fixed_port_at(sheet, scene, endpoint, point, None)?
+    } else {
+        None
+    };
+    Ok((ConnectorAttachment { endpoint, port }, point))
 }
 
 fn connection_point_at(
@@ -1263,7 +1280,7 @@ fn creation_input(
     press: &mut CreationPress,
     started_here: bool,
     event_offset: usize,
-) -> (Option<Pos2>, bool) {
+) -> (Option<(Pos2, Modifiers)>, bool) {
     let threshold = ctx.options(|options| options.input_options.max_click_dist);
     ctx.input(|input| {
         let mut started = !started_here;
@@ -1313,10 +1330,10 @@ fn creation_input(
                     pos,
                     button: PointerButton::Primary,
                     pressed: false,
-                    ..
+                    modifiers,
                 } if started && released.is_none() => {
                     press.moved |= press.screen_origin.distance(*pos) > threshold;
-                    released = Some(*pos);
+                    released = Some((*pos, *modifiers));
                 }
                 egui::Event::PointerMoved(pos) if started && released.is_none() => {
                     press.moved |= press.screen_origin.distance(*pos) > threshold;
@@ -2312,9 +2329,32 @@ fn arrow_drop(
         return Ok(false);
     }
     let from = Endpoint::Object(source);
-    let target = attachment_at(doc.sheet(), layout, scene, point, view.zoom, Some(source));
+    let (target, _) = attachment_at(
+        doc.sheet(),
+        layout,
+        scene,
+        point,
+        view.zoom,
+        Some(source),
+        modifiers,
+    )?;
+    let occupied =
+        if modifiers.command && modifiers.alt && matches!(target.endpoint, Endpoint::Point(_)) {
+            let (unmodified, _) = attachment_at(
+                doc.sheet(),
+                layout,
+                scene,
+                point,
+                view.zoom,
+                Some(source),
+                Modifiers::NONE,
+            )?;
+            !matches!(unmodified.endpoint, Endpoint::Point(_))
+        } else {
+            false
+        };
     match target.endpoint {
-        Endpoint::Point(center) if modifiers.command => {
+        Endpoint::Point(center) if modifiers.command && !occupied => {
             let (id, _) = doc.add_connected_canvas_object(
                 arrow_clone(&object, center),
                 CanvasConnector::new(from, Endpoint::Point(center)),
@@ -3130,6 +3170,10 @@ fn interact_controls(
             ui.ctx().accesskit_node_builder(response.id, |node| {
                 node.set_description(hint.as_str());
             });
+        } else if matches!(control.kind, ControlKind::Arrow(_)) {
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_description(view.board_labels.connect_hint.as_str());
+            });
         }
         if let ControlKind::Arrow(dir) = control.kind
             && let SceneId::Object(source) = control.item
@@ -3465,15 +3509,24 @@ fn update_gesture(
                     from,
                 } => {
                     if tool == BoardTool::Connector {
-                        let to =
-                            attachment_at(doc.sheet(), layout, scene, current, view.zoom, None);
-                        create(
-                            doc,
-                            view,
-                            tool,
-                            thinoda_core::Rect::default(),
-                            Some((from, to)),
+                        attachment_at(
+                            doc.sheet(),
+                            layout,
+                            scene,
+                            current,
+                            view.zoom,
+                            None,
+                            release_modifiers,
                         )
+                        .and_then(|(to, _)| {
+                            create(
+                                doc,
+                                view,
+                                tool,
+                                thinoda_core::Rect::default(),
+                                Some((from, to)),
+                            )
+                        })
                     } else {
                         let minimum = if tool == BoardTool::Frame {
                             thinoda_core::MIN_ZONE_SIZE
@@ -3525,19 +3578,17 @@ fn update_gesture(
                         set_rotation(doc, item, preview).map(|()| true)
                     }
                 }
-                GestureKind::Endpoint { id, start, point } => {
-                    let target =
-                        attachment_at(doc.sheet(), layout, scene, point, view.zoom, Some(id));
-                    let port = if target.port.is_some() {
-                        Ok(target.port)
-                    } else if release_modifiers.shift {
-                        fixed_port_at(doc.sheet(), scene, target.endpoint, point, None)
-                    } else {
-                        Ok(None)
-                    };
-                    port.and_then(|port| set_endpoint(doc, id, start, target.endpoint, port))
-                        .map(|()| true)
-                }
+                GestureKind::Endpoint { id, start, point } => attachment_at(
+                    doc.sheet(),
+                    layout,
+                    scene,
+                    point,
+                    view.zoom,
+                    Some(id),
+                    release_modifiers,
+                )
+                .and_then(|(target, _)| set_endpoint(doc, id, start, target.endpoint, target.port))
+                .map(|()| true),
                 GestureKind::Waypoint {
                     id,
                     index,
@@ -3558,11 +3609,10 @@ fn update_gesture(
                     current,
                     ..
                 } => {
-                    let modifiers = ctx.input(|input| input.modifiers);
                     if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
-                        arrow_drop(doc, view, layout, scene, source, current, modifiers)
+                        arrow_drop(doc, view, layout, scene, source, current, release_modifiers)
                     } else {
-                        let mode = ArrowMode::from_modifiers(modifiers);
+                        let mode = ArrowMode::from_modifiers(release_modifiers);
                         arrow_click(doc, view, scene, source, dir, mode)
                     }
                 }
@@ -3570,8 +3620,7 @@ fn update_gesture(
                     source, current, ..
                 } => {
                     if (current - drag.origin).length() * view.zoom >= ARROW_DRAG {
-                        let modifiers = ctx.input(|input| input.modifiers);
-                        arrow_drop(doc, view, layout, scene, source, current, modifiers)
+                        arrow_drop(doc, view, layout, scene, source, current, release_modifiers)
                     } else {
                         Ok(false)
                     }
@@ -3625,6 +3674,21 @@ pub(super) fn interact(
         view.board_input.cancel_gesture();
         close_quick(&ctx, view);
         view.board_input.last_tool = view.board_tool;
+    }
+    if let Some(press) = ctx.input(|input| {
+        input.events[event_offset..]
+            .iter()
+            .find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                } => Some((*pos, *modifiers)),
+                _ => None,
+            })
+    }) {
+        view.board_input.primary_press = Some(press);
     }
     if view.board_input.connector.as_ref().is_some_and(|pending| {
         pending.sheet != doc.active_index()
@@ -3696,7 +3760,10 @@ pub(super) fn interact(
         }
         _ => None,
     };
-    if enabled && connecting && view.board_input.quick.is_none() {
+    let ignoring_points = ctx.input(|input| input.modifiers.alt)
+        && (view.board_tool == BoardTool::Connector
+            || (connecting && view.board_input.gesture.is_some()));
+    if enabled && connecting && !ignoring_points && view.board_input.quick.is_none() {
         view.board_input.connection_hover = pointer
             .filter(|point| canvas_point_unobscured(ui, response, *point))
             .and_then(|point| {
@@ -3852,9 +3919,17 @@ pub(super) fn interact(
                 .or_else(|| press.as_ref().map(|press| press.screen_origin));
             if let Some(origin) = origin
                 && canvas_point_unobscured(ui, response, origin)
-                && released.is_none_or(|point| canvas_point_unobscured(ui, response, point))
+                && released.is_none_or(|(point, _)| canvas_point_unobscured(ui, response, point))
                 && prepare_edit(doc, view, out)
             {
+                let modifiers = view
+                    .board_input
+                    .primary_press
+                    .filter(|(point, _)| point.distance(origin) <= 1.0)
+                    .map_or_else(
+                        || ctx.input(|input| input.modifiers),
+                        |(_, modifiers)| modifiers,
+                    );
                 let origin = view.xf().sheet(origin);
                 let (from, start) = if tool != BoardTool::Connector {
                     (
@@ -3863,20 +3938,22 @@ pub(super) fn interact(
                     )
                 } else if let Some(pending) = &view.board_input.connector {
                     (pending.from, pending.point)
-                } else if let Some(point) =
-                    connection_point_at(doc.sheet(), layout, scene, origin, view.zoom, None)
-                {
-                    (point.attachment, point.position)
                 } else {
-                    (
-                        ConnectorAttachment::floating(endpoint_at(
-                            doc.sheet(),
-                            scene,
-                            origin,
-                            None,
-                        )),
+                    match attachment_at(
+                        doc.sheet(),
+                        layout,
+                        scene,
                         origin,
-                    )
+                        view.zoom,
+                        None,
+                        modifiers,
+                    ) {
+                        Ok(attachment) => attachment,
+                        Err(error) => {
+                            out.error = Some(error);
+                            return true;
+                        }
+                    }
                 };
                 let kind = GestureKind::Create {
                     tool,
@@ -3900,35 +3977,45 @@ pub(super) fn interact(
             }
         } else if response.clicked()
             && (pressed_origin.is_none() || view.board_input.creation_press.is_some())
-            && released.is_none_or(|point| canvas_point_unobscured(ui, response, point))
+            && released.is_none_or(|(point, _)| canvas_point_unobscured(ui, response, point))
             && let Some(point) = response.interact_pointer_pos()
             && prepare_edit(doc, view, out)
         {
             let point = view.xf().sheet(point);
             let result = if tool == BoardTool::Connector {
-                let fixed = connection_point_at(doc.sheet(), layout, scene, point, view.zoom, None);
-                let end = fixed.map_or_else(
-                    || ConnectorAttachment::floating(endpoint_at(doc.sheet(), scene, point, None)),
-                    |fixed| fixed.attachment,
+                let modifiers = released.map_or_else(
+                    || ctx.input(|input| input.modifiers),
+                    |(_, modifiers)| modifiers,
                 );
-                if let Some(pending) = view.board_input.connector.take() {
-                    create(
-                        doc,
-                        view,
-                        tool,
-                        thinoda_core::Rect::default(),
-                        Some((pending.from, end)),
-                    )
-                } else {
-                    view.board_input.connector = Some(PendingConnector {
-                        from: end,
-                        point: fixed.map_or(point, |fixed| fixed.position),
-                        state: doc.state_id(),
-                        sheet: doc.active_index(),
-                        sheet_identity: sheet_identity(doc),
-                    });
-                    Ok(false)
-                }
+                attachment_at(
+                    doc.sheet(),
+                    layout,
+                    scene,
+                    point,
+                    view.zoom,
+                    None,
+                    modifiers,
+                )
+                .and_then(|(end, position)| {
+                    if let Some(pending) = view.board_input.connector.take() {
+                        create(
+                            doc,
+                            view,
+                            tool,
+                            thinoda_core::Rect::default(),
+                            Some((pending.from, end)),
+                        )
+                    } else {
+                        view.board_input.connector = Some(PendingConnector {
+                            from: end,
+                            point: position,
+                            state: doc.state_id(),
+                            sheet: doc.active_index(),
+                            sheet_identity: sheet_identity(doc),
+                        });
+                        Ok(false)
+                    }
+                })
             } else {
                 create_at(doc, view, tool, point)
             };
@@ -3950,7 +4037,15 @@ pub(super) fn interact(
             .input(|input| input.pointer.press_origin())
             .unwrap_or_default();
         let point = view.xf().sheet(origin);
-        if !ctx.input(|input| input.modifiers.alt)
+        let modifiers = view
+            .board_input
+            .primary_press
+            .filter(|(point, _)| point.distance(origin) <= 1.0)
+            .map_or_else(
+                || ctx.input(|input| input.modifiers),
+                |(_, modifiers)| modifiers,
+            );
+        if !modifiers.alt
             && canvas_point_unobscured(ui, response, origin)
             && let Some(source) =
                 connection_point_at(doc.sheet(), layout, scene, point, view.zoom, None)
@@ -3979,12 +4074,22 @@ pub(super) fn interact(
             );
             return true;
         }
-        let hit = scene.hit_test(point);
+        let hit = if modifiers.alt && canvas_point_unobscured(ui, response, origin) {
+            connection_point_at(doc.sheet(), layout, scene, point, view.zoom, None).and_then(
+                |source| match source.attachment.endpoint {
+                    Endpoint::Topic(id) => Some(SceneHit::Topic(id)),
+                    Endpoint::Object(id) => Some(SceneHit::Object(id)),
+                    Endpoint::Point(_) => None,
+                },
+            )
+        } else {
+            None
+        }
+        .or_else(|| scene.hit_test(point));
         let board_hit = hit.filter(|hit| match *hit {
             SceneHit::Object(_) => true,
             SceneHit::Topic(id) => is_board_topic(doc.sheet(), view, id),
         });
-        let modifiers = ctx.input(|input| input.modifiers);
         if hit.is_none()
             && let Some(source) = outline_source(doc.sheet(), scene, view, point)
         {
@@ -5116,15 +5221,26 @@ pub(super) fn paint(
                 6.0,
                 4.0,
             ));
-            let target = scene
-                .hit_test(*current)
-                .filter(|hit| *hit != SceneHit::Object(*source))
-                .and_then(|hit| {
-                    scene.item(match hit {
-                        SceneHit::Topic(id) => SceneId::Topic(id),
-                        SceneHit::Object(id) => SceneId::Object(id),
-                    })
-                });
+            let modifiers = painter.ctx().input(|input| input.modifiers);
+            let body = endpoint_at(sheet, scene, *current, Some(*source));
+            let occupied = if modifiers.command || !modifiers.alt {
+                connection_point_at(sheet, layout, scene, *current, xf.zoom, Some(*source))
+                    .map_or(body, |point| point.attachment.endpoint)
+            } else {
+                body
+            };
+            let preview = if modifiers.alt && !modifiers.shift {
+                Endpoint::Point(*current)
+            } else if modifiers.alt {
+                body
+            } else {
+                occupied
+            };
+            let target = match preview {
+                Endpoint::Topic(id) => scene.item(SceneId::Topic(id)),
+                Endpoint::Object(id) => scene.item(SceneId::Object(id)),
+                Endpoint::Point(_) => None,
+            };
             if let Some(item) = target {
                 painter.rect_stroke(
                     xf.rect(item.bounds).expand(3.0),
@@ -5132,11 +5248,16 @@ pub(super) fn paint(
                     stroke,
                     StrokeKind::Outside,
                 );
-            } else if painter.ctx().input(|input| input.modifiers.command)
+            } else if modifiers.command
+                && matches!(occupied, Endpoint::Point(_))
                 && let Some(object) = sheet.canvas.object(*source)
             {
                 let rect = thinoda_core::Rect::from_center_size(
-                    snapped(sheet, *current),
+                    if modifiers.alt {
+                        *current
+                    } else {
+                        snapped(sheet, *current)
+                    },
                     object.rect.size,
                 );
                 painter.add(egui::Shape::closed_line(

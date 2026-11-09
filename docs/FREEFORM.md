@@ -54,8 +54,15 @@ to reveal connection crosses. Drag from a cross to start a connector, or drop
 an endpoint, Connector-tool drag, direction arrow or outline drag on one to fix
 the attachment. The Connector tool also supports clicking a source and then a
 destination. Dropping on a body away from a cross leaves a floating attachment;
-Shift-dragging an endpoint onto a shape or topic fixes an arbitrary position.
-A focused endpoint can be fixed or reset with Enter or Space; arrow keys adjust
+holding Shift while connecting to a shape or topic fixes an arbitrary position.
+Hold Alt while dropping to ignore targets and grid snapping, leaving a free
+point; Alt+Shift ignores crosses but keeps a floating attachment to the body.
+These modifiers apply to endpoint handles, Connector-tool clicks and drags,
+direction arrows and outline drags. An Alt-drag started on a shape or its cross
+still duplicates the shape; press Alt after starting a connector to leave its
+destination free. Ctrl/Command+Alt-drag from an arrow clones only over empty
+space, not over an ignored target. A focused endpoint can be fixed or reset with
+Enter or Space; arrow keys adjust
 a fixed point, Ctrl+arrows (Command+arrows on macOS) cycle targets, and Home/End
 cycle visible default points on supported targets. Alt+arrows still duplicate
 the selection. Moving a projected point with an arrow pins its visible

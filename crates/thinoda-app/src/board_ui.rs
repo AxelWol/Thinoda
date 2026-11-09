@@ -502,7 +502,16 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.from = t("From").into();
     labels.to = t("To").into();
     labels.fixed_attachment = t("Fixed attachment").into();
-    labels.connector_end_hint = t("Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points.").into();
+    let connector_drop_hint = t(
+        "Hold Shift while dropping to fix the attachment, or Alt for a free point; Alt+Shift attaches without fixing.",
+    );
+    labels.connector_end_hint = format!(
+        "{} {}",
+        t(
+            "Drag to reconnect; drop on a cross or Shift-drag onto a shape or topic to fix the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS), Home/End cycle visible connection points."
+        ),
+        connector_drop_hint
+    );
     labels.free_point = t("Free point").into();
     labels.resize = t("Resize board item").into();
     labels.rotate = t("Rotate board item").into();
@@ -516,7 +525,13 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.connect_right = t("Add connected shape to the right").into();
     labels.connect_down = t("Add connected shape below").into();
     labels.connect_left = t("Add connected shape to the left").into();
-    labels.connect_hint = t("Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS.").into();
+    labels.connect_hint = format!(
+        "{} {}",
+        t(
+            "Click adds a connected copy; Ctrl+click adds only a copy; Shift+click adds only a connector. Drag to connect to another item; Ctrl+drag drops a connected copy. Use Command on macOS."
+        ),
+        connector_drop_hint
+    );
     labels.quick_hint =
         t("Hold an arrow, or press Shift+F10 on a focused arrow, to choose the shape.").into();
     labels.label_editor = t("Board object label").into();

@@ -13,6 +13,7 @@ module.exports = defineConfig({
         "board-toolbar.browser.spec.ts",
         "board-workflows.browser.spec.ts",
         "drawio-background.browser.spec.ts",
+        "drawio-connector-modifiers.browser.spec.ts",
         "drawio-grid.browser.spec.ts",
         "drawio-html.browser.spec.ts",
         "drawio-link.browser.spec.ts",

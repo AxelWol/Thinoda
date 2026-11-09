@@ -353,8 +353,9 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   on hover over any shape while dragging an end (built-ins: 4/8/16 default points per
   shape kind; stencils: `<constraint>`s). The current partial implementation exposes
   16 points for rectangles, rounded rectangles and rectangular topics, and eight
-  for ellipses and diamonds. Points can start or terminate a connector; Shift-drag
-  still fixes arbitrary positions, and focused endpoints support keyboard editing.
+  for ellipses and diamonds. Points can start or terminate a connector; Shift
+  fixes arbitrary positions, Alt drops a free point and Alt+Shift attaches
+  without fixing, and focused endpoints support keyboard editing.
   Other built-in shapes, named ports and stencil constraints remain planned.
 - **Direction arrows on hover** (light-blue ↑→↓←): click = clone + connect in that
   direction (respecting spacing/grid, avoiding overlaps); drag = draw connector, drop on a
@@ -433,8 +434,9 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   tags). Advanced: "draw.io style" text field, validated on apply, writes through the
   ownership table (3.1.1).
 - **Connectors**: waypoint handles (drag to add/move, double-click remove); fixed
-  attachments use Shift-drag or Enter/Space today. Explicit named/default ports
-  on hover and Tab between ports remain planned.
+  attachments use Shift or Enter/Space today. The supported default connection
+  points can also be cycled with Home/End. Named ports, other default point sets
+  and Tab between individual ports remain planned.
 - **Layers panel**: compact side panel (View menu + board toolbar), visibility/lock,
   rename, reorder, move selection to layer; hidden when only the default layer exists.
 - **Clipboard**: copy also as draw.io XML; paste of draw.io XML / compressed payloads /
@@ -2753,13 +2755,51 @@ Shape resize and rotate handles retain priority over crosses, and Alt-drag
 still duplicates a shape when started on a cross. Connector creation, endpoint,
 quick-arrow and outline drags cancel when released over an obscuring control.
 Self-connections keep the existing routing, which is not yet draw.io's
-outside-loop routing; Alt-drop and custom triangle, cloud and stencil
-constraints are not claimed as parity.
+outside-loop routing; custom triangle, cloud and stencil constraints are not
+claimed as parity.
 Only the verified shape families above expose crosses, and non-rectangular topic
 perimeters remain unsupported. The markers use continuous canvas coordinates,
 not the published editor's screen-pixel rounding. Native formats and clipboard
 versions do not change in this slice. Physical touch and screen-reader review,
 advanced routing and the other release gates remain open.
+
+**Connector drop modifiers (partial Phase 8) — critique.** In the published
+editor, dropping an endpoint or a connector from a cross on a target body with
+Shift produced a fixed, non-perimeter point. Alt ignored both the target and
+grid snapping; Alt+Shift ignored its connection crosses but attached to the
+target without a fixed point. Thinoda now applies those distinctions to endpoint
+handles, cross-started connectors, Connector-tool drag and click-click
+creation, quick-arrow drops and outline drops. Normal cross drops still use the
+shape's default perimeter point, and body drops without modifiers remain
+floating. Connector-tool sources use the modifiers on press for drags and on
+release for clicks. Connection crosses and quick-arrow target/clone previews
+reflect the active modifiers.
+
+**Rubber-duck findings and remaining scope.** Alt must be latched at the
+initial shape press for the existing duplicate gesture: otherwise pressing it
+before the drag threshold turns a connector into a duplicate, or releasing it
+turns a duplicate into a connector. Projected crosses on rounded or curved
+shapes can lie outside the painted body, so Alt-press resolves the cross's
+target before considering an outline drag. Destination modifiers instead come
+from the actual release event, even when keyboard state changes in the same frame.
+This intentionally differs from the tested published editor, which retained
+the modifiers from its last pointer move. Ctrl/Command+Alt over an ignored
+target must not accidentally create a clone: the arrow action checks the
+unmodified hit separately, while Ctrl/Command+Alt over genuinely empty space
+still creates the existing connected clone. Modifier-based drops under an
+obscuring control cancel, and undo/redo restore the exact connector and port.
+Alt+Shift on empty space remains a free, unsnapped point. These are tested
+interaction rules, not a claim that every draw.io modifier combination,
+platform shortcut, custom port, or physical touch/screen-reader experience
+has been verified.
+
+After the final code edits, the four affected Rust library suites passed
+2,097 tests with four ignored. The supplied corpus suite passed 13 tests and
+processed all 88 diagrams with no failures. A production web build passed nine
+mouse-and-keyboard journeys across Chromium, Firefox and WebKit, checking saved
+fixed, floating and unsnapped endpoints as well as undo/redo. Native workspace
+and WebAssembly Clippy, formatting and a Windows build also passed. These
+automated checks do not replace physical-device or screen-reader acceptance.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
