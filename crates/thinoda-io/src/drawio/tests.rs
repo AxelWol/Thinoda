@@ -119,6 +119,89 @@ fn ordinary_drawio_note_alignment_is_imported() {
 }
 
 #[test]
+fn double_ellipse_import_reports_the_missing_inner_outline() {
+    let xml = page(
+        r##"<mxCell id="a" value="End" style="shape=doubleEllipse;fillColor=#ffffcc;strokeColor=#123456;strokeWidth=2;rotation=30;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="b" value="Next" style="ellipse;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##,
+    )
+    .replacen(
+        "<mxGraphModel>",
+        r#"<mxGraphModel adaptiveColors="none">"#,
+        1,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let sheet = &report.workbook.sheets[0];
+    let objects = shapes(sheet);
+    assert_eq!(objects.len(), 2);
+    assert!(matches!(
+        objects[0].kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Ellipse,
+            ..
+        }
+    ));
+    assert_eq!(objects[0].label(), "End");
+    assert_eq!(objects[0].rect, rect(10.0, 20.0, 100.0, 60.0));
+    assert_eq!(objects[0].rotation, 30.0);
+    assert_eq!(objects[0].style.fill, Some(Color::rgb(255, 255, 204)));
+    assert_eq!(objects[0].style.stroke, Some(Color::rgb(18, 52, 86)));
+    assert_eq!(objects[0].style.stroke_width, 2.0);
+    assert_eq!(connectors(sheet)[0].from, Endpoint::Object(objects[0].id));
+    assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
+    report.workbook.validate().unwrap();
+
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings))
+            if warnings == vec![ImportWarning::Formatting]
+    ));
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.warnings, report.warnings);
+    assert_eq!(linked.workbook, report.workbook);
+    assert_eq!(
+        crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+        report.warnings
+    );
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
+fn simple_ellipse_and_flowchart_ellipse_stencils_do_not_gain_the_warning() {
+    for shape in [
+        "ellipse",
+        "mxgraph.flowchart.start_1",
+        "mxgraph.flowchart.start_2",
+        "mxgraph.flowchart.on-page_reference",
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="Start" style="shape={shape};fillColor=#fff;strokeColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ))
+        .replacen(
+            "<mxGraphModel>",
+            r#"<mxGraphModel adaptiveColors="none">"#,
+            1,
+        );
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{shape}: {:?}", report.warnings);
+        assert!(matches!(
+            shapes(&report.workbook.sheets[0])[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Ellipse,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
 fn removed_font_color_uses_the_drawio_default_across_board_items() {
     let xml = page(
         r##"<mxCell id="a" value="Shape" style="shape=rectangle;fontColor=none;textOpacity=40;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="60" as="geometry"/></mxCell>
@@ -4220,6 +4303,7 @@ fn shaped_containers_report_their_frame_approximation() {
         "shape=partialRectangle;container=1;left=0;",
         "shape=folder;container=1;tabWidth=80;tabHeight=20;",
         "shape=ellipse;container=1;",
+        "shape=doubleEllipse;container=1;",
         "swimlane;shape=folder;container=1;",
     ] {
         let xml = page(&format!(

@@ -747,6 +747,8 @@ those system-owned controls. WinGet publishing remains paused.
   values. Adaptive colors can be flattened and inherited colors can fall back
   to Thinoda defaults; the warning does not imply that all unsupported
   appearance is detected.
+  Double ellipses import as editable single ellipses with a formatting warning;
+  their inner outline and exact label bounds are not preserved.
   Unsupported content can prevent export. Editable image export is not Save As
   or lossless save-back.
   Import also recognizes legacy URI- or base64-encoded SVG diagrams and older

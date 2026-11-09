@@ -744,6 +744,33 @@ test("draw.io paste warns about unresolved shape appearance", async ({ page }, t
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io paste warns when a double ellipse is simplified", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" value="End" style="shape=doubleEllipse;">',
+        '<mxGeometry width="100" height="60" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-double-ellipse-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-double-ellipse-warning.png") });
+    const after = archive(await saveAs(page, "drawio-double-ellipse-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape).toMatchObject({ shape: "ellipse", label: "End" });
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-double-ellipse-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("draw.io paste preserves CSS colors and can be undone", async ({ page }) => {
     const text = [
         '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',

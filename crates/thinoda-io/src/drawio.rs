@@ -1488,10 +1488,10 @@ fn classify(style: &Style) -> Kind {
         "line" => Kind::Line,
         "image" => Kind::Image,
         "ellipse"
-        | "doubleEllipse"
         | "mxgraph.flowchart.start_1"
         | "mxgraph.flowchart.start_2"
         | "mxgraph.flowchart.on-page_reference" => symmetric(S::Ellipse),
+        "doubleEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
         "partialRectangle" => shape(S::Rectangle, 0.0),
         "mxgraph.basic.rect" | "mxgraph.bootstrap.rect" => symmetric(S::Rectangle),
         "mxgraph.bootstrap.rrect" => symmetric(S::RoundedRectangle),

@@ -2775,6 +2775,47 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_reports_double_ellipse_approximation_and_undoes_paste() {
+        use crate::app::Cmd;
+        use thinoda_core::{CanvasObjectKind, ShapeKind};
+
+        let text = concat!(
+            r#"<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="shape" vertex="1" parent="1" value="End" style="shape=doubleEllipse;"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        let object = app
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .objects
+            .first()
+            .unwrap();
+        assert!(matches!(
+            object.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Ellipse,
+                ..
+            }
+        ));
+        assert_eq!(object.label(), "End");
+        assert!(app.toasts.texts().any(|text| text
+            == crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_preserves_css_colors_and_undoes_paste() {
         use crate::app::Cmd;
         use thinoda_core::Color;

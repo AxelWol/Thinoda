@@ -128,6 +128,9 @@ or stroke width is invalid or outside the supported range. Adaptive colors can
 be flattened and inherited colors can fall back to Thinoda defaults. Other
 appearance losses may still go unreported.
 
+Double ellipses import as editable single ellipses with a formatting warning;
+their inner outline and exact label bounds are not preserved.
+
 Opening editable images also accepts older URI- or base64-encoded SVG diagrams
 and older PNG diagram metadata. Ordinary PNG drops still add an image; a
 `.drawio.png` drop opens the embedded diagram instead.

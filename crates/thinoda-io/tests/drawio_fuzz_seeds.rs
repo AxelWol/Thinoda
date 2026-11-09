@@ -31,6 +31,7 @@ const OUT_OF_RANGE_POINTS: &[u8] =
 const APPEARANCE_COLORS: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/appearance-colors");
 const CSS_COLORS: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/css-colors");
+const DOUBLE_ELLIPSE: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/double-ellipse");
 
 #[test]
 fn document_seeds_reach_their_importers_and_native_roundtrip() {
@@ -48,6 +49,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         ("out-of-range points", Format::DrawIo, OUT_OF_RANGE_POINTS),
         ("appearance colors", Format::DrawIo, APPEARANCE_COLORS),
         ("css colors", Format::DrawIo, CSS_COLORS),
+        ("double ellipse", Format::DrawIo, DOUBLE_ELLIPSE),
         ("warning", Format::DrawIo, WARNING),
         ("compressed", Format::DrawIo, COMPRESSED),
         ("svg", Format::DrawIo, SVG),
@@ -160,6 +162,21 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
                 Some(thinoda_core::Color::rgb(1, 2, 3))
             );
             assert_eq!(objects[2].style.fill, None);
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, report.warnings);
+        }
+        if name == "double ellipse" {
+            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            let objects = &report.workbook.sheets[0].canvas.objects;
+            assert_eq!(objects.len(), 1);
+            assert!(matches!(
+                objects[0].kind,
+                thinoda_core::CanvasObjectKind::Shape {
+                    shape: thinoda_core::ShapeKind::Ellipse,
+                    ..
+                }
+            ));
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, report.warnings);

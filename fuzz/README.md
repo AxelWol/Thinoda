@@ -54,8 +54,10 @@ point seed checks that usable connector and ink points survive alongside a
 warning. An appearance-colors seed exercises adaptive and inherited colors and
 an out-of-range stroke width through document and clipboard imports. A
 CSS-colors seed exercises RGB/RGBA, named and four-digit hex colors, nested
-adaptive colors, and nonfinite hue through the same paths. Its PNG
-seed is the original editor-exported fixture already used by the importer tests.
+adaptive colors, and nonfinite hue through the same paths. A double-ellipse
+seed checks that the missing inner outline is reported on document and
+clipboard import. The target's PNG seed is the original editor-exported
+fixture already used by the importer tests.
 On successful imports, including reports with conversion
 warnings, each target checks validation and an exact round-trip through
 Thinoda's native format. This in-memory check does not bypass the application's

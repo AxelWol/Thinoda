@@ -1362,6 +1362,35 @@ colors in dark mode, and is not comprehensively detected for ordinary shapes.
 Real system clipboards, physical accessibility acceptance, renderer parity and
 source-preserving save-back remain open.
 
+**Double-ellipse disclosure and rubber-duck review (partial Phases 6, 9 and 13).**
+The published [double-ellipse renderer](https://raw.githubusercontent.com/jgraph/drawio/c72c9a98b7a6ce392556ed04c05e0ff19f43f5c3/src/main/webapp/mxgraph/src/shape/mxDoubleEllipse.js)
+draws an inset inner outline and uses inset label bounds. Thinoda still imports
+the shape as an editable single ellipse, but now reports a Formatting warning
+instead of silently implying a faithful conversion. Frame, rotation, colors,
+label and supported connector attachments remain editable. A double-ellipse
+container instead becomes a frame and follows the existing container-loss
+warning. Simple ellipses and three verified flowchart ellipse stencils do not
+gain this warning.
+
+The review checked that the warning reaches strict file import, published
+links and clipboard conversion; the strict importer requires confirmation.
+An app regression checks the localized simplification notice and undo, while
+browser screenshots show the notice during synthetic paste. The warning is
+generic, not cell-specific, and formatting-only paste notices are temporary.
+It is conservative even when the missing inner outline would not be visible.
+The original double-ellipse identity and label inset are not stored in the
+converted workbook, so keep the original file. Faithful rendering, editing,
+exports and source-preserving save-back remain open.
+
+Validation passed 119 draw.io library tests, six supplied-corpus tests, six
+deterministic fuzz-seed tests and 16 app clipboard tests. Separate tests checked
+strict confirmation, geometry and shaped containers. The synthetic paste and
+undo journey passed in Chromium, Firefox and WebKit. Formatting and native,
+WebAssembly and fuzz Clippy passed with warnings denied. A 22-second Linux
+AddressSanitizer smoke completed 9,223 executions without a reported failure;
+the separate 30-minute acceptance campaign and real system clipboard and
+accessibility acceptance remain open.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop
