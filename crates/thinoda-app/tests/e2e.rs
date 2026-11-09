@@ -71,7 +71,7 @@ fn rich_sheet() -> thinoda_core::Sheet {
 }
 
 #[test]
-fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
+fn sheet_clipboard_payload_pastes_once_with_undo() {
     let mut source = ThinodaApp::headless();
     let ctx = egui::Context::default();
     let sheet = rich_sheet();
@@ -84,14 +84,7 @@ fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
     let source_state = source.doc().unwrap().doc.state_id();
     source.exec(&ctx, Cmd::CopySheet);
     assert_eq!(source.doc().unwrap().doc.state_id(), source_state);
-    let payload = ctx
-        .output(|output| {
-            output.commands.iter().find_map(|command| match command {
-                egui::OutputCommand::CopyText(text) => Some(text.clone()),
-                _ => None,
-            })
-        })
-        .unwrap();
+    let payload = thinoda_core::clipboard::encode_sheet(source.doc().unwrap().doc.sheet()).unwrap();
     let mut target = harness(ThinodaApp::headless());
     let before = target.state().doc().unwrap().doc.workbook().clone();
     let ctx = target.ctx.clone();
@@ -128,7 +121,7 @@ fn sheet_context_menu_exposes_complete_clipboard_and_separate_save_actions() {
     menu_action(&h, "New Sheet");
     h.get_by_role_and_label(Role::Button, "Copy Sheet").click();
     h.run_steps(3);
-    h.get_by_label("Copied sheet to clipboard");
+    h.get_by_label("Copied sheet and SVG to clipboard");
     assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
 }
 

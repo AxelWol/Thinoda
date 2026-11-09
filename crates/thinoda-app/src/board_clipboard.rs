@@ -1939,15 +1939,21 @@ mod tests {
                 .texts()
                 .any(|text| { text.contains(crate::i18n::t("Copied sheet and SVG to clipboard")) })
         );
-        app.exec(&ctx, Cmd::PasteSheet);
+        let mut target = crate::app::ThinodaApp::headless();
+        let before = target.doc().unwrap().doc.workbook().clone();
+        target.exec(&ctx, Cmd::PasteSheet);
         let input = egui::RawInput {
             events: vec![egui::Event::Paste(text)],
             ..Default::default()
         };
-        ctx.run_ui(input, |ui| app.handle_sheet_paste(ui.ctx()))
+        ctx.run_ui(input, |ui| target.handle_sheet_paste(ui.ctx()))
             .drop_without_applying_deltas();
-        assert_eq!(app.doc().unwrap().doc.workbook().sheets.len(), 2);
-        assert_eq!(app.doc().unwrap().doc.sheet(), &original);
+        assert_eq!(target.doc().unwrap().doc.workbook().sheets.len(), 2);
+        assert_eq!(target.doc().unwrap().doc.sheet(), &original);
+        target.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(target.doc().unwrap().doc.workbook(), &before);
+        target.exec(&ctx, Cmd::Canvas(Action::Redo));
+        assert_eq!(target.doc().unwrap().doc.sheet(), &original);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
