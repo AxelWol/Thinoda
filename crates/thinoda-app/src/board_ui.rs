@@ -200,6 +200,7 @@ impl ShapeChange {
                     if *shape != kind {
                         object.rounding = None;
                         object.rectangle_sides = None;
+                        object.double_ellipse_margin = None;
                     }
                     *shape = kind;
                 }
@@ -447,6 +448,7 @@ pub(crate) fn shape_name(shape: ShapeKind) -> &'static str {
         ShapeKind::Rectangle => "Rectangle",
         ShapeKind::RoundedRectangle => "Rounded rectangle",
         ShapeKind::Ellipse => "Ellipse",
+        ShapeKind::DoubleEllipse => "Double ellipse",
         ShapeKind::Diamond => "Diamond",
         ShapeKind::Triangle => "Triangle",
         ShapeKind::RightTriangle => "Right triangle",
@@ -1524,6 +1526,7 @@ impl ThinodaApp {
                     if *shape != previous_shape {
                         edited.rounding = None;
                         edited.rectangle_sides = None;
+                        edited.double_ellipse_margin = None;
                     }
                     if let Some(rounding) = &mut edited.rounding {
                         let response = widgets::property_field(ui, t("Corner radius"), |ui| {
@@ -1559,6 +1562,30 @@ impl ThinodaApp {
                             edited.rectangle_sides = Some(sides);
                         }
                         widgets::caption(ui, t("Sides rotate with the shape."));
+                    }
+                    if *shape == ShapeKind::DoubleEllipse {
+                        let mut automatic = edited.double_ellipse_margin.is_none();
+                        if ui
+                            .checkbox(&mut automatic, t("Automatic inner inset"))
+                            .changed()
+                        {
+                            edited.double_ellipse_margin = (!automatic).then(|| {
+                                thinoda_core::board::double_ellipse_inset(
+                                    edited.rect,
+                                    edited.style.effective_shape_stroke_width(),
+                                    None,
+                                )
+                            });
+                        }
+                        if let Some(inset) = &mut edited.double_ellipse_margin {
+                            widgets::property_field(ui, t("Inner outline inset"), |ui| {
+                                ui.add(
+                                    egui::DragValue::new(inset)
+                                        .range(0.0..=MAX_BOARD_COORDINATE)
+                                        .speed(0.5),
+                                )
+                            });
+                        }
                     }
                     optional_color(ui, "Fill", &mut edited.style.fill, Color::WHITE);
                     optional_color(ui, "Stroke", &mut edited.style.stroke, Color::BLACK);
@@ -1665,6 +1692,7 @@ impl ThinodaApp {
                         current.style = edited.style;
                         current.rounding = edited.rounding;
                         current.rectangle_sides = edited.rectangle_sides;
+                        current.double_ellipse_margin = edited.double_ellipse_margin;
                         match (&mut current.kind, edited.kind) {
                             (
                                 CanvasObjectKind::Shape { shape, .. },
@@ -3824,9 +3852,17 @@ mod tests {
         harness.key_press(egui::Key::ArrowRight);
         harness.run_steps(3);
         assert!(harness.get_by_label("Rounded rectangle").is_focused());
+        let rounded = harness.get_by_label("Rounded rectangle").rect();
+        let below_rounded = ShapeKind::ALL
+            .into_iter()
+            .find(|shape| {
+                let rect = harness.get_by_label(shape_name(*shape)).rect();
+                rect.top() > rounded.top() && (rect.left() - rounded.left()).abs() < 1.0
+            })
+            .unwrap();
         harness.key_press(egui::Key::ArrowDown);
         harness.run_steps(3);
-        assert!(harness.get_by_label("Trapezoid").is_focused());
+        assert!(harness.get_by_label(shape_name(below_rounded)).is_focused());
         harness.key_press(egui::Key::ArrowUp);
         harness.run_steps(3);
         assert!(harness.get_by_label("Rounded rectangle").is_focused());
@@ -4124,7 +4160,8 @@ mod tests {
         harness.get_by_label("Shape library").click();
         harness.run_steps(5);
         let wide_first = harness.get_by_label("Rectangle").rect();
-        let wide_sixth = harness.get_by_label("Right triangle").rect();
+        let sixth_shape = shape_name(ShapeKind::ALL[5]);
+        let wide_sixth = harness.get_by_label(sixth_shape).rect();
         assert_eq!(wide_first.top(), wide_sixth.top());
 
         harness.set_size(vec2(180.0, 160.0));
@@ -4132,7 +4169,7 @@ mod tests {
         let bounds = harness.ctx.content_rect();
         let search = harness.get_by_label("Search shapes").rect();
         let first = harness.get_by_label("Rectangle").rect();
-        let sixth = harness.get_by_label("Right triangle").rect();
+        let sixth = harness.get_by_label(sixth_shape).rect();
         assert!(
             bounds.contains_rect(search) && bounds.contains_rect(first),
             "search={search:?} first={first:?} bounds={bounds:?}"
@@ -6459,6 +6496,103 @@ mod tests {
                 assert_ne!(translated, "Corner radius", "{language:?}");
             }
         }
+    }
+
+    #[test]
+    fn double_ellipse_inspector_is_localized_accessible_and_undoable() {
+        for key in [
+            "Double ellipse",
+            "Automatic inner inset",
+            "Inner outline inset",
+        ] {
+            assert!(i18n::has_translations(key), "{key}");
+            for language in i18n::Lang::ALL {
+                assert!(!i18n::t_in(language, key).is_empty(), "{language:?}: {key}");
+            }
+        }
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            BoardRect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.style.stroke_width = 17.0;
+        let id = doc.doc.add_canvas_object(shape).unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(current(harness.state()).double_ellipse_margin, None);
+        let automatic =
+            harness.get_by_role_and_label(egui::Role::CheckBox, "Automatic inner inset");
+        assert!(!automatic.accesskit_node().is_disabled());
+        automatic.click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+
+        harness.get_by_label("Inner outline inset").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Inner outline inset").type_text("8.5");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(8.5));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.redo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+
+        harness.get_by_label("Shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Ellipse").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, None);
+        assert!(harness.query_by_label("Automatic inner inset").is_none());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).double_ellipse_margin, Some(5.0));
+
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[id], true)
+            .unwrap();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_role_and_label(egui::Role::CheckBox, "Automatic inner inset")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            harness
+                .get_by_label("Inner outline inset")
+                .accesskit_node()
+                .is_disabled()
+        );
     }
 
     #[test]

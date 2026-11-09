@@ -64,6 +64,8 @@ const ROUNDING_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-ROUNDING-1";
 const ROUNDING_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-ROUNDING-1";
 const RECTANGLE_SIDES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-RECTANGLE-SIDES-1";
 const RECTANGLE_SIDES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-RECTANGLE-SIDES-1";
+const DOUBLE_ELLIPSE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DOUBLE-ELLIPSE-1";
+const DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DOUBLE-ELLIPSE-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -85,7 +87,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_rectangle_sides() {
+        tuple.serialize_element(if self.workbook.has_double_ellipses() {
+            DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rectangle_sides() {
             RECTANGLE_SIDES_INK_WORKBOOK_VERSION
         } else if self.workbook.has_shape_rounding() {
             ROUNDING_INK_WORKBOOK_VERSION
@@ -166,7 +170,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_rectangle_sides() {
+    let version = if workbook.has_double_ellipses() {
+        DOUBLE_ELLIPSE_WORKBOOK_VERSION
+    } else if workbook.has_rectangle_sides() {
         RECTANGLE_SIDES_WORKBOOK_VERSION
     } else if workbook.has_shape_rounding() {
         ROUNDING_WORKBOOK_VERSION
@@ -216,6 +222,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_double_ellipses() {
+                return Err(A::Error::custom(
+                    "double ellipses require a versioned recovery workbook",
+                ));
+            }
             if workbook.has_rectangle_sides() {
                 return Err(A::Error::custom(
                     "rectangle outline sides require a versioned recovery workbook",
@@ -272,6 +283,8 @@ where
                 && version != ROUNDING_INK_WORKBOOK_VERSION
                 && version != RECTANGLE_SIDES_WORKBOOK_VERSION
                 && version != RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+                && version != DOUBLE_ELLIPSE_WORKBOOK_VERSION
+                && version != DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -280,6 +293,19 @@ where
             let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != DOUBLE_ELLIPSE_WORKBOOK_VERSION
+                && version != DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+                && workbook.has_double_ellipses()
+            {
+                return Err(A::Error::custom(
+                    "double ellipses require a double-ellipse-aware recovery workbook",
+                ));
+            }
+            let version = match version.as_str() {
+                DOUBLE_ELLIPSE_WORKBOOK_VERSION => RECTANGLE_SIDES_WORKBOOK_VERSION,
+                DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION => RECTANGLE_SIDES_INK_WORKBOOK_VERSION,
+                version => version,
+            };
             if version != RECTANGLE_SIDES_WORKBOOK_VERSION
                 && version != RECTANGLE_SIDES_INK_WORKBOOK_VERSION
                 && workbook.has_rectangle_sides()
@@ -289,7 +315,7 @@ where
                 ));
             }
             // These envelopes also support every earlier rounding-era feature.
-            let version = match version.as_str() {
+            let version = match version {
                 RECTANGLE_SIDES_WORKBOOK_VERSION => ROUNDING_WORKBOOK_VERSION,
                 RECTANGLE_SIDES_INK_WORKBOOK_VERSION => ROUNDING_INK_WORKBOOK_VERSION,
                 version => version,
@@ -1949,6 +1975,86 @@ mod lock_tests {
                     .to_string()
                     .contains("rectangle outline sides require a versioned recovery workbook")
             );
+        }
+    }
+
+    #[test]
+    fn double_ellipses_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasObject, DrawioRectangleStencil, Rect, RectangleSides, ShapeKind, ShapeRounding,
+            Vec2,
+        };
+
+        for margin in [None, Some(8.5)] {
+            let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+            let mut ellipse = CanvasObject::shape(
+                ShapeKind::DoubleEllipse,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            );
+            ellipse.double_ellipse_margin = margin;
+            book.active_mut().add_canvas_object(ellipse).unwrap();
+            let mut rectangle = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rectangle.rectangle_sides = Some(RectangleSides::default());
+            book.active_mut().add_canvas_object(rectangle).unwrap();
+            let mut rounded = CanvasObject::shape(
+                ShapeKind::RoundedRectangle,
+                Rect::from_min_size(Vec2::new(240.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rounded.rounding = Some(ShapeRounding {
+                radius: 15.0,
+                stencil: DrawioRectangleStencil::Forms,
+            });
+            book.active_mut().add_canvas_object(rounded).unwrap();
+
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+                let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    value["workbook"][0],
+                    if ink.is_some() {
+                        DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+                    } else {
+                        DOUBLE_ELLIPSE_WORKBOOK_VERSION
+                    }
+                );
+                let mut older = value.clone();
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+                } else {
+                    RECTANGLE_SIDES_WORKBOOK_VERSION
+                });
+                assert!(
+                    serde_json::from_value::<Snapshot>(older)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("double ellipses require a double-ellipse-aware")
+                );
+                let mut unversioned = value.clone();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(
+                    serde_json::from_value::<Snapshot>(unversioned)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("double ellipses require a versioned recovery workbook")
+                );
+                let mut malformed = value;
+                malformed["workbook"][1]["sheets"][0]["canvas"]["objects"][0]["double_ellipse_margin"] =
+                    serde_json::json!("invalid");
+                assert!(serde_json::from_value::<Snapshot>(malformed).is_err());
+            }
         }
     }
 

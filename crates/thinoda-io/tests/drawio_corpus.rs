@@ -188,6 +188,91 @@ fn check_partial_rectangles(before: &Workbook, after: &Workbook) -> Result<(), S
     Ok(())
 }
 
+#[derive(Debug)]
+struct DoubleEllipseSnapshot {
+    frame: Rect,
+    rotation: f32,
+    margin: Option<f32>,
+}
+
+fn double_ellipses(sheet: &Sheet) -> Vec<DoubleEllipseSnapshot> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| {
+            matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::DoubleEllipse,
+                    ..
+                }
+            )
+            .then_some(DoubleEllipseSnapshot {
+                frame: object.rect,
+                rotation: object.rotation,
+                margin: object.double_ellipse_margin,
+            })
+        })
+        .collect()
+}
+
+fn check_double_ellipses(before: &Workbook, after: &Workbook) -> Result<(), String> {
+    let close = |a: f32, b: f32| {
+        (a - b).abs() <= 0.001 + 2.0 * f32::EPSILON * a.abs().max(b.abs()).max(1.0)
+    };
+    for (index, (original, restored)) in before.sheets.iter().zip(&after.sheets).enumerate() {
+        let mut remaining = double_ellipses(restored);
+        for ellipse in double_ellipses(original) {
+            let Some(found) = remaining.iter().position(|other| {
+                (match (ellipse.margin, other.margin) {
+                    (Some(a), Some(b)) => close(a, b),
+                    (None, None) => true,
+                    _ => false,
+                }) && close(ellipse.frame.min.x, other.frame.min.x)
+                    && close(ellipse.frame.min.y, other.frame.min.y)
+                    && close(ellipse.frame.size.x, other.frame.size.x)
+                    && close(ellipse.frame.size.y, other.frame.size.y)
+                    && close(ellipse.rotation, other.rotation)
+            }) else {
+                return Err(format!(
+                    "page {} lost double ellipse {ellipse:?}",
+                    index + 1
+                ));
+            };
+            remaining.swap_remove(found);
+        }
+        if !remaining.is_empty() {
+            return Err(format!(
+                "page {} gained {} double ellipses",
+                index + 1,
+                remaining.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn double_ellipse_corpus_check_detects_changed_insets() {
+    let mut book = Workbook::default();
+    let mut ellipse = thinoda_core::CanvasObject::shape(
+        ShapeKind::DoubleEllipse,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    ellipse.double_ellipse_margin = Some(8.5);
+    let id = book.active_mut().add_canvas_object(ellipse).unwrap();
+    let mut changed = book.clone();
+    assert!(check_double_ellipses(&book, &changed).is_ok());
+    changed
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .double_ellipse_margin = None;
+    assert!(check_double_ellipses(&book, &changed).is_err());
+}
+
 fn check(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let format = thinoda_io::detect_format(path, &bytes);
@@ -241,6 +326,7 @@ fn check(path: &Path) -> Result<String, String> {
     check_waypoints(&book, &again)?;
     check_markers(&book, &again)?;
     check_partial_rectangles(&book, &again)?;
+    check_double_ellipses(&book, &again)?;
 
     let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
         .map_err(|e| format!("native export: {e}"))?;
@@ -307,7 +393,7 @@ fn check(path: &Path) -> Result<String, String> {
         }
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} double ellipse(s), {} warning kind(s)",
         book.sheets.len(),
         book.sheets
             .iter()
@@ -327,6 +413,10 @@ fn check(path: &Path) -> Result<String, String> {
         book.sheets
             .iter()
             .map(|sheet| partial_rectangles(sheet).len())
+            .sum::<usize>(),
+        book.sheets
+            .iter()
+            .map(|sheet| double_ellipses(sheet).len())
             .sum::<usize>(),
         report.warnings.len()
     ))

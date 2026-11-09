@@ -517,7 +517,7 @@ A; it is not completion of the broader Phase 6 requirements below.
 | 10 | Layers, containers, swimlanes, tables | Partial | 7 | Structure editing beyond current frame approximations |
 | 11 | Embedded containers & clipboard | Partial | 7 | `.drawio.svg/png` read+write, html/pdf/`#R`, clipboard interop |
 | 12 | Vendor library download | Open | 5, 9 | Optional libraries manager |
-| 13 | Advanced fidelity | Open | 7 | Sketch, math, placeholders, adaptive colors, page view, tooltips |
+| 13 | Advanced fidelity | Partial | 7 | Sketch, math, placeholders, adaptive colors, page view, tooltips |
 | 14 | Hardening & release | Partial | all | Perf budgets, fuzz, a11y, i18n, docs |
 
 The completed marker, contextual-toolbar and adjustable-radius slices below do
@@ -1366,9 +1366,9 @@ source-preserving save-back remain open.
 
 **Double-ellipse disclosure and rubber-duck review (partial Phases 6, 9 and 13).**
 The published [double-ellipse renderer](https://raw.githubusercontent.com/jgraph/drawio/c72c9a98b7a6ce392556ed04c05e0ff19f43f5c3/src/main/webapp/mxgraph/src/shape/mxDoubleEllipse.js)
-draws an inset inner outline and uses inset label bounds. Thinoda still imports
-the shape as an editable single ellipse, but now reports a Formatting warning
-instead of silently implying a faithful conversion. Frame, rotation, colors,
+draws an inset inner outline and uses inset label bounds. At this checkpoint,
+Thinoda imported the shape as an editable single ellipse and reported a
+Formatting warning instead of silently implying a faithful conversion. Frame, rotation, colors,
 label and supported connector attachments remain editable. A double-ellipse
 container instead becomes a frame and follows the existing container-loss
 warning. Simple ellipses and three verified flowchart ellipse stencils do not
@@ -1380,9 +1380,9 @@ An app regression checks the localized simplification notice and undo, while
 browser screenshots show the notice during synthetic paste. The warning is
 generic, not cell-specific, and formatting-only paste notices are temporary.
 It is conservative even when the missing inner outline would not be visible.
-The original double-ellipse identity and label inset are not stored in the
-converted workbook, so keep the original file. Faithful rendering, editing,
-exports and source-preserving save-back remain open.
+At this checkpoint the original double-ellipse identity and label inset were
+not stored in the converted workbook. The later editable-double-ellipse
+checkpoint describes the current behavior and remaining limitations.
 
 Validation passed 119 draw.io library tests, six supplied-corpus tests, six
 deterministic fuzz-seed tests and 16 app clipboard tests. Separate tests checked
@@ -1666,6 +1666,61 @@ with warnings denied. A 21-second Linux AddressSanitizer smoke completed 8,086
 executions without a reported failure or reproducer. It does not satisfy the
 separate 30-minute-per-target fuzz campaign; real system clipboard,
 physical-device and accessibility acceptance also remain open.
+
+**Editable double-ellipse checkpoint (partial Phases 3, 4, 6, 9 and 11).**
+Standalone draw.io double ellipses now retain their two outlines, label, frame,
+rotation, supported colors and ordinary connector attachments as editable
+Thinoda shapes. The inner outline and label bounds share the published
+[automatic inset](https://raw.githubusercontent.com/jgraph/drawio/c72c9a98b7a6ce392556ed04c05e0ff19f43f5c3/src/main/webapp/mxgraph/src/shape/mxDoubleEllipse.js)
+or an explicit `margin`. The localized shape library and inspector support
+automatic or custom insets, locking, undo and redo; same-kind quick inserts
+retain the custom inset. Native files use version 21 only when needed, and the
+sheet and board clipboard, XMind and recovery envelopes are similarly gated.
+
+Import reports unsupported label layout and font sizes, unresolved or adaptive
+colors, invalid insets and label bounds that cannot be represented. Double
+ellipses used as containers still become frames with a formatting warning.
+Export and **Copy as draw.io** report visible shapes whose appearance may
+differ; supported shape identity and insets survive direct reimport. The
+conversion warning does not preserve the source style or enable save-back.
+
+**Rubber-duck self-critique.** Review found that the automatic canvas outline
+uses two units when neither fill nor stroke is set, even if the stored stroke
+width differs. Geometry, label bounds, insertion previews, visual exports and
+draw.io export now use that same effective width. Review also identified a
+missing copy/export appearance warning, and a label-size gap: explicit 11px
+and removal of draw.io's 12px vertex default use mxGraph's 11px fallback. Those
+cases now warn when a label is present, while ordinary 12px and empty labels do
+not acquire that warning. Shape-library navigation tests no longer assume
+fixed positions after adding a tile. The first browser pixel probe also
+included the inspector's matching red color swatch; it now isolates the board
+region and verifies the detected shape's bounds before counting both outlines.
+
+This is editable interoperability, not exact visual parity: ellipses use
+48-segment outlines, canvas labels do not wrap like draw.io labels, visual
+exports may wrap differently from the canvas, and text styling and adaptive
+colors remain incomplete. Oversized insets can collapse label bounds; valid
+values are retained but reported when clamping is necessary. Other shape
+labels still use the generic font-size check, which can accept an 11px source
+label without a warning. Inspector and clipboard tests do not replace
+physical-device, system-clipboard or screen-reader acceptance; visual exports
+still need broader Office and PDF viewer acceptance. Keep the original draw.io
+file and a native copy. The new
+shape and export-loss variants are public API additions that exhaustive Rust
+matches must handle. The parent phases remain partial.
+
+Validation passed 2,172 tests across the five affected library suites, with
+four ignored; after the font-warning change, the I/O library and interchange
+integrations passed 332 tests, with three ignored, and the application library
+passed 906 tests, with two ignored. Shape-label editing passed 18 tests, and
+three separately enabled GPU label-visual tests passed. All 88
+supplied diagrams passed the corpus checks, including three double ellipses
+in one file. The production web build passed the paste, edit, copy and undo
+journey in Chromium, Firefox and WebKit; the outline and copy-warning
+screenshots were inspected. Native, WebAssembly and fuzz Clippy passed with
+warnings denied. The final Linux AddressSanitizer smoke completed 9,425
+executions in 22 seconds without a reported failure or reproducer. This short
+run does not satisfy the separate 30-minute-per-target acceptance campaign.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

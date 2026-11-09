@@ -1117,6 +1117,61 @@ fn rectangle_sides_board_clipboard_requires_version_thirteen() {
 }
 
 #[test]
+fn double_ellipse_board_clipboard_requires_version_fourteen() {
+    use crate::{Rect, RectangleSides};
+
+    for margin in [None, Some(8.5)] {
+        let mut source = Sheet::new("Source", "Root");
+        let mut ellipse = CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        ellipse.double_ellipse_margin = margin;
+        let id = source.add_canvas_object(ellipse).unwrap();
+        let mut rectangle = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+        );
+        rectangle.rectangle_sides = Some(RectangleSides::default());
+        let rectangle_id = source.add_canvas_object(rectangle).unwrap();
+        let payload = copy(&source, &[], &[id, rectangle_id]);
+        let encoded = encode_board_payload(&payload).unwrap();
+        assert!(encoded.starts_with(DOUBLE_ELLIPSE_BOARD_PREFIX));
+        assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+        assert_eq!(
+            decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            payload
+        );
+        for version in 1..14 {
+            let forged = encoded.replacen(
+                "THINODA-BOARD-CLIPBOARD-14",
+                &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+                1,
+            );
+            assert!(decode_board_payload(&forged).is_err(), "version {version}");
+        }
+        for value in [serde_json::json!(-1), serde_json::json!("invalid")] {
+            let mut malformed = serde_json::to_value(&payload).unwrap();
+            malformed["fragment"]["canvas"]["objects"][0]["double_ellipse_margin"] = value;
+            let forged = format!("{DOUBLE_ELLIPSE_BOARD_PREFIX}{malformed}");
+            assert!(decode_board_payload(&forged).is_err());
+        }
+        let mut destination = Sheet::new("Destination", "Root");
+        let pasted =
+            paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+        let restored = destination.canvas.object(pasted.objects[0]).unwrap();
+        assert!(matches!(
+            restored.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::DoubleEllipse,
+                ..
+            }
+        ));
+        assert_eq!(restored.double_ellipse_margin, margin);
+    }
+}
+
+#[test]
 fn connectors_keep_selected_targets_and_detach_external_targets_at_rendered_points() {
     let mut source = Sheet::new("Source", "Root");
     let external_topic = source.add_child(source.root, None, "External");

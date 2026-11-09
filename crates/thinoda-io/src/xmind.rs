@@ -26,6 +26,7 @@ const HALF_CIRCLE_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-7";
 const BAR_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-8";
 const ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-ROUNDING-1";
 const RECTANGLE_SIDES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RECTANGLE-SIDES-1";
+const DOUBLE_ELLIPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DOUBLE-ELLIPSE-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -715,7 +716,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_rectangle_sides() {
+    if book.has_double_ellipses() {
+        Ok(serde_json::to_string(&(
+            DOUBLE_ELLIPSE_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rectangle_sides() {
         Ok(serde_json::to_string(&(
             RECTANGLE_SIDES_SNAPSHOT_VERSION,
             book,
@@ -781,6 +787,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == BAR_MARKER_SNAPSHOT_VERSION
                 || version == ROUNDING_SNAPSHOT_VERSION
                 || version == RECTANGLE_SIDES_SNAPSHOT_VERSION
+                || version == DOUBLE_ELLIPSE_SNAPSHOT_VERSION
         })
 }
 
@@ -802,6 +809,13 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .any(|object| {
             object.get("rounding").is_some()
                 || object.get("rectangle_sides").is_some()
+                || object.get("double_ellipse_margin").is_some()
+                || object
+                    .get("kind")
+                    .and_then(|kind| kind.get("shape"))
+                    .and_then(|shape| shape.get("shape"))
+                    .and_then(Value::as_str)
+                    == Some("double-ellipse")
                 || object
                     .get("kind")
                     .and_then(|kind| kind.get("connector"))
@@ -831,10 +845,21 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != BAR_MARKER_SNAPSHOT_VERSION
             && version != ROUNDING_SNAPSHOT_VERSION
             && version != RECTANGLE_SIDES_SNAPSHOT_VERSION
+            && version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION && workbook.has_double_ellipses() {
+            return Err(IoError::NewerVersion(
+                "double ellipses require a double-ellipse-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if version == DOUBLE_ELLIPSE_SNAPSHOT_VERSION {
+            RECTANGLE_SIDES_SNAPSHOT_VERSION
+        } else {
+            version.as_str()
+        };
         if version != RECTANGLE_SIDES_SNAPSHOT_VERSION && workbook.has_rectangle_sides() {
             return Err(IoError::NewerVersion(
                 "rectangle outline sides require a partial-rectangle-aware private XMind snapshot"
@@ -845,7 +870,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         let version = if version == RECTANGLE_SIDES_SNAPSHOT_VERSION {
             ROUNDING_SNAPSHOT_VERSION
         } else {
-            version.as_str()
+            version
         };
         if version != MARKER_SNAPSHOT_VERSION
             && version != EXTENDED_MARKER_SNAPSHOT_VERSION
@@ -949,6 +974,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_double_ellipses() {
+            return Err(IoError::NewerVersion(
+                "double ellipses require a double-ellipse-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_rectangle_sides() {
             return Err(IoError::NewerVersion(
                 "rectangle outline sides require a partial-rectangle-aware private XMind snapshot"
@@ -2410,6 +2440,76 @@ mod tests {
             metadata["thinodaWorkbook"] = json!(snapshot);
             *bytes = serde_json::to_vec(&metadata).unwrap();
             assert!(import(&make_archive(&entries)).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn double_ellipses_reject_old_and_malformed_private_snapshots() {
+        use thinoda_core::{
+            CanvasObject, DrawioRectangleStencil, Rect, RectangleSides, ShapeKind, ShapeRounding,
+            Vec2,
+        };
+
+        for margin in [None, Some(8.5)] {
+            let mut book = Workbook::default();
+            let mut ellipse = CanvasObject::shape(
+                ShapeKind::DoubleEllipse,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            );
+            ellipse.double_ellipse_margin = margin;
+            book.active_mut().add_canvas_object(ellipse).unwrap();
+            let mut rectangle = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rectangle.rectangle_sides = Some(RectangleSides::default());
+            book.active_mut().add_canvas_object(rectangle).unwrap();
+            let mut rounded = CanvasObject::shape(
+                ShapeKind::RoundedRectangle,
+                Rect::from_min_size(Vec2::new(240.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rounded.rounding = Some(ShapeRounding {
+                radius: 15.0,
+                stencil: DrawioRectangleStencil::Forms,
+            });
+            book.active_mut().add_canvas_object(rounded).unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(RECTANGLE_SIDES_SNAPSHOT_VERSION, &book)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(matches!(
+                    import(&make_archive(&entries)),
+                    Err(IoError::NewerVersion(_))
+                ));
+            }
+            for version in [
+                DOUBLE_ELLIPSE_SNAPSHOT_VERSION,
+                RECTANGLE_SIDES_SNAPSHOT_VERSION,
+            ] {
+                let mut malformed = serde_json::to_value(&book).unwrap();
+                malformed["sheets"][0]["canvas"]["objects"][0]["double_ellipse_margin"] =
+                    json!("invalid");
+                let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(import(&make_archive(&entries)).is_err(), "{version}");
+            }
         }
     }
 

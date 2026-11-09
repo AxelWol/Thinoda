@@ -33,12 +33,15 @@ const HALF_CIRCLE_MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-13\n";
 const BAR_MARKER_SHEET_PREFIX: &str = "THINODA-SHEET-14\n";
 const ROUNDING_SHEET_PREFIX: &str = "THINODA-SHEET-15\n";
 const RECTANGLE_SIDES_SHEET_PREFIX: &str = "THINODA-SHEET-16\n";
+const DOUBLE_ELLIPSE_SHEET_PREFIX: &str = "THINODA-SHEET-17\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_rectangle_sides() {
+    let prefix = if sheet.has_double_ellipses() {
+        DOUBLE_ELLIPSE_SHEET_PREFIX
+    } else if sheet.has_rectangle_sides() {
         RECTANGLE_SIDES_SHEET_PREFIX
     } else if sheet.has_shape_rounding() {
         ROUNDING_SHEET_PREFIX
@@ -89,9 +92,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(RECTANGLE_SIDES_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-16\r\n"))
-        .map(|json| (16, json))
+        .strip_prefix(DOUBLE_ELLIPSE_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-17\r\n"))
+        .map(|json| (17, json))
+        .or_else(|| {
+            text.strip_prefix(RECTANGLE_SIDES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-16\r\n"))
+                .map(|json| (16, json))
+        })
         .or_else(|| {
             text.strip_prefix(ROUNDING_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-15\r\n"))
@@ -198,6 +206,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     if version < 16 && sheet.has_rectangle_sides() {
         return Err("rectangle outline sides require sheet clipboard version 16".into());
+    }
+    if version < 17 && sheet.has_double_ellipses() {
+        return Err("double ellipses require sheet clipboard version 17".into());
     }
     if version < 6 && sheet.has_connector_waypoints() {
         return Err("connector waypoints require sheet clipboard version 6".into());
@@ -968,6 +979,45 @@ mod tests {
             let forged =
                 encoded.replacen("THINODA-SHEET-16", &format!("THINODA-SHEET-{version}"), 1);
             assert!(decode_sheet(&forged).is_err(), "version {version}");
+        }
+    }
+
+    #[test]
+    fn double_ellipse_sheet_clipboard_requires_version_seventeen() {
+        use crate::{CanvasObject, Rect, RectangleSides, ShapeKind, Vec2};
+
+        for margin in [None, Some(8.5)] {
+            let mut sheet = formatted_card_sheet(crate::CardKind::Text);
+            let mut ellipse = CanvasObject::shape(
+                ShapeKind::DoubleEllipse,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            );
+            ellipse.double_ellipse_margin = margin;
+            sheet.add_canvas_object(ellipse).unwrap();
+            let mut rectangle = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+            );
+            rectangle.rectangle_sides = Some(RectangleSides::default());
+            sheet.add_canvas_object(rectangle).unwrap();
+            let encoded = encode_sheet(&sheet).unwrap();
+            assert!(encoded.starts_with(DOUBLE_ELLIPSE_SHEET_PREFIX));
+            assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+            assert_eq!(
+                decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+                sheet
+            );
+            for version in 1..17 {
+                let forged =
+                    encoded.replacen("THINODA-SHEET-17", &format!("THINODA-SHEET-{version}"), 1);
+                assert!(decode_sheet(&forged).is_err(), "version {version}");
+            }
+            for value in [serde_json::json!(-1), serde_json::json!("invalid")] {
+                let mut malformed = serde_json::to_value(&sheet).unwrap();
+                malformed["canvas"]["objects"][0]["double_ellipse_margin"] = value;
+                let forged = format!("{DOUBLE_ELLIPSE_SHEET_PREFIX}{malformed}");
+                assert!(decode_sheet(&forged).is_err());
+            }
         }
     }
 

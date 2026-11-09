@@ -790,6 +790,55 @@ impl Style {
         self.opacity() < 1.0 && self.num("textOpacity").is_none_or(|opacity| opacity > 0.0)
     }
 
+    fn double_ellipse_label_loss(&self, has_label: bool) -> bool {
+        if !has_label {
+            return false;
+        }
+        let nonzero_spacing = |key| {
+            self.get(key)
+                .is_some_and(|value| value != "none" && self.num(key).is_none_or(|v| v != 0.0))
+        };
+        // Removing the editor's 12px vertex default exposes mxGraph's 11px fallback.
+        let unsupported_font_size = match self.get("fontSize") {
+            None => self.suppress_defaults,
+            Some("none") => true,
+            Some(_) => self.num("fontSize").is_none_or(|size| size != 12.0),
+        };
+        self.get("whiteSpace") == Some("wrap")
+            || self
+                .get("overflow")
+                .is_some_and(|value| !matches!(value, "" | "none" | "visible"))
+            || self
+                .get("labelPosition")
+                .is_some_and(|value| !matches!(value, "" | "none" | "center"))
+            || self
+                .get("verticalLabelPosition")
+                .is_some_and(|value| !matches!(value, "" | "none" | "middle"))
+            || self
+                .get("horizontal")
+                .is_some_and(|value| !matches!(value, "" | "none" | "1"))
+            || self.flag("noLabel")
+            || self
+                .get("textDirection")
+                .is_some_and(|value| !matches!(value, "" | "none" | "default"))
+            || self
+                .get("labelWidth")
+                .is_some_and(|value| !matches!(value, "" | "none"))
+            || [
+                "spacing",
+                "spacingTop",
+                "spacingBottom",
+                "spacingLeft",
+                "spacingRight",
+            ]
+            .into_iter()
+            .any(nonzero_spacing)
+            || unsupported_font_size
+            || self
+                .get("fontStyle")
+                .is_some_and(|value| value != "none" && self.num("fontStyle").is_none())
+    }
+
     fn connector_label_appearance_loss(&self, source_is_edge: bool) -> bool {
         let text = self.text_color();
         let visible = text.is_none_or(|color| color.a > 0);
@@ -1501,7 +1550,7 @@ fn classify(style: &Style) -> Kind {
         | "mxgraph.flowchart.start_1"
         | "mxgraph.flowchart.start_2"
         | "mxgraph.flowchart.on-page_reference" => symmetric(S::Ellipse),
-        "doubleEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
+        "doubleEllipse" => symmetric(S::DoubleEllipse),
         FLOWCHART_ANNOTATION_1 if style.get("shape") == Some(FLOWCHART_ANNOTATION_1) => {
             Kind::Approx(S::Rectangle, 0.0, false)
         }
@@ -1574,11 +1623,12 @@ fn object_style(style: &Style) -> ObjectStyle {
 }
 
 /// Resolves visible light-theme fallbacks while reporting lost adaptive styling.
-fn partial_rectangle_colors(
+fn resolved_shape_colors(
     style: &Style,
     object: &mut CanvasObject,
     has_label: bool,
     adaptive_fixed_colors: bool,
+    outline_visible: bool,
 ) -> bool {
     let mut approximate = !style.tokens.is_empty()
         || has_label && matches!(style.get("fontColor"), None | Some("" | "default"));
@@ -1617,10 +1667,8 @@ fn partial_rectangle_colors(
         }
     }
     if adaptive_fixed_colors && object.style.opacity > 0.0 {
-        let visible_outline = object
-            .rectangle_sides
-            .is_some_and(|sides| sides.top || sides.right || sides.bottom || sides.left)
-            && object.style.stroke.is_some_and(|color| color.a > 0);
+        let visible_outline =
+            outline_visible && object.style.stroke.is_some_and(|color| color.a > 0);
         approximate |= object.style.fill.is_some_and(|color| color.a > 0)
             || visible_outline
             || has_label && object.style.text_color.is_some_and(|color| color.a > 0);
@@ -2022,11 +2070,46 @@ impl<'a> PageImport<'a> {
                 if style.shape() == "partialRectangle" {
                     object.rectangle_sides = Some(style.rectangle_sides());
                     let has_label = !object.label().is_empty();
-                    if partial_rectangle_colors(
+                    let outline_visible = object.rectangle_sides.is_some_and(|sides| {
+                        sides.top || sides.right || sides.bottom || sides.left
+                    });
+                    if resolved_shape_colors(
                         style,
                         &mut object,
                         has_label,
                         self.adaptive_fixed_colors,
+                        outline_visible,
+                    ) {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                }
+                if shape == ShapeKind::DoubleEllipse {
+                    if let Some(raw) = style.get("margin")
+                        && raw != "none"
+                    {
+                        match style
+                            .num("margin")
+                            .filter(|value| (0.0..=MAX_BOARD_COORDINATE).contains(value))
+                        {
+                            Some(margin) => {
+                                object.double_ellipse_margin = Some(margin);
+                                if margin * 2.0 > frame.size.x.min(frame.size.y) {
+                                    self.warn(ImportWarning::Formatting);
+                                }
+                            }
+                            None => self.warn(ImportWarning::Formatting),
+                        }
+                    }
+                    let has_label = !object.label().is_empty();
+                    if style.double_ellipse_label_loss(has_label) {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    if resolved_shape_colors(
+                        style,
+                        &mut object,
+                        has_label,
+                        self.adaptive_fixed_colors,
+                        true,
                     ) {
                         self.warn(ImportWarning::Formatting);
                     }
@@ -2893,6 +2976,7 @@ fn shape_style(shape: ShapeKind) -> &'static str {
         S::Rectangle => "rounded=0;",
         S::RoundedRectangle => "rounded=1;",
         S::Ellipse => "ellipse;",
+        S::DoubleEllipse => "shape=doubleEllipse;",
         S::Diamond => "rhombus;",
         S::Triangle => "triangle;direction=north;",
         S::RightTriangle => "shape=mxgraph.basic.orthogonal_triangle;",
@@ -3330,13 +3414,18 @@ impl<'a> PageWriter<'a> {
                 } else {
                     style.push_str(shape_style(*shape));
                 }
+                if let Some(margin) = object.double_ellipse_margin {
+                    style.push_str(&format!("margin={};", num(margin)));
+                }
                 style.push_str("whiteSpace=wrap;html=1;");
-                let fill = if object.rectangle_sides.is_some() {
+                let fill = if object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse
+                {
                     Some(style_ref.fill.unwrap_or(Color::TRANSPARENT))
                 } else {
                     style_ref.fill
                 };
-                let stroke = if object.rectangle_sides.is_some()
+                let stroke = if (object.rectangle_sides.is_some()
+                    || *shape == ShapeKind::DoubleEllipse)
                     && style_ref.stroke.is_none()
                     && style_ref.fill.is_some()
                 {
@@ -3347,14 +3436,12 @@ impl<'a> PageWriter<'a> {
                 color_keys(&mut style, "fillColor", "fillOpacity", fill);
                 color_keys(&mut style, "strokeColor", "strokeOpacity", stroke);
                 color_keys(&mut style, "fontColor", "textOpacity", style_ref.text_color);
-                let width = if object.rectangle_sides.is_some()
-                    && style_ref.fill.is_none()
-                    && style_ref.stroke.is_none()
-                {
-                    2.0
-                } else {
-                    style_ref.stroke_width
-                };
+                let width =
+                    if object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse {
+                        style_ref.effective_shape_stroke_width()
+                    } else {
+                        style_ref.stroke_width
+                    };
                 style.push_str(&format!("strokeWidth={};", num(width)));
                 common_keys(
                     &mut style,

@@ -941,58 +941,237 @@ fn drawio_note_fallbacks_report_only_cards_on_exported_pages() {
 }
 
 #[test]
-fn double_ellipse_import_reports_the_missing_inner_outline() {
-    let xml = page(
-        r##"<mxCell id="a" value="End" style="shape=doubleEllipse;fillColor=#ffffcc;strokeColor=#123456;strokeWidth=2;rotation=30;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
-        <mxCell id="b" value="Next" style="ellipse;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
-        <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##,
-    )
-    .replacen(
-        "<mxGraphModel>",
-        r#"<mxGraphModel adaptiveColors="none">"#,
-        1,
-    );
-    let report = load(&xml);
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
-    let sheet = &report.workbook.sheets[0];
-    let objects = shapes(sheet);
-    assert_eq!(objects.len(), 2);
-    assert!(matches!(
-        objects[0].kind,
-        CanvasObjectKind::Shape {
-            shape: ShapeKind::Ellipse,
-            ..
-        }
-    ));
-    assert_eq!(objects[0].label(), "End");
-    assert_eq!(objects[0].rect, rect(10.0, 20.0, 100.0, 60.0));
-    assert_eq!(objects[0].rotation, 30.0);
-    assert_eq!(objects[0].style.fill, Some(Color::rgb(255, 255, 204)));
-    assert_eq!(objects[0].style.stroke, Some(Color::rgb(18, 52, 86)));
-    assert_eq!(objects[0].style.stroke_width, 2.0);
-    assert_eq!(connectors(sheet)[0].from, Endpoint::Object(objects[0].id));
-    assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
-    report.workbook.validate().unwrap();
+fn double_ellipse_import_preserves_inset_rotation_and_connectors() {
+    for (margin_style, expected_margin) in [
+        ("", None),
+        ("margin=0;", Some(0.0)),
+        ("margin=8.5;", Some(8.5)),
+        ("margin=30;", Some(30.0)),
+        ("margin=none;", None),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="End" style="shape=doubleEllipse;fillColor=#ffffcc;strokeColor=#123456;fontColor=#000000;strokeWidth=2;rotation=30;{margin_style}" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="b" value="Next" style="ellipse;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##
+        ))
+        .replacen(
+            "<mxGraphModel>",
+            r#"<mxGraphModel adaptiveColors="none">"#,
+            1,
+        );
+        let report = load(&xml);
+        assert!(
+            report.warnings.is_empty(),
+            "{margin_style}: {:?}",
+            report.warnings
+        );
+        let sheet = &report.workbook.sheets[0];
+        let objects = shapes(sheet);
+        assert_eq!(objects.len(), 2);
+        assert!(matches!(
+            objects[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::DoubleEllipse,
+                ..
+            }
+        ));
+        assert_eq!(objects[0].label(), "End");
+        assert_eq!(objects[0].rect, rect(10.0, 20.0, 100.0, 60.0));
+        assert_eq!(objects[0].rotation, 30.0);
+        assert_eq!(objects[0].double_ellipse_margin, expected_margin);
+        assert_eq!(objects[0].style.fill, Some(Color::rgb(255, 255, 204)));
+        assert_eq!(objects[0].style.stroke, Some(Color::rgb(18, 52, 86)));
+        assert_eq!(objects[0].style.stroke_width, 2.0);
+        assert_eq!(connectors(sheet)[0].from, Endpoint::Object(objects[0].id));
+        assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
+        report.workbook.validate().unwrap();
+        assert!(crate::import_bytes(Format::DrawIo, xml.as_bytes()).is_ok());
 
-    assert!(matches!(
-        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
-        Err(IoError::ImportNeedsConfirmation(warnings))
-            if warnings == vec![ImportWarning::Formatting]
-    ));
-    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
-    let linked = crate::import_drawio_link(&link).unwrap();
-    assert_eq!(linked.warnings, report.warnings);
-    assert_eq!(linked.workbook, report.workbook);
+        let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+        let linked = crate::import_drawio_link(&link).unwrap();
+        assert_eq!(linked.warnings, report.warnings);
+        assert_eq!(linked.workbook, report.workbook);
+        assert!(
+            crate::drawio_clipboard::decode(&xml)
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
+        let native =
+            export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(crate::required_native_version(&report.workbook), 21);
+        assert_eq!(
+            crate::import_bytes(Format::Thinoda, &native).unwrap(),
+            report.workbook
+        );
+        let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+        assert!(exported.contains("shape=doubleEllipse;"));
+        if let Some(margin) = expected_margin {
+            assert!(exported.contains(&format!("margin={};", num(margin))));
+        } else {
+            assert!(!exported.contains("margin="));
+        }
+        let reimported = load(&exported);
+        assert_eq!(
+            shapes(&reimported.workbook.sheets[0])[0].double_ellipse_margin,
+            expected_margin
+        );
+    }
+}
+
+#[test]
+fn double_ellipse_reports_unrepresentable_insets_and_unresolved_colors() {
+    for margin in ["-1", "NaN", "Infinity", "invalid", "1000001"] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="End" style="shape=doubleEllipse;fillColor=#fff;strokeColor=#000;fontColor=#000;margin={margin};" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ))
+        .replacen(
+            "<mxGraphModel>",
+            r#"<mxGraphModel adaptiveColors="none">"#,
+            1,
+        );
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{margin}");
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0].double_ellipse_margin,
+            None
+        );
+    }
+    let collapsed = page(
+        r##"<mxCell id="a" value="End" style="shape=doubleEllipse;fillColor=#fff;strokeColor=#000;fontColor=#000;margin=31;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+    )
+    .replacen("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#, 1);
+    let report = load(&collapsed);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
     assert_eq!(
-        crate::drawio_clipboard::decode(&xml).unwrap().warnings,
-        report.warnings
+        shapes(&report.workbook.sheets[0])[0].double_ellipse_margin,
+        Some(31.0)
     );
-    let native =
-        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+
+    let defaults = page(
+        r#"<mxCell id="a" value="End" style="shape=doubleEllipse;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&defaults);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let object = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(object.style.fill, Some(Color::WHITE));
+    assert_eq!(object.style.stroke, Some(Color::BLACK));
+}
+
+#[test]
+fn double_ellipse_reports_unsupported_label_layout() {
+    for (extra, warning) in [
+        ("whiteSpace=wrap;", true),
+        ("whiteSpace=nowrap;", false),
+        ("spacingLeft=12;", true),
+        ("spacing=0;spacingTop=none;", false),
+        ("labelPosition=right;", true),
+        ("verticalLabelPosition=top;", true),
+        ("overflow=hidden;", true),
+        ("horizontal=0;", true),
+        ("noLabel=1;", true),
+        ("textDirection=rtl;", true),
+        ("labelWidth=40;", true),
+        ("fontSize=11;", true),
+        ("fontSize=12;", false),
+        ("fontSize=none;", true),
+        ("fontSize=invalid;", true),
+        ("fontStyle=invalid;", true),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="End" style="shape=doubleEllipse;fillColor=#fff;strokeColor=#000;fontColor=#000;{extra}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ))
+        .replacen(
+            "<mxGraphModel>",
+            r#"<mxGraphModel adaptiveColors="none">"#,
+            1,
+        );
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warning,
+            "{extra}: {:?}",
+            report.warnings
+        );
+        assert!(matches!(
+            shapes(&report.workbook.sheets[0])[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::DoubleEllipse,
+                ..
+            }
+        ));
+    }
+
+    let suppressed_default = page(
+        r##"<mxCell id="a" value="End" style=";shape=doubleEllipse;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
+    )
+    .replacen("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#, 1);
     assert_eq!(
-        crate::import_bytes(Format::Thinoda, &native).unwrap(),
-        report.workbook
+        load(&suppressed_default).warnings,
+        vec![ImportWarning::Formatting]
     );
+    let restored_default =
+        suppressed_default.replace("shape=doubleEllipse;", "shape=doubleEllipse;fontSize=12;");
+    assert!(load(&restored_default).warnings.is_empty());
+    let without_label = suppressed_default.replace(r#"value="End""#, r#"value="""#);
+    assert!(load(&without_label).warnings.is_empty());
+    let empty_eleven =
+        without_label.replace("shape=doubleEllipse;", "shape=doubleEllipse;fontSize=11;");
+    assert!(load(&empty_eleven).warnings.is_empty());
+}
+
+#[test]
+fn double_ellipse_appearance_losses_cover_visible_fill_outline_and_label() {
+    let mut sheet = Sheet::new("Ellipses", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let frame = rect(0.0, 0.0, 100.0, 60.0);
+    let mut automatic = CanvasObject::shape(ShapeKind::DoubleEllipse, frame);
+    automatic.style.stroke_width = 17.0;
+    sheet.add_canvas_object(automatic).unwrap();
+    let mut fill = CanvasObject::shape(ShapeKind::DoubleEllipse, frame);
+    fill.style.fill = Some(Color::rgb(20, 40, 60));
+    sheet.add_canvas_object(fill).unwrap();
+    let mut outline = CanvasObject::shape(ShapeKind::DoubleEllipse, frame);
+    outline.style.fill = Some(Color::TRANSPARENT);
+    outline.style.stroke = Some(Color::BLACK);
+    sheet.add_canvas_object(outline).unwrap();
+    let mut label = CanvasObject::shape(ShapeKind::DoubleEllipse, frame);
+    label.style.fill = Some(Color::TRANSPARENT);
+    label.style.stroke = Some(Color::TRANSPARENT);
+    if let CanvasObjectKind::Shape { label, .. } = &mut label.kind {
+        *label = "Visible label".into();
+    }
+    sheet.add_canvas_object(label).unwrap();
+    let mut invisible = CanvasObject::shape(ShapeKind::DoubleEllipse, frame);
+    invisible.style.fill = Some(Color::TRANSPARENT);
+    invisible.style.stroke = Some(Color::TRANSPARENT);
+    sheet.add_canvas_object(invisible).unwrap();
+    let mut transparent = CanvasObject::shape(ShapeKind::DoubleEllipse, frame);
+    transparent.style.opacity = 0.0;
+    sheet.add_canvas_object(transparent).unwrap();
+
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioDoubleEllipseAppearanceApproximated(4)],
+            "{format:?}"
+        );
+    }
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    let automatic = exported
+        .split("<mxCell ")
+        .find(|cell| cell.contains("shape=doubleEllipse;") && cell.contains("strokeWidth=2;"))
+        .unwrap();
+    assert!(automatic.contains("fillColor=none;"));
+    let restored = load(&exported);
+    assert_eq!(
+        shapes(&restored.workbook.sheets[0])[0]
+            .style
+            .effective_shape_stroke_width(),
+        2.0
+    );
+    assert!(export_losses(&book, Format::Thinoda, &ExportOptions::default()).is_empty());
 }
 
 #[test]

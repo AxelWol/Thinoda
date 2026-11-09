@@ -289,6 +289,19 @@ impl CanvasLayer {
             .iter()
             .any(|object| object.rectangle_sides.is_some())
     }
+
+    /// Whether this layer needs double-ellipse-aware persistence.
+    pub fn has_double_ellipses(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::DoubleEllipse,
+                    ..
+                }
+            ) || object.double_ellipse_margin.is_some()
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -339,6 +352,17 @@ impl Default for ObjectStyle {
             text_color: None,
             stroke_width: 2.0,
             opacity: 1.0,
+        }
+    }
+}
+
+impl ObjectStyle {
+    /// Width used for a shape's automatic outline when neither color is set.
+    pub fn effective_shape_stroke_width(&self) -> f32 {
+        if self.stroke.is_none() && self.fill.is_none() {
+            2.0
+        } else {
+            self.stroke_width
         }
     }
 }
@@ -446,6 +470,9 @@ pub struct CanvasObject {
     /// Optional per-side outline for an imported draw.io partial rectangle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rectangle_sides: Option<RectangleSides>,
+    /// Explicit inset of a double ellipse's inner outline; `None` uses the automatic inset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub double_ellipse_margin: Option<f32>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -467,6 +494,7 @@ impl CanvasObject {
             style: ObjectStyle::default(),
             rounding: None,
             rectangle_sides: None,
+            double_ellipse_margin: None,
         }
     }
 
@@ -531,6 +559,7 @@ pub enum ShapeKind {
     Rectangle,
     RoundedRectangle,
     Ellipse,
+    DoubleEllipse,
     Diamond,
     Triangle,
     RightTriangle,
@@ -560,10 +589,11 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
-    pub const ALL: [ShapeKind; 29] = [
+    pub const ALL: [ShapeKind; 30] = [
         ShapeKind::Rectangle,
         ShapeKind::RoundedRectangle,
         ShapeKind::Ellipse,
+        ShapeKind::DoubleEllipse,
         ShapeKind::Diamond,
         ShapeKind::Triangle,
         ShapeKind::RightTriangle,
@@ -616,6 +646,7 @@ impl ShapeKind {
             ShapeKind::Rectangle => "rectangle",
             ShapeKind::RoundedRectangle => "rounded-rectangle",
             ShapeKind::Ellipse => "ellipse",
+            ShapeKind::DoubleEllipse => "double-ellipse",
             ShapeKind::Diamond => "diamond",
             ShapeKind::Triangle => "triangle",
             ShapeKind::RightTriangle => "right-triangle",
@@ -655,7 +686,9 @@ impl ShapeKind {
             }
             ShapeKind::RoundedRectangle => rounded_rect(0.15, 0.15),
             ShapeKind::Terminator => rounded_rect(0.5, 0.5),
-            ShapeKind::Ellipse => ellipse_arc(0.5, 0.5, 0.5, 0.5, 0.0, 360.0, 48),
+            ShapeKind::Ellipse | ShapeKind::DoubleEllipse => {
+                ellipse_arc(0.5, 0.5, 0.5, 0.5, 0.0, 360.0, 48)
+            }
             ShapeKind::Diamond | ShapeKind::Decision => {
                 vec![p(0.5, 0.0), p(1.0, 0.5), p(0.5, 1.0), p(0.0, 0.5)]
             }
@@ -811,6 +844,11 @@ impl ShapeKind {
     pub fn unit_details(self) -> Vec<Vec<Vec2>> {
         let p = Vec2::new;
         match self {
+            ShapeKind::DoubleEllipse => {
+                let mut inner = ellipse_arc(0.5, 0.5, 0.4, 0.4, 0.0, 360.0, 48);
+                inner.push(inner[0]);
+                vec![inner]
+            }
             ShapeKind::Cylinder => vec![ellipse_arc(0.5, 0.12, 0.5, 0.12, 0.0, 180.0, 16)],
             ShapeKind::PredefinedProcess => vec![
                 vec![p(0.1, 0.0), p(0.1, 1.0)],
@@ -824,6 +862,7 @@ impl ShapeKind {
     pub fn unit_label_rect(self) -> Rect {
         let (x0, y0, x1, y1) = match self {
             ShapeKind::Ellipse | ShapeKind::Cloud => (0.15, 0.15, 0.85, 0.85),
+            ShapeKind::DoubleEllipse => (0.05, 0.05, 0.95, 0.95),
             ShapeKind::Diamond | ShapeKind::Decision => (0.25, 0.25, 0.75, 0.75),
             ShapeKind::Triangle => (0.25, 0.45, 0.75, 0.95),
             ShapeKind::RightTriangle => (0.05, 0.5, 0.5, 0.95),
@@ -906,6 +945,18 @@ pub fn shape_geometry_with_rounding(
     rotation: f32,
     rounding: Option<ShapeRounding>,
 ) -> ShapeGeometry {
+    shape_geometry_with_style(kind, rect, rotation, rounding, 2.0, None)
+}
+
+/// Shape geometry with an optional double-ellipse inset and the current stroke width.
+pub fn shape_geometry_with_style(
+    kind: ShapeKind,
+    rect: Rect,
+    rotation: f32,
+    rounding: Option<ShapeRounding>,
+    stroke_width: f32,
+    double_ellipse_margin: Option<f32>,
+) -> ShapeGeometry {
     let center = rect.center();
     let map = |u: Vec2| {
         rotate_around(
@@ -926,18 +977,65 @@ pub fn shape_geometry_with_rounding(
         Some(_) => ShapeKind::Rectangle.unit_outline(),
         None => kind.unit_outline(),
     };
-    ShapeGeometry {
-        outline: outline.into_iter().map(map).collect(),
-        details: kind
-            .unit_details()
+    let details = if kind == ShapeKind::DoubleEllipse {
+        let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
+        let rx = rect.size.x / 2.0 - inset;
+        let ry = rect.size.y / 2.0 - inset;
+        if rx > 0.0 && ry > 0.0 {
+            let mut inner = ellipse_arc(center.x, center.y, rx, ry, 0.0, 360.0, 48);
+            inner.push(inner[0]);
+            vec![
+                inner
+                    .into_iter()
+                    .map(|point| rotate_around(point, center, rotation))
+                    .collect(),
+            ]
+        } else {
+            Vec::new()
+        }
+    } else {
+        kind.unit_details()
             .into_iter()
             .map(|line| line.into_iter().map(map).collect())
-            .collect(),
+            .collect()
+    };
+    ShapeGeometry {
+        outline: outline.into_iter().map(map).collect(),
+        details,
     }
+}
+
+/// Absolute inner-outline inset used by draw.io double ellipses.
+pub fn double_ellipse_inset(rect: Rect, stroke_width: f32, margin: Option<f32>) -> f32 {
+    margin.unwrap_or_else(|| {
+        (3.0 + stroke_width)
+            .min(rect.size.x / 5.0)
+            .min(rect.size.y / 5.0)
+    })
 }
 
 /// Unrotated text area of a shape inside `rect`.
 pub fn shape_label_rect(kind: ShapeKind, rect: Rect) -> Rect {
+    shape_label_rect_with_style(kind, rect, 2.0, None)
+}
+
+/// Unrotated text area with the current double-ellipse inset.
+pub fn shape_label_rect_with_style(
+    kind: ShapeKind,
+    rect: Rect,
+    stroke_width: f32,
+    double_ellipse_margin: Option<f32>,
+) -> Rect {
+    if kind == ShapeKind::DoubleEllipse {
+        let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
+        return Rect::from_center_size(
+            rect.center(),
+            Vec2::new(
+                (rect.size.x - 2.0 * inset).max(0.0),
+                (rect.size.y - 2.0 * inset).max(0.0),
+            ),
+        );
+    }
     let u = kind.unit_label_rect();
     Rect::from_min_size(
         Vec2::new(
@@ -1464,6 +1562,20 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
     {
         return Err(format!(
             "canvas object {id} has invalid rectangle outline sides"
+        ));
+    }
+    if let Some(margin) = object.double_ellipse_margin
+        && (!matches!(
+            object.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::DoubleEllipse,
+                ..
+            }
+        ) || !margin.is_finite()
+            || !(0.0..=MAX_BOARD_COORDINATE).contains(&margin))
+    {
+        return Err(format!(
+            "canvas object {id} has invalid double-ellipse inset"
         ));
     }
     match &object.kind {

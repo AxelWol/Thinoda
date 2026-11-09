@@ -2851,13 +2851,13 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn drawio_clipboard_reports_double_ellipse_approximation_and_undoes_paste() {
+    fn drawio_clipboard_preserves_double_ellipse_and_undoes_paste() {
         use crate::app::Cmd;
         use thinoda_core::{CanvasObjectKind, ShapeKind};
 
         let text = concat!(
             r#"<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
-            r#"<mxCell id="shape" vertex="1" parent="1" value="End" style="shape=doubleEllipse;"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+            r##"<mxCell id="shape" vertex="1" parent="1" value="End" style="shape=doubleEllipse;fillColor=#ffffcc;strokeColor=#123456;fontColor=#000000;margin=8.5;"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
             r#"</root></mxGraphModel>"#
         );
         let (mut app, clipboard) = empty_board_app();
@@ -2877,15 +2877,34 @@ mod tests {
         assert!(matches!(
             object.kind,
             CanvasObjectKind::Shape {
-                shape: ShapeKind::Ellipse,
+                shape: ShapeKind::DoubleEllipse,
                 ..
             }
         ));
         assert_eq!(object.label(), "End");
-        assert!(app.toasts.texts().any(|text| text
+        assert_eq!(object.double_ellipse_margin, Some(8.5));
+        assert!(!app.toasts.texts().any(|text| text
             == crate::i18n::t(
                 "Pasted from draw.io; some content may have been omitted or simplified"
             )));
+
+        app.exec(&ctx, Cmd::CopyAsDrawio);
+        let copied = clipboard.borrow().text.clone();
+        let restored = thinoda_io::drawio_clipboard::decode(&copied).unwrap();
+        let mut sheet = Sheet::new("Restored", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        clipboard::paste_board_selection(&mut sheet, &restored.payload, Vec2::ZERO).unwrap();
+        assert_eq!(sheet.canvas.objects[0].double_ellipse_margin, Some(8.5));
+        assert!(matches!(
+            sheet.canvas.objects[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::DoubleEllipse,
+                ..
+            }
+        ));
+        assert!(app.toasts.texts().any(|text| text.contains(crate::i18n::t(
+            "Double-ellipse appearance may differ in draw.io"
+        ))));
         app.exec(&ctx, Cmd::Canvas(Action::Undo));
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }

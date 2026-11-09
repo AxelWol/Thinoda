@@ -152,8 +152,11 @@ Ordinary folded draw.io notes import as editable flat sticky cards with a
 warning; notes used as containers or images can be simplified differently.
 Export and **Copy as draw.io** report that flat cards can gain folded corners.
 
-Double ellipses import as editable single ellipses with a formatting warning;
-their inner outline and exact label bounds are not preserved.
+Standalone double ellipses retain their editable inner outline and automatic or
+custom inset. Invalid insets and unresolved or adaptive colors are reported;
+**Export** and **Copy as draw.io** warn that appearance can differ. Shape-label
+wrapping and full draw.io text styling are not yet preserved, and double
+ellipses used as containers still become frames with a warning.
 
 Flowchart annotation brackets import as editable open-sided rectangles with a
 formatting warning. Their original stencil identity and exact appearance are

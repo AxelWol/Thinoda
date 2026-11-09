@@ -800,6 +800,11 @@ impl Sheet {
         self.canvas.has_rectangle_sides()
     }
 
+    /// Whether the sheet needs double-ellipse-aware persistence.
+    pub fn has_double_ellipses(&self) -> bool {
+        self.canvas.has_double_ellipses()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2332,6 +2337,11 @@ impl Workbook {
     /// Whether any sheet needs partial-rectangle-aware persistence.
     pub fn has_rectangle_sides(&self) -> bool {
         self.sheets.iter().any(Sheet::has_rectangle_sides)
+    }
+
+    /// Whether any sheet needs double-ellipse-aware persistence.
+    pub fn has_double_ellipses(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_double_ellipses)
     }
 
     pub fn active(&self) -> &Sheet {

@@ -1270,6 +1270,50 @@ fn armed_shape_click_on_empty_space_creates_one_undoable_shape_and_shows_a_ghost
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
+#[test]
+fn double_ellipse_armed_ghost_matches_the_created_inner_outline() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::DoubleEllipse));
+    let empty = point(&h, Vec2::new(-300.0, -200.0));
+    h.hover_at(empty);
+    h.run_steps(3);
+    let ghost_paths: Vec<Vec<Pos2>> = h
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Path(path) if !path.closed && path.points.len() == 49 => {
+                Some(path.points.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    click(&mut h, empty, Modifiers::NONE);
+    let object = &h.state().doc.sheet().canvas.objects[0];
+    let expected = thinoda_core::board::shape_geometry_with_style(
+        ShapeKind::DoubleEllipse,
+        object.rect,
+        object.rotation,
+        object.rounding,
+        object.style.effective_shape_stroke_width(),
+        object.double_ellipse_margin,
+    )
+    .details
+    .remove(0)
+    .into_iter()
+    .map(|point| h.state().view.xf().pos(point))
+    .collect::<Vec<_>>();
+    assert!(
+        ghost_paths.iter().any(|path| {
+            path.iter()
+                .zip(&expected)
+                .all(|(actual, expected)| actual.distance(*expected) < 0.001)
+        }),
+        "the ghost must use the final shape's absolute inset"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
 /// One-finger tap with the touch and pointer events of each phase in the same
 /// frame, as platform backends deliver them.
 fn tap(h: &mut Harness<'_, State>, position: Pos2) {
@@ -6477,6 +6521,47 @@ fn quick_shape_picker_preserves_rectangle_sides_only_for_the_same_kind() {
                 .object(clone)
                 .unwrap()
                 .rectangle_sides,
+            expected,
+            "{chosen}"
+        );
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn quick_shape_picker_preserves_double_ellipse_inset_only_for_the_same_kind() {
+    for (chosen, expected) in [("Double ellipse", Some(8.5)), ("Diamond", None)] {
+        let mut sheet = board();
+        let mut object = CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        object.double_ellipse_margin = Some(8.5);
+        sheet.add_canvas_object(object).unwrap();
+        let mut h = harness(sheet);
+        select_shape_at(&mut h, Vec2::ZERO);
+        let before = h.state().doc.workbook().clone();
+        let arrow = arrow_center(&h, "Add connected shape to the right");
+        h.hover_at(arrow);
+        h.run_steps(50);
+        let tile = h.get_by_label(chosen).rect().center();
+        h.hover_at(tile);
+        h.run_steps(3);
+        click(&mut h, tile, Modifiers::NONE);
+        h.run_steps(2);
+        let [clone] = h.state().view.board_selection[..] else {
+            panic!("expected one selected shape");
+        };
+        assert_eq!(
+            h.state()
+                .doc
+                .sheet()
+                .canvas
+                .object(clone)
+                .unwrap()
+                .double_ellipse_margin,
             expected,
             "{chosen}"
         );

@@ -152,9 +152,19 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "rectangle outline sides require native format version 20".into(),
             ));
         }
+        if version < 21 && book.has_double_ellipses() {
+            return Err(IoError::Invalid(
+                "double ellipses require native format version 21".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_double_ellipses() {
+            return Err(IoError::Invalid(
+                "double ellipses require a versioned native archive".into(),
+            ));
+        }
         if book.has_rectangle_sides() {
             return Err(IoError::Invalid(
                 "rectangle outline sides require a versioned native archive".into(),

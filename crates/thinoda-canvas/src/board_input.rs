@@ -8,7 +8,7 @@ use thinoda_core::{
     Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
     board::{
         BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
-        rotate_around, rotated_corners, shape_geometry_with_rounding,
+        rotate_around, rotated_corners, shape_geometry_with_style,
     },
     scene::{SceneGeometry, SceneItem},
 };
@@ -1810,6 +1810,7 @@ fn quick_insert(
         if *kind != shape {
             clone.rounding = None;
             clone.rectangle_sides = None;
+            clone.double_ellipse_margin = None;
         }
         *kind = shape;
     }
@@ -3889,19 +3890,21 @@ pub(super) fn paint(
     };
     if let Some((kind, pointer)) = view.board_input.drop_ghost.or(armed_ghost) {
         let center = snapped(sheet, xf.sheet(pointer));
-        let ghost = xf.rect(thinoda_core::Rect::from_center_size(
-            center,
-            default_size(BoardTool::Shape(kind)),
-        ));
-        let point = |p: Vec2| ghost.min + vec2(p.x * ghost.width(), p.y * ghost.height());
+        let ghost =
+            thinoda_core::Rect::from_center_size(center, default_size(BoardTool::Shape(kind)));
+        let geometry = thinoda_core::board::shape_geometry(kind, ghost, 0.0);
         let stroke = Stroke::new(1.5, view.accent.gamma_multiply(0.6));
         painter.add(egui::Shape::closed_line(
-            kind.unit_outline().into_iter().map(point).collect(),
+            geometry
+                .outline
+                .into_iter()
+                .map(|point| xf.pos(point))
+                .collect(),
             stroke,
         ));
-        for detail in kind.unit_details() {
+        for detail in geometry.details {
             painter.add(egui::Shape::line(
-                detail.into_iter().map(point).collect(),
+                detail.into_iter().map(|point| xf.pos(point)).collect(),
                 stroke,
             ));
         }
@@ -3927,7 +3930,20 @@ pub(super) fn paint(
             CanvasObjectKind::Shape { shape: source, .. } if *source == shape => object.rounding,
             _ => None,
         };
-        let geometry = shape_geometry_with_rounding(shape, target, object.rotation, rounding);
+        let margin = match &object.kind {
+            CanvasObjectKind::Shape { shape: source, .. } if *source == shape => {
+                object.double_ellipse_margin
+            }
+            _ => None,
+        };
+        let geometry = shape_geometry_with_style(
+            shape,
+            target,
+            object.rotation,
+            rounding,
+            object.style.effective_shape_stroke_width(),
+            margin,
+        );
         painter.add(egui::Shape::closed_line(
             geometry
                 .outline
@@ -4255,7 +4271,12 @@ fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
 fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
     let rect = match &object.kind {
         CanvasObjectKind::Shape { shape, .. } => {
-            let label_rect = thinoda_core::board::shape_label_rect(*shape, object.rect);
+            let label_rect = thinoda_core::board::shape_label_rect_with_style(
+                *shape,
+                object.rect,
+                object.style.effective_shape_stroke_width(),
+                object.double_ellipse_margin,
+            );
             thinoda_core::Rect::from_center_size(
                 rotate_around(label_rect.center(), object.rect.center(), object.rotation),
                 label_rect.size,

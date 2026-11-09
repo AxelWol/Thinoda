@@ -1608,6 +1608,63 @@ fn adjustable_corners_drive_scene_hits_and_connector_clipping() {
 }
 
 #[test]
+fn double_ellipse_scene_uses_effective_width_and_outer_perimeter() {
+    let mut sheet = Sheet::new("Double ellipse", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let frame = rect(0.0, 0.0, 100.0, 60.0);
+    let mut object = CanvasObject::shape(ShapeKind::DoubleEllipse, frame);
+    object.style.stroke_width = 9.0;
+    let id = sheet.add_canvas_object(object).unwrap();
+    let (layout, initial_scene) = scene(&sheet);
+    let item = initial_scene.item(SceneId::Object(id)).unwrap();
+    let SceneGeometry::Polygon { outline, details } = &item.geometry else {
+        panic!("expected double-ellipse geometry");
+    };
+    assert_eq!(
+        details,
+        &crate::board::shape_geometry_with_style(
+            ShapeKind::DoubleEllipse,
+            frame,
+            0.0,
+            None,
+            2.0,
+            None,
+        )
+        .details
+    );
+    assert_eq!(
+        initial_scene.hit_test(frame.center()),
+        Some(SceneHit::Object(id))
+    );
+    let edge = CanvasConnector::new(
+        Endpoint::Object(id),
+        Endpoint::Point(Vec2::new(200.0, 30.0)),
+    );
+    let endpoint = connector_path(&sheet, &layout, &edge)[0];
+    assert!(distance_to_outline(endpoint, outline) < 0.01);
+    assert!((endpoint.x - 100.0).abs() < 0.01);
+
+    sheet.canvas.object_mut(id).unwrap().style.stroke = Some(Color::BLACK);
+    let (_, scene) = scene(&sheet);
+    let SceneGeometry::Polygon { details, .. } = &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        panic!("expected double-ellipse geometry");
+    };
+    assert_eq!(
+        details,
+        &crate::board::shape_geometry_with_style(
+            ShapeKind::DoubleEllipse,
+            frame,
+            0.0,
+            None,
+            9.0,
+            None,
+        )
+        .details
+    );
+}
+
+#[test]
 fn partial_rectangle_keeps_its_selection_and_connector_perimeter() {
     use crate::RectangleSides;
 

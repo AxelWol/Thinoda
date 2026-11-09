@@ -604,6 +604,172 @@ fn rectangle_sides_require_v20_and_aware_xmind_snapshots() {
 }
 
 #[test]
+fn double_ellipses_require_v21_and_aware_xmind_snapshots() {
+    for margin in [None, Some(8.5)] {
+        let (mut book, _) = half_circle_marker_book();
+        let mut ellipse = CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        ellipse.double_ellipse_margin = margin;
+        book.active_mut().add_canvas_object(ellipse).unwrap();
+        let mut rectangle = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(100.0, 60.0)),
+        );
+        rectangle.rectangle_sides = Some(thinoda_core::RectangleSides::default());
+        book.active_mut().add_canvas_object(rectangle).unwrap();
+
+        assert_eq!(required_native_version(&book), 21);
+        let native = export(&book, Format::Thinoda);
+        assert_eq!(manifest_version(&native), 21);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+        let content = serde_json::to_vec(&book).unwrap();
+        let manifest = br#"{"format":"thinoda","version":20,"resources":[]}"#;
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_slice()),
+            ("content.json", &content),
+        ]);
+        assert!(
+            import_bytes(Format::Thinoda, &forged)
+                .unwrap_err()
+                .to_string()
+                .contains("double ellipses require native format version 21")
+        );
+        for version in 3..20 {
+            let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+            let forged = zip_with(&[
+                ("manifest.json", manifest.as_bytes()),
+                ("content.json", &content),
+            ]);
+            assert!(import_bytes(Format::Thinoda, &forged).is_err(), "{version}");
+        }
+        assert!(import_bytes(Format::Thinoda, &content).is_err());
+        for value in [serde_json::json!(-1), serde_json::json!("invalid")] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][0]["double_ellipse_margin"] = value;
+            let malformed = serde_json::to_vec(&malformed).unwrap();
+            let manifest = br#"{"format":"thinoda","version":21,"resources":[]}"#;
+            let forged = zip_with(&[
+                ("manifest.json", manifest.as_slice()),
+                ("content.json", &malformed),
+            ]);
+            assert!(import_bytes(Format::Thinoda, &forged).is_err());
+        }
+        let xmind = export(&book, Format::XMind);
+        assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+        assert!(
+            String::from_utf8(entry(&xmind, "metadata.json"))
+                .unwrap()
+                .contains("THINODA-XMIND-DOUBLE-ELLIPSE-1")
+        );
+    }
+}
+
+#[test]
+fn double_ellipse_renders_in_svg_raster_pdf_and_powerpoint() {
+    let mut sheet = Sheet::new("Double ellipse", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::DoubleEllipse,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.fill = Some(Color::WHITE);
+    shape.style.stroke = Some(Color::rgb(200, 30, 40));
+    shape.style.stroke_width = 4.0;
+    shape.double_ellipse_margin = Some(10.0);
+    let id = sheet.add_canvas_object(shape).unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 150.0));
+    let frame = Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 220.0));
+    sheet
+        .add_presentation_slide("Editable", PresentationSource::Branch(root), frame)
+        .unwrap();
+    sheet
+        .add_presentation_slide("Viewport", PresentationSource::Viewport, frame)
+        .unwrap();
+    let double = Workbook::new(sheet);
+    let mut collapsed = double.clone();
+    collapsed
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .double_ellipse_margin = Some(30.0);
+    let double_svg = String::from_utf8(export(&double, Format::Svg)).unwrap();
+    let collapsed_svg = String::from_utf8(export(&collapsed, Format::Svg)).unwrap();
+    assert!(double_svg.contains("M 90.00,30.00"), "{double_svg}");
+    assert!(!collapsed_svg.contains("M 90.00,30.00"), "{collapsed_svg}");
+    let presentation =
+        render_presentation_slide_svg(double.active(), 0, &ExportOptions::default()).unwrap();
+    assert!(presentation.contains("M 90.00,30.00"), "{presentation}");
+
+    let double_png = image::load_from_memory(&export(&double, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let collapsed_png = image::load_from_memory(&export(&collapsed, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let view = view_box(&double_svg);
+    assert_eq!(view, view_box(&collapsed_svg));
+    let sample = |image: &image::RgbaImage, x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    assert_ne!(
+        sample(&double_png, 50.0, 10.0),
+        sample(&collapsed_png, 50.0, 10.0)
+    );
+    assert_eq!(
+        sample(&double_png, 50.0, 30.0),
+        sample(&collapsed_png, 50.0, 30.0)
+    );
+    let double_pdf = export(&double, Format::Pdf);
+    let collapsed_pdf = export(&collapsed, Format::Pdf);
+    assert!(double_pdf.starts_with(b"%PDF"));
+    assert_ne!(double_pdf, collapsed_pdf);
+    let double_pptx = export(&double, Format::PowerPoint);
+    let collapsed_pptx = export(&collapsed, Format::PowerPoint);
+    let double_slide = String::from_utf8(entry(&double_pptx, "ppt/slides/slide1.xml")).unwrap();
+    let collapsed_slide =
+        String::from_utf8(entry(&collapsed_pptx, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(
+        double_slide.matches(&format!("Canvas object {id}")).count(),
+        2
+    );
+    assert_eq!(
+        collapsed_slide
+            .matches(&format!("Canvas object {id}"))
+            .count(),
+        1
+    );
+    assert_ne!(
+        entry(&double_pptx, "ppt/media/slide2-viewport.png"),
+        entry(&collapsed_pptx, "ppt/media/slide2-viewport.png")
+    );
+
+    let mut no_stroke = double.clone();
+    no_stroke
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .style
+        .stroke = None;
+    let mut no_stroke_collapsed = no_stroke.clone();
+    no_stroke_collapsed
+        .active_mut()
+        .canvas
+        .object_mut(id)
+        .unwrap()
+        .double_ellipse_margin = Some(30.0);
+    assert_eq!(
+        export(&no_stroke, Format::Png),
+        export(&no_stroke_collapsed, Format::Png)
+    );
+}
+
+#[test]
 fn shape_rounding_renders_in_svg_raster_pdf_and_powerpoint() {
     let mut sheet = Sheet::new("Rounded", "");
     sheet.root_mode = SheetRootMode::Hidden;

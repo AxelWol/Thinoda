@@ -3,7 +3,7 @@
  * The synthetic events never read or replace the system clipboard.
  */
 import { expect, test, type Page } from "@playwright/test";
-import { command, drag, frames, imagePicker, jpeg, saveAs, zipEntry } from "./board-browser-helpers";
+import { colorBounds, command, drag, frames, imagePicker, jpeg, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -62,6 +62,7 @@ type BoardObject = {
     };
     style: { fill?: string; stroke?: string; text_color?: string };
     rectangle_sides?: { top: boolean; right: boolean; bottom: boolean; left: boolean };
+    double_ellipse_margin?: number;
 };
 
 type BoardSheet = {
@@ -81,7 +82,9 @@ function archive(zip: Buffer) {
             sheets: BoardSheet[];
             active_sheet: number;
         },
-        manifest: JSON.parse(zipEntry(zip, "manifest.json").toString("utf8")) as { resources: Resource[] },
+        manifest: JSON.parse(zipEntry(zip, "manifest.json").toString("utf8")) as {
+            version: number; resources: Resource[];
+        },
     };
 }
 
@@ -773,10 +776,12 @@ test("draw.io paste warns about unresolved shape appearance", async ({ page }, t
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
-test("draw.io paste warns when a double ellipse is simplified", async ({ page }, testInfo) => {
+test("draw.io paste and copy preserve an editable double ellipse", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
-        '<mxCell id="shape" vertex="1" parent="1" value="End" style="shape=doubleEllipse;">',
+        '<mxCell id="shape" vertex="1" parent="1" value="End" ',
+        'style="shape=doubleEllipse;fillColor=none;strokeColor=#ed1234;',
+        'fontColor=#000000;strokeWidth=4;margin=8.5;">',
         '<mxGeometry width="100" height="60" as="geometry"/></mxCell>',
         '</root></mxGraphModel>',
     ].join("");
@@ -787,12 +792,86 @@ test("draw.io paste warns when a double ellipse is simplified", async ({ page },
         })];
     }, text);
     await paste(page);
-    await page.screenshot({ path: testInfo.outputPath("drawio-double-ellipse-warning.png") });
+    await page.screenshot({ path: testInfo.outputPath("drawio-double-ellipse-paste.png") });
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error("Cannot inspect the canvas without a viewport");
+    // Exclude the inspector's matching stroke-color swatch.
+    const canvas = await page.screenshot({
+        clip: {
+            x: 0,
+            y: 100,
+            width: Math.floor(viewport.width * 0.75),
+            height: viewport.height - 150,
+        },
+    });
+    const bounds = (await colorBounds(page, canvas, [[237, 18, 52]], 15))[0];
+    expect(bounds.count).toBeGreaterThan(100);
+    expect(bounds.maxX - bounds.minX).toBeGreaterThan(80);
+    expect(bounds.maxX - bounds.minX).toBeLessThan(140);
+    expect(bounds.maxY - bounds.minY).toBeGreaterThan(45);
+    expect(bounds.maxY - bounds.minY).toBeLessThan(100);
+    const topStrokes = await page.evaluate(async ({ base64, bounds }) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${base64}`;
+        await image.decode();
+        const surface = document.createElement("canvas");
+        surface.width = image.width;
+        surface.height = image.height;
+        const context = surface.getContext("2d");
+        if (!context) throw new Error("Cannot inspect the rendered double ellipse");
+        context.drawImage(image, 0, 0);
+        const x = Math.round((bounds.minX + bounds.maxX) / 2);
+        const middle = Math.round((bounds.minY + bounds.maxY) / 2);
+        const strokes: number[] = [];
+        let inside = false;
+        for (let y = bounds.minY; y < middle - 4; y++) {
+            const [r, g, b] = context.getImageData(x, y, 1, 1).data;
+            const red = Math.abs(r - 237) < 30 && g < 45 && Math.abs(b - 52) < 30;
+            if (red && !inside) strokes.push(y);
+            inside = red;
+        }
+        return strokes;
+    }, { base64: canvas.toString("base64"), bounds });
+    expect(topStrokes).toHaveLength(2);
     const after = archive(await saveAs(page, "drawio-double-ellipse-after.thinoda"));
     const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
     expect(objects).toHaveLength(1);
-    expect(objects[0].kind.shape).toMatchObject({ shape: "ellipse", label: "End" });
+    expect(objects[0].kind.shape).toMatchObject({ shape: "double-ellipse", label: "End" });
+    expect(objects[0].double_ellipse_margin).toBe(8.5);
+    expect(after.manifest.version).toBe(21);
 
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("F2");
+    await frames(page);
+    const label = page.locator("input[type='text']");
+    await expect(label).toBeFocused();
+    await label.fill("Finish");
+    await page.keyboard.press("Enter");
+    await frames(page);
+    const edited = archive(await saveAs(page, "drawio-double-ellipse-edited.thinoda"));
+    const editedObject = edited.content.sheets[edited.content.active_sheet].canvas?.objects?.[0];
+    expect(editedObject?.kind.shape).toMatchObject({ shape: "double-ellipse", label: "Finish" });
+    expect(editedObject?.double_ellipse_margin).toBe(8.5);
+
+    const previous = await page.evaluate(() => window.__thinodaTestClipboard.plainWrites);
+    await command(page, "Copy as draw.io");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites))
+        .toBe(previous + 1);
+    const copied = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    const model = decodeURIComponent(copied);
+    expect(model).toContain("shape=doubleEllipse;");
+    expect(model).toContain("margin=8.5;");
+    expect(model).toContain("Finish");
+    await page.screenshot({ path: testInfo.outputPath("drawio-double-ellipse-copy-warning.png") });
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const labelUndone = archive(await saveAs(page, "drawio-double-ellipse-label-undo.thinoda"));
+    const restored = labelUndone.content.sheets[labelUndone.content.active_sheet].canvas?.objects?.[0];
+    expect(restored?.kind.shape).toMatchObject({ shape: "double-ellipse", label: "End" });
+    expect(restored?.double_ellipse_margin).toBe(8.5);
     await page.locator("#thinoda_canvas").focus();
     await page.keyboard.press("Control+z");
     await frames(page);

@@ -235,19 +235,37 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             assert_eq!(pasted.warnings, vec![thinoda_io::ImportWarning::Other]);
         }
         if name == "double ellipse" {
-            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            assert!(report.warnings.is_empty());
             let objects = &report.workbook.sheets[0].canvas.objects;
             assert_eq!(objects.len(), 1);
             assert!(matches!(
                 objects[0].kind,
                 thinoda_core::CanvasObjectKind::Shape {
-                    shape: thinoda_core::ShapeKind::Ellipse,
+                    shape: thinoda_core::ShapeKind::DoubleEllipse,
                     ..
                 }
             ));
+            assert_eq!(objects[0].double_ellipse_margin, Some(8.5));
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, report.warnings);
+            let mut sheet = thinoda_core::Sheet::new("Pasted", "");
+            sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+            thinoda_core::clipboard::paste_board_selection(
+                &mut sheet,
+                &pasted.payload,
+                thinoda_core::Vec2::ZERO,
+            )
+            .unwrap();
+            assert_eq!(sheet.canvas.objects.len(), 1);
+            assert!(matches!(
+                sheet.canvas.objects[0].kind,
+                thinoda_core::CanvasObjectKind::Shape {
+                    shape: thinoda_core::ShapeKind::DoubleEllipse,
+                    ..
+                }
+            ));
+            assert_eq!(sheet.canvas.objects[0].double_ellipse_margin, Some(8.5));
         }
         if name == "flowchart annotation" {
             assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);

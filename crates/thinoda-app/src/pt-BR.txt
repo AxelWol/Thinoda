@@ -1,5 +1,8 @@
 # Regional wording overrides.
 Corner radius|Raio dos cantos
+Double ellipse|Elipse dupla
+Automatic inner inset|Espaçamento interno automático
+Inner outline inset|Espaçamento do contorno interno
 Outline sides|Lados do contorno
 Top outline|Contorno superior
 Right outline|Contorno direito
@@ -54,6 +57,7 @@ Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa menta
 Connector-to-connector attachments detached|Conexões entre conectores desfeitas
 Label color or opacity may differ in draw.io|A cor ou opacidade dos rótulos pode ser diferente no draw.io
 Rectangle colors or automatic outlines may differ in draw.io|As cores ou os contornos automáticos dos retângulos podem ser diferentes no draw.io
+Double-ellipse appearance may differ in draw.io|As elipses duplas podem ter uma aparência diferente no draw.io
 Collapsed process outlines may be omitted in draw.io|Os contornos de processos sem largura ou altura podem ser omitidos no draw.io
 Grid or snapping may differ in draw.io|A grade ou o encaixe na grade podem ser diferentes no draw.io
 Page background may differ in draw.io|O fundo da página pode ser diferente no draw.io

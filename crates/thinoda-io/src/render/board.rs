@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
-        CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath,
-        rectangle_side_paths, rotate_around, shape_label_rect,
+        CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath, ShapeKind,
+        rectangle_side_paths, rotate_around, shape_label_rect_with_style,
     },
     scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_path},
 };
@@ -178,7 +178,8 @@ pub(crate) fn object_prims(
                 .map(|c| faded(c, opacity));
             let width = if object.style.stroke.is_none()
                 && (visual.automatic_board_stroke.is_some()
-                    || object.rectangle_sides.is_some() && object.style.fill.is_none())
+                    || (object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse)
+                        && object.style.fill.is_none())
             {
                 2.0
             } else {
@@ -217,7 +218,9 @@ pub(crate) fn object_prims(
                     points: detail.clone(),
                     closed: false,
                     fill: None,
-                    stroke: if visual.automatic_board_stroke.is_some() {
+                    stroke: if *shape == ShapeKind::DoubleEllipse
+                        || visual.automatic_board_stroke.is_some()
+                    {
                         stroke
                     } else {
                         Some(stroke.unwrap_or((ink, 1.0)))
@@ -226,7 +229,12 @@ pub(crate) fn object_prims(
                 });
             }
             if !label.trim().is_empty() {
-                let rect = shape_label_rect(*shape, object.rect);
+                let rect = shape_label_rect_with_style(
+                    *shape,
+                    object.rect,
+                    object.style.effective_shape_stroke_width(),
+                    object.double_ellipse_margin,
+                );
                 let under = object.style.fill.map_or(background, |f| f.over(background));
                 out.push(Prim::Text {
                     rect,

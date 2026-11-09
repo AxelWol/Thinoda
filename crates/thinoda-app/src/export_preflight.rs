@@ -199,6 +199,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     *count,
                     "Rectangle colors or automatic outlines may differ in draw.io",
                 ),
+                ExportLoss::DrawioDoubleEllipseAppearanceApproximated(count) => {
+                    (*count, "Double-ellipse appearance may differ in draw.io")
+                }
                 ExportLoss::DrawioCollapsedProcessApproximated(count) => (
                     *count,
                     "Collapsed process outlines may be omitted in draw.io",

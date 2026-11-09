@@ -16,7 +16,7 @@ use thinoda_core::{
     SceneBand, SceneId, ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
     board::{
         polyline_midpoint, rectangle_side_paths, rotate_around, rotated_bounds, rotated_corners,
-        shape_label_rect,
+        shape_label_rect_with_style,
     },
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
@@ -757,7 +757,13 @@ fn shape_label_visible_bounds(
     let font_size = shape_label_font_size(zoom) / zoom.max(f32::EPSILON);
     let size = Vec2::new(longest as f32, line_count as f32) * (font_size * 2.0);
     let center = rotate_around(
-        shape_label_rect(*shape, object.rect).center(),
+        shape_label_rect_with_style(
+            *shape,
+            object.rect,
+            object.style.effective_shape_stroke_width(),
+            object.double_ellipse_margin,
+        )
+        .center(),
         object.rect.center(),
         object.rotation,
     );
@@ -1395,7 +1401,12 @@ fn paint_canvas_object(
                 ));
             }
             if !label.is_empty() && editing_board_object != Some(object.id) {
-                let text_rect = shape_label_rect(*shape, object.rect);
+                let text_rect = shape_label_rect_with_style(
+                    *shape,
+                    object.rect,
+                    object.style.effective_shape_stroke_width(),
+                    object.double_ellipse_margin,
+                );
                 let font = FontId::proportional(shape_label_font_size(z));
                 let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
                 let text_color = opacity_color(text_color, object.style.opacity);
@@ -2917,7 +2928,8 @@ mod tests {
             for angle in [0.0_f32, 45.0, 90.0, -90.0] {
                 let shape = &mut sheet.canvas.objects[0];
                 shape.rotation = angle;
-                let label_center = shape_label_rect(ShapeKind::Triangle, shape.rect).center();
+                let label_center =
+                    thinoda_core::board::shape_label_rect(ShapeKind::Triangle, shape.rect).center();
                 let expected = xf.pos(rotate_around(label_center, shape.rect.center(), angle));
                 let mut output = ctx.run_pass(
                     egui::RawInput {

@@ -597,8 +597,14 @@ fn object_item(
     };
     let geometry = match &object.kind {
         CanvasObjectKind::Shape { shape, .. } => {
-            let g =
-                shape_geometry_with_rounding(*shape, object.rect, object.rotation, object.rounding);
+            let g = crate::board::shape_geometry_with_style(
+                *shape,
+                object.rect,
+                object.rotation,
+                object.rounding,
+                object.style.effective_shape_stroke_width(),
+                object.double_ellipse_margin,
+            );
             SceneGeometry::Polygon {
                 outline: g.outline,
                 details: g.details,

@@ -763,6 +763,72 @@ fn every_shape_kind_round_trips_and_has_geometry() {
 }
 
 #[test]
+fn double_ellipse_uses_absolute_insets_for_outline_and_label() {
+    let frame = rect(10.0, 20.0, 100.0, 60.0);
+    for (stroke, margin, expected) in [(2.0, None, 5.0), (7.0, None, 10.0), (2.0, Some(8.5), 8.5)] {
+        let geometry =
+            shape_geometry_with_style(ShapeKind::DoubleEllipse, frame, 0.0, None, stroke, margin);
+        assert_eq!(geometry.details.len(), 1);
+        assert_eq!(geometry.details[0].first(), geometry.details[0].last());
+        let bounds = points_bounds(&geometry.details[0]).unwrap();
+        let expected_rect = rect(
+            10.0 + expected,
+            20.0 + expected,
+            100.0 - 2.0 * expected,
+            60.0 - 2.0 * expected,
+        );
+        assert!((bounds.min - expected_rect.min).length() < 0.001);
+        assert!((bounds.size - expected_rect.size).length() < 0.001);
+        assert_eq!(
+            shape_label_rect_with_style(ShapeKind::DoubleEllipse, frame, stroke, margin),
+            expected_rect
+        );
+
+        let rotated =
+            shape_geometry_with_style(ShapeKind::DoubleEllipse, frame, 90.0, None, stroke, margin);
+        for (original, actual) in geometry.details[0].iter().zip(&rotated.details[0]) {
+            assert!((*actual - rotate_around(*original, frame.center(), 90.0)).length() < 0.001);
+        }
+    }
+
+    let small = rect(0.0, 0.0, 10.0, 5.0);
+    assert_eq!(double_ellipse_inset(small, 2.0, None), 1.0);
+    let collapsed =
+        shape_geometry_with_style(ShapeKind::DoubleEllipse, frame, 0.0, None, 2.0, Some(30.0));
+    assert!(collapsed.details.is_empty());
+    assert_eq!(
+        shape_label_rect_with_style(ShapeKind::DoubleEllipse, frame, 2.0, Some(30.0)).center(),
+        frame.center()
+    );
+}
+
+#[test]
+fn double_ellipse_inset_is_optional_and_validated() {
+    let mut object = CanvasObject::shape(ShapeKind::DoubleEllipse, rect(0.0, 0.0, 100.0, 60.0));
+    assert!(
+        !serde_json::to_string(&object)
+            .unwrap()
+            .contains("double_ellipse_margin")
+    );
+    object.double_ellipse_margin = Some(8.5);
+    validate_object(&object).unwrap();
+    assert_eq!(
+        serde_json::from_str::<CanvasObject>(&serde_json::to_string(&object).unwrap()).unwrap(),
+        object
+    );
+    for margin in [-1.0, f32::NAN, f32::INFINITY, MAX_BOARD_COORDINATE + 1.0] {
+        object.double_ellipse_margin = Some(margin);
+        assert!(validate_object(&object).is_err(), "{margin}");
+    }
+    object.double_ellipse_margin = Some(8.5);
+    object.kind = CanvasObjectKind::Shape {
+        shape: ShapeKind::Ellipse,
+        label: String::new(),
+    };
+    assert!(validate_object(&object).is_err());
+}
+
+#[test]
 fn adjustable_rectangle_rounding_is_absolute_and_validated() {
     let frame = rect(10.0, 20.0, 100.0, 60.0);
     let rounding = ShapeRounding {

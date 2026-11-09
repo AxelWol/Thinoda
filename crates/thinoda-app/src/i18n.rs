@@ -530,6 +530,10 @@ const DE: &[(&str, &str)] = &[
         "Rechteckfarben oder automatische Konturen können in draw.io abweichen",
     ),
     (
+        "Double-ellipse appearance may differ in draw.io",
+        "Doppelte Ellipsen können in draw.io anders aussehen",
+    ),
+    (
         "Collapsed process outlines may be omitted in draw.io",
         "Konturen von Prozessen ohne Breite oder Höhe können in draw.io fehlen",
     ),
@@ -1467,6 +1471,9 @@ const DE: &[(&str, &str)] = &[
     ("Rounded rectangle", "Abgerundetes Rechteck"),
     ("Rectangle", "Rechteck"),
     ("Ellipse", "Ellipse"),
+    ("Double ellipse", "Doppelte Ellipse"),
+    ("Automatic inner inset", "Automatischer Innenabstand"),
+    ("Inner outline inset", "Innenabstand der Kontur"),
     ("Capsule", "Kapselform"),
     ("Diamond", "Raute"),
     ("Curve", "Kurve"),
@@ -5128,6 +5135,7 @@ mod tests {
             "Connector-to-connector attachments detached",
             "Label color or opacity may differ in draw.io",
             "Rectangle colors or automatic outlines may differ in draw.io",
+            "Double-ellipse appearance may differ in draw.io",
             "Collapsed process outlines may be omitted in draw.io",
             "Grid or snapping may differ in draw.io",
             "Translucent connector labels may render differently",

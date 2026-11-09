@@ -30,6 +30,7 @@ const HALF_CIRCLE_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-10\n";
 const BAR_MARKER_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-11\n";
 const ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-12\n";
 const RECTANGLE_SIDES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-13\n";
+const DOUBLE_ELLIPSE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-14\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -48,7 +49,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_rectangle_sides() {
+        if self.fragment.has_double_ellipses() {
+            DOUBLE_ELLIPSE_BOARD_PREFIX
+        } else if self.fragment.has_rectangle_sides() {
             RECTANGLE_SIDES_BOARD_PREFIX
         } else if self.fragment.has_shape_rounding() {
             ROUNDING_BOARD_PREFIX
@@ -246,9 +249,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(RECTANGLE_SIDES_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-13\r\n"))
-        .map(|json| (13, json))
+        .strip_prefix(DOUBLE_ELLIPSE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-14\r\n"))
+        .map(|json| (14, json))
+        .or_else(|| {
+            text.strip_prefix(RECTANGLE_SIDES_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-13\r\n"))
+                .map(|json| (13, json))
+        })
         .or_else(|| {
             text.strip_prefix(ROUNDING_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-12\r\n"))
@@ -341,6 +349,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     }
     if version < 13 && payload.fragment.has_rectangle_sides() {
         return Err("rectangle outline sides require board clipboard version 13".into());
+    }
+    if version < 14 && payload.fragment.has_double_ellipses() {
+        return Err("double ellipses require board clipboard version 14".into());
     }
     if version < 3 && payload.fragment.has_connector_waypoints() {
         return Err("connector waypoints require board clipboard version 3".into());

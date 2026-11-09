@@ -36,6 +36,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::DrawioGridSettingsApproximated(23),
         ExportLoss::DrawioBackgroundAppearanceApproximated(24),
         ExportLoss::DrawioCardAppearanceApproximated(25),
+        ExportLoss::DrawioDoubleEllipseAppearanceApproximated(26),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -60,6 +61,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     assert!(lines[22].starts_with("23 — "), "{}", lines[22]);
     assert!(lines[23].starts_with("24 — "), "{}", lines[23]);
     assert!(lines[24].starts_with("25 — "), "{}", lines[24]);
+    assert!(lines[25].starts_with("26 — "), "{}", lines[25]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -77,6 +79,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         (23, "Grid or snapping may differ in draw.io"),
         (24, "Page background may differ in draw.io"),
         (25, "Cards may show folded corners in draw.io"),
+        (26, "Double-ellipse appearance may differ in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -154,6 +157,27 @@ fn partial_rectangle_appearance_loss_requires_localized_export_consent() {
         "{message}"
     );
     assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn double_ellipse_appearance_loss_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let options = ExportOptions::default();
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            message.contains(t("Double-ellipse appearance may differ in draw.io")),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
     assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
 }
 
