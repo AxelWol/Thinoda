@@ -36,6 +36,7 @@ const CSS_COLORS: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/css
 const PAGE_BACKGROUND: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/page-background");
 const FOLDED_NOTES: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/folded-notes");
 const DOUBLE_ELLIPSE: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/double-ellipse");
+const LABEL_SIZES: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/label-sizes");
 const FLOWCHART_ANNOTATION: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/flowchart-annotation");
 const FLOWCHART_PROCESS: &[u8] =
@@ -65,6 +66,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             CLIPBOARD_PAGE_WARNINGS,
         ),
         ("double ellipse", Format::DrawIo, DOUBLE_ELLIPSE),
+        ("label sizes", Format::DrawIo, LABEL_SIZES),
         ("flowchart annotation", Format::DrawIo, FLOWCHART_ANNOTATION),
         ("flowchart process", Format::DrawIo, FLOWCHART_PROCESS),
         ("warning", Format::DrawIo, WARNING),
@@ -77,6 +79,24 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         assert!(!report.workbook.sheets.is_empty(), "{name}");
         if name == "warning" {
             assert!(!report.warnings.is_empty());
+        }
+        if name == "label sizes" {
+            assert!(
+                report
+                    .warnings
+                    .contains(&thinoda_io::ImportWarning::Formatting)
+            );
+            let objects = &report.workbook.sheets[0].canvas.objects;
+            assert!(objects.iter().any(|object| object.label() == "Small shape"));
+            assert!(objects.iter().any(|object| object.label() == "Named text"));
+            assert!(
+                objects
+                    .iter()
+                    .any(|object| object.label() == "Parent\nChild")
+            );
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, report.warnings);
         }
         if name == "partial rectangle" {
             let object = &report.workbook.sheets[0].canvas.objects[0];

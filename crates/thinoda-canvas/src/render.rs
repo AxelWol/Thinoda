@@ -15,8 +15,8 @@ use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, RectangleSides,
     SceneBand, SceneId, ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
     board::{
-        polyline_midpoint, rectangle_side_paths, rotate_around, rotated_bounds, rotated_corners,
-        shape_label_rect_with_style,
+        CANVAS_LABEL_FONT_SIZE, polyline_midpoint, rectangle_side_paths, rotate_around,
+        rotated_bounds, rotated_corners, shape_label_rect_with_style,
     },
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
@@ -27,7 +27,7 @@ use thinoda_core::{
 pub(crate) const RELATIONSHIP_SEGMENTS: usize = 32;
 
 pub(crate) fn shape_label_font_size(zoom: f32) -> f32 {
-    (12.0 * zoom).max(7.0)
+    (CANVAS_LABEL_FONT_SIZE * zoom).max(7.0)
 }
 
 /// Converts a core color into an egui color.
@@ -480,7 +480,7 @@ pub(crate) fn paint_map_scene(
             }
         }
         if let Some(title) = rel.map(|x| x.title.as_str()).filter(|t| !t.is_empty()) {
-            let font = FontId::proportional(12.0 * z);
+            let font = FontId::proportional(CANVAS_LABEL_FONT_SIZE * z);
             let g = painter.layout_no_wrap(title.to_owned(), font, color);
             let m = xf.pos(r.mid);
             let rr = Rect::from_center_size(m, g.size() + vec2(8.0, 4.0) * z);
@@ -725,7 +725,8 @@ fn object_visible_bounds(
             let label_margin = if connector.label.is_empty() {
                 0.0
             } else {
-                connector.label.chars().count() as f32 * 12.0 * zoom_scale + 8.0 * zoom_scale
+                connector.label.chars().count() as f32 * CANVAS_LABEL_FONT_SIZE * zoom_scale
+                    + 8.0 * zoom_scale
             };
             arrow_margin.max(label_margin)
         }
@@ -1515,7 +1516,7 @@ fn paint_canvas_object(
                 }
                 if !connector.label.is_empty() && editing_board_object != Some(object.id) {
                     let mid = xf.pos(label_center.expect("a connector path has points"));
-                    let font = FontId::proportional((12.0 * z).max(7.0));
+                    let font = FontId::proportional(shape_label_font_size(z));
                     let text_color = object
                         .style
                         .text_color

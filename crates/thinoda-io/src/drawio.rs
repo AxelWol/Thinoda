@@ -21,13 +21,13 @@ use thinoda_core::{
     ApproxMeasure, Color, MAX_PRESENTATION_NAME_BYTES, MAX_ZONES, MIN_ZONE_SIZE, Rect, Sheet,
     TextAlign, TopicId, TopicShape, Vec2, Workbook, ZoneId,
     board::{
-        Band, BoardMember, CanvasConnector, CanvasGroupId, CanvasObject, CanvasObjectId,
-        CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind, ConnectorRoute,
-        DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil, Endpoint, GridKind, InkStroke,
-        InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH,
-        MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, RectangleSides, ShapeKind,
-        ShapeRounding, SheetRootMode, normalize_rotation, rotate_around, valid_board_position,
-        valid_connector_marker_size,
+        Band, BoardMember, CANVAS_LABEL_FONT_SIZE, CanvasConnector, CanvasGroupId, CanvasObject,
+        CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
+        ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil, Endpoint, GridKind,
+        InkStroke, InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE,
+        MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle,
+        RectangleSides, ShapeKind, ShapeRounding, SheetRootMode, normalize_rotation, rotate_around,
+        valid_board_position, valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -790,6 +790,29 @@ impl Style {
         self.opacity() < 1.0 && self.num("textOpacity").is_none_or(|opacity| opacity > 0.0)
     }
 
+    fn label_style_loss(&self, source_is_edge: bool) -> bool {
+        // Vertices default to 12px; edges and removed defaults use mxGraph's 11px.
+        // These built-in vertex styles leave the default label settings unchanged.
+        if !self.tokens.is_empty()
+            && (source_is_edge
+                || self.tokens.len() > 1
+                || self.get("shape").is_some()
+                || !matches!(
+                    self.tokens.first().map(String::as_str),
+                    Some("ellipse" | "rhombus" | "triangle")
+                ))
+        {
+            return true;
+        }
+        match self.get("fontSize") {
+            None => source_is_edge || self.suppress_defaults,
+            Some("none") => true,
+            Some(_) => self
+                .num("fontSize")
+                .is_none_or(|size| size != CANVAS_LABEL_FONT_SIZE),
+        }
+    }
+
     fn double_ellipse_label_loss(&self, has_label: bool) -> bool {
         if !has_label {
             return false;
@@ -797,12 +820,6 @@ impl Style {
         let nonzero_spacing = |key| {
             self.get(key)
                 .is_some_and(|value| value != "none" && self.num(key).is_none_or(|v| v != 0.0))
-        };
-        // Removing the editor's 12px vertex default exposes mxGraph's 11px fallback.
-        let unsupported_font_size = match self.get("fontSize") {
-            None => self.suppress_defaults,
-            Some("none") => true,
-            Some(_) => self.num("fontSize").is_none_or(|size| size != 12.0),
         };
         self.get("whiteSpace") == Some("wrap")
             || self
@@ -833,7 +850,6 @@ impl Style {
             ]
             .into_iter()
             .any(nonzero_spacing)
-            || unsupported_font_size
             || self
                 .get("fontStyle")
                 .is_some_and(|value| value != "none" && self.num("fontStyle").is_none())
@@ -2227,6 +2243,9 @@ impl<'a> PageImport<'a> {
                 return self.card(index, card_kind, rect, label, context, image);
             }
         };
+        if !object.label().is_empty() && style.label_style_loss(false) {
+            self.warn(ImportWarning::Formatting);
+        }
         self.add_object(index, object, context)
             .map(BoardMember::Object)
     }
@@ -2403,11 +2422,14 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Links);
         }
         let mut label = self.label(cell);
+        let label_style_loss = !label.is_empty() && style.label_style_loss(true);
         for child in self.children[index].clone() {
             let child = &cells[child];
             if child.vertex && child.visible {
                 let text = self.label(child);
                 if !text.is_empty() {
+                    // Folding child labels loses their independent positions and styles.
+                    self.warn(ImportWarning::Formatting);
                     if !label.is_empty() {
                         label.push('\n');
                     }
@@ -2416,7 +2438,9 @@ impl<'a> PageImport<'a> {
             }
         }
         if !label.is_empty()
-            && (style.label_opacity_loss() || style.connector_label_appearance_loss(true))
+            && (label_style_loss
+                || style.label_opacity_loss()
+                || style.connector_label_appearance_loss(true))
         {
             self.warn(ImportWarning::Formatting);
         }
@@ -3535,6 +3559,9 @@ impl<'a> PageWriter<'a> {
                     "textOpacity",
                     object.style.text_color,
                 );
+                if !connector.label.is_empty() {
+                    style.push_str(&format!("fontSize={};", num(CANVAS_LABEL_FONT_SIZE)));
+                }
                 style.push_str(&format!("strokeWidth={};", num(connector.width)));
                 common_keys(&mut style, &object.style, 0.0, object.locked, object.band);
                 let ends = [self.terminal(connector.from), self.terminal(connector.to)];
@@ -3765,6 +3792,9 @@ impl<'a> PageWriter<'a> {
             };
             let mut style = String::from("curved=1;dashed=1;endArrow=classic;html=1;");
             color_keys(&mut style, "strokeColor", "strokeOpacity", model.color);
+            if !model.title.is_empty() {
+                style.push_str(&format!("fontSize={};", num(CANVAS_LABEL_FONT_SIZE)));
+            }
             let ends = [
                 self.topic_terminal(model.from, relationship.start),
                 self.topic_terminal(model.to, relationship.end),

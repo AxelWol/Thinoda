@@ -751,6 +751,16 @@ those system-owned controls. WinGet publishing remains paused.
   rectangle placeholders and are identified in the import or paste warning.
   Named styles combined with an explicit shape can also lose formatting.
   The original stencil and style data are not retained; keep the source file.
+  Shape and connector labels use a fixed 12-unit canvas font at normal zoom.
+  Import warns when a nonempty label's source size differs or cannot be
+  determined; draw.io's default connector-label size is 11. Named text and
+  label styles also warn when their inherited alignment or other effects
+  cannot be preserved. Separate connector-label cells are joined into the
+  connector text with a warning because their individual styles and positions
+  are not retained.
+  Export and **Copy as draw.io** write size 12 for labeled board connectors;
+  flattened relationship labels use size 12 as well. Text styling and wrapping
+  can still differ.
   Import follows draw.io's grid visibility and size, enabling snapping when the
   grid is enabled. Unsupported grid sizes are adjusted with a warning. A direct
   Thinoda export and reimport preserves its independent grid and snapping

@@ -33,6 +33,8 @@ pub const MAX_TOTAL_CONNECTOR_WAYPOINTS: usize = 200_000;
 pub const MAX_BOARD_COORDINATE: f32 = 1_000_000.0;
 /// Characters of a shape/connector label or an alt text.
 pub const MAX_BOARD_TEXT_CHARS: usize = 10_000;
+/// Canvas font size for shape, connector and relationship labels at normal zoom.
+pub const CANVAS_LABEL_FONT_SIZE: f32 = 12.0;
 pub const MIN_STROKE_WIDTH: f32 = 0.1;
 pub const MAX_STROKE_WIDTH: f32 = 200.0;
 /// draw.io marker size in board units, before adding the stroke width.

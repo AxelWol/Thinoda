@@ -378,8 +378,9 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   add/edit label (A), "…" opens the full connector inspector. Positioned near the edge
   midpoint, never covering the edge; keyboard reachable; reuses existing board toolbar
   widgets/icons. Selected **shape** quick toolbar likewise (fill, stroke, text, style
-  presets, "…"), following the same visual language. *Phase 1d places both in the
-  contextual section of the left board toolbar instead; see the Phase 1d progress note.*
+  presets, "…"), following the same visual language. *Phase 1d used the left board
+  toolbar; later slices moved those controls to top contextual overlays.
+  Object-adjacent floating toolbars remain open.*
 - **Virtual bends**: midpoint dots on each segment of the selected edge; drag = create
   waypoint; orthogonal edges drag whole segments; double-click waypoint = remove;
   "Clear waypoints" in toolbar "…".
@@ -766,8 +767,8 @@ connections arrive in Phase 8 without changing the gestures).
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
   v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
   markers, v18 covers bar markers, v19 covers adjustable rectangle corners,
-  v20 covers rectangle outline sides, and subsequent additions need a higher
-  version.
+  v20 covers rectangle outline sides, v21 covers double ellipses, and
+  subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -1700,9 +1701,9 @@ This is editable interoperability, not exact visual parity: ellipses use
 48-segment outlines, canvas labels do not wrap like draw.io labels, visual
 exports may wrap differently from the canvas, and text styling and adaptive
 colors remain incomplete. Oversized insets can collapse label bounds; valid
-values are retained but reported when clamping is necessary. Other shape
-labels still use the generic font-size check, which can accept an 11px source
-label without a warning. Inspector and clipboard tests do not replace
+values are retained but reported when clamping is necessary. At this
+checkpoint, other shape labels still used the generic font-size check; the
+follow-on checkpoint below closes that specific gap. Inspector and clipboard tests do not replace
 physical-device, system-clipboard or screen-reader acceptance; visual exports
 still need broader Office and PDF viewer acceptance. Keep the original draw.io
 file and a native copy. The new
@@ -1721,6 +1722,55 @@ screenshots were inspected. Native, WebAssembly and fuzz Clippy passed with
 warnings denied. The final Linux AddressSanitizer smoke completed 9,425
 executions in 22 seconds without a reported failure or reproducer. This short
 run does not satisfy the separate 30-minute-per-target acceptance campaign.
+
+**Canvas label-size and folded-label diagnostics (partial Phases 6, 9 and 11).**
+Nonempty converted shape and connector labels now report a formatting loss
+when their draw.io size differs from Thinoda's 12-unit canvas font. The
+[published default stylesheet](https://raw.githubusercontent.com/jgraph/drawio/c72c9a98b7a6ce392556ed04c05e0ff19f43f5c3/src/main/webapp/styles/default.xml)
+sets a vertex size of 12 and an edge size of 11; a removed font size or
+suppressed vertex defaults also fall back to 11. Named styles are treated
+conservatively because their font-size precedence and other effects are not
+resolved; in the published default stylesheet, the single built-in `ellipse`,
+`rhombus` and `triangle` styles do not override the default label style. A
+separate child label is still folded into its connector, but now reports a
+formatting loss even at size 12 because its independent placement and style
+are not retained.
+
+Labeled board connectors and flattened mind-map relationships now export with
+`fontSize=12`, matching their canvas text at normal zoom. Unlabeled edges are
+unchanged. This intentionally changes those labels' appearance in draw.io
+from its 11px edge default. The native canvas, conversion diagnostic and
+writer share the font-size constant. Visual exports use size 14 for shape
+labels and size 12 for connector labels, with different wrapping from the
+canvas.
+
+**Rubber-duck self-critique.** A named `edgeLabel` after an `ellipse` can
+change the vertex's size without an explicit `shape` key, so testing only
+edge styles missed a real loss. The built-in `text` and `label` named styles
+also change alignment or other text properties even at size 12; treating every
+single token as a faithful shape was incorrect. Child labels can have their own
+position, colors and styles; checking only their font size would incorrectly
+imply that the folded result is faithful. These cases now warn. Named-style
+warnings can be conservative even when a later explicit size is 12, because
+the named style's other properties are not preserved. The warning is generic,
+not a per-label count or a retained source style. Cards, rich text, full style
+precedence, independent label editing and placement, and source-preserving
+save-back remain open. Board label minimum size at low zoom and visual exports
+can also differ from draw.io. Keep the original file and a native copy; these
+diagnostics do not establish full appearance fidelity.
+
+Validation passed 310 I/O and interchange tests, 907 app library tests and 494
+canvas library tests (two ignored in each library), 18 shape-label editing
+tests and three GPU label-visual tests. All 88 supplied diagrams passed the
+corpus round trip and rendering check. Nine production-browser paste, warning,
+edit, copy and undo journeys passed across Chromium, Firefox and WebKit; the
+warning screenshots were inspected. The named-text warning regression failed
+against the previous build and passed after the fix. One initial browser run
+hit a stale preview listener; the final run verified the actual build's assets
+and stopped the isolated listeners afterward. Native, WebAssembly and fuzz
+Clippy passed with warnings denied. A 22-second Linux AddressSanitizer smoke
+completed 7,913 executions without a reported failure; it is not the separate
+30-minute-per-target acceptance campaign.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

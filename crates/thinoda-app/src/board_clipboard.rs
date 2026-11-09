@@ -2851,6 +2851,50 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_connector_label_size_warning_and_copy_are_undoable() {
+        use crate::app::Cmd;
+        use thinoda_core::CanvasObjectKind;
+
+        for (font, warned) in [("", true), ("fontSize=11;", true), ("fontSize=12;", false)] {
+            let text = format!(
+                r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" value="Edge" style="endArrow=none;strokeColor=#000;fontColor=#000;{font}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel>"##
+            );
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            clipboard.borrow_mut().text = text;
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            assert_eq!(
+                app.toasts.texts().any(|text| text
+                    == crate::i18n::t(
+                        "Pasted from draw.io; some content may have been omitted or simplified"
+                    )),
+                warned,
+                "{font}"
+            );
+            let object = &app.doc().unwrap().doc.sheet().canvas.objects[0];
+            assert!(matches!(
+                &object.kind,
+                CanvasObjectKind::Connector(connector) if connector.label == "Edge"
+            ));
+
+            app.toasts.tick(60.0);
+            app.exec(&ctx, Cmd::CopyAsDrawio);
+            assert!(clipboard.borrow().text.contains("fontSize%3D12"));
+            app.exec(&ctx, Cmd::MenuPaste);
+            assert_eq!(app.doc().unwrap().doc.sheet().canvas.objects.len(), 2);
+            assert!(!app.toasts.texts().any(|text| text
+                == crate::i18n::t(
+                    "Pasted from draw.io; some content may have been omitted or simplified"
+                )));
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_preserves_double_ellipse_and_undoes_paste() {
         use crate::app::Cmd;
         use thinoda_core::{CanvasObjectKind, ShapeKind};

@@ -1121,6 +1121,262 @@ fn double_ellipse_reports_unsupported_label_layout() {
 }
 
 #[test]
+fn vertex_label_font_size_loss_is_reported_for_shapes_and_text() {
+    for (shape, prefix, font, label, warned) in [
+        ("rectangle", "", "", "Label", false),
+        ("rectangle", "", "fontSize=12;", "Label", false),
+        ("rectangle", "", "fontSize=11;", "Label", true),
+        ("ellipse", "", "fontSize=11;", "Label", true),
+        ("text", "", "fontSize=11;", "Label", true),
+        ("rectangle", "", "fontSize=none;", "Label", true),
+        ("rectangle", ";", "", "Label", true),
+        ("rectangle", ";", "fontSize=12;", "Label", false),
+        ("rectangle", "", "fontSize=invalid;", "Label", true),
+        ("rectangle", "", "fontSize=11;", "", false),
+        ("rectangle", ";", "", "", false),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="{label}" style="{prefix}shape={shape};fillColor=#fff;strokeColor=#000;fontColor=#000;{font}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ))
+        .replacen(
+            "<mxGraphModel>",
+            r#"<mxGraphModel adaptiveColors="none">"#,
+            1,
+        );
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warned,
+            "{shape} {prefix} {font} {label:?}: {:?}",
+            report.warnings
+        );
+        if warned {
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(_))
+            ));
+        }
+        let linked = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+        assert_eq!(
+            crate::import_drawio_link(&linked).unwrap().warnings,
+            report.warnings
+        );
+        assert_eq!(
+            crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn named_vertex_styles_with_lost_label_appearance_are_reported() {
+    for (style, label, warned) in [
+        ("ellipse;", "Label", false),
+        ("rhombus;", "Label", false),
+        ("triangle;", "Label", false),
+        ("text;", "Label", true),
+        ("text;fontSize=12;", "Label", true),
+        ("text;fontSize=11;", "Label", true),
+        ("label;", "Label", true),
+        ("edgeLabel;", "Label", true),
+        ("defaultEdge;", "Label", true),
+        ("customStyle;", "Label", true),
+        ("ellipse;edgeLabel;", "Label", true),
+        ("ellipse;defaultVertex;", "Label", true),
+        ("ellipse;fontSize=12;edgeLabel;", "Label", true),
+        ("ellipse;edgeLabel;fontSize=12;", "Label", true),
+        ("ellipse;customStyle;fontSize=12;", "Label", true),
+        ("ellipse;edgeLabel;", "", false),
+        ("text;", "", false),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="{label}" style="{style}fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warned,
+            "{style} {label:?}: {:?}",
+            report.warnings
+        );
+        if warned {
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(_))
+            ));
+        }
+        let linked = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+        assert_eq!(
+            crate::import_drawio_link(&linked).unwrap().warnings,
+            report.warnings
+        );
+        assert_eq!(
+            crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn edge_label_font_size_loss_and_folded_children_are_reported() {
+    for (parent_font, parent_label, child_style, child_label, warned) in [
+        ("", "Label", "", "", true),
+        ("fontSize=11;", "Label", "", "", true),
+        ("fontSize=none;", "Label", "", "", true),
+        ("fontSize=12;", "Label", "", "", false),
+        ("fontSize=11;", "", "", "", false),
+        ("fontSize=11;", "", "fontSize=12;", "Child", true),
+        ("fontSize=12;", "", "fontSize=11;", "Child", true),
+        ("fontSize=12;", "", "fontSize=none;", "Child", true),
+        ("fontSize=12;", "", "edgeLabel;", "Child", true),
+        ("fontSize=12;", "", "edgeLabel;fontSize=12;", "Child", true),
+        ("fontSize=12;", "", ";fontSize=12;", "Child", true),
+        ("fontSize=12;", "", "", "Child", true),
+        ("defaultEdge;fontSize=12;", "Label", "", "", true),
+        ("fontSize=12;defaultEdge;", "Label", "", "", true),
+    ] {
+        let child = if child_label.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"<mxCell id="label" value="{child_label}" style="{child_style}" vertex="1" parent="e"><mxGeometry relative="1" as="geometry"/></mxCell>"#
+            )
+        };
+        let xml = page(&format!(
+            r##"<mxCell id="e" value="{parent_label}" style="endArrow=none;strokeColor=#000;fontColor=#000;{parent_font}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell>{child}"##
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warned,
+            "{parent_font} {parent_label:?} {child_style} {child_label:?}: {:?}",
+            report.warnings
+        );
+        if warned {
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(_))
+            ));
+        }
+        let linked = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+        assert_eq!(
+            crate::import_drawio_link(&linked).unwrap().warnings,
+            report.warnings
+        );
+        assert_eq!(
+            crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+            report.warnings
+        );
+    }
+}
+
+#[test]
+fn multipage_clipboard_reports_font_size_loss_only_from_the_pasted_page() {
+    let graph = |font: &str| {
+        format!(
+            r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="e" value="Label" style="endArrow=none;strokeColor=#000;fontColor=#000;fontSize={font};" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel>"##
+        )
+    };
+    for (first, later, first_warned) in [("12", "11", false), ("11", "12", true)] {
+        let xml = format!(
+            r#"<mxfile><diagram name="First">{}</diagram><diagram name="Later">{}</diagram></mxfile>"#,
+            graph(first),
+            graph(later)
+        );
+        let report = load(&xml);
+        assert!(report.warnings.contains(&ImportWarning::Formatting));
+        let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+        assert_eq!(
+            pasted.warnings.contains(&ImportWarning::Formatting),
+            first_warned,
+            "{first} {later}: {:?}",
+            pasted.warnings
+        );
+        assert!(pasted.warnings.contains(&ImportWarning::Other));
+    }
+}
+
+#[test]
+fn drawio_export_uses_canvas_font_size_for_board_connector_labels() {
+    let mut sheet = Sheet::new("Connectors", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    for (y, label) in [(0.0, "Label"), (40.0, "")] {
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(0.0, y)),
+            Endpoint::Point(Vec2::new(100.0, y)),
+        );
+        connector.arrow_end = false;
+        connector.label = label.into();
+        let mut object = CanvasObject::connector(connector);
+        object.style.text_color = Some(Color::BLACK);
+        sheet.add_canvas_object(object).unwrap();
+    }
+
+    let book = Workbook::new(sheet);
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    let labelled = xml
+        .split("<mxCell ")
+        .find(|cell| cell.contains(r#"value="Label""#))
+        .unwrap();
+    assert!(labelled.contains("fontSize=12;"), "{labelled}");
+    let unlabelled = xml
+        .split("<mxCell ")
+        .find(|cell| cell.contains(r#"value="""#) && cell.contains(r#"edge="1""#))
+        .unwrap();
+    assert!(!unlabelled.contains("fontSize="), "{unlabelled}");
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(connectors(&report.workbook.sheets[0])[0].label, "Label");
+
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let losses = export_losses(&book, format, &ExportOptions::default());
+        assert!(
+            !losses
+                .iter()
+                .any(|loss| matches!(loss, ExportLoss::DrawioLabelAppearanceApproximated(_))),
+            "{format:?}: {losses:?}"
+        );
+        let bytes = export_bytes(&book, format, &ExportOptions::default()).unwrap();
+        let restored = import(&bytes).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{format:?}: {:?}",
+            restored.warnings
+        );
+        assert_eq!(connectors(&restored.workbook.sheets[0])[0].label, "Label");
+    }
+}
+
+#[test]
+fn drawio_export_matches_relationship_label_font_size_at_normal_zoom() {
+    let mut sheet = Sheet::new("Map", "Root");
+    let first = sheet.add_child(sheet.root, None, "First");
+    let second = sheet.add_child(sheet.root, None, "Second");
+    let relation = sheet.add_relationship(first, second).unwrap();
+    sheet.set_relationship_title(relation, "Relates").unwrap();
+    let book = Workbook::new(sheet);
+
+    let losses = export_losses(&book, Format::DrawIo, &ExportOptions::default());
+    assert!(
+        losses
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::MapElementsFlattened(_)))
+    );
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    let relation = xml
+        .split("<mxCell ")
+        .find(|cell| cell.contains(r#"value="Relates""#))
+        .unwrap();
+    assert!(relation.contains("fontSize=12;"), "{relation}");
+    let report = load(&xml);
+    assert!(
+        connectors(&report.workbook.sheets[0])
+            .iter()
+            .any(|connector| connector.label == "Relates")
+    );
+}
+
+#[test]
 fn double_ellipse_appearance_losses_cover_visible_fill_outline_and_label() {
     let mut sheet = Sheet::new("Ellipses", "");
     sheet.root_mode = SheetRootMode::Hidden;
@@ -2303,8 +2559,13 @@ fn drawio_independent_label_opacity_and_default_connector_color_are_reported() {
         ("edge", "endArrow=none;", "Edge", true),
         ("edge", "opacity=40;endArrow=none;", "Edge", true),
     ] {
+        let edge_font = if element == "edge" {
+            "fontSize=12;"
+        } else {
+            ""
+        };
         let xml = page(&format!(
-            r#"<mxCell id="a" value="{value}" style="{style}" {element}="1" parent="1"><mxGeometry x="0" y="0" width="100" height="60" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell>"#
+            r#"<mxCell id="a" value="{value}" style="{style}{edge_font}" {element}="1" parent="1"><mxGeometry x="0" y="0" width="100" height="60" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="100" y="0" as="targetPoint"/></mxGeometry></mxCell>"#
         ));
         let report = load(&xml);
         assert_eq!(
@@ -2759,7 +3020,11 @@ fn unsupported_drawio_shapes_report_rectangle_placeholders_on_all_import_paths()
         <mxCell id="known" value="Known" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="60" height="40" as="geometry"/></mxCell>"##,
     );
     let report = load(&xml);
-    let expected = vec![ImportWarning::UnsupportedDrawioShapes, ImportWarning::Other];
+    let expected = vec![
+        ImportWarning::Formatting,
+        ImportWarning::UnsupportedDrawioShapes,
+        ImportWarning::Other,
+    ];
     assert_eq!(report.warnings, expected);
     let objects = shapes(&report.workbook.sheets[0]);
     assert_eq!(objects.len(), 3);
@@ -4598,7 +4863,7 @@ fn nested_connector_waypoints_import_and_round_trip_in_parent_coordinates() {
         r#"
         <mxCell id="g" style="group" vertex="1" parent="1"><mxGeometry x="100" y="200" width="300" height="200" as="geometry"/></mxCell>
         <mxCell id="a" value="A" vertex="1" parent="g"><mxGeometry width="20" height="20" as="geometry"/></mxCell>
-        <mxCell id="e" value="Route" style="edgeStyle=none;endArrow=none;fontColor=#000000;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="50" y="10" as="sourcePoint"/><mxPoint x="150" y="90" as="targetPoint"/><Array as="points"><mxPoint x="80" y="10"/><mxPoint x="80" y="90"/></Array></mxGeometry></mxCell>
+        <mxCell id="e" value="Route" style="edgeStyle=none;endArrow=none;fontColor=#000000;fontSize=12;" edge="1" parent="g"><mxGeometry relative="1" as="geometry"><mxPoint x="50" y="10" as="sourcePoint"/><mxPoint x="150" y="90" as="targetPoint"/><Array as="points"><mxPoint x="80" y="10"/><mxPoint x="80" y="90"/></Array></mxGeometry></mxCell>
         "#,
     );
     let sheet = clean(&xml);
@@ -5003,7 +5268,10 @@ fn invalid_unused_edge_geometry_warns_without_omitting_attached_connectors_or_la
         <mxCell id="label" value="Label" vertex="1" parent="e"><mxGeometry x="invalid" relative="1" as="geometry"/></mxCell>"#,
     );
     let report = load(&xml);
-    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::Formatting, ImportWarning::Other]
+    );
     let sheet = &report.workbook.sheets[0];
     let shapes = shapes(sheet);
     let edge = connectors(sheet)[0];
@@ -5965,10 +6233,11 @@ fn notes_text_lines_directions_and_user_objects() {
         "#,
     );
     let report = load(&xml);
-    // The card tooltip and folded outlines have no native equivalents.
+    // The named text style, card tooltip and folded outlines are approximated.
     assert_eq!(
         report.warnings,
         vec![
+            ImportWarning::Formatting,
             ImportWarning::DrawioFoldedNotesApproximated,
             ImportWarning::Other,
         ]

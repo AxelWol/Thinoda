@@ -58,7 +58,7 @@ type BoardObject = {
     id: number;
     kind: {
         shape?: { shape: string; label?: string };
-        connector?: { from: unknown; to: unknown; waypoints?: { x: number; y: number }[] };
+        connector?: { from: unknown; to: unknown; label?: string; waypoints?: { x: number; y: number }[] };
     };
     style: { fill?: string; stroke?: string; text_color?: string };
     rectangle_sides?: { top: boolean; right: boolean; bottom: boolean; left: boolean };
@@ -190,6 +190,15 @@ async function paste(page: Page) {
         .toBe(previous + 1);
     await frames(page);
     await page.waitForTimeout(300);
+}
+
+async function expectWarningToast(page: Page, path: string) {
+    const screenshot = await page.screenshot({ path });
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error("Cannot inspect the warning without a viewport");
+    const warning = (await colorBounds(page, screenshot, [[224, 142, 0]], 30))[0];
+    expect(warning.count).toBeGreaterThan(5);
+    expect(warning.maxY).toBeGreaterThan(viewport.height - 100);
 }
 
 test.beforeEach(async ({ page, context }) => {
@@ -773,6 +782,88 @@ test("draw.io paste warns about unresolved shape appearance", async ({ page }, t
     await page.keyboard.press("Control+z");
     await frames(page);
     const undone = archive(await saveAs(page, "drawio-appearance-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
+test("draw.io connector label size is disclosed and copy matches the canvas", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="edge" value="Small label" style="endArrow=none;strokeColor=#000000;',
+        'fontColor=#000000;fontSize=11;" edge="1" parent="1">',
+        '<mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/>',
+        '<mxPoint x="160" y="0" as="targetPoint"/></mxGeometry></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-label-size-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await expectWarningToast(page, testInfo.outputPath("drawio-label-size-warning.png"));
+    const after = archive(await saveAs(page, "drawio-label-size-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.connector?.label).toBe("Small label");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("F2");
+    await frames(page);
+    const label = page.locator("input[type='text']");
+    await expect(label).toBeFocused();
+    await label.fill("Edited label");
+    await page.keyboard.press("Enter");
+    await frames(page);
+
+    const previous = await page.evaluate(() => window.__thinodaTestClipboard.plainWrites);
+    await command(page, "Copy as draw.io");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites))
+        .toBe(previous + 1);
+    const copied = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    const model = decodeURIComponent(copied);
+    expect(model).toContain('value="Edited label"');
+    expect(model).toContain("fontSize=12;");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const restored = archive(await saveAs(page, "drawio-label-size-edit-undo.thinoda"));
+    expect(restored.content.sheets[restored.content.active_sheet].canvas?.objects?.[0]
+        .kind.connector?.label).toBe("Small label");
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-label-size-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
+test("draw.io named text styling is disclosed on paste", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="text" value="Named text" vertex="1" parent="1" ',
+        'style="text;fontColor=#000000;fontSize=12;">',
+        '<mxGeometry width="100" height="60" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-named-text-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await expectWarningToast(page, testInfo.outputPath("drawio-named-text-warning.png"));
+    const after = archive(await saveAs(page, "drawio-named-text-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape?.label).toBe("Named text");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-named-text-undo.thinoda"));
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
