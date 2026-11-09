@@ -119,11 +119,12 @@ half-circles and bars remain open; their fill setting is retained when changing
 directly to a fillable draw.io marker. Unsupported marker shapes, out-of-range sizes
 and unsupported fill values trigger a formatting warning. Supported fixed
 connector points, offsets and perimeter settings are retained on attached
-shapes and topics. Hover a rectangle, rounded rectangle, ellipse, diamond or
-rectangular topic to reveal connection crosses; drag from or drop onto a cross
-to fix the attachment. Hold Shift while connecting to fix an arbitrary point,
-Alt to leave a free point without grid snapping, or Alt+Shift to attach without
-fixing. Enter or Space toggles a focused endpoint; Home/End cycle visible default
+shapes and topics. Hover a rectangle, rounded rectangle, ellipse, double ellipse,
+diamond or rectangular topic to reveal connection crosses; drag from or drop
+onto a cross to fix the attachment. Hold Shift while connecting to fix an
+arbitrary point, Alt to leave a free point without grid snapping, or Alt+Shift
+to attach without fixing. Enter or Space toggles a focused endpoint; Home/End
+cycle visible default
 points.
 Unsupported constraints and possible position differences are reported. Export
 requires consent if a fixed point may move or if an unexported collapsed topic
@@ -182,6 +183,10 @@ custom inset. Invalid insets and unresolved or adaptive colors are reported;
 **Export** and **Copy as draw.io** warn that appearance can differ. Shape-label
 wrapping and full draw.io text styling are not yet preserved, and double
 ellipses used as containers still become frames with a warning.
+Import warns when a connected double ellipse uses a different perimeter.
+Previously saved fixed perimeter attachments on double ellipses may move
+slightly because their projection now uses the analytic ellipse rather than
+its flattened outline.
 
 Flowchart annotation brackets import as editable open-sided rectangles with a
 formatting warning. Their original stencil identity and exact appearance are

@@ -950,7 +950,7 @@ fn double_ellipse_import_preserves_inset_rotation_and_connectors() {
         ("margin=none;", None),
     ] {
         let xml = page(&format!(
-            r##"<mxCell id="a" value="End" style="shape=doubleEllipse;fillColor=#ffffcc;strokeColor=#123456;fontColor=#000000;strokeWidth=2;rotation=30;{margin_style}" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+            r##"<mxCell id="a" value="End" style="shape=doubleEllipse;perimeter=ellipsePerimeter;fillColor=#ffffcc;strokeColor=#123456;fontColor=#000000;strokeWidth=2;rotation=30;{margin_style}" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
             <mxCell id="b" value="Next" style="ellipse;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
             <mxCell id="e" style="endArrow=none;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##
         ))
@@ -1005,7 +1005,7 @@ fn double_ellipse_import_preserves_inset_rotation_and_connectors() {
             report.workbook
         );
         let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
-        assert!(exported.contains("shape=doubleEllipse;"));
+        assert!(exported.contains("shape=doubleEllipse;perimeter=ellipsePerimeter;"));
         if let Some(margin) = expected_margin {
             assert!(exported.contains(&format!("margin={};", num(margin))));
         } else {
@@ -1016,6 +1016,89 @@ fn double_ellipse_import_preserves_inset_rotation_and_connectors() {
             shapes(&reimported.workbook.sheets[0])[0].double_ellipse_margin,
             expected_margin
         );
+    }
+}
+
+#[test]
+fn double_ellipse_connector_perimeter_differences_are_reported() {
+    for (target_style, fixed, perimeter, warned) in [
+        (
+            "shape=doubleEllipse;perimeter=ellipsePerimeter;",
+            false,
+            true,
+            false,
+        ),
+        ("shape=doubleEllipse;", false, true, true),
+        (
+            "shape=doubleEllipse;perimeter=rectanglePerimeter;",
+            false,
+            true,
+            true,
+        ),
+        (
+            "shape=doubleEllipse;perimeter=ellipsePerimeter;",
+            true,
+            true,
+            false,
+        ),
+        ("shape=doubleEllipse;", true, true, true),
+        ("shape=doubleEllipse;", true, false, false),
+    ] {
+        for source in [true, false] {
+            let (terminal, prefix) = if source {
+                (r#"source="a""#, "exit")
+            } else {
+                (r#"target="a""#, "entry")
+            };
+            let constraint = if fixed {
+                format!(
+                    "{prefix}X=1;{prefix}Y=1;{prefix}Perimeter={};",
+                    u8::from(perimeter)
+                )
+            } else {
+                String::new()
+            };
+            let xml = page(&format!(
+                r#"<mxCell id="a" style="{target_style}fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+                <mxCell id="e" style="endArrow=none;{constraint}" edge="1" {terminal} parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="200" y="20" as="targetPoint"/></mxGeometry></mxCell>"#
+            ))
+            .replacen(
+                "<mxGraphModel>",
+                r#"<mxGraphModel adaptiveColors="none">"#,
+                1,
+            );
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings.contains(&ImportWarning::Formatting),
+                warned,
+                "{target_style}, fixed={fixed}, perimeter={perimeter}, source={source}: {:?}",
+                report.warnings
+            );
+            let connector = connectors(&report.workbook.sheets[0])[0];
+            assert_eq!(
+                if source {
+                    connector.from_port
+                } else {
+                    connector.to_port
+                }
+                .is_some(),
+                fixed
+            );
+            report.workbook.validate().unwrap();
+            let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+            assert_eq!(
+                pasted.warnings.contains(&ImportWarning::Formatting),
+                warned,
+                "clipboard: {target_style}, fixed={fixed}, source={source}"
+            );
+            let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+            let linked = crate::import_drawio_link(&link).unwrap();
+            assert_eq!(
+                linked.warnings.contains(&ImportWarning::Formatting),
+                warned,
+                "link: {target_style}, fixed={fixed}, source={source}"
+            );
+        }
     }
 }
 
@@ -6200,17 +6283,21 @@ fn default_connection_points_round_trip_for_supported_shape_families() {
         (ShapeKind::Rectangle, &rectangle[..]),
         (ShapeKind::RoundedRectangle, &rectangle[..]),
         (ShapeKind::Ellipse, &perimeter[..]),
+        (ShapeKind::DoubleEllipse, &perimeter[..]),
         (ShapeKind::Diamond, &perimeter[..]),
     ]
     .into_iter()
     .enumerate()
     {
-        let source = sheet
-            .add_canvas_object(CanvasObject::shape(
-                kind,
-                Rect::from_min_size(Vec2::new(index as f32 * 160.0, 0.0), Vec2::new(120.0, 80.0)),
-            ))
-            .unwrap();
+        let mut object = CanvasObject::shape(
+            kind,
+            Rect::from_min_size(Vec2::new(index as f32 * 160.0, 0.0), Vec2::new(120.0, 80.0)),
+        );
+        if kind == ShapeKind::DoubleEllipse {
+            object.style.fill = Some(Color::TRANSPARENT);
+            object.style.stroke = Some(Color::TRANSPARENT);
+        }
+        let source = sheet.add_canvas_object(object).unwrap();
         for &(x, y) in positions {
             let port = ConnectorPort {
                 position: Vec2::new(x, y),
@@ -6557,13 +6644,13 @@ fn fixed_connector_port_export_discloses_position_changes_and_requires_consent()
     for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
         let losses = export_losses(&book, format, &ExportOptions::default());
         assert!(
-            losses.contains(&ExportLoss::DrawioFixedConnectorPositionApproximated(6)),
+            losses.contains(&ExportLoss::DrawioFixedConnectorPositionApproximated(5)),
             "{format:?}: {losses:?}"
         );
         assert!(matches!(
             export_bytes(&book, format, &ExportOptions::default()),
             Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(ref losses))
-                if losses == &[ExportLoss::DrawioFixedConnectorPositionApproximated(6)]
+                if losses == &[ExportLoss::DrawioFixedConnectorPositionApproximated(5)]
         ));
         let bytes =
             crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)

@@ -2901,6 +2901,62 @@ fn connection_point_drag_from_hovered_shapes_creates_fixed_undoable_edges() {
 }
 
 #[test]
+fn double_ellipse_crosses_create_fixed_connections_and_undo() {
+    for tool in [BoardTool::Select, BoardTool::Connector] {
+        let mut sheet = board();
+        let source_rect =
+            thinoda_core::Rect::from_center_size(Vec2::new(-200.0, -80.0), Vec2::new(120.0, 80.0));
+        let target_rect =
+            thinoda_core::Rect::from_center_size(Vec2::new(200.0, 100.0), Vec2::new(160.0, 100.0));
+        let mut source = CanvasObject::shape(ShapeKind::DoubleEllipse, source_rect);
+        source.rotation = 37.0;
+        source.double_ellipse_margin = Some(8.5);
+        let source = sheet.add_canvas_object(source).unwrap();
+        let target = sheet
+            .add_canvas_object(CanvasObject::shape(ShapeKind::DoubleEllipse, target_rect))
+            .unwrap();
+        let from_port = default_port(1.0, 1.0).unwrap();
+        let to_port = default_port(0.0, 0.0).unwrap();
+        let position = |rect, rotation, port| {
+            thinoda_core::scene::fixed_connector_port_position(
+                rect,
+                rotation,
+                Some((ShapeKind::DoubleEllipse, None)),
+                port,
+            )
+        };
+        let mut h = harness(sheet);
+        set_tool(&mut h, tool);
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, position(source_rect, 37.0, from_port));
+        let end = point(&h, position(target_rect, 0.0, to_port));
+        h.hover_at(start);
+        h.run_steps(3);
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            egui::CursorIcon::Crosshair,
+            "{tool:?}"
+        );
+        drag(&mut h, start, end);
+        finish_drag(&mut h, end);
+        let [edge] = connectors(h.state().doc.sheet())[..] else {
+            panic!("expected one connector for {tool:?}");
+        };
+        let connector = connector(&h, edge);
+        assert_eq!(connector.from, Endpoint::Object(source));
+        assert_eq!(connector.to, Endpoint::Object(target));
+        assert_eq!(connector.from_port, Some(from_port));
+        assert_eq!(connector.to_port, Some(to_port));
+        let after = h.state().doc.workbook().clone();
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state_mut().doc.redo());
+        assert_eq!(h.state().doc.workbook(), &after);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
 fn connection_points_on_rectangular_map_topics_create_fixed_edges() {
     for central in [true, false] {
         for tool in [BoardTool::Select, BoardTool::Connector] {
@@ -3221,6 +3277,40 @@ fn connection_points_reconnect_existing_endpoints_and_support_keyboard_cycles() 
     h.key_press(Key::End);
     h.run_steps(3);
     assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_cycles_double_ellipse_connection_points() {
+    let mut sheet = board();
+    let target = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::DoubleEllipse,
+            thinoda_core::Rect::from_center_size(Vec2::new(200.0, 0.0), Vec2::new(120.0, 80.0)),
+        ))
+        .unwrap();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-200.0, 0.0)),
+            Endpoint::Object(target),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    h.get_by_label("Connector To").focus();
+    h.run_steps(2);
+    h.key_press(Key::End);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    h.key_press(Key::End);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.0));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 

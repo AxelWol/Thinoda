@@ -1,7 +1,7 @@
 //! Validates the draw.io codec against real diagrams and templates.
 //!
-//! Point `THINODA_DRAWIO_CORPUS` at a folder of `.drawio`/`.xml` files, or keep
-//! them in `docs/draw-io-examples` (not committed; the test skips when absent).
+//! Uses the examples in `docs/draw-io-examples`, or a folder of `.drawio`/`.xml`
+//! files selected by `THINODA_DRAWIO_CORPUS`. The test skips when absent.
 
 use std::path::{Path, PathBuf};
 use thinoda_core::{

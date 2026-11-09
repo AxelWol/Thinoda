@@ -740,11 +740,11 @@ those system-owned controls. WinGet publishing remains paused.
   that range, and unsupported fill values trigger a formatting warning.
   Supported fixed connector points, offsets and perimeter settings are retained
   for attached shapes and topics. Hover a rectangle, rounded rectangle, ellipse,
-  diamond or rectangular topic to reveal connection crosses; drag from or drop
-  onto a cross to fix an attachment. Hold Shift while connecting to fix an
-  arbitrary point, Alt to leave a free point without grid snapping, or Alt+Shift
-  to attach without fixing. Enter or Space toggles a focused endpoint, and
-  Home/End cycle visible default points. Unsupported constraints and
+  double ellipse, diamond or rectangular topic to reveal connection crosses;
+  drag from or drop onto a cross to fix an attachment. Hold Shift while connecting
+  to fix an arbitrary point, Alt to leave a free point without grid snapping, or
+  Alt+Shift to attach without fixing. Enter or Space toggles a focused endpoint,
+  and Home/End cycle visible default points. Unsupported constraints and
   possible position differences are reported. Export requires consent if a
   fixed point may move or if an unexported collapsed topic detaches it.
   Existing Thinoda triangle arrows retain
@@ -795,6 +795,9 @@ those system-owned controls. WinGet publishing remains paused.
   Standalone double ellipses retain their editable inner outline and automatic
   or custom inset. Invalid insets and unresolved or adaptive colors are
   reported; **Export** and **Copy as draw.io** warn that appearance can differ.
+  Import warns when a connected double ellipse uses a different perimeter.
+  Existing fixed perimeter attachments on double ellipses may move slightly
+  because they now follow the analytic ellipse rather than its flattened outline.
   Shape-label wrapping and full draw.io text styling are not yet preserved, and
   double ellipses used as containers still become frames with a warning.
   Flowchart annotation brackets import as editable open-sided rectangles with

@@ -353,9 +353,10 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   on hover over any shape while dragging an end (built-ins: 4/8/16 default points per
   shape kind; stencils: `<constraint>`s). The current partial implementation exposes
   16 points for rectangles, rounded rectangles and rectangular topics, and eight
-  for ellipses and diamonds. Points can start or terminate a connector; Shift
-  fixes arbitrary positions, Alt drops a free point and Alt+Shift attaches
-  without fixing, and focused endpoints support keyboard editing.
+  for ellipses, double ellipses and diamonds. Points can start or terminate a
+  connector; Shift fixes arbitrary positions, Alt drops a free point and
+  Alt+Shift attaches without fixing, and focused endpoints support keyboard
+  editing.
   Other built-in shapes, named ports and stencil constraints remain planned.
 - **Direction arrows on hover** (light-blue ↑→↓←): click = clone + connect in that
   direction (respecting spacing/grid, avoiding overlaps); drag = draw connector, drop on a
@@ -1981,17 +1982,18 @@ do not prove compatibility with every historical HTML export or fidelity for
 every shape.
 
 **Corpus validation (docs/draw-io-examples).** `crates/thinoda-io/tests/drawio_corpus.rs`
-runs every `.drawio`/`.xml`/`.dio` file in the user-supplied example corpus
-(currently 88 files from jgraph/drawio-diagrams and the drawio.com docs:
+runs every `.drawio`/`.xml`/`.dio` file in the example corpus
+(currently 87 files from jgraph/drawio-diagrams:
 templates, floor plans, mockups, AWS/Azure, BPMN, C4, UML, network and
 infographic diagrams). For each file it checks format detection, import with
 report, `Workbook::validate`, the same source URI-encoded as a `#R` fragment
 (identical workbook and warnings), draw.io export → re-import (same page count,
 grid, background and no lost items), native `.thinoda` round trip, SVG export
 and clipboard decoding, each under `catch_unwind`. The current corpus passes
-88/88 with no panics; earlier checkpoints reported 89/89 for an earlier
-corpus. The corpus folder is not committed (third-party content, ~3 MB); the
-test skips when it is absent and honours `THINODA_DRAWIO_CORPUS`. Run:
+87/87 with no panics; earlier checkpoints passed 88/88 and 89/89 for earlier
+corpora. The committed examples are Apache-2.0; see the corpus README for
+provenance and the license. The test skips when the folder is absent and
+honours `THINODA_DRAWIO_CORPUS`. Run:
 `cargo test -p thinoda-io --release --test drawio_corpus -- --nocapture`.
 
 The initial gap analysis from the corpus (8,180 vertices, 1,876 edges) set the
@@ -2800,6 +2802,36 @@ mouse-and-keyboard journeys across Chromium, Firefox and WebKit, checking saved
 fixed, floating and unsnapped endpoints as well as undo/redo. Native workspace
 and WebAssembly Clippy, formatting and a Windows build also passed. These
 automated checks do not replace physical-device or screen-reader acceptance.
+
+**Double-ellipse connector support (partial Phases 6 and 8) — critique.**
+The published editor uses the same eight default constraints for ellipses and
+double ellipses. Probes compared 192 combinations of dimensions, zoom,
+rotation and inner margins without a difference in their connection points.
+Thinoda now exposes those crosses on double ellipses and uses the same analytic
+fixed-port projection as an ellipse. Dragging, keyboard cycling and undo/redo
+reuse the existing connector interaction; the inner outline does not change
+the outer connection perimeter.
+
+**Rubber-duck findings and remaining scope.** Export previously wrote only
+`shape=doubleEllipse`, which uses the default rectangular perimeter in draw.io;
+the exporter now also specifies `perimeter=ellipsePerimeter`. Import reports a
+formatting warning when a connected double ellipse uses an incompatible
+perimeter, including floating connectors; fixed non-perimeter points do not
+depend on that perimeter. This does not resolve other named-style or adaptive
+color approximations. Existing fixed perimeter attachments on double ellipses
+can move slightly because projection now uses an analytic ellipse rather than
+the former flattened outline; free, floating and fixed non-perimeter endpoints
+do not change. The native file format and stored port values remain unchanged.
+Screen-pixel rounding, physical touch, screen readers and unimplemented shape
+constraints remain outside this slice.
+
+After the final code edits, the four affected Rust library suites passed
+2,101 tests with four ignored, and the corpus suite passed all 13 tests across
+87 supplied diagrams. Twelve connector journeys passed in Chromium, Firefox
+and WebKit against a production web build; the double-ellipse export journey
+explicitly confirms the existing appearance-loss dialog. Native and
+WebAssembly Clippy, formatting and a Windows build also passed. These checks do
+not establish pixel-level or assistive-technology parity.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

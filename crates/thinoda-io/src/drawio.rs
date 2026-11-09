@@ -2335,13 +2335,25 @@ impl<'a> PageImport<'a> {
             Endpoint::Object(id) => self.shapes.contains_key(&id),
             Endpoint::Point(_) => false,
         };
+        let target_cell = terminal
+            .and_then(|id| self.index.get(id))
+            .and_then(|index| self.cells.get(*index));
         match style.connector_port(source) {
-            Ok(None) => None,
+            Ok(None) => {
+                if matches!(endpoint, Endpoint::Object(id)
+                    if self.shapes.get(&id) == Some(&ShapeKind::DoubleEllipse))
+                    && !target_cell.is_some_and(|cell| {
+                        self.connector_geometry_matches_source(cell, endpoint, true)
+                    })
+                {
+                    self.warn(ImportWarning::Formatting);
+                }
+                None
+            }
             Ok(Some(port)) if supported_target => {
-                let compatible = terminal
-                    .and_then(|id| self.index.get(id))
-                    .and_then(|index| self.cells.get(*index))
-                    .is_some_and(|cell| self.fixed_port_matches_source(cell, endpoint, port));
+                let compatible = target_cell.is_some_and(|cell| {
+                    self.connector_geometry_matches_source(cell, endpoint, port.perimeter)
+                });
                 if !compatible {
                     self.warn(ImportWarning::Formatting);
                 }
@@ -2354,11 +2366,11 @@ impl<'a> PageImport<'a> {
         }
     }
 
-    fn fixed_port_matches_source(
+    fn connector_geometry_matches_source(
         &self,
         cell: &Cell,
         endpoint: Endpoint,
-        port: ConnectorPort,
+        perimeter: bool,
     ) -> bool {
         let style = &cell.style;
         if style
@@ -2401,7 +2413,7 @@ impl<'a> PageImport<'a> {
             }
             _ => {}
         }
-        if !port.perimeter {
+        if !perimeter {
             return true;
         }
         if cell.geometry.width <= 0.0 || cell.geometry.height <= 0.0 {
@@ -2416,7 +2428,7 @@ impl<'a> PageImport<'a> {
                     | ShapeKind::Process
                     | ShapeKind::PredefinedProcess,
                 ) => ConstraintPerimeter::Rectangle,
-                Some(ShapeKind::Ellipse) => ConstraintPerimeter::Ellipse,
+                Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse) => ConstraintPerimeter::Ellipse,
                 Some(ShapeKind::Diamond) => ConstraintPerimeter::Rhombus,
                 _ => return false,
             },
@@ -3085,7 +3097,7 @@ fn shape_style(shape: ShapeKind) -> &'static str {
         S::Rectangle => "rounded=0;",
         S::RoundedRectangle => "rounded=1;",
         S::Ellipse => "ellipse;",
-        S::DoubleEllipse => "shape=doubleEllipse;",
+        S::DoubleEllipse => "shape=doubleEllipse;perimeter=ellipsePerimeter;",
         S::Diamond => "rhombus;",
         S::Triangle => "triangle;direction=north;",
         S::RightTriangle => "shape=mxgraph.basic.orthogonal_triangle;",
@@ -3166,6 +3178,7 @@ pub(crate) fn fixed_port_position_approximate(
                             | ShapeKind::Process
                             | ShapeKind::PredefinedProcess
                             | ShapeKind::Ellipse
+                            | ShapeKind::DoubleEllipse
                             | ShapeKind::Diamond
                     ))
         }

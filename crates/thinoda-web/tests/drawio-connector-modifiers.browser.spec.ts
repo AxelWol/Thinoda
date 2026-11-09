@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { colorBounds, command, frames, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
@@ -131,3 +132,84 @@ for (const mode of ["alt", "shift", "alt-shift"] as const) {
         expect(activeSheet(await saveAs(page, `connectors-${mode}-redo.thinoda`))).toEqual(saved);
     });
 }
+
+test("double-ellipse crosses create persistent connectors with an elliptic draw.io perimeter", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    const xml = `<mxfile><diagram name="Double ellipses"><mxGraphModel adaptiveColors="simple"><root>
+        <mxCell id="0"/><mxCell id="1" parent="0"/>
+        <mxCell id="source" value="Source" vertex="1" parent="1"
+          style="shape=doubleEllipse;perimeter=ellipsePerimeter;fillColor=#D0274F;strokeColor=#D0274F;fontColor=#000000;margin=8.5;">
+          <mxGeometry x="0" y="0" width="120" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="target" value="Target" vertex="1" parent="1"
+          style="shape=doubleEllipse;perimeter=ellipsePerimeter;fillColor=#287AC4;strokeColor=#287AC4;fontColor=#000000;">
+          <mxGeometry x="320" y="140" width="120" height="80" as="geometry"/>
+        </mxCell>
+        </root></mxGraphModel></diagram></mxfile>`;
+    await canvas.drop({
+        files: { name: "double-ellipses.drawio", mimeType: "application/xml", buffer: Buffer.from(xml) },
+    });
+    const colors = [[208, 39, 79], [40, 122, 196]] as const;
+    const bounds = async () => colorBounds(page, await page.screenshot(), colors, 5);
+    await expect.poll(async () => (await bounds()).every(region => region.count > 500), {
+        timeout: 30_000,
+    }).toBe(true);
+    const baseline = activeSheet(await saveAs(page, "double-ellipses-before.thinoda"));
+    const source = baseline.canvas.objects.find(object => object.kind.shape?.label === "Source");
+    const target = baseline.canvas.objects.find(object => object.kind.shape?.label === "Target");
+    if (!source || !target) throw new Error("Missing imported double ellipses");
+
+    await command(page, "Connector tool");
+    const [sourceBounds, targetBounds] = await bounds();
+    const diagonal = (region: typeof sourceBounds, direction: number) => ({
+        x: Math.round((region.minX + region.maxX) / 2
+            + direction * (region.maxX - region.minX) / (2 * Math.sqrt(2))),
+        y: Math.round((region.minY + region.maxY) / 2
+            + direction * (region.maxY - region.minY) / (2 * Math.sqrt(2))),
+    });
+    const start = diagonal(sourceBounds, 1);
+    const end = diagonal(targetBounds, -1);
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await frames(page);
+    await page.mouse.move(end.x, end.y, { steps: 10 });
+    await frames(page);
+    await page.mouse.up();
+    await frames(page);
+
+    const saved = activeSheet(await saveAs(page, "double-ellipses-after.thinoda"));
+    const edges = saved.canvas.objects.flatMap(object => object.kind.connector ? [object.kind.connector] : []);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+        from: { object: source.id },
+        to: { object: target.id },
+        from_port: { position: { x: 1, y: 1 }, offset: { x: 0, y: 0 }, perimeter: true },
+        to_port: { position: { x: 0, y: 0 }, offset: { x: 0, y: 0 }, perimeter: true },
+    });
+
+    await page.evaluate(() => { window.prompt = () => "double-ellipses-export.drawio"; });
+    const pending = page.waitForEvent("download", { timeout: 30_000 });
+    await command(page, "Export draw.io");
+    // The canvas-painted loss dialog has no DOM buttons; confirm at this viewport.
+    await page.mouse.move(727, 483);
+    await expect.poll(() => canvas.evaluate(
+        element => (element as HTMLCanvasElement).style.cursor,
+    )).toBe("pointer");
+    await page.mouse.click(727, 483);
+    await frames(page);
+    const exported = (await readFile(await (await pending).path())).toString("utf8");
+    expect(exported.match(/shape=doubleEllipse;perimeter=ellipsePerimeter;/g)).toHaveLength(2);
+    expect(exported).toContain("exitX=1;exitY=1;");
+    expect(exported).toContain("entryX=0;entryY=0;");
+
+    await canvas.focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    expect(activeSheet(await saveAs(page, "double-ellipses-undo.thinoda"))).toEqual(baseline);
+    await canvas.focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    expect(activeSheet(await saveAs(page, "double-ellipses-redo.thinoda"))).toEqual(saved);
+});

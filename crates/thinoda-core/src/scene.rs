@@ -1041,7 +1041,7 @@ fn fixed_port_perimeter(rect: Rect, shape: Option<ShapeKind>, point: Vec2) -> Op
                 center.y + (y * scale) as f32,
             ))
         }
-        Some(ShapeKind::Ellipse) => {
+        Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse) => {
             // The published ellipse perimeter truncates center-relative distances.
             let x = delta.x.trunc();
             let y = delta.y.trunc();

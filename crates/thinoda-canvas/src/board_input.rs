@@ -715,7 +715,9 @@ fn connection_points_for_item(
                 ShapeKind::Rectangle | ShapeKind::RoundedRectangle => {
                     &RECTANGLE_CONNECTION_POINTS[..]
                 }
-                ShapeKind::Ellipse | ShapeKind::Diamond => &PERIMETER_CONNECTION_POINTS[..],
+                ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::Diamond => {
+                    &PERIMETER_CONNECTION_POINTS[..]
+                }
                 _ => return None,
             };
             (
@@ -940,6 +942,7 @@ mod connection_point_tests {
             (ShapeKind::Rectangle, 16),
             (ShapeKind::RoundedRectangle, 16),
             (ShapeKind::Ellipse, 8),
+            (ShapeKind::DoubleEllipse, 8),
             (ShapeKind::Diamond, 8),
         ] {
             for rotation in [0.0, 37.0, 90.0] {

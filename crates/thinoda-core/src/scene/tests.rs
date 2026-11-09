@@ -228,6 +228,48 @@ fn fixed_connector_ports_match_drawio_rectangle_ellipse_and_rhombus_perimeters()
 }
 
 #[test]
+fn double_ellipse_fixed_ports_follow_the_same_perimeter_as_ellipses() {
+    let positions = [
+        (Vec2::new(0.0, 0.0), Vec2::ZERO),
+        (Vec2::new(1.0, 1.0), Vec2::ZERO),
+        (Vec2::new(0.0, 0.5), Vec2::ZERO),
+        (Vec2::new(0.513, 0.524), Vec2::ZERO),
+        (Vec2::new(0.25, 0.75), Vec2::new(2.5, -1.5)),
+        (Vec2::new(0.5, 0.5), Vec2::new(0.9, -0.9)),
+    ];
+    for (width, height) in [(10.0, 10.0), (101.0, 61.0), (160.0, 100.0), (500.0, 300.0)] {
+        let bounds = rect(105.0, 73.0, width, height);
+        for rotation in [0.0, 37.0, 90.0] {
+            for (position, offset) in positions {
+                for perimeter in [true, false] {
+                    let port = ConnectorPort {
+                        position,
+                        offset,
+                        perimeter,
+                    };
+                    let ellipse = fixed_connector_port_position(
+                        bounds,
+                        rotation,
+                        Some((ShapeKind::Ellipse, None)),
+                        port,
+                    );
+                    let double = fixed_connector_port_position(
+                        bounds,
+                        rotation,
+                        Some((ShapeKind::DoubleEllipse, None)),
+                        port,
+                    );
+                    assert!(
+                        (ellipse - double).length() < 0.001,
+                        "{width}x{height}, {rotation}, {port:?}: {double:?} != {ellipse:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn connector_marker_geometry_and_hit_testing_follow_both_ends() {
     use crate::board::{ConnectorMarker, ConnectorMarkerKind};
 

@@ -49,11 +49,12 @@ and segment dragging are not yet available; see
 
 ### Fixed connector attachments
 
-Hover a rectangle, rounded rectangle, ellipse, diamond or rectangular topic
-to reveal connection crosses. Drag from a cross to start a connector, or drop
-an endpoint, Connector-tool drag, direction arrow or outline drag on one to fix
-the attachment. The Connector tool also supports clicking a source and then a
-destination. Dropping on a body away from a cross leaves a floating attachment;
+Hover a rectangle, rounded rectangle, ellipse, double ellipse, diamond or
+rectangular topic to reveal connection crosses. Drag from a cross to start a
+connector, or drop an endpoint, Connector-tool drag, direction arrow or outline
+drag on one to fix the attachment. The Connector tool also supports clicking a
+source and then a destination. Dropping on a body away from a cross leaves a
+floating attachment;
 holding Shift while connecting to a shape or topic fixes an arbitrary position.
 Hold Alt while dropping to ignore targets and grid snapping, leaving a free
 point; Alt+Shift ignores crosses but keeps a floating attachment to the body.
@@ -77,9 +78,14 @@ visible location. Import warns when a source perimeter, orientation or changed
 target geometry may alter that position. draw.io export requires consent if
 the position may differ or a fixed attachment points to a collapsed topic that
 cannot be exported; a detached endpoint remains at its visible location.
-Rectangle, ellipse and diamond projections follow the tested draw.io subset;
-named ports, directional constraints, and exact perimeter and routing parity
-for every draw.io shape remain incomplete.
+Rectangle, ellipse, double-ellipse and diamond projections follow the tested
+draw.io subset; named ports, directional constraints, and exact perimeter and
+routing parity for every draw.io shape remain incomplete.
+
+Import warns when a connected double ellipse uses a different source perimeter.
+Previously saved fixed perimeter attachments on double ellipses can move
+slightly because they now use the analytic ellipse rather than its flattened
+outline; floating and non-perimeter attachments are unchanged.
 
 ### Imported rectangle corners
 
