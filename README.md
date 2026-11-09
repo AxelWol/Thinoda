@@ -757,6 +757,13 @@ those system-owned controls. WinGet publishing remains paused.
   settings, but draw.io may discard those Thinoda-specific settings when saving.
   Export warns when dot grids or independent snapping can differ; keep a
   `.thinoda` copy. Line-grid appearance is approximate.
+  An explicit draw.io page color is imported as the sheet's canvas background.
+  Import warns when a finite page, adaptive or translucent color, gradient, or
+  background image cannot be represented faithfully. Export uses matching
+  `light-dark` color alternatives so the current draw.io editor keeps explicit
+  colors in both themes; older viewers may not support that syntax.
+  Translucent backgrounds require export confirmation because the editors can
+  blend them over different colors.
   Double ellipses import as editable single ellipses with a formatting warning;
   their inner outline and exact label bounds are not preserved.
   Flowchart annotation brackets import as editable open-sided rectangles with

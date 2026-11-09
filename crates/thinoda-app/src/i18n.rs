@@ -179,6 +179,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
             "Unsupported shapes or styles in the draw.io source may appear as rectangles"
         }
         ImportWarning::DrawioGridAdjusted => "draw.io grid settings were adjusted",
+        ImportWarning::DrawioBackgroundAdjusted => {
+            "draw.io page background was approximated or omitted"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -530,6 +533,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Grid or snapping may differ in draw.io",
         "Raster oder Einrasten können in draw.io abweichen",
+    ),
+    (
+        "Page background may differ in draw.io",
+        "Der Seitenhintergrund kann in draw.io abweichen",
     ),
     (
         "Translucent connector labels may render differently",
@@ -1376,6 +1383,10 @@ const DE: &[(&str, &str)] = &[
     (
         "draw.io grid settings were adjusted",
         "draw.io-Rastereinstellungen wurden angepasst",
+    ),
+    (
+        "draw.io page background was approximated or omitted",
+        "Der draw.io-Seitenhintergrund wurde angenähert oder ausgelassen",
     ),
     (
         "Other unsupported map data",
@@ -4869,6 +4880,8 @@ mod tests {
             "Connector attachments may have been detached",
             "Unsupported shapes or styles in the draw.io source may appear as rectangles",
             "draw.io grid settings were adjusted",
+            "draw.io page background was approximated or omitted",
+            "Page background may differ in draw.io",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",
             "Could not paste draw.io content",

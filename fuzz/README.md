@@ -54,7 +54,10 @@ point seed checks that usable connector and ink points survive alongside a
 warning. An appearance-colors seed exercises adaptive and inherited colors and
 an out-of-range stroke width through document and clipboard imports. A
 CSS-colors seed exercises RGB/RGBA, named and four-digit hex colors, nested
-adaptive colors, and nonfinite hue through the same paths. A double-ellipse
+adaptive colors, and nonfinite hue through the same paths. A page-background
+seed covers a fixed adaptive pair, a finite page, a gradient
+and an image, and checks that page-only warnings do not leak into clipboard
+fragments. A double-ellipse
 seed checks that the missing inner outline is reported on document and
 clipboard import. A flowchart-annotation seed exercises the transparent,
 open-sided bracket conversion. A flowchart-process seed covers both the

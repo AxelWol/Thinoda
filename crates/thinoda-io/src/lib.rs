@@ -390,6 +390,8 @@ pub enum ImportWarning {
     UnsupportedDrawioShapes,
     /// A draw.io grid size or Thinoda grid extension was adjusted or ignored.
     DrawioGridAdjusted,
+    /// A draw.io page background was approximated or omitted.
+    DrawioBackgroundAdjusted,
     Other,
 }
 

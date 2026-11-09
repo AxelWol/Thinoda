@@ -511,6 +511,42 @@ mod tests {
     }
 
     #[test]
+    fn adjusted_background_link_shows_a_cancelable_specific_warning() {
+        let xml = r##"<mxGraphModel page="1" background="light-dark(#F4C27A,#F4C27A)"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"##;
+        let link = format!(
+            "#R{}",
+            thinoda_io::drawio_clipboard::encode_uri_component(xml)
+        );
+        let mut h = harness();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        h.state_mut().import_drawio_link_text(&link).unwrap();
+        h.run_steps(3);
+        assert_eq!(
+            h.state().dialogs.imports.front().unwrap().2,
+            vec![ImportWarning::DrawioBackgroundAdjusted]
+        );
+        assert!(h.query_all_by_role(Role::Label).any(|node| {
+            node.value().is_some_and(|value| {
+                value.contains(t("draw.io page background was approximated or omitted"))
+            })
+        }));
+        h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+        h.run_steps(3);
+        assert!(h.state().dialogs.imports.is_empty());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+
+        h.state_mut().import_drawio_link_text(&link).unwrap();
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, t("Import converted copy"))
+            .click();
+        h.run_steps(3);
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().theme.background,
+            Some(thinoda_core::Color::rgb(244, 194, 122))
+        );
+    }
+
+    #[test]
     fn rejected_link_does_not_change_documents_or_queue_warnings() {
         let mut app = app_with_changes();
         let before = app.doc().unwrap().doc.workbook().clone();

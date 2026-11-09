@@ -2630,6 +2630,119 @@ fn import_grid(model: &Element, sheet: &mut Sheet, warnings: &mut BTreeSet<Impor
     sheet.board.snap = snap;
 }
 
+fn drawio_background_atom(value: &str, in_pair: bool) -> bool {
+    if value.len() > 200 {
+        return false;
+    }
+    let value = value.trim();
+    if let Some(hex) = value.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.bytes().all(|c| c.is_ascii_hexdigit());
+    }
+    if value.bytes().all(|c| c.is_ascii_alphabetic()) {
+        return (3..=30).contains(&value.len())
+            && !["none", "inherit", "initial", "unset", "revert", "default"]
+                .iter()
+                .any(|excluded| value.eq_ignore_ascii_case(excluded));
+    }
+    let Some((name, arguments)) = value.split_once('(') else {
+        return false;
+    };
+    let Some(arguments) = arguments.strip_suffix(')') else {
+        return false;
+    };
+    let lower_name = name.to_ascii_lowercase();
+    if !matches!(lower_name.as_str(), "rgb" | "rgba" | "hsl" | "hsla")
+        || (in_pair && (name != lower_name || !matches!(name, "rgb" | "rgba")))
+    {
+        return false;
+    }
+    let arguments = arguments.to_ascii_lowercase().replacen("deg", "", 1);
+    arguments.chars().all(|c| {
+        c.is_ascii_digit()
+            || matches!(c, '.' | ',' | '%' | '/' | '+' | '-')
+            || ((c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
+    })
+}
+
+fn drawio_fixed_background_pair(value: &str) -> bool {
+    if value.len() > 200 {
+        return false;
+    }
+    let value = value.trim();
+    // The editor's adaptive-color parser accepts fewer forms than CSS itself.
+    let Some(inner) = value
+        .strip_prefix("light-dark(")
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for (index, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+            }
+            ',' if depth == 0 => {
+                let (light, rest) = inner.split_at(index);
+                let dark = &rest[1..];
+                if !drawio_background_atom(light, true) || !drawio_background_atom(dark, true) {
+                    return false;
+                }
+                let Some(light) = parse_style_color(light) else {
+                    return false;
+                };
+                let Some(dark) = parse_style_color(dark) else {
+                    return false;
+                };
+                return !light.approximate
+                    && !dark.approximate
+                    && light.color.is_some()
+                    && light.color == dark.color;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn import_background(model: &Element, sheet: &mut Sheet, warnings: &mut BTreeSet<ImportWarning>) {
+    if let Some(value) = model.attr("background")
+        && !matches!(value, "" | "none")
+    {
+        match parse_style_color(value) {
+            Some(ParsedColor {
+                color: Some(color),
+                approximate,
+            }) => {
+                sheet.theme.background = Some(color);
+                let fixed_pair = drawio_fixed_background_pair(value);
+                let fixed_atom = !approximate
+                    && drawio_background_atom(value, false)
+                    && matches!(model.attr("adaptiveColors"), Some("simple" | "none"));
+                if !(fixed_pair || fixed_atom) || color.a < 255 || model.attr("page") != Some("0") {
+                    warnings.insert(ImportWarning::DrawioBackgroundAdjusted);
+                }
+            }
+            _ => {
+                warnings.insert(ImportWarning::DrawioBackgroundAdjusted);
+            }
+        }
+    }
+    if model
+        .attr("backgroundGradient")
+        .is_some_and(|value| !matches!(value, "" | "none"))
+        || model
+            .attr("backgroundImage")
+            .is_some_and(|value| !value.is_empty())
+    {
+        warnings.insert(ImportWarning::DrawioBackgroundAdjusted);
+    }
+}
+
 fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning>) -> Sheet {
     let title = if page.name.trim().is_empty() {
         format!("Page-{number}")
@@ -2640,6 +2753,7 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
     sheet.root_mode = SheetRootMode::Hidden;
     let model = &page.model;
     import_grid(model, &mut sheet, warnings);
+    import_background(model, &mut sheet, warnings);
     let cells = read_cells(model, warnings);
     let index: HashMap<&str, usize> = cells
         .iter()
@@ -3624,8 +3738,16 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> String {
             GridKind::Lines => (1, "lines"),
         };
         let thinoda_snap = u8::from(sheet.board.snap);
+        let background = sheet
+            .theme
+            .background
+            .map(|color| {
+                let color = color.to_hex();
+                format!(" background=\"light-dark({color},{color})\"")
+            })
+            .unwrap_or_default();
         out.push_str(&format!(
-            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
+            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\"{background} guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
             index + 1,
             esc(&sheet.title),
             num(sheet.board.grid_size),

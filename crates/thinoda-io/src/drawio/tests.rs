@@ -332,6 +332,310 @@ fn editable_drawio_images_preserve_selected_sheet_grid_settings() {
 }
 
 #[test]
+fn drawio_background_import_reports_page_and_color_approximations() {
+    let amber = Color::rgb(244, 194, 122);
+    for (attributes, expected, adjusted) in [
+        ("", None, false),
+        (r#"background="""#, None, false),
+        (r#"background="none""#, None, false),
+        (
+            r#"background="none" backgroundGradient="none" backgroundImage="""#,
+            None,
+            false,
+        ),
+        (
+            r##"page="0" background="#F4C27A" adaptiveColors="simple""##,
+            Some(amber),
+            false,
+        ),
+        (
+            r##"page="0" background="#F4C27A" adaptiveColors="none""##,
+            Some(amber),
+            false,
+        ),
+        (
+            r#"page="0" background="rgb(244,194,122)" adaptiveColors="simple""#,
+            Some(amber),
+            false,
+        ),
+        (
+            r#"page="0" background="hsl(0,100%,50%)" adaptiveColors="simple""#,
+            Some(Color::rgb(255, 0, 0)),
+            false,
+        ),
+        (
+            r#"page="0" background="hwb(240 0% 0%)" adaptiveColors="simple""#,
+            Some(Color::rgb(0, 0, 255)),
+            true,
+        ),
+        (
+            r#"page="0" background="rgb(1,/* comment */2,3)" adaptiveColors="simple""#,
+            Some(Color::rgb(1, 2, 3)),
+            true,
+        ),
+        (r##"page="0" background="#F4C27A""##, Some(amber), true),
+        (
+            r##"page="0" background="#F4C27A" adaptiveColors="future""##,
+            Some(amber),
+            true,
+        ),
+        (
+            r##"page="0" background="light-dark(#F4C27A,#F4C27A)""##,
+            Some(amber),
+            false,
+        ),
+        (
+            r##"page="0" background="light-dark(rgb(244,194,122),#F4C27A)""##,
+            Some(amber),
+            false,
+        ),
+        (
+            r##"page="0" background="LIGHT-DARK(rgb(244,194,122),#f4c27a)""##,
+            Some(amber),
+            true,
+        ),
+        (
+            r#"page="0" background="light-dark(light-dark(red,red),rgb(255,0,0))""#,
+            Some(Color::rgb(255, 0, 0)),
+            true,
+        ),
+        (
+            r##"page="0" background="light-dark(#F4C27A,#683D00)""##,
+            Some(amber),
+            true,
+        ),
+        (
+            r#"page="0" background="light-dark(light-dark(red,blue),red)""#,
+            Some(Color::rgb(255, 0, 0)),
+            true,
+        ),
+        (
+            r#"page="0" background="light-dark(red,currentColor)""#,
+            Some(Color::rgb(255, 0, 0)),
+            true,
+        ),
+        (
+            r##"page="0" background="light-dark(#fff,var(--unknown))""##,
+            None,
+            true,
+        ),
+        (
+            r##"page="0" background="#11223380" adaptiveColors="simple""##,
+            Some(Color::rgba(17, 34, 51, 128)),
+            true,
+        ),
+        (
+            r#"page="0" background="transparent" adaptiveColors="simple""#,
+            Some(Color::TRANSPARENT),
+            true,
+        ),
+        (
+            r##"background="#F4C27A" adaptiveColors="simple""##,
+            Some(amber),
+            true,
+        ),
+        (
+            r##"page="1" background="#F4C27A" adaptiveColors="simple""##,
+            Some(amber),
+            true,
+        ),
+        (
+            r##"page="false" background="#F4C27A" adaptiveColors="simple""##,
+            Some(amber),
+            true,
+        ),
+        (r#"page="0" background="currentColor""#, None, true),
+        (r#"page="0" background="rgb(1,2)""#, None, true),
+        (r##"backgroundGradient="#ffffff""##, None, true),
+        (r#"backgroundImage="{}""#, None, true),
+        (r#"backgroundImage="none""#, None, true),
+    ] {
+        let xml = format!(
+            r#"<mxGraphModel {attributes}><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#
+        );
+        let report = load(&xml);
+        assert_eq!(
+            report.workbook.active().theme.background,
+            expected,
+            "{attributes}"
+        );
+        let warnings = if adjusted {
+            vec![ImportWarning::DrawioBackgroundAdjusted]
+        } else {
+            vec![]
+        };
+        assert_eq!(report.warnings, warnings, "{attributes}");
+        let strict = crate::import_bytes(Format::DrawIo, xml.as_bytes());
+        if adjusted {
+            assert!(
+                matches!(strict, Err(IoError::ImportNeedsConfirmation(ref actual)) if *actual == warnings),
+                "{attributes}: {strict:?}"
+            );
+        } else {
+            assert!(strict.is_ok(), "{attributes}: {strict:?}");
+        }
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn fixed_background_pairs_follow_drawio_color_recognition() {
+    for (value, fixed) in [
+        ("light-dark(red,#ff0000)", true),
+        ("light-dark(rgb(255,0,0),#ff0000)", true),
+        ("light-dark(#f4c27a,#F4C27A)", true),
+        ("light-dark(red,blue)", false),
+        ("LIGHT-DARK(red,red)", false),
+        ("light-dark(RGB(255,0,0),red)", false),
+        ("light-dark(hsl(0,100%,50%),red)", false),
+        ("light-dark(light-dark(red,red),red)", false),
+        ("light-dark(red,currentColor)", false),
+        ("light-dark(red,red,red)", false),
+    ] {
+        assert_eq!(drawio_fixed_background_pair(value), fixed, "{value}");
+    }
+}
+
+#[test]
+fn published_drawio_saves_and_reopens_a_fixed_background() {
+    let xml = include_bytes!("../../tests/fixtures/published-static-background.drawio");
+    let report = import(xml).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(
+        report.workbook.active().theme.background,
+        Some(Color::rgb(244, 194, 122))
+    );
+    assert_eq!(shapes(report.workbook.active())[0].label(), "Synthetic");
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap();
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    assert_eq!(
+        restored.workbook.active().theme.background,
+        report.workbook.active().theme.background
+    );
+}
+
+#[test]
+fn drawio_backgrounds_round_trip_and_preflight_the_exported_pages() {
+    let mut first = Sheet::new("Default", "");
+    first.root_mode = SheetRootMode::Hidden;
+    first.board.grid = GridKind::Lines;
+    first.board.snap = true;
+    first
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 100.0, 60.0),
+        ))
+        .unwrap();
+    let backgrounds = [
+        None,
+        Some(Color::rgb(244, 194, 122)),
+        Some(Color::rgba(17, 34, 51, 128)),
+        Some(Color::rgba(90, 80, 70, 0)),
+    ];
+    let mut book = Workbook::new(first);
+    for (index, background) in backgrounds.iter().enumerate().skip(1) {
+        let mut sheet = book.sheets[0].clone();
+        sheet.title = format!("Background {index}");
+        sheet.theme.background = *background;
+        book.sheets.push(sheet);
+    }
+    book.active_sheet = 2;
+    book.validate().unwrap();
+    let xml = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(xml.contains(r#"background="light-dark(#F4C27A,#F4C27A)""#));
+    assert!(xml.contains(r#"background="light-dark(#11223380,#11223380)""#));
+    assert!(xml.contains(r#"background="light-dark(#5A504600,#5A504600)""#));
+    assert!(!xml.contains("adaptiveColors="));
+    let report = load(&xml);
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::DrawioBackgroundAdjusted]
+    );
+    assert_eq!(report.workbook.sheets.len(), backgrounds.len());
+    for (sheet, expected) in report.workbook.sheets.iter().zip(backgrounds) {
+        assert_eq!(sheet.theme.background, expected);
+    }
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+
+    for (index, background) in backgrounds.into_iter().enumerate() {
+        let options = ExportOptions {
+            sheet: Some(index),
+            ..Default::default()
+        };
+        let selected_loss = if background.is_some_and(|color| color.a < 255) {
+            vec![ExportLoss::DrawioBackgroundAppearanceApproximated(1)]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            export_losses(&book, Format::DrawIo, &options),
+            vec![ExportLoss::DrawioBackgroundAppearanceApproximated(2)]
+        );
+        for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+            assert_eq!(export_losses(&book, format, &options), selected_loss);
+            let bytes = export_bytes(&book, format, &options).unwrap();
+            let report = import(&bytes).unwrap();
+            assert_eq!(report.workbook.sheets.len(), 1);
+            assert_eq!(report.workbook.active().theme.background, background);
+            assert_eq!(
+                report
+                    .warnings
+                    .contains(&ImportWarning::DrawioBackgroundAdjusted),
+                !selected_loss.is_empty(),
+                "{format:?}, sheet {index}: {:?}",
+                report.warnings
+            );
+        }
+        assert!(
+            export_losses(&book, Format::Thinoda, &options).is_empty(),
+            "native backgrounds are not approximated"
+        );
+    }
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioBackgroundAppearanceApproximated(1)]
+        );
+    }
+}
+
+#[test]
+fn imported_page_background_is_used_by_visual_exports() {
+    use thinoda_core::theme::Theme;
+
+    for (value, color) in [
+        ("#F4C27A", Color::rgb(244, 194, 122)),
+        ("#11223380", Color::rgba(17, 34, 51, 128)),
+    ] {
+        let xml = format!(
+            r#"<mxGraphModel page="0" background="light-dark({value},{value})"><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" vertex="1" parent="1" style="shape=rectangle;"><mxGeometry width="100" height="60" as="geometry"/></mxCell></root></mxGraphModel>"#
+        );
+        let book = load(&xml).workbook;
+        assert_eq!(book.active().theme.background, Some(color));
+        for dark in [false, true] {
+            let options = ExportOptions {
+                dark,
+                ..Default::default()
+            };
+            let expected =
+                Theme::for_settings(&book.active().theme).background(&book.active().theme, dark);
+            let svg =
+                String::from_utf8(export_bytes(&book, Format::Svg, &options).unwrap()).unwrap();
+            assert!(svg.contains(&format!("fill=\"{}\"", expected.to_hex())));
+            let png = export_bytes(&book, Format::Png, &options).unwrap();
+            let pixel = image::load_from_memory(&png)
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(0, 0)
+                .0;
+            assert_eq!(pixel, [expected.r, expected.g, expected.b, expected.a]);
+        }
+    }
+}
+
+#[test]
 fn sticky_and_text_card_alignment_survives_drawio_interchange() {
     use thinoda_core::TextAlign;
 

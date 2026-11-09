@@ -230,6 +230,9 @@ fn check(path: &Path) -> Result<String, String> {
         if original.board != restored.board {
             return Err(format!("page {} changed its grid settings", index + 1));
         }
+        if original.theme.background != restored.theme.background {
+            return Err(format!("page {} changed its background", index + 1));
+        }
     }
     let round_trip = items(&again);
     if round_trip < count {

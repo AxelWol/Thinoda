@@ -140,6 +140,14 @@ reimport, but draw.io may discard those settings when saving. Export warns when
 dot grids or independent snapping can differ; keep a `.thinoda` copy.
 Line-grid appearance is approximate.
 
+An explicit draw.io page color becomes the sheet's canvas background. Import
+warns when a finite page, adaptive or translucent color, gradient, or background
+image cannot be represented faithfully. Export writes matching `light-dark`
+color alternatives so the current draw.io editor retains explicit colors in
+both themes, without changing its settings for shapes. Older viewers may not
+support this syntax. Translucent backgrounds require export confirmation
+because editors can blend them over different colors.
+
 Double ellipses import as editable single ellipses with a formatting warning;
 their inner outline and exact label bounds are not preserved.
 

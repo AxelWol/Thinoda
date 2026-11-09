@@ -34,6 +34,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::DrawioRectangleAppearanceApproximated(21),
         ExportLoss::DrawioCollapsedProcessApproximated(22),
         ExportLoss::DrawioGridSettingsApproximated(23),
+        ExportLoss::DrawioBackgroundAppearanceApproximated(24),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -56,6 +57,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     assert!(lines[20].starts_with("21 — "), "{}", lines[20]);
     assert!(lines[21].starts_with("22 — "), "{}", lines[21]);
     assert!(lines[22].starts_with("23 — "), "{}", lines[22]);
+    assert!(lines[23].starts_with("24 — "), "{}", lines[23]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -71,6 +73,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ),
         (22, "Collapsed process outlines may be omitted in draw.io"),
         (23, "Grid or snapping may differ in draw.io"),
+        (24, "Page background may differ in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -192,6 +195,31 @@ fn drawio_grid_approximation_requires_localized_export_consent() {
         assert!(!value.is_empty());
         if language != i18n::Lang::En {
             assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
+}
+
+#[test]
+fn drawio_background_approximation_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut().theme.background = Some(thinoda_core::Color::rgba(17, 34, 51, 128));
+    let key = "Page background may differ in draw.io";
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message =
+            require_board_consent(&book, format, &ExportOptions::default(), false).unwrap_err();
+        assert!(message.contains(t(key)), "{format:?}: {message}");
+        assert!(require_board_consent(&book, format, &ExportOptions::default(), true).is_ok());
+    }
+    assert!(
+        require_board_consent(&book, Format::Thinoda, &ExportOptions::default(), false).is_ok()
+    );
+    for key in [key, "draw.io page background was approximated or omitted"] {
+        for language in i18n::Lang::ALL {
+            let value = i18n::t_in(language, key);
+            assert!(!value.is_empty());
+            if language != i18n::Lang::En {
+                assert_ne!(value, key, "missing {language:?} warning");
+            }
         }
     }
 }

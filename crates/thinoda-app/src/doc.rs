@@ -1733,6 +1733,41 @@ mod tests {
     }
 
     #[test]
+    fn adjusted_drawio_background_requires_consent_and_preserves_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("background.drawio");
+        let xml = r##"<mxGraphModel page="1" background="light-dark(#F4C27A,#F4C27A)"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"##;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(
+            warnings,
+            vec![thinoda_io::ImportWarning::DrawioBackgroundAdjusted]
+        );
+        assert_eq!(
+            document.doc.sheet().theme.background,
+            Some(thinoda_core::Color::rgb(244, 194, 122))
+        );
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        let native = directory.path().join("background.thinoda");
+        document.save_to(&native, false).unwrap();
+        let reopened = OpenDoc::open(&native).unwrap();
+        assert_eq!(
+            reopened.doc.sheet().theme.background,
+            Some(thinoda_core::Color::rgb(244, 194, 122))
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), xml);
+    }
+
+    #[test]
     fn supported_drawio_markers_open_without_confirmation_and_save_as_native() {
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 

@@ -31,6 +31,7 @@ const OUT_OF_RANGE_POINTS: &[u8] =
 const APPEARANCE_COLORS: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/appearance-colors");
 const CSS_COLORS: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/css-colors");
+const PAGE_BACKGROUND: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/page-background");
 const DOUBLE_ELLIPSE: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/double-ellipse");
 const FLOWCHART_ANNOTATION: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/flowchart-annotation");
@@ -53,6 +54,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         ("out-of-range points", Format::DrawIo, OUT_OF_RANGE_POINTS),
         ("appearance colors", Format::DrawIo, APPEARANCE_COLORS),
         ("css colors", Format::DrawIo, CSS_COLORS),
+        ("page background", Format::DrawIo, PAGE_BACKGROUND),
         ("double ellipse", Format::DrawIo, DOUBLE_ELLIPSE),
         ("flowchart annotation", Format::DrawIo, FLOWCHART_ANNOTATION),
         ("flowchart process", Format::DrawIo, FLOWCHART_PROCESS),
@@ -171,6 +173,19 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, report.warnings);
+        }
+        if name == "page background" {
+            assert_eq!(
+                report.warnings,
+                vec![thinoda_io::ImportWarning::DrawioBackgroundAdjusted]
+            );
+            assert_eq!(
+                report.workbook.sheets[0].theme.background,
+                Some(thinoda_core::Color::rgb(244, 194, 122))
+            );
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert!(pasted.warnings.is_empty());
         }
         if name == "double ellipse" {
             assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);

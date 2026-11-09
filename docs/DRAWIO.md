@@ -1561,6 +1561,47 @@ Chromium, Firefox and WebKit. Native, WebAssembly and fuzz Clippy checks passed
 with warnings denied. The grid and snap controls still need physical-device and
 accessibility acceptance.
 
+**Page-background checkpoint (partial Phases 6, 7 and 11).** Explicit draw.io
+page colors now become existing per-sheet Thinoda backgrounds, used by the
+canvas and visual exports and retained in native files. An absent, empty or
+`none` background still follows the sheet theme. The import report identifies
+approximations caused by finite page view, adaptive or translucent colors,
+unresolved values, gradients and background images. Page-only warnings are
+suppressed when pasting cells, while content warnings remain. Source protection
+and cancelable conversion consent are unchanged.
+
+Export writes the same explicit color as both alternatives in
+`light-dark(color,color)`, rather than changing the page's global
+`adaptiveColors` setting and thereby changing shape appearance. The current
+published draw.io editor displays this in both themes and retains it through
+its color dialog, save and reopen. A translucent background is counted in the
+export preflight because the two editors may composite it over different
+underlying colors; editable images count the selected sheet and `.drawio` counts
+all sheets.
+
+Validation passed 146 draw.io codec tests, 22 clipboard tests, ten supplied-
+corpus tests (including an explicit scan of all 88 supplied files), six
+deterministic fuzz-seed tests, background-specific app and export-consent tests,
+and the all-language label catalog check. A production web build passed both
+background journeys in Chromium, Firefox and WebKit. Workspace and fuzz
+formatting, native and WebAssembly Clippy, and fuzz Clippy passed with warnings
+denied. A 21-second Linux AddressSanitizer smoke completed 9,450 executions
+without a reported failure or reproducer; the separate 30-minute acceptance
+campaign remains open.
+
+**Rubber-duck self-critique.** Thinoda extends a finite draw.io page color
+across the canvas; page boundaries and geometry are not reproduced. Dynamic
+light/dark alternatives are reduced to a light-side color, and gradients and
+background images are not retained. The published editor's safe-color and
+adaptive-color parsers accept different subsets of CSS, so the import warning
+is deliberately conservative for nested, unusually spelled and otherwise
+unrecognized expressions even when some happen to render identically. Equal
+`light-dark` export depends on modern color support: older or third-party
+viewers may not understand it, and they are not covered by the opaque-color
+preflight. Keep the original and a `.thinoda` copy; this is not source-preserving
+save-back. New warning and export-loss variants are public API additions that
+exhaustive Rust matches must handle.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop
@@ -1697,17 +1738,23 @@ do not prove compatibility with every historical HTML export or fidelity for
 every shape.
 
 **Corpus validation (docs/draw-io-examples).** `crates/thinoda-io/tests/drawio_corpus.rs`
-runs every `.drawio`/`.xml` file in the user-supplied example corpus (89 files from
-jgraph/drawio-diagrams and the drawio.com docs: templates, floor plans, mockups, AWS/Azure,
-BPMN, C4, UML, network and infographic diagrams). For each file it checks format
-detection, import with report, `Workbook::validate`, the same source URI-encoded as
-a `#R` fragment (identical workbook and warnings), draw.io export → re-import (same page
-count, no lost items), native `.thinoda` round trip, SVG export and clipboard decoding,
-each under `catch_unwind`. Result: 89/89 pass, no panics. The corpus folder is not
-committed (third-party content, ~3 MB); the test skips when it is absent and honours
-`THINODA_DRAWIO_CORPUS`. Run: `cargo test -p thinoda-io --release --test drawio_corpus -- --nocapture`.
+runs every `.drawio`/`.xml`/`.dio` file in the user-supplied example corpus
+(currently 88 files from jgraph/drawio-diagrams and the drawio.com docs:
+templates, floor plans, mockups, AWS/Azure, BPMN, C4, UML, network and
+infographic diagrams). For each file it checks format detection, import with
+report, `Workbook::validate`, the same source URI-encoded as a `#R` fragment
+(identical workbook and warnings), draw.io export → re-import (same page count,
+grid, background and no lost items), native `.thinoda` round trip, SVG export
+and clipboard decoding, each under `catch_unwind`. The current corpus passes
+88/88 with no panics; earlier checkpoints reported 89/89 for an earlier
+corpus. The corpus folder is not committed (third-party content, ~3 MB); the
+test skips when it is absent and honours `THINODA_DRAWIO_CORPUS`. Run:
+`cargo test -p thinoda-io --release --test drawio_corpus -- --nocapture`.
 
-The initial gap analysis from the corpus (8,180 vertices, 1,876 edges) set the fidelity order:
+The initial gap analysis from the corpus (8,180 vertices, 1,876 edges) set the
+fidelity order below. Some initial gaps, including partial rectangles, delay
+shapes and waypoints, have since received partial or complete import support;
+see the later checkpoints for current limits.
 1. **Images** — 200 image cells in 21 files: 32 inline `data:` URIs (PNG/SVG), the rest
    remote or `img/lib/...` built-in libraries. Inline images are importable; remote URLs
    stay labelled placeholders (never fetched).
@@ -1730,7 +1777,7 @@ warning. Export writes `shape=image;thinodaCard=image;image=data:<mime>,<base64>
 display size, and the export gate allows resources for draw.io only when every resource
 is a PNG/JPEG picture of an image card. Tests: `inline_png_and_svg_images_become_transparent_image_cards`,
 `remote_and_unsupported_images_stay_placeholders_with_their_source`,
-`image_cards_round_trip_their_pixels_and_size`; corpus still 89/89.
+`image_cards_round_trip_their_pixels_and_size`; the earlier corpus passed 89/89.
 
 **Shape label editing (user-reported bug, fixed).** Typing on a selected shape
 swallowed the first character (the seeded character was selected and replaced by the next
@@ -1754,7 +1801,7 @@ that fallback with retained, editable sides.
 attach to it. Dedicated outlines (folder tab, cube depth, envelope, UML actor/frame tab,
 and other stencils) stay with Phase 4/13. Tests:
 `built_in_shape_aliases_map_to_their_thinoda_equivalents`,
-`waypoints_become_small_dots_in_the_stroke_color`; corpus still 89/89.
+`waypoints_become_small_dots_in_the_stroke_color`; the earlier corpus passed 89/89.
 
 **Connector waypoints (fidelity slice 3; partial Phases 3 and 8).** Explicit
 draw.io connector points import in sheet coordinates and export relative to

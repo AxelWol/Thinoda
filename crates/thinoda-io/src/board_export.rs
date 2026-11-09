@@ -226,6 +226,8 @@ pub enum ExportLoss {
     DrawioCollapsedProcessApproximated(usize),
     /// draw.io couples grid visibility to snapping and cannot display a dot grid.
     DrawioGridSettingsApproximated(usize),
+    /// Translucent backgrounds can blend against different editor backgrounds.
+    DrawioBackgroundAppearanceApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -429,6 +431,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut rectangle_appearance = 0;
     let mut collapsed_processes = 0;
     let mut grid_settings = 0;
+    let mut background_appearance = 0;
     for sheet in sheets {
         for (id, topic) in &sheet.topics {
             if topic.card.is_none() && !sheet.is_anchor(*id) {
@@ -497,6 +500,8 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
             sheet.board.grid == thinoda_core::GridKind::Dots
                 || sheet.board.snap != (sheet.board.grid != thinoda_core::GridKind::None),
         );
+        background_appearance +=
+            usize::from(sheet.theme.background.is_some_and(|color| color.a < 255));
     }
     let mut out = Vec::new();
     for (loss, count) in [
@@ -525,6 +530,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
             collapsed_processes,
         ),
         (ExportLoss::DrawioGridSettingsApproximated, grid_settings),
+        (
+            ExportLoss::DrawioBackgroundAppearanceApproximated,
+            background_appearance,
+        ),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),
         (ExportLoss::SlidesDropped, slides),
