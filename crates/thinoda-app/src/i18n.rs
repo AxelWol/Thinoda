@@ -520,6 +520,10 @@ const DE: &[(&str, &str)] = &[
         "Rechteckfarben oder automatische Konturen können in draw.io abweichen",
     ),
     (
+        "Collapsed process outlines may be omitted in draw.io",
+        "Konturen von Prozessen ohne Breite oder Höhe können in draw.io fehlen",
+    ),
+    (
         "Translucent connector labels may render differently",
         "Halbtransparente Verbindungsbeschriftungen können anders dargestellt werden",
     ),
@@ -5080,6 +5084,7 @@ mod tests {
             "Connector-to-connector attachments detached",
             "Label color or opacity may differ in draw.io",
             "Rectangle colors or automatic outlines may differ in draw.io",
+            "Collapsed process outlines may be omitted in draw.io",
             "Translucent connector labels may render differently",
             "Topic notes, labels, markers or tasks omitted",
             "Presentation slides omitted",

@@ -199,6 +199,10 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     *count,
                     "Rectangle colors or automatic outlines may differ in draw.io",
                 ),
+                ExportLoss::DrawioCollapsedProcessApproximated(count) => (
+                    *count,
+                    "Collapsed process outlines may be omitted in draw.io",
+                ),
                 ExportLoss::TopicDetailsDropped(count) => {
                     (*count, "Topic notes, labels, markers or tasks omitted")
                 }

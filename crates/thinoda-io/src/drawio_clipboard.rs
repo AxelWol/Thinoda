@@ -242,6 +242,63 @@ mod tests {
     }
 
     #[test]
+    fn native_process_copy_uses_square_drawio_geometry_and_keeps_its_identity() {
+        use thinoda_core::{CanvasObject, ShapeKind};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let id = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Process,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0)),
+            ))
+            .unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let payload = copy_board_selection(&sheet, &layout, &[], &[id])
+            .unwrap()
+            .unwrap();
+        let copied = encode(&payload).unwrap();
+        let xml = drawio::percent_decode(&copied).unwrap();
+        assert!(xml.contains("shape=rectangle;rounded=0;thinodaShape=process;"));
+        let pasted = decode(&copied).unwrap();
+        assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
+        let mut restored = Sheet::new("Restored", "");
+        restored.root_mode = SheetRootMode::Hidden;
+        paste_board_selection(&mut restored, &pasted.payload, Vec2::ZERO).unwrap();
+        assert!(matches!(
+            restored.canvas.objects[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Process,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn collapsed_process_clipboard_copy_reports_visible_outline_loss() {
+        use thinoda_core::{CanvasObject, ShapeKind};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let id = sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Process,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(0.0, 100.0)),
+            ))
+            .unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let payload = copy_board_selection(&sheet, &layout, &[], &[id])
+            .unwrap()
+            .unwrap();
+        let expected = vec![ExportLoss::DrawioCollapsedProcessApproximated(1)];
+        assert_eq!(encode_with_report(&payload).unwrap().losses, expected);
+        assert!(matches!(
+            encode(&payload),
+            Err(IoError::DrawioClipboardLoss(losses)) if losses == expected
+        ));
+    }
+
+    #[test]
     fn detects_plain_encoded_and_file_forms_only() {
         assert!(looks_like_drawio(MODEL));
         assert!(looks_like_drawio(&encode_uri_component(MODEL)));

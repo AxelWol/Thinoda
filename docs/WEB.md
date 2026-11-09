@@ -135,6 +135,12 @@ Flowchart annotation brackets import as editable open-sided rectangles with a
 formatting warning. Their original stencil identity and exact appearance are
 not preserved; keep the original diagram.
 
+Flowchart process stencils import as editable square-cornered processes with a
+formatting warning; their rounded corners are not preserved. Native processes
+export as square rectangles with a Thinoda identity marker, which other editors
+may remove. Export and **Copy as draw.io** warn when a visible zero-width or
+zero-height process outline may disappear in draw.io.
+
 Opening editable images also accepts older URI- or base64-encoded SVG diagrams
 and older PNG diagram metadata. Ordinary PNG drops still add an image; a
 `.drawio.png` drop opens the embedded diagram instead.

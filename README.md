@@ -752,6 +752,11 @@ those system-owned controls. WinGet publishing remains paused.
   Flowchart annotation brackets import as editable open-sided rectangles with
   a formatting warning; their original stencil identity and exact appearance
   are not preserved.
+  Flowchart process stencils import as editable square-cornered processes with
+  a formatting warning; their rounded corners are not preserved. Native
+  processes export as square rectangles with a Thinoda identity marker, which
+  other editors may remove. Export and **Copy as draw.io** warn when a visible
+  zero-width or zero-height process outline may disappear in draw.io.
   Unsupported content can prevent export. Editable image export is not Save As
   or lossless save-back.
   Import also recognizes legacy URI- or base64-encoded SVG diagrams and older

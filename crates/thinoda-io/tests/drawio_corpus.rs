@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use thinoda_core::{
-    Color, Rect, RectangleSides, Sheet, Vec2, Workbook,
+    Color, Rect, RectangleSides, ShapeKind, Sheet, Vec2, Workbook,
     board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute},
 };
 use thinoda_io::{ExportOptions, Format};
@@ -361,6 +361,49 @@ fn supplied_requirements_flow_keeps_its_annotation_brackets() {
         assert_eq!(bracket.style.stroke_width, 2.0);
     }
     report.workbook.validate().unwrap();
+}
+
+#[test]
+fn supplied_gantt_processes_remain_editable_with_a_warning() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    for name in ["gantt_1.xml", "gantt_1 (1).xml"] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
+        assert!(
+            report
+                .warnings
+                .contains(&thinoda_io::ImportWarning::Formatting),
+            "{name}"
+        );
+        let count = |book: &Workbook| {
+            book.sheets
+                .iter()
+                .flat_map(|sheet| &sheet.canvas.objects)
+                .filter(|object| {
+                    matches!(
+                        object.kind,
+                        CanvasObjectKind::Shape {
+                            shape: ShapeKind::Process,
+                            ..
+                        }
+                    )
+                })
+                .count()
+        };
+        assert_eq!(count(&report.workbook), 22, "{name}");
+        let exported =
+            thinoda_io::export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default())
+                .unwrap();
+        let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported).unwrap();
+        assert_eq!(count(&reopened.workbook), 22, "{name}");
+        reopened.workbook.validate().unwrap();
+    }
 }
 
 #[test]

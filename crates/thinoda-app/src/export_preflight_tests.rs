@@ -32,6 +32,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::DrawioLabelAppearanceApproximated(19),
         ExportLoss::ConnectorLabelCompositingApproximated(20),
         ExportLoss::DrawioRectangleAppearanceApproximated(21),
+        ExportLoss::DrawioCollapsedProcessApproximated(22),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -52,6 +53,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     assert!(lines[18].starts_with("19 — "), "{}", lines[18]);
     assert!(lines[19].starts_with("20 — "), "{}", lines[19]);
     assert!(lines[20].starts_with("21 — "), "{}", lines[20]);
+    assert!(lines[21].starts_with("22 — "), "{}", lines[21]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -65,6 +67,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
             21,
             "Rectangle colors or automatic outlines may differ in draw.io",
         ),
+        (22, "Collapsed process outlines may be omitted in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -142,6 +145,27 @@ fn partial_rectangle_appearance_loss_requires_localized_export_consent() {
         "{message}"
     );
     assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn collapsed_process_loss_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Process,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(0.0, 100.0)),
+        ))
+        .unwrap();
+    let options = ExportOptions::default();
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            message.contains(t("Collapsed process outlines may be omitted in draw.io")),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
     assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
 }
 

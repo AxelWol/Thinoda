@@ -1432,6 +1432,53 @@ A 22-second Linux AddressSanitizer smoke completed 10,141 executions without a
 reported failure or reproducer; the separate 30-minute acceptance campaign and
 real system clipboard, accessibility and viewer acceptance remain open.
 
+**Flowchart process interchange and rubber-duck review (partial Phases 6, 9 and
+13).** The published [flowchart stencil](https://app.diagrams.net/stencils/flowchart.xml)
+uses a rounded rectangle whose corner radius is 6% of the shorter dimension.
+Thinoda's native Process has square corners. An explicit
+`shape=mxgraph.flowchart.process` therefore imports as an editable Process with
+a Formatting warning instead of silently claiming the rounded source is
+preserved. Supported frame, direction, rotation, colors, label and ordinary
+attachments remain editable. Bare named-style tokens are not treated as an
+explicit stencil.
+
+The review also found that exporting a native square Process as the rounded
+stencil changed its appearance in draw.io. Native processes now export as
+`shape=rectangle;rounded=0;thinodaShape=process;`. Thinoda restores Process
+identity only while that explicit square-rectangle geometry and marker remain;
+changing the shape or enabling rounding in draw.io takes precedence. The marker
+is a Thinoda extension, so another editor may strip it and older Thinoda versions
+will read the rectangle without recovering Process identity. Native `.thinoda`
+workbooks are unchanged.
+
+A second edge case is a zero-width or zero-height Process: Thinoda can paint
+its outline, while draw.io hides the exported rectangle. File and editable-image
+export preflight now report affected visible outlines on the exported sheets.
+**Copy as draw.io** shows a localized sticky warning; the strict clipboard API
+refuses the lossy copy. The imported source stencil itself is also invisible
+when collapsed, so its square approximation may become visible; the import
+warning is conservative even when rounded corners would not otherwise show.
+The browser journey also exposed that **Copy as draw.io** was missing from the
+command palette; it is now available there as well as in the menus.
+
+This is not source-preserving stencil support. Exact rounded corners, original
+stencil identity, label placement, fixed connection constraints and hit testing
+remain open, as do source-preserving save-back and real clipboard, viewer and
+accessibility acceptance. Formatting-only paste notices are temporary, and the
+converted workbook does not remember the source approximation for later export
+warnings. Keep the original draw.io file.
+
+Validation passed 155 selected draw.io library tests, eight supplied-corpus
+tests, six deterministic fuzz-seed tests, 76 app clipboard tests, 19 export
+preflight tests and 29 localization tests. Palette and keymap regressions also
+passed. The two synthetic paste/copy journeys passed in Chromium, Firefox and
+WebKit; screenshots show the conversion and collapsed-outline notices. A
+published draw.io probe confirmed that the tagged zero-width and zero-height
+rectangles are hidden while their labels remain visible. Formatting and native,
+WebAssembly and fuzz Clippy passed with warnings denied. A 21-second Linux
+AddressSanitizer smoke completed 9,442 executions without a reported failure or
+reproducer; it does not satisfy the separate 30-minute acceptance campaign.
+
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the
 same bounded, conversion-only import and warning flow as File › Open, on desktop

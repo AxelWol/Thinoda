@@ -772,6 +772,66 @@ test("draw.io paste warns when a double ellipse is simplified", async ({ page },
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io process paste warns and copies its square approximation", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" value="Task" style="shape=mxgraph.flowchart.process;">',
+        '<mxGeometry width="300" height="200" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-process-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-process-warning.png") });
+    const after = archive(await saveAs(page, "drawio-process-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape).toMatchObject({ shape: "process", label: "Task" });
+
+    const previous = await page.evaluate(() => window.__thinodaTestClipboard.plainWrites);
+    await command(page, "Copy as draw.io");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites))
+        .toBe(previous + 1);
+    const copied = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    expect(decodeURIComponent(copied)).toContain("shape=rectangle;rounded=0;thinodaShape=process;");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-process-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
+test("copy as draw.io warns about a collapsed process outline", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" ',
+        'style="shape=rectangle;rounded=0;thinodaShape=process;strokeColor=#000000;fillColor=none;">',
+        '<mxGeometry width="0" height="100" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    const previous = await page.evaluate(() => window.__thinodaTestClipboard.plainWrites);
+    await command(page, "Copy as draw.io");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites))
+        .toBe(previous + 1);
+    const copied = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    expect(decodeURIComponent(copied)).toContain("shape=rectangle;rounded=0;thinodaShape=process;");
+    expect(decodeURIComponent(copied)).toContain('width="0"');
+    await page.screenshot({ path: testInfo.outputPath("drawio-collapsed-process-copy-warning.png") });
+});
+
 test("draw.io annotation pastes as an editable open bracket", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',

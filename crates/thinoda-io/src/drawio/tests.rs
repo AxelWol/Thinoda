@@ -202,6 +202,278 @@ fn simple_ellipse_and_flowchart_ellipse_stencils_do_not_gain_the_warning() {
 }
 
 #[test]
+fn flowchart_process_import_reports_rounded_corner_loss() {
+    let xml = page(
+        r##"<mxCell id="a" value="Task" style="shape=mxgraph.flowchart.process;fillColor=#ffffff;strokeColor=#123456;rotation=30;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="300" height="200" as="geometry"/></mxCell>"##,
+    )
+    .replacen(
+        "<mxGraphModel>",
+        r#"<mxGraphModel adaptiveColors="none">"#,
+        1,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let object = shapes(&report.workbook.sheets[0])[0];
+    assert!(matches!(
+        object.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Process,
+            ..
+        }
+    ));
+    assert_eq!(object.label(), "Task");
+    assert_eq!(object.rect, rect(10.0, 20.0, 300.0, 200.0));
+    assert_eq!(object.rotation, 30.0);
+    assert_eq!(object.style.fill, Some(Color::WHITE));
+    assert_eq!(object.style.stroke, Some(Color::rgb(18, 52, 86)));
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings))
+            if warnings == vec![ImportWarning::Formatting]
+    ));
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    assert_eq!(
+        crate::import_drawio_link(&link).unwrap().warnings,
+        report.warnings
+    );
+    assert_eq!(
+        crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+        report.warnings
+    );
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
+fn flowchart_process_direction_and_collapsed_frames_still_warn() {
+    for (direction, width, height, expected_frame, rotation) in [
+        ("east", 300, 200, rect(10.0, 20.0, 300.0, 200.0), 0.0),
+        ("west", 300, 200, rect(10.0, 20.0, 300.0, 200.0), 180.0),
+        ("south", 300, 200, rect(60.0, -30.0, 200.0, 300.0), 90.0),
+        ("north", 300, 200, rect(60.0, -30.0, 200.0, 300.0), 270.0),
+        ("east", 0, 200, rect(10.0, 20.0, 0.0, 200.0), 0.0),
+        ("east", 300, 0, rect(10.0, 20.0, 300.0, 0.0), 0.0),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="shape=mxgraph.flowchart.process;direction={direction};" vertex="1" parent="1"><mxGeometry x="10" y="20" width="{width}" height="{height}" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+        let object = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(object.rect, expected_frame, "{direction} {width} {height}");
+        assert_eq!(object.rotation, rotation, "{direction} {width} {height}");
+    }
+}
+
+#[test]
+fn native_process_exports_as_a_square_rectangle_with_roundtrip_identity() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut process = shape(ShapeKind::Process, rect(10.0, 20.0, 300.0, 200.0), "Task");
+    process.style.fill = Some(Color::WHITE);
+    process.style.stroke = Some(Color::rgb(18, 52, 86));
+    process.rotation = 30.0;
+    sheet.add_canvas_object(process.clone()).unwrap();
+    let exported = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(
+        exported.contains("shape=rectangle;rounded=0;thinodaShape=process;"),
+        "{exported}"
+    );
+    assert!(!exported.contains("shape=mxgraph.flowchart.process;"));
+    let report = load(&exported);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let restored = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(restored.kind, process.kind);
+    assert_eq!(restored.rect, process.rect);
+    assert_eq!(restored.rotation, process.rotation);
+    assert_eq!(restored.style, process.style);
+}
+
+#[test]
+fn collapsed_native_process_outline_is_visible_in_png() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut process = shape(ShapeKind::Process, rect(20.0, 20.0, 0.0, 100.0), "");
+    process.style.stroke = Some(Color::BLACK);
+    process.style.stroke_width = 4.0;
+    sheet.add_canvas_object(process).unwrap();
+    let book = Workbook::new(sheet);
+    let options = ExportOptions {
+        transparent: true,
+        ..Default::default()
+    };
+    let svg = String::from_utf8(export_bytes(&book, Format::Svg, &options).unwrap()).unwrap();
+    let values: Vec<f32> = svg
+        .split("viewBox=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .map(|part| part.parse().unwrap())
+        .collect();
+    let png = export_bytes(&book, Format::Png, &options).unwrap();
+    let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+    let x = (20.0 - values[0]).floor() as u32;
+    let y = (70.0 - values[1]).floor() as u32;
+    assert!(pixels.get_pixel(x, y).0[3] > 0);
+}
+
+#[test]
+fn drawio_export_reports_visible_collapsed_process_outlines() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    for (frame, stroke, fill, opacity) in [
+        (rect(0.0, 0.0, 0.0, 100.0), Some(Color::BLACK), None, 1.0),
+        (rect(50.0, 0.0, 100.0, 0.0), None, None, 1.0),
+        (
+            rect(0.0, 200.0, 100.0, 100.0),
+            Some(Color::BLACK),
+            None,
+            1.0,
+        ),
+        (
+            rect(0.0, 400.0, 0.0, 100.0),
+            Some(Color::TRANSPARENT),
+            None,
+            1.0,
+        ),
+        (rect(50.0, 400.0, 0.0, 100.0), Some(Color::BLACK), None, 0.0),
+        (
+            rect(100.0, 400.0, 0.0, 100.0),
+            None,
+            Some(Color::WHITE),
+            1.0,
+        ),
+    ] {
+        let mut process = shape(ShapeKind::Process, frame, "");
+        process.style.stroke = stroke;
+        process.style.fill = fill;
+        process.style.opacity = opacity;
+        sheet.add_canvas_object(process).unwrap();
+    }
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioCollapsedProcessApproximated(2)],
+            "{format:?}"
+        );
+    }
+    assert!(export_losses(&book, Format::Thinoda, &ExportOptions::default()).is_empty());
+}
+
+#[test]
+fn collapsed_process_loss_respects_editable_image_sheet_scope() {
+    let mut first = Sheet::new("First", "");
+    first.root_mode = SheetRootMode::Hidden;
+    first
+        .add_canvas_object(shape(ShapeKind::Process, rect(0.0, 0.0, 0.0, 100.0), ""))
+        .unwrap();
+    let mut second = Sheet::new("Second", "");
+    second.root_mode = SheetRootMode::Hidden;
+    for x in [0.0, 100.0] {
+        second
+            .add_canvas_object(shape(ShapeKind::Process, rect(x, 0.0, 100.0, 0.0), ""))
+            .unwrap();
+    }
+    let mut book = Workbook::new(first);
+    book.sheets.push(second);
+    for (sheet, expected) in [(0, 1), (1, 2)] {
+        let options = ExportOptions {
+            sheet: Some(sheet),
+            ..Default::default()
+        };
+        for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+            assert_eq!(
+                export_losses(&book, format, &options),
+                vec![ExportLoss::DrawioCollapsedProcessApproximated(expected)],
+                "{format:?}, sheet {sheet}"
+            );
+        }
+        assert_eq!(
+            export_losses(&book, Format::DrawIo, &options),
+            vec![ExportLoss::DrawioCollapsedProcessApproximated(3)]
+        );
+    }
+    book.active_sheet = 1;
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioCollapsedProcessApproximated(2)]
+        );
+    }
+}
+
+#[test]
+fn native_process_marker_never_overrides_changed_drawio_geometry() {
+    for (style, expected, warning) in [
+        (
+            "shape=rectangle;rounded=0;thinodaShape=process;",
+            ShapeKind::Process,
+            None,
+        ),
+        (
+            "shape=rectangle;rounded=1;thinodaShape=process;",
+            ShapeKind::RoundedRectangle,
+            None,
+        ),
+        (
+            "shape=ellipse;rounded=0;thinodaShape=process;",
+            ShapeKind::Ellipse,
+            None,
+        ),
+        (
+            "shape=rectangle;thinodaShape=process;",
+            ShapeKind::Rectangle,
+            None,
+        ),
+        (
+            "shape=label;rounded=0;thinodaShape=process;",
+            ShapeKind::Rectangle,
+            None,
+        ),
+        (
+            "shape=mxgraph.flowchart.process;thinodaShape=process;",
+            ShapeKind::Process,
+            Some(ImportWarning::Formatting),
+        ),
+        (
+            "mxgraph.flowchart.process;",
+            ShapeKind::Rectangle,
+            Some(ImportWarning::Other),
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="{style}" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#
+        ))
+        .replacen(
+            "<mxGraphModel>",
+            r#"<mxGraphModel adaptiveColors="none">"#,
+            1,
+        );
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings,
+            warning.into_iter().collect::<Vec<_>>(),
+            "{style}"
+        );
+        assert!(
+            matches!(
+                shapes(&report.workbook.sheets[0])[0].kind,
+                CanvasObjectKind::Shape { shape, .. } if shape == expected
+            ),
+            "{style}"
+        );
+    }
+}
+
+#[test]
 fn flowchart_annotation_imports_as_an_editable_open_bracket() {
     let xml = page(
         r##"<mxCell id="a" value="Note" style="shape=mxgraph.flowchart.annotation_1;fillColor=#ff0000;strokeColor=#336699;strokeWidth=4;strokeOpacity=50;rotation=180;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>

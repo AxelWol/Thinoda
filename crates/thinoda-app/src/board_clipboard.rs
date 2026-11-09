@@ -2816,6 +2816,54 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_reports_process_approximation_and_copies_square_geometry() {
+        use crate::app::Cmd;
+        use thinoda_core::{CanvasObjectKind, ShapeKind};
+
+        let text = concat!(
+            r#"<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="shape" vertex="1" parent="1" value="Task" style="shape=mxgraph.flowchart.process;"><mxGeometry width="300" height="200" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let (mut app, clipboard) = empty_board_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        clipboard.borrow_mut().text = text.into();
+        let ctx = egui::Context::default();
+        app.exec(&ctx, Cmd::MenuPaste);
+        assert!(matches!(
+            app.doc().unwrap().doc.sheet().canvas.objects[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Process,
+                ..
+            }
+        ));
+        assert!(app.toasts.texts().any(|text| text
+            == crate::i18n::t(
+                "Pasted from draw.io; some content may have been omitted or simplified"
+            )));
+
+        app.exec(&ctx, Cmd::CopyAsDrawio);
+        let copied = clipboard.borrow().text.clone();
+        assert!(copied.contains("shape%3Drectangle%3Brounded%3D0%3BthinodaShape%3Dprocess%3B"));
+        let pasted = thinoda_io::drawio_clipboard::decode(&copied).unwrap();
+        assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
+        let mut restored = Sheet::new("Restored", "");
+        restored.root_mode = SheetRootMode::Hidden;
+        clipboard::paste_board_selection(&mut restored, &pasted.payload, Vec2::ZERO).unwrap();
+        assert!(matches!(
+            restored.canvas.objects[0].kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Process,
+                ..
+            }
+        ));
+
+        app.exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_bracket_is_editable_and_undoable() {
         use crate::app::Cmd;
         use thinoda_core::{Color, RectangleSides};
@@ -3229,6 +3277,48 @@ mod tests {
                     crate::i18n::t_in(
                         language,
                         "Rectangle colors or automatic outlines may differ in draw.io"
+                    )
+                )
+            })
+            .collect();
+        let has_warning = |app: &crate::app::ThinodaApp| {
+            app.toasts
+                .texts()
+                .any(|text| expected.iter().any(|line| text.contains(line)))
+        };
+        assert!(has_warning(&app));
+        app.toasts.tick(10.0);
+        assert!(has_warning(&app));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn copy_as_drawio_warns_about_collapsed_process_outlines() {
+        use crate::app::Cmd;
+
+        let (mut app, clipboard) = empty_board_app();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Process,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(0.0, 100.0)),
+            ))
+            .unwrap();
+        doc.view.board_selection = vec![id];
+        let before = doc.doc.workbook().clone();
+
+        app.exec(&egui::Context::default(), Cmd::CopyAsDrawio);
+        assert!(clipboard.borrow().text.starts_with("%3CmxGraphModel"));
+        let expected: Vec<_> = crate::i18n::Lang::ALL
+            .into_iter()
+            .map(|language| {
+                format!(
+                    "1 — {}",
+                    crate::i18n::t_in(
+                        language,
+                        "Collapsed process outlines may be omitted in draw.io"
                     )
                 )
             })

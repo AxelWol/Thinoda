@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use thinoda_core::{
     CanvasObjectId, Endpoint, Sheet, Topic, Workbook,
-    board::{CanvasObject, CanvasObjectKind, SheetRootMode},
+    board::{CanvasObject, CanvasObjectKind, ShapeKind, SheetRootMode},
     model::PresentationSource,
 };
 
@@ -222,6 +222,8 @@ pub enum ExportLoss {
     DrawioLabelAppearanceApproximated(usize),
     /// Partial-rectangle colors and automatic outlines can differ in draw.io.
     DrawioRectangleAppearanceApproximated(usize),
+    /// A zero-width or zero-height process outline can be omitted by draw.io.
+    DrawioCollapsedProcessApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -423,6 +425,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut legacy_markers = 0;
     let mut label_appearance = 0;
     let mut rectangle_appearance = 0;
+    let mut collapsed_processes = 0;
     let mut settings = false;
     for sheet in sheets {
         for (id, topic) in &sheet.topics {
@@ -441,6 +444,21 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         slides += sheet.presentation.slides.len();
         connector_attachments += connector_attachment_counts(sheet).values().sum::<usize>();
         for object in &sheet.canvas.objects {
+            if matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::Process,
+                    ..
+                }
+            ) && (object.rect.size.x == 0.0 || object.rect.size.y == 0.0)
+                && object.style.opacity > 0.0
+                && match object.style.stroke {
+                    Some(color) => color.a > 0,
+                    None => object.style.fill.is_none(),
+                }
+            {
+                collapsed_processes += 1;
+            }
             if let Some(sides) = object.rectangle_sides
                 && object.style.opacity > 0.0
             {
@@ -496,6 +514,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         (
             ExportLoss::DrawioRectangleAppearanceApproximated,
             rectangle_appearance,
+        ),
+        (
+            ExportLoss::DrawioCollapsedProcessApproximated,
+            collapsed_processes,
         ),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),

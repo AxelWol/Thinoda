@@ -4194,6 +4194,7 @@ impl ThinodaApp {
             (Cmd::Canvas(Action::SelectAll), "Select All", "", "Edit"),
             (Cmd::Find, "Find…", "", "Edit"),
             (Cmd::FindReplace, "Find and Replace…", "", "Edit"),
+            (Cmd::CopyAsDrawio, "Copy as draw.io", "", "Edit"),
             (Cmd::CopyStyle, "Copy Style", "", "Edit"),
             (Cmd::PasteStyle, "Paste Style", "", "Edit"),
             (Cmd::ResetStyle, "Reset Style", "", "Edit"),
@@ -5626,6 +5627,12 @@ mod tests {
             cmds.iter()
                 .any(|(command, _)| *command == Cmd::MoveToNewWindow)
         );
+        let (_, drawio_copy) = cmds
+            .iter()
+            .find(|(command, _)| *command == Cmd::CopyAsDrawio)
+            .expect("draw.io copy is available from the command palette");
+        assert_eq!(drawio_copy.title, t("Copy as draw.io"));
+        assert_eq!(drawio_copy.category.as_deref(), Some(t("Edit")));
     }
 
     #[test]

@@ -34,6 +34,8 @@ const CSS_COLORS: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/css
 const DOUBLE_ELLIPSE: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/double-ellipse");
 const FLOWCHART_ANNOTATION: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/flowchart-annotation");
+const FLOWCHART_PROCESS: &[u8] =
+    include_bytes!("../../../fuzz/corpus/drawio_import/flowchart-process");
 
 #[test]
 fn document_seeds_reach_their_importers_and_native_roundtrip() {
@@ -53,6 +55,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
         ("css colors", Format::DrawIo, CSS_COLORS),
         ("double ellipse", Format::DrawIo, DOUBLE_ELLIPSE),
         ("flowchart annotation", Format::DrawIo, FLOWCHART_ANNOTATION),
+        ("flowchart process", Format::DrawIo, FLOWCHART_PROCESS),
         ("warning", Format::DrawIo, WARNING),
         ("compressed", Format::DrawIo, COMPRESSED),
         ("svg", Format::DrawIo, SVG),
@@ -201,6 +204,21 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
                 objects[0].style.fill,
                 Some(thinoda_core::Color::TRANSPARENT)
             );
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, report.warnings);
+        }
+        if name == "flowchart process" {
+            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            let objects = &report.workbook.sheets[0].canvas.objects;
+            assert_eq!(objects.len(), 2);
+            assert!(objects.iter().all(|object| matches!(
+                object.kind,
+                thinoda_core::CanvasObjectKind::Shape {
+                    shape: thinoda_core::ShapeKind::Process,
+                    ..
+                }
+            )));
             let pasted =
                 thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
             assert_eq!(pasted.warnings, report.warnings);

@@ -1394,6 +1394,7 @@ fn is_mockup_rectangle(style: &Style) -> bool {
 }
 
 const FLOWCHART_ANNOTATION_1: &str = "mxgraph.flowchart.annotation_1";
+const FLOWCHART_PROCESS: &str = "mxgraph.flowchart.process";
 
 fn mockup_rectangle(style: &Style) -> Kind {
     use std::cmp::Ordering;
@@ -1481,6 +1482,11 @@ fn classify(style: &Style) -> Kind {
         "" | "rect" | "rectangle" | "label" => {
             if style.flag("rounded") {
                 symmetric(S::RoundedRectangle)
+            } else if style.get("shape") == Some("rectangle")
+                && style.get("rounded") == Some("0")
+                && style.get("thinodaShape") == Some("process")
+            {
+                symmetric(S::Process)
             } else {
                 symmetric(S::Rectangle)
             }
@@ -1524,7 +1530,9 @@ fn classify(style: &Style) -> Kind {
         "mxgraph.basic.pentagon" => shape(S::Pentagon, 0.0),
         "mxgraph.basic.octagon2" => shape(S::Octagon, 0.0),
         "mxgraph.basic.orthogonal_triangle" => shape(S::RightTriangle, 0.0),
-        "mxgraph.flowchart.process" => shape(S::Process, 0.0),
+        FLOWCHART_PROCESS if style.get("shape") == Some(FLOWCHART_PROCESS) => {
+            Kind::Approx(S::Process, 0.0, false)
+        }
         "mxgraph.flowchart.decision" => shape(S::Decision, 0.0),
         "mxgraph.flowchart.terminator" => shape(S::Terminator, 0.0),
         "mxgraph.flowchart.data" => shape(S::Data, 0.0),
@@ -2680,7 +2688,7 @@ fn shape_style(shape: ShapeKind) -> &'static str {
         S::Callout => "shape=callout;",
         S::Cylinder => "shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=15;",
         S::Document => "shape=document;boundedLbl=1;",
-        S::Process => "shape=mxgraph.flowchart.process;",
+        S::Process => "shape=rectangle;rounded=0;thinodaShape=process;",
         S::PredefinedProcess => "shape=process;backgroundOutline=1;",
         S::Decision => "shape=mxgraph.flowchart.decision;",
         S::Terminator => "shape=mxgraph.flowchart.terminator;",
