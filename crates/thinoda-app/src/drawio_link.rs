@@ -439,6 +439,43 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_shape_link_shows_a_cancelable_specific_warning() {
+        let xml = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="chair" value="Chair" style="shape=mxgraph.floorplan.office_chair;" vertex="1" parent="1"><mxGeometry width="40" height="43" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let link = format!(
+            "#R{}",
+            thinoda_io::drawio_clipboard::encode_uri_component(xml)
+        );
+        let mut h = harness();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        h.state_mut().import_drawio_link_text(&link).unwrap();
+        h.run_steps(3);
+        assert!(
+            h.state()
+                .dialogs
+                .imports
+                .front()
+                .unwrap()
+                .2
+                .contains(&ImportWarning::UnsupportedDrawioShapes)
+        );
+        assert!(
+            h.query_all_by_role(Role::Label).any(|node| node
+                .value()
+                .is_some_and(|value| value.contains(t(
+                    "Unsupported shapes or styles in the draw.io source may appear as rectangles"
+                ))))
+        );
+        h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+        h.run_steps(3);
+        assert!(h.state().dialogs.imports.is_empty());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
     fn rejected_link_does_not_change_documents_or_queue_warnings() {
         let mut app = app_with_changes();
         let before = app.doc().unwrap().doc.workbook().clone();

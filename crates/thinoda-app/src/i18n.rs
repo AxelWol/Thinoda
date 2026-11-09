@@ -175,6 +175,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::Markers => "Markers and task data",
         ImportWarning::Links => "Additional or unsupported links",
         ImportWarning::DetachedConnectors => "Connector attachments were detached",
+        ImportWarning::UnsupportedDrawioShapes => {
+            "Unsupported shapes or styles in the draw.io source may appear as rectangles"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -1360,6 +1363,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Connector attachments may have been detached",
         "Verbindungen wurden möglicherweise von ihren Ankerpunkten gelöst",
+    ),
+    (
+        "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+        "Nicht unterstützte Formen oder Stile in der draw.io-Quelle können als Rechtecke erscheinen",
     ),
     (
         "Other unsupported map data",
@@ -4851,6 +4858,7 @@ mod tests {
             "Additional draw.io pages omitted",
             "Connector attachments were detached",
             "Connector attachments may have been detached",
+            "Unsupported shapes or styles in the draw.io source may appear as rectangles",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",
             "Could not paste draw.io content",

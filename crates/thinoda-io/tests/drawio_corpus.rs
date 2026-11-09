@@ -407,6 +407,51 @@ fn supplied_gantt_processes_remain_editable_with_a_warning() {
 }
 
 #[test]
+fn supplied_floorplan_chair_placeholders_are_explicitly_reported() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    for (name, minimum) in [
+        ("seating_plan_3.xml", 481),
+        ("evacuation_plan_4.xml", 85),
+        ("lan_plan_2.xml", 23),
+        ("Floorplan.xml", 7),
+    ] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
+        assert!(
+            report
+                .warnings
+                .contains(&thinoda_io::ImportWarning::UnsupportedDrawioShapes),
+            "{name}"
+        );
+        let placeholders = report
+            .workbook
+            .sheets
+            .iter()
+            .flat_map(|sheet| &sheet.canvas.objects)
+            .filter(|object| {
+                matches!(
+                    object.kind,
+                    CanvasObjectKind::Shape {
+                        shape: ShapeKind::Rectangle,
+                        ..
+                    }
+                ) && object.label().is_empty()
+                    && (object.rect.size == Vec2::new(40.0, 43.0)
+                        || object.rect.size == Vec2::new(43.0, 40.0))
+            })
+            .count();
+        assert!(placeholders >= minimum, "{name}: {placeholders}");
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
 fn supplied_uml_activity_keeps_its_rgb_colors() {
     let Some(dir) = corpus_dir() else {
         return;

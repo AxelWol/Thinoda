@@ -386,6 +386,8 @@ pub enum ImportWarning {
     Links,
     /// A connector's referenced terminal became an unanchored point.
     DetachedConnectors,
+    /// An unrecognized draw.io shape or named style was represented by a rectangle.
+    UnsupportedDrawioShapes,
     Other,
 }
 

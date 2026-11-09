@@ -464,6 +464,7 @@ Only the current sheet is exported. Colors, assets, relationships, advanced layo
 Additional or unsupported links|Links adicionais ou não suportados
 Connector attachments were detached|As conexões foram separadas de seus pontos de ancoragem
 Connector attachments may have been detached|As conexões podem ter sido separadas de seus pontos de ancoragem
+Unsupported shapes or styles in the draw.io source may appear as rectangles|Formas ou estilos não compatíveis na origem do draw.io podem aparecer como retângulos
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão

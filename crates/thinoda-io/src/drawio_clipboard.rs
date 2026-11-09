@@ -398,7 +398,10 @@ mod tests {
                 DrawioPasteLoss::AdditionalPages(2),
             ]
         );
-        assert_eq!(pasted.warnings, vec![ImportWarning::Other]);
+        assert_eq!(
+            pasted.warnings,
+            vec![ImportWarning::UnsupportedDrawioShapes, ImportWarning::Other]
+        );
 
         let mut sheet = Sheet::new("Paste", "");
         sheet.root_mode = SheetRootMode::Hidden;

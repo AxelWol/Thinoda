@@ -431,6 +431,7 @@ pub(crate) struct DrawioPasteOutcome {
     possible_omissions: bool,
     losses: Vec<thinoda_io::drawio_clipboard::DrawioPasteLoss>,
     detached_connectors: bool,
+    unsupported_shapes: bool,
 }
 
 /// Pastes draw.io clipboard text as one undoable edit centred in the view.
@@ -463,6 +464,9 @@ pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<DrawioPasteO
         detached_connectors: pasted
             .warnings
             .contains(&thinoda_io::ImportWarning::DetachedConnectors),
+        unsupported_shapes: pasted
+            .warnings
+            .contains(&thinoda_io::ImportWarning::UnsupportedDrawioShapes),
     })
 }
 
@@ -796,6 +800,7 @@ impl crate::app::ThinodaApp {
                         Ok(outcome)
                             if !outcome.losses.is_empty()
                                 || outcome.detached_connectors
+                                || outcome.unsupported_shapes
                                 || outcome.possible_omissions =>
                         {
                             let message = crate::i18n::t(
@@ -806,6 +811,14 @@ impl crate::app::ThinodaApp {
                                 lines.push(
                                     crate::i18n::t("Connector attachments may have been detached")
                                         .to_owned(),
+                                );
+                            }
+                            if outcome.unsupported_shapes {
+                                lines.push(
+                                    crate::i18n::t(
+                                        "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+                                    )
+                                    .to_owned(),
                                 );
                             }
                             let message = if lines.is_empty() {
@@ -2685,6 +2698,48 @@ mod tests {
         )));
         app.exec(&ctx, Cmd::Canvas(Action::Undo));
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_reports_unsupported_shapes_on_first_and_later_pages() {
+        use crate::app::Cmd;
+
+        let chair = concat!(
+            r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
+            r#"<mxCell id="chair" value="Chair" style="shape=mxgraph.floorplan.office_chair;" vertex="1" parent="1"><mxGeometry width="40" height="43" as="geometry"/></mxCell>"#,
+            r#"</root></mxGraphModel>"#
+        );
+        let later = format!(
+            "<mxfile><diagram name=\"First\">{DRAWIO_MODEL}</diagram><diagram name=\"Later\">{chair}</diagram></mxfile>"
+        );
+        for (text, expected_items, omitted_pages) in
+            [(chair.to_owned(), 1, false), (later, 3, true)]
+        {
+            let (mut app, clipboard) = empty_board_app();
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let items = board_item_count(&app);
+            clipboard.borrow_mut().text = text;
+            let ctx = egui::Context::default();
+            app.exec(&ctx, Cmd::MenuPaste);
+            assert_eq!(board_item_count(&app), items + expected_items);
+            app.toasts.tick(60.0);
+            let notice = app
+                .toasts
+                .texts()
+                .find(|text| {
+                    text.contains(crate::i18n::t(
+                        "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+                    ))
+                })
+                .expect("unsupported shape warning should stay visible");
+            assert_eq!(
+                notice.contains(crate::i18n::t("Additional draw.io pages omitted")),
+                omitted_pages
+            );
+            app.exec(&ctx, Cmd::Canvas(Action::Undo));
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

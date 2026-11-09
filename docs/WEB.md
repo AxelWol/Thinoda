@@ -128,6 +128,11 @@ or stroke width is invalid or outside the supported range. Adaptive colors can
 be flattened and inherited colors can fall back to Thinoda defaults. Other
 appearance losses may still go unreported.
 
+Unrecognized draw.io shapes or standalone named styles become editable
+rectangle placeholders and are identified in the import or paste warning.
+Named styles combined with an explicit shape can also lose formatting. Original
+stencil and style data are not retained; keep the source file.
+
 Double ellipses import as editable single ellipses with a formatting warning;
 their inner outline and exact label bounds are not preserved.
 

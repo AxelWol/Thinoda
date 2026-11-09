@@ -458,11 +458,13 @@ fn native_process_marker_never_overrides_changed_drawio_geometry() {
             1,
         );
         let report = load(&xml);
-        assert_eq!(
-            report.warnings,
-            warning.into_iter().collect::<Vec<_>>(),
-            "{style}"
-        );
+        let expected_warnings = match warning {
+            Some(ImportWarning::Other) => {
+                vec![ImportWarning::UnsupportedDrawioShapes, ImportWarning::Other]
+            }
+            other => other.into_iter().collect(),
+        };
+        assert_eq!(report.warnings, expected_warnings, "{style}");
         assert!(
             matches!(
                 shapes(&report.workbook.sheets[0])[0].kind,
@@ -584,7 +586,10 @@ fn flowchart_annotation_identifier_is_not_a_named_style() {
         r#"<mxCell id="a" style="mxgraph.flowchart.annotation_1;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
     );
     let report = load(&xml);
-    assert_eq!(report.warnings, vec![ImportWarning::Other]);
+    assert_eq!(
+        report.warnings,
+        vec![ImportWarning::UnsupportedDrawioShapes, ImportWarning::Other]
+    );
     assert_eq!(shapes(&report.workbook.sheets[0])[0].rectangle_sides, None);
 }
 
@@ -1712,8 +1717,109 @@ fn unrecognized_anchor_names_remain_reported_placeholders() {
     );
     let report = load(&xml);
     assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes)
+    );
     let object = shapes(&report.workbook.sheets[0])[0];
     assert_ne!(object.style.stroke, Some(Color::TRANSPARENT));
+}
+
+#[test]
+fn unsupported_drawio_shapes_report_rectangle_placeholders_on_all_import_paths() {
+    let xml = page(
+        r##"<mxCell id="chair" value="Chair" style="shape=mxgraph.floorplan.office_chair;fillColor=#ffffff;strokeColor=#000000;rotation=35;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="40" height="43" as="geometry"/></mxCell>
+        <mxCell id="custom" value="Custom" style="unregisteredStyle;" vertex="1" parent="1"><mxGeometry x="100" y="20" width="60" height="40" as="geometry"/></mxCell>
+        <mxCell id="known" value="Known" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="60" height="40" as="geometry"/></mxCell>"##,
+    );
+    let report = load(&xml);
+    let expected = vec![ImportWarning::UnsupportedDrawioShapes, ImportWarning::Other];
+    assert_eq!(report.warnings, expected);
+    let objects = shapes(&report.workbook.sheets[0]);
+    assert_eq!(objects.len(), 3);
+    assert_eq!(objects[0].label(), "Chair");
+    assert_eq!(objects[0].rect, rect(10.0, 20.0, 40.0, 43.0));
+    assert_eq!(objects[0].rotation, 35.0);
+    assert_eq!(objects[0].style.fill, Some(Color::WHITE));
+    assert_eq!(objects[0].style.stroke, Some(Color::BLACK));
+    assert!(objects.iter().all(|object| matches!(
+        object.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Rectangle,
+            ..
+        }
+    )));
+    report.workbook.validate().unwrap();
+
+    assert!(matches!(
+        crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+        Err(IoError::ImportNeedsConfirmation(warnings)) if warnings == expected
+    ));
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert_eq!(linked.warnings, expected);
+    assert_eq!(linked.workbook, report.workbook);
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert_eq!(pasted.warnings, expected);
+
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+    let exported = export(&report.workbook).unwrap();
+    let reopened = import(&exported).unwrap();
+    assert!(
+        !reopened
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes),
+        "the fallback no longer retains the source stencil identity"
+    );
+}
+
+#[test]
+fn recognized_approximations_do_not_claim_to_be_unknown_shapes() {
+    let xml = page(
+        r#"<mxCell id="folder" value="Folder" style="shape=folder;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+}
+
+#[test]
+fn ignored_named_styles_with_explicit_shapes_report_formatting_loss() {
+    for style in [
+        "ellipse;shape=cloud;",
+        "customStyle;shape=rectangle;fillColor=#ffffff;strokeColor=#000000;",
+        "shape=ellipse;customStyle;",
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="shape" style="{style}" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings == vec![ImportWarning::Formatting]
+        ));
+        let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+        assert_eq!(
+            crate::import_drawio_link(&link).unwrap().warnings,
+            report.warnings
+        );
+        assert_eq!(
+            crate::drawio_clipboard::decode(&xml).unwrap().warnings,
+            report.warnings
+        );
+    }
+
+    let ordinary = page(
+        r#"<mxCell id="shape" style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
+    );
+    assert!(load(&ordinary).warnings.is_empty());
 }
 
 #[test]
@@ -2199,7 +2305,11 @@ fn mockup_shape_identifiers_are_not_treated_as_named_styles() {
             r##"<mxCell id="a" style="{alias};rSize=10;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
         ));
         let report = load(&xml);
-        assert_eq!(report.warnings, vec![ImportWarning::Other], "{alias}");
+        assert_eq!(
+            report.warnings,
+            vec![ImportWarning::UnsupportedDrawioShapes, ImportWarning::Other],
+            "{alias}"
+        );
         assert!(matches!(
             shapes(&report.workbook.sheets[0])[0].kind,
             CanvasObjectKind::Shape {
@@ -4877,6 +4987,7 @@ fn unsupported_content_is_reported_not_dropped_silently() {
         vec![
             ImportWarning::Formatting,
             ImportWarning::Resources,
+            ImportWarning::UnsupportedDrawioShapes,
             ImportWarning::Other
         ]
     );

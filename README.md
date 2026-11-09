@@ -747,6 +747,10 @@ those system-owned controls. WinGet publishing remains paused.
   values. Adaptive colors can be flattened and inherited colors can fall back
   to Thinoda defaults; the warning does not imply that all unsupported
   appearance is detected.
+  Unrecognized draw.io shapes or standalone named styles become editable
+  rectangle placeholders and are identified in the import or paste warning.
+  Named styles combined with an explicit shape can also lose formatting.
+  The original stencil and style data are not retained; keep the source file.
   Double ellipses import as editable single ellipses with a formatting warning;
   their inner outline and exact label bounds are not preserved.
   Flowchart annotation brackets import as editable open-sided rectangles with

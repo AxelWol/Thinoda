@@ -201,8 +201,8 @@ Rules (each backed by a test):
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
   oval markers, v17 adds half-circle markers, v18 adds bar markers, and v19 adds
-  adjustable rectangle corners. Every later field or passthrough representation
-  that a v19 reader cannot preserve must require a
+  adjustable rectangle corners; v20 adds rectangle outline sides. Every later
+  field or passthrough representation that a v20 reader cannot preserve must require a
   higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
@@ -1478,6 +1478,46 @@ rectangles are hidden while their labels remain visible. Formatting and native,
 WebAssembly and fuzz Clippy passed with warnings denied. A 21-second Linux
 AddressSanitizer smoke completed 9,442 executions without a reported failure or
 reproducer; it does not satisfy the separate 30-minute acceptance campaign.
+
+**Unsupported shapes and named-style disclosure (partial Phases 5, 6 and
+11).** The supplied floorplan examples contain 596
+`mxgraph.floorplan.office_chair` cells. The published
+[floorplan stencil](https://app.diagrams.net/stencils/floorplan.xml) uses two
+filled curved paths for an office chair, which the current single-outline shape
+model cannot faithfully represent. Unrecognized shape or standalone named-style
+identifiers still become editable rectangle placeholders; file and link import
+now identify that conversion explicitly, and clipboard paste shows a localized
+sticky notice. The existing generic `Other` warning is retained for consumers
+that rely on it. The new warning is an additional public `ImportWarning`
+variant, so Rust consumers with exhaustive matches must handle it.
+
+The review also found that a named style combined with an explicit shape was
+silently ignored. Such combinations now report a Formatting warning, including
+styles whose properties might in fact be overridden; this is deliberately
+conservative rather than a stylesheet resolver. draw.io's
+[stylesheet documentation](https://jgraph.github.io/mxgraph/docs/js-api/files/view/mxStylesheet-js.html)
+describes named styles and default suppression. Clipboard warnings currently
+aggregate all source pages, even though only the first page is pasted, so the
+message refers to the source rather than asserting that a particular pasted
+object was replaced.
+
+This is disclosure, not chair or generic-stencil support. Source identifiers,
+the original shape/style data, exact appearance, counts, affected-object
+locations, hierarchy, ports and source-preserving save-back remain open.
+Converted files can no longer warn about source shapes whose identities were
+lost, and the notice does not cover every possible stylesheet or appearance
+loss. Unknown shaped containers and image resources follow their existing
+separate frame and resource warnings. Keep the original file.
+
+Validation passed 158 selected draw.io I/O library tests, nine supplied-corpus
+tests, six deterministic fuzz-seed tests, 75 app clipboard tests, 15 link tests
+and 29 localization tests. The synthetic paste and undo journey passed against
+a debug web build in Chromium, Firefox and WebKit; screenshots were inspected
+for the warning, while the browser test itself asserts the converted shape and
+undo rather than the toast text. App tests assert the sticky notice and
+cancelable link warning. Formatting and native, WebAssembly and fuzz Clippy
+passed with warnings denied. Real system clipboard and accessibility acceptance
+remain open.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

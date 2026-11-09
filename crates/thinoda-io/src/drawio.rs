@@ -917,7 +917,8 @@ impl Style {
             self.get(key)
                 .is_some_and(|_| self.num(key).is_none_or(|value| value != default))
         };
-        FLAGS.iter().any(|key| self.flag(key))
+        (self.get("shape").is_some() && !self.tokens.is_empty())
+            || FLAGS.iter().any(|key| self.flag(key))
             || self.get("fontColor") == Some("none")
             || self.color_appearance_loss("fillColor", "fillOpacity")
             || self.color_appearance_loss("strokeColor", "strokeOpacity")
@@ -2079,6 +2080,7 @@ impl<'a> PageImport<'a> {
             }
             Kind::Unknown | Kind::Container | Kind::Group => {
                 if kind == Kind::Unknown {
+                    self.warn(ImportWarning::UnsupportedDrawioShapes);
                     self.warn(ImportWarning::Other);
                 } else {
                     self.warn(ImportWarning::Formatting);

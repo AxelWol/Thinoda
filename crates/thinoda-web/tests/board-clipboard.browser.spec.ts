@@ -659,6 +659,34 @@ test("draw.io paste warns about a detached connector", async ({ page }, testInfo
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io paste warns about an unsupported chair placeholder", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="chair" value="Chair" vertex="1" parent="1" ',
+        'style="shape=mxgraph.floorplan.office_chair;fillColor=#ffffff;strokeColor=#000000;">',
+        '<mxGeometry x="100" y="100" width="40" height="43" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-chair-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await page.screenshot({ path: testInfo.outputPath("drawio-chair-warning.png") });
+    const after = archive(await saveAs(page, "drawio-chair-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape).toEqual({ shape: "rectangle", label: "Chair" });
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-chair-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("draw.io paste omits a connector with a malformed endpoint", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
