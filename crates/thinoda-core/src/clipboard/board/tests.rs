@@ -1117,6 +1117,72 @@ fn rectangle_sides_board_clipboard_requires_version_thirteen() {
 }
 
 #[test]
+fn fixed_connector_port_clipboards_preserve_or_detach_the_attachment() {
+    use crate::ConnectorPort;
+
+    let mut source = Sheet::new("Source", "Root");
+    let shape = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 100.0, 60.0),
+        ))
+        .unwrap();
+    let port = ConnectorPort {
+        position: Vec2::new(1.0, 0.25),
+        offset: Vec2::ZERO,
+        perimeter: false,
+    };
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(shape),
+        Endpoint::Point(Vec2::new(300.0, 100.0)),
+    );
+    connector.from_port = Some(port);
+    let edge = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+
+    let payload = copy(&source, &[], &[shape, edge]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(FIXED_PORT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..15 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-15",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(decode_board_payload(&forged).is_err(), "version {version}");
+    }
+
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    let CanvasObjectKind::Connector(connector) =
+        &destination.canvas.object(pasted.objects[1]).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, Endpoint::Object(pasted.objects[0]));
+    assert_eq!(connector.from_port, Some(port));
+    destination.validate().unwrap();
+
+    let detached = copy(&source, &[], &[edge]);
+    let CanvasObjectKind::Connector(connector) = &detached.fragment.canvas.objects[0].kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(200.0, 115.0)));
+    assert_eq!(connector.from_port, None);
+    assert!(
+        !encode_board_payload(&detached)
+            .unwrap()
+            .starts_with(FIXED_PORT_BOARD_PREFIX)
+    );
+}
+
+#[test]
 fn double_ellipse_board_clipboard_requires_version_fourteen() {
     use crate::{Rect, RectangleSides};
 

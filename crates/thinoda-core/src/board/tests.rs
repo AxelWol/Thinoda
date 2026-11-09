@@ -360,7 +360,7 @@ fn deleting_a_waypoint_connector_keeps_edge_attachments_on_its_path() {
 
     let before = sheet.clone();
     sheet.canvas.objects.retain(|object| object.id != target);
-    assert_eq!(sheet.fix_dangling_endpoints(&before), 1);
+    assert_eq!(sheet.fix_dangling_endpoints(&before), Ok(1));
     let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(attached).unwrap().kind
     else {
         panic!("expected connector");
@@ -2580,4 +2580,148 @@ fn hidden_root_is_rejected_for_imported_fim_sheets() {
     let json = serde_json::to_string(&crate::Workbook::new(sheet)).unwrap();
     let restored: crate::Workbook = serde_json::from_str(&json).unwrap();
     assert!(restored.validate().unwrap_err().contains("FIM"));
+}
+#[test]
+fn fixed_connector_ports_validate_targets_and_preserve_the_visible_end_on_deletion() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let shape = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(100.0, 100.0), Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let port = ConnectorPort {
+        position: Vec2::new(1.0, 0.25),
+        offset: Vec2::ZERO,
+        perimeter: false,
+    };
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(shape),
+        Endpoint::Point(Vec2::new(300.0, 100.0)),
+    );
+    connector.from_port = Some(port);
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    sheet.validate().unwrap();
+
+    for bad in [
+        ConnectorPort {
+            position: Vec2::new(-0.1, 0.5),
+            ..port
+        },
+        ConnectorPort {
+            position: Vec2::new(f32::NAN, 0.5),
+            ..port
+        },
+        ConnectorPort {
+            offset: Vec2::new(MAX_BOARD_COORDINATE + 1.0, 0.0),
+            ..port
+        },
+    ] {
+        let mut invalid = connector.clone();
+        invalid.from_port = Some(bad);
+        assert!(
+            sheet
+                .add_canvas_object(CanvasObject::connector(invalid))
+                .is_err()
+        );
+    }
+    let mut detached = connector.clone();
+    detached.from = Endpoint::Point(Vec2::ZERO);
+    assert!(
+        sheet
+            .add_canvas_object(CanvasObject::connector(detached))
+            .is_err()
+    );
+    let mut attached_to_edge = connector;
+    attached_to_edge.from = Endpoint::Object(edge);
+    assert!(
+        sheet
+            .add_canvas_object(CanvasObject::connector(attached_to_edge))
+            .is_err()
+    );
+    let mut malformed = sheet.clone();
+    let other_edge = malformed
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(50.0, 0.0)),
+        )))
+        .unwrap();
+    if let CanvasObjectKind::Connector(connector) =
+        &mut malformed.canvas.object_mut(other_edge).unwrap().kind
+    {
+        connector.from = Endpoint::Object(edge);
+        connector.from_port = Some(port);
+    }
+    assert!(malformed.validate().unwrap_err().contains("not a shape"));
+
+    sheet.remove_canvas_objects(&[shape]).unwrap();
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(edge).unwrap().kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(200.0, 115.0)));
+    assert_eq!(connector.from_port, None);
+    sheet.validate().unwrap();
+}
+
+#[test]
+fn deleting_an_out_of_range_fixed_port_is_atomic() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let shape = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(
+                Vec2::new(MAX_BOARD_COORDINATE - 100.0, 0.0),
+                Vec2::new(100.0, 60.0),
+            ),
+        ))
+        .unwrap();
+    let mut connector = CanvasConnector::new(Endpoint::Object(shape), Endpoint::Point(Vec2::ZERO));
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.5),
+        offset: Vec2::new(1.0, 0.0),
+        perimeter: false,
+    });
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let before = sheet.clone();
+    assert!(sheet.remove_canvas_objects(&[shape]).is_err());
+    assert_eq!(sheet, before);
+}
+
+#[test]
+fn deleting_a_topic_with_an_out_of_range_fixed_port_is_atomic() {
+    let mut sheet = Sheet::new("Ports", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let card = sheet
+        .add_card(
+            "Target",
+            Vec2::new(MAX_BOARD_COORDINATE - 50.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(100.0, 60.0)),
+        )
+        .unwrap();
+    let mut connector = CanvasConnector::new(Endpoint::Topic(card), Endpoint::Point(Vec2::ZERO));
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.5),
+        offset: Vec2::new(1.0, 0.0),
+        perimeter: false,
+    });
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    sheet.validate().unwrap();
+    let before = sheet.clone();
+    assert!(sheet.remove_topics(&[card]).is_err());
+    assert_eq!(sheet, before);
+
+    let workbook = crate::Workbook::new(before);
+    let mut doc = crate::Document::new(workbook.clone());
+    assert!(
+        doc.edit_sheet("Delete", |sheet| sheet.remove_topics(&[card]))
+            .is_err()
+    );
+    assert_eq!(doc.workbook(), &workbook);
+    assert!(!doc.can_undo());
 }

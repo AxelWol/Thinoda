@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 21;
+pub const NATIVE_FORMAT_VERSION: u64 = 22;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -23,10 +23,12 @@ pub const NATIVE_FORMAT_VERSION: u64 = 21;
 /// 13 custom connector marker sizes, 14 connector marker fill overrides,
 /// 15 diamond connector markers, 16 oval connector markers, 17 half-circle markers,
 /// 18 bar connector markers, 19 adjustable rectangle corners, and
-/// 20 partial rectangle outline sides, and 21 double ellipses.
+/// 20 partial rectangle outline sides, 21 double ellipses, and 22 fixed connector ports.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_double_ellipses() {
+    if book.has_fixed_connector_ports() {
+        22
+    } else if book.has_double_ellipses() {
         21
     } else if book.has_rectangle_sides() {
         20
@@ -218,6 +220,10 @@ pub enum ExportLoss {
     MapElementsFlattened(usize),
     /// Connector ends attached to other connectors are written as free points.
     ConnectorAttachmentsDetached(usize),
+    /// Fixed connector ends on topics not written to draw.io become free points.
+    FixedConnectorAttachmentsDetached(usize),
+    /// Fixed connector ends can land at different positions in draw.io.
+    DrawioFixedConnectorPositionApproximated(usize),
     /// Legacy triangle arrow ends are approximated by draw.io classic arrows.
     LegacyConnectorMarkersApproximated(usize),
     /// Label color or opacity can differ in draw.io.
@@ -432,6 +438,8 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut slides = 0;
     let mut inline_text = 0;
     let mut connector_attachments = 0;
+    let mut fixed_connector_attachments = 0;
+    let mut fixed_connector_positions = 0;
     let mut legacy_markers = 0;
     let mut label_appearance = 0;
     let mut rectangle_appearance = 0;
@@ -461,6 +469,60 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         flattened += sheet.relationships.len() + sheet.boundaries.len() + sheet.summaries.len();
         slides += sheet.presentation.slides.len();
         connector_attachments += connector_attachment_counts(sheet).values().sum::<usize>();
+        if sheet.canvas.has_fixed_connector_ports() {
+            let objects: HashMap<_, _> = sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| (object.id, object))
+                .collect();
+            let has_fixed_topic = sheet.canvas.objects.iter().any(|object| {
+                matches!(&object.kind, CanvasObjectKind::Connector(connector)
+                    if matches!(connector.from, Endpoint::Topic(_)) && connector.from_port.is_some()
+                        || matches!(connector.to, Endpoint::Topic(_)) && connector.to_port.is_some())
+            });
+            let layout = has_fixed_topic.then(|| {
+                thinoda_core::layout::layout_sheet(
+                    sheet,
+                    &thinoda_core::layout::ApproxMeasure,
+                    false,
+                )
+            });
+            let topics = layout
+                .as_ref()
+                .map(|layout| crate::drawio::exported_topics(sheet, layout));
+            for (endpoint, port) in sheet
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) => Some([
+                        (connector.from, connector.from_port),
+                        (connector.to, connector.to_port),
+                    ]),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|(endpoint, port)| port.map(|port| (endpoint, port)))
+            {
+                let target = match endpoint {
+                    Endpoint::Object(id) => objects.get(&id).copied(),
+                    _ => None,
+                };
+                if matches!(endpoint, Endpoint::Topic(id) if topics.as_ref().is_some_and(|ids| !ids.contains(&id)))
+                {
+                    fixed_connector_attachments += 1;
+                } else if crate::drawio::fixed_port_position_approximate(
+                    sheet,
+                    target,
+                    layout.as_ref(),
+                    endpoint,
+                    port,
+                ) {
+                    fixed_connector_positions += 1;
+                }
+            }
+        }
         for object in &sheet.canvas.objects {
             if matches!(
                 object.kind,
@@ -543,6 +605,14 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         (
             ExportLoss::ConnectorAttachmentsDetached,
             connector_attachments,
+        ),
+        (
+            ExportLoss::FixedConnectorAttachmentsDetached,
+            fixed_connector_attachments,
+        ),
+        (
+            ExportLoss::DrawioFixedConnectorPositionApproximated,
+            fixed_connector_positions,
         ),
         (
             ExportLoss::LegacyConnectorMarkersApproximated,

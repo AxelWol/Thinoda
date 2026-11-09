@@ -157,9 +157,19 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "double ellipses require native format version 21".into(),
             ));
         }
+        if version < 22 && book.has_fixed_connector_ports() {
+            return Err(IoError::Invalid(
+                "fixed connector ports require native format version 22".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_fixed_connector_ports() {
+            return Err(IoError::Invalid(
+                "fixed connector ports require a versioned native archive".into(),
+            ));
+        }
         if book.has_double_ellipses() {
             return Err(IoError::Invalid(
                 "double ellipses require a versioned native archive".into(),

@@ -5,10 +5,10 @@
 
 use std::path::{Path, PathBuf};
 use thinoda_core::{
-    Color, Rect, RectangleSides, ShapeKind, Sheet, Vec2, Workbook,
+    Color, ConnectorPort, Rect, RectangleSides, ShapeKind, Sheet, Vec2, Workbook,
     board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute},
 };
-use thinoda_io::{ExportOptions, Format};
+use thinoda_io::{ExportLoss, ExportOptions, Format, IoError};
 
 fn corpus_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("THINODA_DRAWIO_CORPUS")
@@ -38,6 +38,92 @@ fn waypoint_paths(sheet: &Sheet) -> Vec<(ConnectorRoute, &[Vec2])> {
             _ => None,
         })
         .collect()
+}
+
+fn fixed_ports(sheet: &Sheet) -> Vec<ConnectorPort> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector) => {
+                Some([connector.from_port, connector.to_port])
+            }
+            _ => None,
+        })
+        .flatten()
+        .flatten()
+        .collect()
+}
+
+fn check_fixed_ports(
+    before: &Workbook,
+    after: &Workbook,
+    expected_detached: usize,
+) -> Result<(), String> {
+    let mut detached = 0;
+    for (index, (original, restored)) in before.sheets.iter().zip(&after.sheets).enumerate() {
+        let mut remaining = fixed_ports(restored);
+        for port in fixed_ports(original) {
+            if let Some(found) = remaining.iter().position(|other| *other == port) {
+                remaining.swap_remove(found);
+            } else {
+                detached += 1;
+            }
+        }
+        if !remaining.is_empty() {
+            return Err(format!(
+                "page {} gained {} or changed fixed connector ports",
+                index + 1,
+                remaining.len()
+            ));
+        }
+    }
+    if detached != expected_detached {
+        return Err(format!(
+            "fixed connector ports lost {detached}; export reported {expected_detached} detached"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn fixed_port_corpus_check_detects_changes_and_unreported_detachments() {
+    let mut before = Workbook::default();
+    let target = before
+        .active_mut()
+        .add_canvas_object(thinoda_core::CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let mut connector = thinoda_core::CanvasConnector::new(
+        thinoda_core::Endpoint::Object(target),
+        thinoda_core::Endpoint::Point(Vec2::new(200.0, 0.0)),
+    );
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.5),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    });
+    let edge = before
+        .active_mut()
+        .add_canvas_object(thinoda_core::CanvasObject::connector(connector))
+        .unwrap();
+    let mut after = before.clone();
+    if let CanvasObjectKind::Connector(connector) =
+        &mut after.active_mut().canvas.object_mut(edge).unwrap().kind
+    {
+        connector.from_port.as_mut().unwrap().position.y = 0.25;
+    }
+    assert!(check_fixed_ports(&before, &after, 0).is_err());
+    if let CanvasObjectKind::Connector(connector) =
+        &mut after.active_mut().canvas.object_mut(edge).unwrap().kind
+    {
+        connector.from_port = None;
+    }
+    assert!(check_fixed_ports(&before, &after, 0).is_err());
+    assert!(check_fixed_ports(&before, &after, 1).is_ok());
 }
 
 fn check_waypoints(before: &Workbook, after: &Workbook) -> Result<(), String> {
@@ -299,8 +385,46 @@ fn check(path: &Path) -> Result<String, String> {
     }
     let opts = ExportOptions::default();
 
-    let drawio = thinoda_io::export_bytes(&book, Format::DrawIo, &opts)
-        .map_err(|e| format!("draw.io export: {e}"))?;
+    let losses = thinoda_io::export_losses(&book, Format::DrawIo, &opts);
+    let attachment_losses: Vec<_> = losses
+        .iter()
+        .filter(|loss| {
+            matches!(
+                loss,
+                ExportLoss::ConnectorAttachmentsDetached(_)
+                    | ExportLoss::FixedConnectorAttachmentsDetached(_)
+                    | ExportLoss::DrawioFixedConnectorPositionApproximated(_)
+            )
+        })
+        .cloned()
+        .collect();
+    let strict = thinoda_io::export_bytes(&book, Format::DrawIo, &opts);
+    let drawio = match (attachment_losses.as_slice(), strict) {
+        ([], Ok(bytes)) => bytes,
+        (
+            [ExportLoss::ConnectorAttachmentsDetached(expected)],
+            Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(actual)),
+        ) if expected == &actual => {
+            thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
+                .map_err(|e| format!("consented draw.io export: {e}"))?
+        }
+        (expected, Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(actual)))
+            if expected == actual =>
+        {
+            thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
+                .map_err(|e| format!("consented draw.io export: {e}"))?
+        }
+        (expected, Ok(_)) => {
+            return Err(format!(
+                "strict draw.io export accepted attachment losses {expected:?}"
+            ));
+        }
+        (expected, Err(error)) => {
+            return Err(format!(
+                "strict draw.io export reported {error:?} instead of {expected:?}"
+            ));
+        }
+    };
     let again = thinoda_io::import_bytes_with_report(Format::DrawIo, &drawio)
         .map_err(|e| format!("draw.io re-import: {e}"))?
         .workbook;
@@ -327,6 +451,14 @@ fn check(path: &Path) -> Result<String, String> {
     check_markers(&book, &again)?;
     check_partial_rectangles(&book, &again)?;
     check_double_ellipses(&book, &again)?;
+    let detached = attachment_losses
+        .iter()
+        .find_map(|loss| match loss {
+            ExportLoss::FixedConnectorAttachmentsDetached(count) => Some(*count),
+            _ => None,
+        })
+        .unwrap_or(0);
+    check_fixed_ports(&book, &again, detached)?;
 
     let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
         .map_err(|e| format!("native export: {e}"))?;
@@ -393,7 +525,7 @@ fn check(path: &Path) -> Result<String, String> {
         }
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} double ellipse(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} double ellipse(s), {} fixed port(s), {} warning kind(s)",
         book.sheets.len(),
         book.sheets
             .iter()
@@ -417,6 +549,10 @@ fn check(path: &Path) -> Result<String, String> {
         book.sheets
             .iter()
             .map(|sheet| double_ellipses(sheet).len())
+            .sum::<usize>(),
+        book.sheets
+            .iter()
+            .map(|sheet| fixed_ports(sheet).len())
             .sum::<usize>(),
         report.warnings.len()
     ))

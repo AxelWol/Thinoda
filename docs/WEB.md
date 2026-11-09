@@ -116,8 +116,13 @@ markers, including thin variants where available, have independent start and
 end sizes from 0 to 999 in the connector inspector. Classic and block arrows,
 diamonds and ovals can be filled or hollow independently. Open arrows,
 half-circles and bars remain open; their fill setting is retained when changing
-directly to a fillable draw.io marker. Unsupported marker shapes, out-of-range sizes,
-unsupported fill values, and fixed-port hints trigger a formatting warning.
+directly to a fillable draw.io marker. Unsupported marker shapes, out-of-range sizes
+and unsupported fill values trigger a formatting warning. Supported fixed
+connector points, offsets and perimeter settings are retained on attached
+shapes and topics. Shift-drag an endpoint onto a target to fix it; Enter or
+Space toggles a focused endpoint. Unsupported constraints and possible position
+differences are reported. Export requires consent if a fixed point may move
+or if an unexported collapsed topic detaches it.
 Existing Thinoda triangle arrows retain their native appearance; draw.io export
 warns that they will be approximated. Keep the original diagram.
 

@@ -1343,6 +1343,13 @@ pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
             };
             crate::export_preflight::loss_message(&report, Format::DrawIo)
         }
+        thinoda_io::IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(losses) => {
+            let report = crate::export_preflight::LossReport {
+                losses,
+                ..Default::default()
+            };
+            crate::export_preflight::loss_message(&report, Format::DrawIo)
+        }
         thinoda_io::IoError::MindManagerExport(detail) => {
             log::warn!("MindManager export failed: {detail}");
             t("Could not write this MindManager file. The map may be too large or contain invalid data.").into()

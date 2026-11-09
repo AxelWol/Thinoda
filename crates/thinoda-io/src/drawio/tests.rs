@@ -6101,29 +6101,373 @@ fn edge_default_suppression_and_named_default_control_the_end_marker() {
 }
 
 #[test]
-fn attached_connectors_warn_before_marker_and_port_data_is_discarded() {
+fn attached_fixed_connector_ports_survive_file_link_and_clipboard_conversion() {
     let xml = page(
         r#"<mxCell id="a" vertex="1" parent="1"><mxGeometry x="10" y="20" width="60" height="40" as="geometry"/></mxCell>
         <mxCell id="b" vertex="1" parent="1"><mxGeometry x="200" y="20" width="60" height="40" as="geometry"/></mxCell>
         <mxCell id="e" style="endArrow=open;endSize=14;exitX=1;exitY=0.5;entryX=0;entryY=0.25;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"#,
     );
     let report = load(&xml);
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     report.workbook.validate().unwrap();
     let connector = connectors(&report.workbook.sheets[0])[0];
     assert!(matches!(connector.from, Endpoint::Object(_)));
     assert!(matches!(connector.to, Endpoint::Object(_)));
     assert!(connector.arrow_end);
+    assert_eq!(
+        connector.from_port,
+        Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.5),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        })
+    );
+    assert_eq!(
+        connector.to_port,
+        Some(ConnectorPort {
+            position: Vec2::new(0.0, 0.25),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        })
+    );
+    assert_eq!(crate::required_native_version(&report.workbook), 22);
     let paste = crate::drawio_clipboard::decode(&xml).unwrap();
-    assert_eq!(paste.warnings, vec![ImportWarning::Formatting]);
+    assert!(paste.warnings.is_empty(), "{:?}", paste.warnings);
     let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
     let linked = crate::import_drawio_link(&link).unwrap();
-    assert_eq!(linked.warnings, vec![ImportWarning::Formatting]);
+    assert!(linked.warnings.is_empty(), "{:?}", linked.warnings);
+    assert_eq!(
+        connectors(&linked.workbook.sheets[0])[0].from_port,
+        connector.from_port
+    );
 
     let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
     assert!(exported.contains("endArrow=open;"));
-    assert!(!exported.contains("exitX="));
-    assert!(!exported.contains("entryX="));
+    assert!(exported.contains("exitX=1;exitY=0.5;"));
+    assert!(exported.contains("entryX=0;entryY=0.25;"));
+    let restored = import(exported.as_bytes()).unwrap();
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    assert_eq!(
+        connectors(&restored.workbook.sheets[0])[0].from_port,
+        connector.from_port
+    );
+    assert_eq!(
+        connectors(&restored.workbook.sheets[0])[0].to_port,
+        connector.to_port
+    );
+}
+
+#[test]
+fn fixed_connector_ports_on_collapsed_topics_require_consent_and_keep_visible_points() {
+    let mut sheet = Sheet::new("Collapsed", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let parent = sheet.add_floating("Parent", Vec2::new(200.0, 100.0));
+    let child = sheet.add_child(parent, None, "Hidden child");
+    sheet.topic_mut(parent).unwrap().collapsed = true;
+    let mut connector = CanvasConnector::new(Endpoint::Topic(child), Endpoint::Topic(child));
+    connector.arrow_end = false;
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(0.75, 0.25),
+        offset: Vec2::new(3.0, -2.0),
+        perimeter: false,
+    });
+    connector.to_port = Some(ConnectorPort {
+        position: Vec2::new(0.25, 0.75),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    });
+    sheet
+        .add_canvas_object(CanvasObject::connector(connector.clone()))
+        .unwrap();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let original = thinoda_core::scene::connector_path(&sheet, &layout, &connector);
+    assert!(original.len() >= 2);
+    let expected = [original[0], *original.last().unwrap()];
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let losses = export_losses(&book, format, &ExportOptions::default());
+        assert!(
+            losses.contains(&ExportLoss::FixedConnectorAttachmentsDetached(2)),
+            "{format:?}: {losses:?}"
+        );
+        assert!(matches!(
+            export_bytes(&book, format, &ExportOptions::default()),
+            Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(ref losses))
+                if losses == &[ExportLoss::FixedConnectorAttachmentsDetached(2)]
+        ));
+        let bytes =
+            crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap();
+        let restored = import(&bytes).unwrap().workbook;
+        let edge = connectors(&restored.sheets[0])[0];
+        for (end, point) in [edge.from, edge.to].into_iter().zip(expected) {
+            let Endpoint::Point(actual) = end else {
+                panic!("{format:?}: expected a detached point, got {end:?}");
+            };
+            assert!(
+                (actual - point).length() < 0.01,
+                "{format:?}: {actual:?} != {point:?}"
+            );
+        }
+        assert_eq!(edge.from_port, None);
+        assert_eq!(edge.to_port, None);
+    }
+
+    let mut combined = book.clone();
+    let target = combined
+        .active_mut()
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        )))
+        .unwrap();
+    combined
+        .active_mut()
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(200.0, 0.0)),
+        )))
+        .unwrap();
+    assert!(matches!(
+        export_bytes(&combined, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(ref losses))
+            if losses == &[
+                ExportLoss::ConnectorAttachmentsDetached(1),
+                ExportLoss::FixedConnectorAttachmentsDetached(2),
+            ]
+    ));
+
+    let mut visible = book;
+    visible.active_mut().topic_mut(parent).unwrap().collapsed = false;
+    assert!(
+        !export_losses(&visible, Format::DrawIo, &ExportOptions::default())
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::FixedConnectorAttachmentsDetached(_)))
+    );
+}
+
+#[test]
+fn fixed_connector_port_offsets_and_invalid_constraints_are_disclosed() {
+    let cells = |style: &str, source: &str| {
+        page(&format!(
+            r#"<mxCell id="a" vertex="1" parent="1"><mxGeometry x="10" y="20" width="60" height="40" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;{style}" edge="1" {source} parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="200" y="20" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    let xml = cells(
+        "exitX=0.25;exitY=0.75;exitDx=5;exitDy=-3;exitPerimeter=0;",
+        r#"source="a""#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let expected = ConnectorPort {
+        position: Vec2::new(0.25, 0.75),
+        offset: Vec2::new(5.0, -3.0),
+        perimeter: false,
+    };
+    assert_eq!(
+        connectors(&report.workbook.sheets[0])[0].from_port,
+        Some(expected)
+    );
+    let restored = import(&export(&report.workbook).unwrap()).unwrap();
+    assert_eq!(
+        connectors(&restored.workbook.sheets[0])[0].from_port,
+        Some(expected)
+    );
+
+    for (style, source) in [
+        ("exitX=0.25;", r#"source="a""#),
+        ("exitX=1.1;exitY=0.5;", r#"source="a""#),
+        ("exitX=0.5;exitY=NaN;", r#"source="a""#),
+        ("exitX=0.5;exitY=0.5;exitDx=Infinity;", r#"source="a""#),
+        ("exitX=0.5;exitY=0.5;exitPerimeter=2;", r#"source="a""#),
+        ("exitX=0.5;exitY=0.5;", ""),
+    ] {
+        let report = load(&cells(style, source));
+        assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
+        assert_eq!(connectors(&report.workbook.sheets[0])[0].from_port, None);
+        assert_ne!(crate::required_native_version(&report.workbook), 22);
+    }
+}
+
+#[test]
+fn fixed_connector_port_perimeter_and_orientation_differences_are_disclosed() {
+    let diagram = |target_style: &str, perimeter: bool, source: bool| {
+        let (terminal, prefix) = if source {
+            (r#"source="a""#, "exit")
+        } else {
+            (r#"target="a""#, "entry")
+        };
+        page(&format!(
+            r#"<mxCell id="a" style="{target_style}" vertex="1" parent="1"><mxGeometry x="10" y="20" width="100" height="60" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;{prefix}X=1;{prefix}Y=1;{prefix}Perimeter={};" edge="1" {terminal} parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="200" y="20" as="targetPoint"/></mxGeometry></mxCell>"#,
+            u8::from(perimeter)
+        ))
+    };
+
+    for (target_style, perimeter, warned) in [
+        ("rounded=1;", true, false),
+        ("ellipse;", true, false),
+        ("rhombus;", true, false),
+        ("shape=ellipse;perimeter=ellipsePerimeter;", true, false),
+        ("perimeter=rectanglePerimeter;ellipse;", true, false),
+        ("shape=ellipse;", true, true),
+        ("ellipse;perimeter=rectanglePerimeter;", true, true),
+        (";shape=ellipse;", true, true),
+        ("shape=mxgraph.basic.star;", true, true),
+        ("shape=mxgraph.basic.star;", false, false),
+        ("shape=waypoint;", false, true),
+        ("triangle;direction=north;", false, true),
+        ("ellipse;flipH=1;", false, true),
+    ] {
+        for source in [true, false] {
+            let xml = diagram(target_style, perimeter, source);
+            let report = load(&xml);
+            assert_eq!(
+                report.warnings.contains(&ImportWarning::Formatting),
+                warned,
+                "{target_style} perimeter={perimeter} source={source}: {:?}",
+                report.warnings
+            );
+            let connector = connectors(&report.workbook.sheets[0])[0];
+            assert!(
+                if source {
+                    connector.from_port.is_some()
+                } else {
+                    connector.to_port.is_some()
+                },
+                "{target_style} perimeter={perimeter} source={source}"
+            );
+        }
+    }
+
+    let xml = diagram("shape=ellipse;", true, true);
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert!(pasted.warnings.contains(&ImportWarning::Formatting));
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    let linked = crate::import_drawio_link(&link).unwrap();
+    assert!(linked.warnings.contains(&ImportWarning::Formatting));
+}
+
+#[test]
+fn fixed_connector_port_target_geometry_changes_are_disclosed() {
+    let png = b64(&tiny_png(40, 20));
+    for (target_style, width, height, warned) in [
+        ("shape=waypoint;".to_owned(), 20, 20, true),
+        ("shape=note;thinodaCard=text;".to_owned(), 10, 4, true),
+        ("shape=note;thinodaCard=text;".to_owned(), 100, 60, false),
+        (
+            format!("shape=image;image=data:image/png,{png};"),
+            80,
+            80,
+            true,
+        ),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="a" style="{target_style}" vertex="1" parent="1"><mxGeometry x="10" y="20" width="{width}" height="{height}" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;exitX=1;exitY=1;exitPerimeter=0;" edge="1" source="a" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="200" y="20" as="targetPoint"/></mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            warned,
+            "{target_style}: {:?}",
+            report.warnings
+        );
+        assert!(
+            connectors(&report.workbook.sheets[0])[0]
+                .from_port
+                .is_some()
+        );
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn fixed_connector_port_export_discloses_position_changes_and_requires_consent() {
+    let mut sheet = Sheet::new("Ports", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let port = |perimeter| ConnectorPort {
+        position: Vec2::new(0.25, 0.75),
+        offset: Vec2::ZERO,
+        perimeter,
+    };
+    for (index, (kind, perimeter)) in [
+        (ShapeKind::Rectangle, true),
+        (ShapeKind::RoundedRectangle, true),
+        (ShapeKind::Ellipse, true),
+        (ShapeKind::Diamond, true),
+        (ShapeKind::Star, true),
+        (ShapeKind::DoubleEllipse, true),
+        (ShapeKind::Triangle, false),
+        (ShapeKind::Triangle, true),
+        (ShapeKind::Star, false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let target = sheet
+            .add_canvas_object(CanvasObject::shape(
+                kind,
+                Rect::from_min_size(Vec2::new(index as f32 * 120.0, 0.0), Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(100.0, 200.0)),
+        );
+        connector.arrow_end = false;
+        connector.from_port = Some(port(perimeter));
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+    }
+    for (index, (shape, perimeter)) in [
+        (TopicShape::Ellipse, true),
+        (TopicShape::Diamond, true),
+        (TopicShape::Rect, true),
+        (TopicShape::Ellipse, false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let target = sheet.add_floating("Topic", Vec2::new(index as f32 * 200.0, 300.0));
+        sheet.topic_mut(target).unwrap().style.shape = Some(shape);
+        let mut connector = CanvasConnector::new(
+            Endpoint::Topic(target),
+            Endpoint::Point(Vec2::new(100.0, 500.0)),
+        );
+        connector.arrow_end = false;
+        connector.from_port = Some(port(perimeter));
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+    }
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let losses = export_losses(&book, format, &ExportOptions::default());
+        assert!(
+            losses.contains(&ExportLoss::DrawioFixedConnectorPositionApproximated(6)),
+            "{format:?}: {losses:?}"
+        );
+        assert!(matches!(
+            export_bytes(&book, format, &ExportOptions::default()),
+            Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(ref losses))
+                if losses == &[ExportLoss::DrawioFixedConnectorPositionApproximated(6)]
+        ));
+        let bytes =
+            crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap();
+        assert!(!bytes.is_empty(), "{format:?}");
+    }
+    assert!(
+        !export_losses(&book, Format::Thinoda, &ExportOptions::default())
+            .iter()
+            .any(|loss| matches!(
+                loss,
+                ExportLoss::DrawioFixedConnectorPositionApproximated(_)
+            ))
+    );
 }
 
 #[test]

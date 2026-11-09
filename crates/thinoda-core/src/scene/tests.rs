@@ -23,6 +23,198 @@ fn shape(s: &mut Sheet, kind: ShapeKind, r: Rect, band: Band) -> CanvasObjectId 
 }
 
 #[test]
+fn fixed_connector_ports_follow_shape_geometry_for_every_route() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let source = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(100.0, 100.0, 120.0, 80.0),
+        Band::Above,
+    );
+    sheet.rotate_canvas_object(source, 90.0).unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(source),
+        Endpoint::Point(Vec2::new(400.0, 220.0)),
+    );
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(0.25, 0.75),
+        offset: Vec2::new(5.0, -3.0),
+        perimeter: false,
+    });
+    for route in [
+        ConnectorRoute::Straight,
+        ConnectorRoute::Elbow,
+        ConnectorRoute::Curve,
+    ] {
+        connector.route = route;
+        for waypoints in [vec![], vec![Vec2::new(250.0, 180.0)]] {
+            connector.waypoints = waypoints.into();
+            let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+            let path = connector_path(&sheet, &layout, &connector);
+            assert!((path[0].x - 143.0).abs() < 0.01, "{route:?}: {path:?}");
+            assert!((path[0].y - 115.0).abs() < 0.01, "{route:?}: {path:?}");
+            assert_eq!(path.last(), Some(&Vec2::new(400.0, 220.0)));
+        }
+    }
+    sheet
+        .move_canvas_objects(&[source], Vec2::new(50.0, -20.0))
+        .unwrap();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let path = connector_path(&sheet, &layout, &connector);
+    assert!((path[0].x - 193.0).abs() < 0.01);
+    assert!((path[0].y - 95.0).abs() < 0.01);
+}
+
+#[test]
+fn fixed_connector_ports_project_onto_the_shape_perimeter() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let source = shape(
+        &mut sheet,
+        ShapeKind::Ellipse,
+        rect(0.0, 0.0, 100.0, 100.0),
+        Band::Above,
+    );
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(source),
+        Endpoint::Point(Vec2::new(200.0, 0.0)),
+    );
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 1.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    });
+    let projected = connector_path(&sheet, &layout, &connector)[0];
+    assert!((projected.x - 85.355).abs() < 0.3, "{projected:?}");
+    assert!((projected.y - 85.355).abs() < 0.3, "{projected:?}");
+    connector.from_port.as_mut().unwrap().perimeter = false;
+    assert_eq!(
+        connector_path(&sheet, &layout, &connector)[0],
+        Vec2::new(100.0, 100.0)
+    );
+}
+
+#[test]
+fn fixed_connector_ports_use_drawio_perimeters_before_rotation() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let rounded = shape(
+        &mut sheet,
+        ShapeKind::RoundedRectangle,
+        rect(0.0, 0.0, 100.0, 60.0),
+        Band::Above,
+    );
+    let ellipse = shape(
+        &mut sheet,
+        ShapeKind::Ellipse,
+        rect(0.0, 0.0, 100.0, 60.0),
+        Band::Above,
+    );
+    sheet.rotate_canvas_object(rounded, 90.0).unwrap();
+    sheet.rotate_canvas_object(ellipse, 90.0).unwrap();
+    let port = ConnectorPort {
+        position: Vec2::new(1.0, 1.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    };
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(rounded),
+        Endpoint::Point(Vec2::new(200.0, 0.0)),
+    );
+    connector.from_port = Some(port);
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let rounded_point = connector_path(&sheet, &layout, &connector)[0];
+    assert!((rounded_point - Vec2::new(20.0, 80.0)).length() < 0.01);
+    connector.from = Endpoint::Object(ellipse);
+    let ellipse_point = connector_path(&sheet, &layout, &connector)[0];
+    assert!(
+        (ellipse_point - Vec2::new(28.787, 65.355)).length() < 0.3,
+        "{ellipse_point:?}"
+    );
+}
+
+#[test]
+fn fixed_connector_ports_match_drawio_rectangle_ellipse_and_rhombus_perimeters() {
+    let mut sheet = Sheet::new("Ports", "Root");
+    let bounds = rect(0.0, 0.0, 100.0, 60.0);
+    let rectangle = shape(&mut sheet, ShapeKind::Rectangle, bounds, Band::Above);
+    let ellipse = shape(&mut sheet, ShapeKind::Ellipse, bounds, Band::Above);
+    let diamond = shape(&mut sheet, ShapeKind::Diamond, bounds, Band::Above);
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+
+    for (target, position, offset, expected) in [
+        (
+            rectangle,
+            Vec2::new(0.5, 0.5),
+            Vec2::ZERO,
+            Vec2::new(100.0, 30.0),
+        ),
+        (
+            rectangle,
+            Vec2::new(0.25, 0.75),
+            Vec2::new(5.0, -3.0),
+            Vec2::new(0.0, 60.0),
+        ),
+        (
+            ellipse,
+            Vec2::new(1.0, 1.0),
+            Vec2::ZERO,
+            Vec2::new(85.35534, 51.2132),
+        ),
+        (
+            ellipse,
+            Vec2::new(0.5, 0.5),
+            Vec2::new(0.9, -0.9),
+            Vec2::new(50.9, 29.1),
+        ),
+        (
+            ellipse,
+            Vec2::new(0.508, 0.513_333_3),
+            Vec2::ZERO,
+            Vec2::new(50.8, 30.8),
+        ),
+        (
+            ellipse,
+            Vec2::new(0.513, 0.524),
+            Vec2::ZERO,
+            Vec2::new(75.724_785, 55.724_785),
+        ),
+        (
+            diamond,
+            Vec2::new(0.5, 0.5),
+            Vec2::ZERO,
+            Vec2::new(50.0, 60.0),
+        ),
+        (
+            diamond,
+            Vec2::new(0.25, 0.75),
+            Vec2::new(5.0, -3.0),
+            Vec2::new(50.0, 30.0),
+        ),
+        (
+            diamond,
+            Vec2::new(1.0, 1.0),
+            Vec2::ZERO,
+            Vec2::new(75.0, 45.0),
+        ),
+    ] {
+        let mut connector = CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(200.0, 100.0)),
+        );
+        connector.from_port = Some(ConnectorPort {
+            position,
+            offset,
+            perimeter: true,
+        });
+        let actual = connector_path(&sheet, &layout, &connector)[0];
+        assert!(
+            (actual - expected).length() < 0.001,
+            "{target:?} {position:?} {offset:?}: {actual:?} != {expected:?}"
+        );
+    }
+}
+
+#[test]
 fn connector_marker_geometry_and_hit_testing_follow_both_ends() {
     use crate::board::{ConnectorMarker, ConnectorMarkerKind};
 

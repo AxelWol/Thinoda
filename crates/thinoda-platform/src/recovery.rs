@@ -66,6 +66,8 @@ const RECTANGLE_SIDES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-RECTANGLE-SIDES
 const RECTANGLE_SIDES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-RECTANGLE-SIDES-1";
 const DOUBLE_ELLIPSE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DOUBLE-ELLIPSE-1";
 const DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DOUBLE-ELLIPSE-1";
+const FIXED_PORT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-FIXED-PORTS-1";
+const FIXED_PORT_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-FIXED-PORTS-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -87,7 +89,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_double_ellipses() {
+        tuple.serialize_element(if self.workbook.has_fixed_connector_ports() {
+            FIXED_PORT_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_double_ellipses() {
             DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
         } else if self.workbook.has_rectangle_sides() {
             RECTANGLE_SIDES_INK_WORKBOOK_VERSION
@@ -170,7 +174,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_double_ellipses() {
+    let version = if workbook.has_fixed_connector_ports() {
+        FIXED_PORT_WORKBOOK_VERSION
+    } else if workbook.has_double_ellipses() {
         DOUBLE_ELLIPSE_WORKBOOK_VERSION
     } else if workbook.has_rectangle_sides() {
         RECTANGLE_SIDES_WORKBOOK_VERSION
@@ -222,6 +228,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_fixed_connector_ports() {
+                return Err(A::Error::custom(
+                    "fixed connector ports require a versioned recovery workbook",
+                ));
+            }
             if workbook.has_double_ellipses() {
                 return Err(A::Error::custom(
                     "double ellipses require a versioned recovery workbook",
@@ -285,6 +296,8 @@ where
                 && version != RECTANGLE_SIDES_INK_WORKBOOK_VERSION
                 && version != DOUBLE_ELLIPSE_WORKBOOK_VERSION
                 && version != DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+                && version != FIXED_PORT_WORKBOOK_VERSION
+                && version != FIXED_PORT_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -293,6 +306,19 @@ where
             let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != FIXED_PORT_WORKBOOK_VERSION
+                && version != FIXED_PORT_INK_WORKBOOK_VERSION
+                && workbook.has_fixed_connector_ports()
+            {
+                return Err(A::Error::custom(
+                    "fixed connector ports require a port-aware recovery workbook",
+                ));
+            }
+            let version = match version.as_str() {
+                FIXED_PORT_WORKBOOK_VERSION => DOUBLE_ELLIPSE_WORKBOOK_VERSION,
+                FIXED_PORT_INK_WORKBOOK_VERSION => DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION,
+                version => version,
+            };
             if version != DOUBLE_ELLIPSE_WORKBOOK_VERSION
                 && version != DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
                 && workbook.has_double_ellipses()
@@ -301,7 +327,7 @@ where
                     "double ellipses require a double-ellipse-aware recovery workbook",
                 ));
             }
-            let version = match version.as_str() {
+            let version = match version {
                 DOUBLE_ELLIPSE_WORKBOOK_VERSION => RECTANGLE_SIDES_WORKBOOK_VERSION,
                 DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION => RECTANGLE_SIDES_INK_WORKBOOK_VERSION,
                 version => version,
@@ -1975,6 +2001,71 @@ mod lock_tests {
                     .to_string()
                     .contains("rectangle outline sides require a versioned recovery workbook")
             );
+        }
+    }
+
+    #[test]
+    fn fixed_connector_ports_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorPort, Endpoint, Rect, ShapeKind, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let shape = book
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Object(shape),
+            Endpoint::Point(Vec2::new(200.0, 0.0)),
+        );
+        connector.from_port = Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.25),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    FIXED_PORT_INK_WORKBOOK_VERSION
+                } else {
+                    FIXED_PORT_WORKBOOK_VERSION
+                }
+            );
+            let mut older = value.clone();
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+            } else {
+                DOUBLE_ELLIPSE_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(older)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("fixed connector ports require a port-aware")
+            );
+            let mut unversioned = value;
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
         }
     }
 

@@ -189,6 +189,12 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::ConnectorAttachmentsDetached(count) => {
                     (*count, "Connector-to-connector attachments detached")
                 }
+                ExportLoss::FixedConnectorAttachmentsDetached(count) => {
+                    (*count, "Fixed connector attachments detached")
+                }
+                ExportLoss::DrawioFixedConnectorPositionApproximated(count) => {
+                    (*count, "Fixed connector positions may differ in draw.io")
+                }
                 ExportLoss::LegacyConnectorMarkersApproximated(count) => {
                     (*count, "Legacy arrowheads approximated in draw.io")
                 }

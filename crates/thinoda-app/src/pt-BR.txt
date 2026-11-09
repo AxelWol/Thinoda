@@ -55,6 +55,13 @@ Save boards as .thinoda to preserve cards, shapes, connectors, frames and board 
 Inline card text and list formatting omitted|Formatação e listas do texto dos cartões omitidas
 Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa mental convertidos em formas
 Connector-to-connector attachments detached|Conexões entre conectores desfeitas
+Fixed connector attachments detached|Pontos de conexão fixos desconectados
+Fixed connector positions may differ in draw.io|A posição dos pontos de conexão fixos pode ser diferente no draw.io
+Fixed attachment|Ponto de conexão fixo
+Drag to reconnect; Shift-drag onto a shape or topic fixes the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS).|Arraste para reconectar; arraste com Shift sobre uma forma ou tópico para fixar o ponto. Enter alterna a fixação; as setas movem um ponto fixo e Ctrl+setas mudam o destino (Command no macOS).
+Fixed connector ports require a shape or topic.|Pontos de conexão fixos exigem uma forma ou um tópico.
+Fixed connector port exceeds supported limits.|O ponto de conexão fixo ultrapassa os limites permitidos.
+Cannot preserve the fixed connector attachment before deletion.|Não é possível preservar o ponto de conexão fixo antes da exclusão.
 Label color or opacity may differ in draw.io|A cor ou opacidade dos rótulos pode ser diferente no draw.io
 Rectangle colors or automatic outlines may differ in draw.io|As cores ou os contornos automáticos dos retângulos podem ser diferentes no draw.io
 Double-ellipse appearance may differ in draw.io|As elipses duplas podem ter uma aparência diferente no draw.io

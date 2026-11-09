@@ -27,6 +27,7 @@ const BAR_MARKER_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKERS-8";
 const ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-ROUNDING-1";
 const RECTANGLE_SIDES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RECTANGLE-SIDES-1";
 const DOUBLE_ELLIPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DOUBLE-ELLIPSE-1";
+const FIXED_PORT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FIXED-PORTS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -716,7 +717,9 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_double_ellipses() {
+    if book.has_fixed_connector_ports() {
+        Ok(serde_json::to_string(&(FIXED_PORT_SNAPSHOT_VERSION, book))?)
+    } else if book.has_double_ellipses() {
         Ok(serde_json::to_string(&(
             DOUBLE_ELLIPSE_SNAPSHOT_VERSION,
             book,
@@ -788,6 +791,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == ROUNDING_SNAPSHOT_VERSION
                 || version == RECTANGLE_SIDES_SNAPSHOT_VERSION
                 || version == DOUBLE_ELLIPSE_SNAPSHOT_VERSION
+                || version == FIXED_PORT_SNAPSHOT_VERSION
         })
 }
 
@@ -827,6 +831,8 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                             || connector.contains_key("end_marker_size")
                             || connector.contains_key("start_marker_unfilled")
                             || connector.contains_key("end_marker_unfilled")
+                            || connector.contains_key("from_port")
+                            || connector.contains_key("to_port")
                     })
         })
 }
@@ -846,10 +852,21 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != ROUNDING_SNAPSHOT_VERSION
             && version != RECTANGLE_SIDES_SNAPSHOT_VERSION
             && version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION
+            && version != FIXED_PORT_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != FIXED_PORT_SNAPSHOT_VERSION && workbook.has_fixed_connector_ports() {
+            return Err(IoError::NewerVersion(
+                "fixed connector ports require a port-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if version == FIXED_PORT_SNAPSHOT_VERSION {
+            DOUBLE_ELLIPSE_SNAPSHOT_VERSION
+        } else {
+            version.as_str()
+        };
         if version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION && workbook.has_double_ellipses() {
             return Err(IoError::NewerVersion(
                 "double ellipses require a double-ellipse-aware private XMind snapshot".into(),
@@ -858,7 +875,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         let version = if version == DOUBLE_ELLIPSE_SNAPSHOT_VERSION {
             RECTANGLE_SIDES_SNAPSHOT_VERSION
         } else {
-            version.as_str()
+            version
         };
         if version != RECTANGLE_SIDES_SNAPSHOT_VERSION && workbook.has_rectangle_sides() {
             return Err(IoError::NewerVersion(
@@ -974,6 +991,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_fixed_connector_ports() {
+            return Err(IoError::NewerVersion(
+                "fixed connector ports require a port-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_double_ellipses() {
             return Err(IoError::NewerVersion(
                 "double ellipses require a double-ellipse-aware private XMind snapshot".into(),
@@ -2430,6 +2452,68 @@ mod tests {
             let mut malformed = serde_json::to_value(&book).unwrap();
             malformed["sheets"][0]["canvas"]["objects"][0]["rectangle_sides"]["top"] =
                 json!("invalid");
+            let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(import(&make_archive(&entries)).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn fixed_connector_ports_reject_old_and_malformed_private_snapshots() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorPort, Endpoint, Rect, ShapeKind, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let shape = book
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Object(shape),
+            Endpoint::Point(Vec2::new(200.0, 0.0)),
+        );
+        connector.from_port = Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.25),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let original = archive_entries(&export(&book).unwrap());
+        assert_eq!(import(&make_archive(&original)).unwrap(), book);
+        for snapshot in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(DOUBLE_ELLIPSE_SNAPSHOT_VERSION, &book)).unwrap(),
+        ] {
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(snapshot);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
+        for version in [FIXED_PORT_SNAPSHOT_VERSION, DOUBLE_ELLIPSE_SNAPSHOT_VERSION] {
+            let mut malformed = serde_json::to_value(&book).unwrap();
+            malformed["sheets"][0]["canvas"]["objects"][1]["kind"]["connector"]["from_port"]["position"]
+                ["x"] = json!("invalid");
             let snapshot = serde_json::to_string(&(version, malformed)).unwrap();
             let mut entries = original.clone();
             let (_, bytes) = entries

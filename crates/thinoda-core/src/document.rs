@@ -469,7 +469,10 @@ impl Document {
                 }
                 // Deleting a connector target converts the end to a point in this edit.
                 let sheet = &mut self.workbook.sheets[index];
-                sheet.fix_dangling_endpoints(&before);
+                if let Err(error) = sheet.fix_dangling_endpoints(&before) {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
                 if let Err(error) = crate::board::validate_board(sheet) {
                     self.workbook.sheets[index] = before;
                     return Err(EditError::Invalid(error));
@@ -549,8 +552,12 @@ impl Document {
                     return Err(EditError::Invalid(error));
                 }
                 for (index, sheet) in self.workbook.sheets.iter_mut().enumerate() {
-                    if let Some(old) = sheets.get(index) {
-                        sheet.fix_dangling_endpoints(old);
+                    if let Some(old) = sheets.get(index)
+                        && let Err(error) = sheet.fix_dangling_endpoints(old)
+                    {
+                        self.workbook.sheets = sheets;
+                        self.workbook.active_sheet = active;
+                        return Err(EditError::Invalid(error));
                     }
                     if let Err(error) = crate::board::validate_board(sheet) {
                         self.workbook.sheets = sheets;

@@ -6,9 +6,9 @@
 use crate::board::shape_geometry;
 use crate::board::{
     Band, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, ConnectorMarkerKind,
-    ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, ShapeKind, ShapeRounding,
-    distance_to_outline, distance_to_polyline, point_in_polygon, points_bounds, rotate_around,
-    rotated_bounds, rotated_rect_contains, shape_geometry_with_rounding,
+    ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, Endpoint, GridKind, ShapeKind,
+    ShapeRounding, distance_to_outline, distance_to_polyline, point_in_polygon, points_bounds,
+    rotate_around, rotated_bounds, rotated_rect_contains, shape_geometry_with_rounding,
 };
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rotated_rect, cubic};
@@ -821,6 +821,27 @@ pub(crate) fn resolved_object_centers(
         .collect()
 }
 
+pub(crate) fn resolved_connector_endpoints(
+    sheet: &Sheet,
+    layout: &Layout,
+    ids: &HashSet<CanvasObjectId>,
+) -> HashMap<CanvasObjectId, (Vec2, Vec2)> {
+    let mut connectors = ConnectorResolver::new(sheet, layout);
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| ids.contains(&object.id))
+        .filter_map(|object| {
+            let CanvasObjectKind::Connector(connector) = &object.kind else {
+                return None;
+            };
+            let path = connectors.path(object.id, connector)?;
+            Some((object.id, (*path.first()?, *path.last()?)))
+        })
+        .collect()
+}
+
 impl Scene {
     /// Top-most topic or object under `p`.
     pub fn hit_test(&self, p: Vec2) -> Option<SceneHit> {
@@ -909,6 +930,28 @@ impl EndTarget {
         }
     }
 
+    fn with_port(self, port: Option<ConnectorPort>) -> Self {
+        let Some(port) = port else {
+            return self;
+        };
+        let point = Vec2::new(
+            self.rect.min.x + self.rect.size.x * port.position.x + port.offset.x,
+            self.rect.min.y + self.rect.size.y * port.position.y + port.offset.y,
+        );
+        let point = if port.perimeter {
+            if let Some(projected) =
+                fixed_port_perimeter(self.rect, self.shape.map(|(kind, _)| kind), point)
+            {
+                rotate_around(projected, self.rect.center(), self.rotation)
+            } else {
+                self.clip(rotate_around(point, self.rect.center(), self.rotation))
+            }
+        } else {
+            rotate_around(point, self.rect.center(), self.rotation)
+        };
+        Self::boxed(Rect::from_center_size(point, Vec2::ZERO), 0.0)
+    }
+
     /// Point on the visible perimeter in the direction of `toward`, like draw.io's
     /// shape perimeters; boxes and rectangular shapes clip to their rotated rect.
     fn clip(self, toward: Vec2) -> Vec2 {
@@ -938,6 +981,75 @@ impl EndTarget {
                 clip_to_polygon(&outline, origin, toward)
             })
             .unwrap_or_else(|| clip_to_rotated_rect(self.rect, self.rotation, toward))
+    }
+}
+
+/// draw.io applies a constraint to the unrotated perimeter before rotating it.
+fn fixed_port_perimeter(rect: Rect, shape: Option<ShapeKind>, point: Vec2) -> Option<Vec2> {
+    let half = rect.size * 0.5;
+    if half.x <= 0.0 || half.y <= 0.0 {
+        return None;
+    }
+    let center = rect.center();
+    let delta = point - center;
+    match shape {
+        None
+        | Some(
+            ShapeKind::Rectangle
+            | ShapeKind::RoundedRectangle
+            | ShapeKind::Process
+            | ShapeKind::PredefinedProcess,
+        ) => {
+            if delta == Vec2::ZERO {
+                return Some(Vec2::new(rect.max().x, center.y));
+            }
+            let x = f64::from(delta.x);
+            let y = f64::from(delta.y);
+            let scale = (f64::from(half.x) / x.abs()).min(f64::from(half.y) / y.abs());
+            Some(Vec2::new(
+                center.x + (x * scale) as f32,
+                center.y + (y * scale) as f32,
+            ))
+        }
+        Some(ShapeKind::Ellipse) => {
+            // The published ellipse perimeter truncates center-relative distances.
+            let x = delta.x.trunc();
+            let y = delta.y.trunc();
+            if x == 0.0 && y == 0.0 {
+                return Some(point);
+            }
+            let scale = half.x * half.y / (half.y * x).hypot(half.x * y);
+            Some(center + Vec2::new(x, y) * scale)
+        }
+        Some(ShapeKind::Diamond) => {
+            if delta.x == 0.0 {
+                return Some(Vec2::new(
+                    center.x,
+                    if delta.y < 0.0 {
+                        rect.min.y
+                    } else {
+                        rect.max().y
+                    },
+                ));
+            }
+            if delta.y == 0.0 {
+                return Some(Vec2::new(
+                    if delta.x < 0.0 {
+                        rect.min.x
+                    } else {
+                        rect.max().x
+                    },
+                    center.y,
+                ));
+            }
+            let distance = delta.x.abs() / half.x + delta.y.abs() / half.y;
+            Some(if distance < 1.0 {
+                center
+            } else {
+                center + delta * (1.0 / distance)
+            })
+        }
+        _ => None,
     }
 }
 
@@ -1160,8 +1272,8 @@ impl<'a> ConnectorResolver<'a> {
         }
     }
 
-    fn endpoint(&self, end: Endpoint) -> Option<EndTarget> {
-        match end {
+    fn endpoint(&self, end: Endpoint, port: Option<ConnectorPort>) -> Option<EndTarget> {
+        let target = match end {
             Endpoint::Point(p) => {
                 Some(EndTarget::boxed(Rect::from_center_size(p, Vec2::ZERO), 0.0))
             }
@@ -1198,7 +1310,8 @@ impl<'a> ConnectorResolver<'a> {
                     })
                 }
             }
-        }
+        }?;
+        Some(target.with_port(port))
     }
 
     fn resolve(&mut self, id: CanvasObjectId) -> bool {
@@ -1217,8 +1330,8 @@ impl<'a> ConnectorResolver<'a> {
             if exit {
                 active.remove(&id);
                 let path = self
-                    .endpoint(connector.from)
-                    .zip(self.endpoint(connector.to))
+                    .endpoint(connector.from, connector.from_port)
+                    .zip(self.endpoint(connector.to, connector.to_port))
                     .map(|(from, to)| routed_path(connector, from, to));
                 self.paths.insert(id, path);
                 continue;
@@ -1254,8 +1367,8 @@ impl<'a> ConnectorResolver<'a> {
                     return None;
                 }
             }
-            self.endpoint(connector.from)
-                .zip(self.endpoint(connector.to))
+            self.endpoint(connector.from, connector.from_port)
+                .zip(self.endpoint(connector.to, connector.to_port))
                 .map(|(from, to)| routed_path(connector, from, to))
         }
     }
@@ -1324,8 +1437,8 @@ fn connector_targets(
         }
     }
     resolver
-        .endpoint(connector.from)
-        .zip(resolver.endpoint(connector.to))
+        .endpoint(connector.from, connector.from_port)
+        .zip(resolver.endpoint(connector.to, connector.to_port))
 }
 
 /// Polyline of a free connector, clipped to its endpoint targets. Empty if an endpoint

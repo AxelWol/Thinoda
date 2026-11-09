@@ -5,8 +5,9 @@ use egui_kittest::{
     kittest::{NodeT, Queryable},
 };
 use thinoda_core::{
-    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorRoute,
-    Endpoint, SceneId, ShapeKind, SheetRootMode, Workbook, ZOrder, board::BoardMember,
+    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorPort,
+    ConnectorRoute, Endpoint, SceneId, ShapeKind, SheetRootMode, Workbook, ZOrder,
+    board::BoardMember,
 };
 
 struct State {
@@ -2632,6 +2633,192 @@ fn scene_selection_multiselect_lock_z_order_and_undo() {
     }
     assert_eq!(h.state().doc.workbook(), &locked);
     assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn fixed_connector_attachment_shift_drag_uses_release_modifiers_and_undo() {
+    let mut sheet = board();
+    let target = shape(&mut sheet, 300.0, 120.0, "Target");
+    sheet.rotate_canvas_object(target, 90.0).unwrap();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-200.0, 0.0)),
+            Endpoint::Point(Vec2::new(0.0, 0.0)),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let original = h.state().doc.workbook().clone();
+    let handle = h.get_by_label("Connector To").rect().center();
+    let target_point =
+        thinoda_core::board::rotate_around(Vec2::new(270.0, 100.0), Vec2::new(300.0, 120.0), 90.0);
+    let destination = point(&h, target_point);
+    drag(&mut h, handle, destination);
+    assert_eq!(h.state().doc.workbook(), &original);
+    finish_alt_drag(&mut h, destination, Modifiers::SHIFT);
+    let current = connector(&h, edge);
+    assert_eq!(current.to, Endpoint::Object(target));
+    let port = current.to_port.unwrap();
+    assert!((port.position.x - 0.25).abs() < 0.001, "{port:?}");
+    assert!((port.position.y - 0.25).abs() < 0.001, "{port:?}");
+    assert!(!port.perimeter);
+    assert!(
+        h.get_by_label("Connector To, Fixed attachment")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Shift-drag")
+    );
+    let fixed = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &original);
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &fixed);
+    h.run_steps(3);
+    let handle = h
+        .get_by_label("Connector To, Fixed attachment")
+        .rect()
+        .center();
+    let destination = point(&h, Vec2::new(300.0, 120.0));
+    drag(&mut h, handle, destination);
+    finish_drag(&mut h, destination);
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    assert_eq!(connector(&h, edge).to_port, None);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &fixed);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn fixed_connector_attachment_keyboard_controls_are_discoverable_and_undoable() {
+    let mut sheet = board();
+    let target = shape(&mut sheet, 200.0, 0.0, "Target");
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-200.0, 0.0)),
+            Endpoint::Object(target),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let original = h.state().doc.workbook().clone();
+    h.get_by_label("Connector To").focus();
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    let port = connector(&h, edge).to_port.unwrap();
+    assert!(!port.perimeter);
+    let fixed = h.state().doc.workbook().clone();
+    let fixed_handle = h.get_by_label("Connector To, Fixed attachment");
+    assert!(fixed_handle.is_focused());
+    assert!(
+        fixed_handle
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Press Enter")
+    );
+    h.key_press(Key::ArrowDown);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    let moved = connector(&h, edge).to_port.unwrap();
+    assert!((moved.position.y - port.position.y - 1.0 / 80.0).abs() < 0.001);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &fixed);
+    assert!(h.state_mut().doc.redo());
+    h.run_steps(3);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(connector(&h, edge).to_port, None);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(connector(&h, edge).to_port, Some(moved));
+    h.run_steps(3);
+    h.get_by_label("Connector To, Fixed attachment").focus();
+    h.run_steps(2);
+    let original_connector = h.state().doc.sheet().canvas.object(edge).unwrap().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(edge),
+        Some(&original_connector)
+    );
+    assert_ne!(h.state().view.board_selection[0], edge);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    assert_ne!(h.state().doc.workbook(), &original);
+}
+
+#[test]
+fn fixed_connector_attachment_keyboard_nudges_projected_ports_at_the_visible_point() {
+    let mut sheet = board();
+    let target = shape(&mut sheet, 200.0, 0.0, "Target");
+    let mut initial_connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-200.0, 0.0)),
+        Endpoint::Object(target),
+    );
+    initial_connector.to_port = Some(ConnectorPort {
+        position: Vec2::new(0.5, 0.5),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    });
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(initial_connector))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let endpoint = |h: &Harness<'static, State>| {
+        let sheet = h.state().doc.sheet();
+        let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
+        *thinoda_core::scene::connector_path(sheet, &layout, connector(h, edge))
+            .last()
+            .unwrap()
+    };
+    let original = endpoint(&h);
+    h.get_by_label("Connector To, Fixed attachment").focus();
+    h.run_steps(2);
+    h.key_press(Key::ArrowLeft);
+    h.run_steps(3);
+    assert!((endpoint(&h) - (original + Vec2::new(-1.0, 0.0))).length() < 0.01);
+    assert!(!connector(&h, edge).to_port.unwrap().perimeter);
+    let moved = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &moved);
+    assert!((endpoint(&h) - (original + Vec2::new(-1.0, 0.0))).length() < 0.01);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn fixed_connector_attachment_toggles_with_accessibility_click() {
+    let mut sheet = board();
+    let target = shape(&mut sheet, 200.0, 0.0, "Target");
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-200.0, 0.0)),
+            Endpoint::Object(target),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    h.get_by_label("Connector To").click_accesskit();
+    h.run_steps(3);
+    assert!(connector(&h, edge).to_port.is_some());
+    assert!(
+        h.get_by_label("Connector To, Fixed attachment")
+            .is_focused()
+    );
+    h.get_by_label("Connector To, Fixed attachment")
+        .click_accesskit();
+    h.run_steps(3);
     assert_eq!(h.state().doc.workbook(), &before);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }

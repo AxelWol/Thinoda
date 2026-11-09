@@ -306,6 +306,10 @@ pub enum IoError {
     )]
     DrawioConnectorAttachmentsNeedConfirmation(usize),
     #[error(
+        "draw.io export would detach or reposition fixed connector attachments; explicit consent is required: {0:?}"
+    )]
+    DrawioFixedConnectorAttachmentsNeedConfirmation(Vec<ExportLoss>),
+    #[error(
         "MindManager export requires confirmation: only the selected sheet and supported features are written"
     )]
     MindManagerExportNeedsConfirmation,
@@ -765,16 +769,32 @@ pub fn export_bytes_with_consent_and_visual_context(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
-    if format.is_drawio()
-        && !allow_lossy
-        && let Some(count) = export_losses(book, format, opts)
+    if format.is_drawio() && !allow_lossy {
+        let attachments: Vec<_> = export_losses(book, format, opts)
             .into_iter()
-            .find_map(|loss| match loss {
-                ExportLoss::ConnectorAttachmentsDetached(count) => Some(count),
-                _ => None,
+            .filter(|loss| {
+                matches!(
+                    loss,
+                    ExportLoss::ConnectorAttachmentsDetached(_)
+                        | ExportLoss::FixedConnectorAttachmentsDetached(_)
+                        | ExportLoss::DrawioFixedConnectorPositionApproximated(_)
+                )
             })
-    {
-        return Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(count));
+            .collect();
+        if attachments.iter().any(|loss| {
+            matches!(
+                loss,
+                ExportLoss::FixedConnectorAttachmentsDetached(_)
+                    | ExportLoss::DrawioFixedConnectorPositionApproximated(_)
+            )
+        }) {
+            return Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(
+                attachments,
+            ));
+        }
+        if let Some(ExportLoss::ConnectorAttachmentsDetached(count)) = attachments.first() {
+            return Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(*count));
+        }
     }
     if format == Format::MindManager
         && !allow_lossy

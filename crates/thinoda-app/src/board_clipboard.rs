@@ -382,6 +382,7 @@ pub(crate) fn prepare_drawio_copy(
         return Ok(None);
     };
     let selected: HashSet<_> = payload.source_object_ids().collect();
+    let selected_topics: HashSet<_> = payload.source_topic_ids().collect();
     let sheet = doc.doc.sheet();
     let connector_ids: HashSet<_> = sheet
         .canvas
@@ -404,6 +405,28 @@ pub(crate) fn prepare_drawio_copy(
             matches!(end, Endpoint::Object(id) if !selected.contains(id) && connector_ids.contains(id))
         })
         .count();
+    let detached_fixed_external = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| selected.contains(&object.id))
+        .filter_map(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector) => Some([
+                (connector.from, connector.from_port),
+                (connector.to, connector.to_port),
+            ]),
+            _ => None,
+        })
+        .flatten()
+        .filter(|(end, port)| {
+            port.is_some()
+                && match end {
+                    Endpoint::Topic(id) => !selected_topics.contains(id),
+                    Endpoint::Object(id) => !selected.contains(id),
+                    Endpoint::Point(_) => false,
+                }
+        })
+        .count();
     let mut copy = thinoda_io::drawio_clipboard::encode_with_report(&payload)
         .map_err(|error| error.to_string())?;
     if detached_external > 0 {
@@ -420,6 +443,23 @@ pub(crate) fn prepare_drawio_copy(
             copy.losses
                 .push(thinoda_io::ExportLoss::ConnectorAttachmentsDetached(
                     detached_external,
+                ));
+        }
+    }
+    if detached_fixed_external > 0 {
+        if let Some(thinoda_io::ExportLoss::FixedConnectorAttachmentsDetached(count)) =
+            copy.losses.iter_mut().find(|loss| {
+                matches!(
+                    loss,
+                    thinoda_io::ExportLoss::FixedConnectorAttachmentsDetached(_)
+                )
+            })
+        {
+            *count += detached_fixed_external;
+        } else {
+            copy.losses
+                .push(thinoda_io::ExportLoss::FixedConnectorAttachmentsDetached(
+                    detached_fixed_external,
                 ));
         }
     }
@@ -3627,6 +3667,145 @@ mod tests {
         assert!(has_warning(&app));
         app.toasts.tick(10.0);
         assert!(has_warning(&app));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn copy_as_drawio_reports_external_fixed_connector_attachments() {
+        use crate::app::Cmd;
+        use thinoda_core::{CanvasConnector, ConnectorPort, Endpoint, SheetRootMode};
+
+        for include_target in [false, true] {
+            let (mut app, clipboard) = empty_board_app();
+            let doc = app.doc_mut().unwrap();
+            let shape = doc
+                .doc
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+                ))
+                .unwrap();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Object(shape),
+                Endpoint::Point(Vec2::new(200.0, 80.0)),
+            );
+            connector.arrow_end = false;
+            connector.from_port = Some(ConnectorPort {
+                position: Vec2::new(1.0, 0.25),
+                offset: Vec2::ZERO,
+                perimeter: false,
+            });
+            let edge = doc
+                .doc
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            doc.view.board_selection = if include_target {
+                vec![shape, edge]
+            } else {
+                vec![edge]
+            };
+            let before = doc.doc.workbook().clone();
+            let prepared = prepare_drawio_copy(doc).unwrap().unwrap();
+            assert_eq!(
+                prepared.losses.contains(
+                    &thinoda_io::ExportLoss::FixedConnectorAttachmentsDetached(1)
+                ),
+                !include_target
+            );
+            app.exec(&egui::Context::default(), Cmd::CopyAsDrawio);
+            let pasted = thinoda_io::drawio_clipboard::decode(&clipboard.borrow().text).unwrap();
+            let mut restored = Sheet::new("Restored", "");
+            restored.root_mode = SheetRootMode::Hidden;
+            clipboard::paste_board_selection(&mut restored, &pasted.payload, Vec2::ZERO).unwrap();
+            let edge = restored
+                .canvas
+                .objects
+                .iter()
+                .find_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) => Some(connector),
+                    _ => None,
+                })
+                .unwrap();
+            if include_target {
+                assert!(matches!(edge.from, Endpoint::Object(_)));
+                assert!(edge.from_port.is_some());
+            } else {
+                assert_eq!(edge.from, Endpoint::Point(Vec2::new(100.0, 15.0)));
+                assert_eq!(edge.from_port, None);
+                let expected: Vec<_> = crate::i18n::Lang::ALL
+                    .into_iter()
+                    .map(|language| {
+                        format!(
+                            "1 — {}",
+                            crate::i18n::t_in(language, "Fixed connector attachments detached")
+                        )
+                    })
+                    .collect();
+                assert!(
+                    app.toasts
+                        .texts()
+                        .any(|text| { expected.iter().any(|line| text.contains(line)) })
+                );
+            }
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn copy_as_drawio_warns_about_fixed_connector_position_changes() {
+        use crate::app::Cmd;
+        use thinoda_core::{CanvasConnector, ConnectorPort, Endpoint};
+
+        let (mut app, clipboard) = empty_board_app();
+        let doc = app.doc_mut().unwrap();
+        let target = doc
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Star,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(200.0, 80.0)),
+        );
+        connector.arrow_end = false;
+        connector.from_port = Some(ConnectorPort {
+            position: Vec2::new(1.0, 1.0),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        });
+        let edge = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.board_selection = vec![target, edge];
+        let before = doc.doc.workbook().clone();
+        let prepared = prepare_drawio_copy(doc).unwrap().unwrap();
+        assert!(
+            prepared
+                .losses
+                .contains(&thinoda_io::ExportLoss::DrawioFixedConnectorPositionApproximated(1))
+        );
+
+        app.exec(&egui::Context::default(), Cmd::CopyAsDrawio);
+        assert!(clipboard.borrow().text.starts_with("%3CmxGraphModel"));
+        let expected: Vec<_> = crate::i18n::Lang::ALL
+            .into_iter()
+            .map(|language| {
+                format!(
+                    "1 — {}",
+                    crate::i18n::t_in(language, "Fixed connector positions may differ in draw.io")
+                )
+            })
+            .collect();
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| expected.iter().any(|line| text.contains(line)))
+        );
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }
 

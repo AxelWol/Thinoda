@@ -23,11 +23,11 @@ use thinoda_core::{
     board::{
         Band, BoardMember, CANVAS_LABEL_FONT_SIZE, CanvasConnector, CanvasGroupId, CanvasObject,
         CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
-        ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil, Endpoint, GridKind,
-        InkStroke, InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE,
-        MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle,
-        RectangleSides, ShapeKind, ShapeRounding, SheetRootMode, normalize_rotation, rotate_around,
-        valid_board_position, valid_connector_marker_size,
+        ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil,
+        Endpoint, GridKind, InkStroke, InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS,
+        MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH,
+        ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, SheetRootMode, normalize_rotation,
+        rotate_around, valid_board_position, valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -658,18 +658,33 @@ fn parse_style_color(value: &str) -> Option<ParsedColor> {
     })
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ConstraintPerimeter {
+    Rectangle,
+    Ellipse,
+    Rhombus,
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Default)]
 struct Style {
     tokens: Vec<String>,
     map: HashMap<String, String>,
     suppress_defaults: bool,
     partial_sides: [Option<String>; 4],
+    constraint_perimeter: ConstraintPerimeter,
 }
 
 impl Style {
     fn parse(text: &str) -> Self {
         let mut style = Style {
             suppress_defaults: text.starts_with(';'),
+            constraint_perimeter: if text.starts_with(';') {
+                ConstraintPerimeter::Unknown
+            } else {
+                ConstraintPerimeter::Rectangle
+            },
             ..Self::default()
         };
         for raw in text.split(';') {
@@ -684,6 +699,14 @@ impl Style {
             }
             match part.split_once('=') {
                 Some((key, value)) => {
+                    if key.trim() == "perimeter" {
+                        style.constraint_perimeter = match value.trim() {
+                            "rectanglePerimeter" => ConstraintPerimeter::Rectangle,
+                            "ellipsePerimeter" => ConstraintPerimeter::Ellipse,
+                            "rhombusPerimeter" => ConstraintPerimeter::Rhombus,
+                            _ => ConstraintPerimeter::Unknown,
+                        };
+                    }
                     style
                         .map
                         .insert(key.trim().to_owned(), value.trim().to_owned());
@@ -693,6 +716,13 @@ impl Style {
                     if part == "defaultEdge" {
                         style.map.insert("endArrow".into(), "classic".into());
                     }
+                    style.constraint_perimeter = match part {
+                        "defaultVertex" => ConstraintPerimeter::Rectangle,
+                        "ellipse" => ConstraintPerimeter::Ellipse,
+                        "rhombus" => ConstraintPerimeter::Rhombus,
+                        "text" | "label" | "edgeLabel" | "swimlane" => style.constraint_perimeter,
+                        _ => ConstraintPerimeter::Unknown,
+                    };
                     style.tokens.push(part.to_owned());
                 }
             }
@@ -712,6 +742,35 @@ impl Style {
         self.get(key)
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite())
+    }
+
+    fn connector_port(&self, source: bool) -> Result<Option<ConnectorPort>, ()> {
+        let keys = if source {
+            ["exitX", "exitY", "exitDx", "exitDy", "exitPerimeter"]
+        } else {
+            ["entryX", "entryY", "entryDx", "entryDy", "entryPerimeter"]
+        };
+        if keys.iter().all(|key| self.get(key).is_none()) {
+            return Ok(None);
+        }
+        let optional_number = |key| match self.get(key) {
+            Some(_) => self.num(key).ok_or(()),
+            None => Ok(0.0),
+        };
+        let perimeter = match self.get(keys[4]) {
+            None => true,
+            Some(_) => match self.num(keys[4]) {
+                Some(0.0) => false,
+                Some(1.0) => true,
+                _ => return Err(()),
+            },
+        };
+        let port = ConnectorPort {
+            position: Vec2::new(self.num(keys[0]).ok_or(())?, self.num(keys[1]).ok_or(())?),
+            offset: Vec2::new(optional_number(keys[2])?, optional_number(keys[3])?),
+            perimeter,
+        };
+        port.is_valid().then_some(Some(port)).ok_or(())
     }
 
     fn rectangle_sides(&self) -> RectangleSides {
@@ -962,17 +1021,7 @@ impl Style {
         const FLAGS: [&str; 7] = [
             "dashed", "shadow", "glass", "sketch", "flipH", "flipV", "comic",
         ];
-        const PORT_KEYS: [&str; 14] = [
-            "exitX",
-            "exitY",
-            "exitDx",
-            "exitDy",
-            "exitPerimeter",
-            "entryX",
-            "entryY",
-            "entryDx",
-            "entryDy",
-            "entryPerimeter",
+        const PORT_KEYS: [&str; 4] = [
             "sourcePort",
             "targetPort",
             "sourcePortConstraint",
@@ -1641,6 +1690,7 @@ struct PageImport<'a> {
     sheet: Sheet,
     warnings: &'a mut BTreeSet<ImportWarning>,
     items: HashMap<usize, Item>,
+    shapes: HashMap<CanvasObjectId, ShapeKind>,
     visited: Vec<bool>,
     zones: Vec<(ZoneId, Vec<TopicId>, Vec<CanvasObjectId>)>,
     buckets: Vec<(Vec<BoardMember>, bool)>,
@@ -1706,8 +1756,15 @@ impl<'a> PageImport<'a> {
         object: CanvasObject,
         context: Context,
     ) -> Option<CanvasObjectId> {
+        let shape = match &object.kind {
+            CanvasObjectKind::Shape { shape, .. } => Some(*shape),
+            _ => None,
+        };
         match self.sheet.add_canvas_object(object) {
             Ok(id) => {
+                if let Some(shape) = shape {
+                    self.shapes.insert(id, shape);
+                }
                 let locked = self.cells[cell].style.flag("locked");
                 self.register(cell, Item::Object(id), context, locked);
                 Some(id)
@@ -2266,13 +2323,120 @@ impl<'a> PageImport<'a> {
         }
     }
 
+    fn connector_port(
+        &mut self,
+        style: &Style,
+        source: bool,
+        endpoint: Endpoint,
+        terminal: Option<&str>,
+    ) -> Option<ConnectorPort> {
+        let supported_target = match endpoint {
+            Endpoint::Topic(_) => true,
+            Endpoint::Object(id) => self.shapes.contains_key(&id),
+            Endpoint::Point(_) => false,
+        };
+        match style.connector_port(source) {
+            Ok(None) => None,
+            Ok(Some(port)) if supported_target => {
+                let compatible = terminal
+                    .and_then(|id| self.index.get(id))
+                    .and_then(|index| self.cells.get(*index))
+                    .is_some_and(|cell| self.fixed_port_matches_source(cell, endpoint, port));
+                if !compatible {
+                    self.warn(ImportWarning::Formatting);
+                }
+                Some(port)
+            }
+            Ok(Some(_)) | Err(()) => {
+                self.warn(ImportWarning::Formatting);
+                None
+            }
+        }
+    }
+
+    fn fixed_port_matches_source(
+        &self,
+        cell: &Cell,
+        endpoint: Endpoint,
+        port: ConnectorPort,
+    ) -> bool {
+        let style = &cell.style;
+        if style
+            .get("direction")
+            .is_some_and(|value| !matches!(value, "" | "east"))
+            || ["flipH", "flipV", "stencilFlipH", "stencilFlipV"]
+                .iter()
+                .any(|key| {
+                    style
+                        .get(key)
+                        .is_some_and(|value| !matches!(value, "" | "0" | "none"))
+                })
+            || style.tokens.iter().any(|token| {
+                !matches!(
+                    token.as_str(),
+                    "defaultVertex"
+                        | "ellipse"
+                        | "rhombus"
+                        | "triangle"
+                        | "text"
+                        | "label"
+                        | "edgeLabel"
+                        | "swimlane"
+                )
+            })
+        {
+            return false;
+        }
+        match classify(style) {
+            Kind::Shape(_, base, symmetric) | Kind::Approx(_, base, symmetric)
+                if !symmetric && base.rem_euclid(360.0) != 0.0 =>
+            {
+                return false;
+            }
+            Kind::Waypoint | Kind::Image => return false,
+            Kind::Card(_)
+                if cell.geometry.width < MIN_CARD_SIZE || cell.geometry.height < MIN_CARD_SIZE =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+        if !port.perimeter {
+            return true;
+        }
+        if cell.geometry.width <= 0.0 || cell.geometry.height <= 0.0 {
+            return false;
+        }
+        let expected = match endpoint {
+            Endpoint::Topic(_) => ConstraintPerimeter::Rectangle,
+            Endpoint::Object(id) => match self.shapes.get(&id) {
+                Some(
+                    ShapeKind::Rectangle
+                    | ShapeKind::RoundedRectangle
+                    | ShapeKind::Process
+                    | ShapeKind::PredefinedProcess,
+                ) => ConstraintPerimeter::Rectangle,
+                Some(ShapeKind::Ellipse) => ConstraintPerimeter::Ellipse,
+                Some(ShapeKind::Diamond) => ConstraintPerimeter::Rhombus,
+                _ => return false,
+            },
+            Endpoint::Point(_) => return false,
+        };
+        style.constraint_perimeter == expected
+    }
+
     fn edge(&mut self, index: usize, context: Context, last_pass: bool) {
         let cells = self.cells;
         let cell = &cells[index];
         let style = &cell.style;
         let origin = context.origin;
         if let Some(tool) = style.get("thinodaInk") {
-            if style.formatting_loss(true, false) || style.start_arrow() || style.end_arrow() {
+            if style.formatting_loss(true, false)
+                || style.start_arrow()
+                || style.end_arrow()
+                || !matches!(style.connector_port(true), Ok(None))
+                || !matches!(style.connector_port(false), Ok(None))
+            {
                 self.warn(ImportWarning::Formatting);
             }
             let g = &cell.geometry;
@@ -2363,6 +2527,8 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Formatting);
         }
         let mut connector = CanvasConnector::new(from, to);
+        connector.from_port = self.connector_port(style, true, from, cell.source.as_deref());
+        connector.to_port = self.connector_port(style, false, to, cell.target.as_deref());
         connector.route = if style.flag("curved") {
             ConnectorRoute::Curve
         } else if style
@@ -2803,6 +2969,7 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
         sheet,
         warnings,
         items: HashMap::new(),
+        shapes: HashMap::new(),
         visited: vec![false; cells.len()],
         zones: Vec::new(),
         buckets: Vec::new(),
@@ -2971,6 +3138,53 @@ fn topic_shape_style(shape: TopicShape) -> &'static str {
     }
 }
 
+pub(crate) fn fixed_port_position_approximate(
+    sheet: &Sheet,
+    object: Option<&CanvasObject>,
+    layout: Option<&thinoda_core::Layout>,
+    endpoint: Endpoint,
+    port: ConnectorPort,
+) -> bool {
+    match endpoint {
+        Endpoint::Object(_) => {
+            let Some(object) = object else {
+                return false;
+            };
+            let CanvasObjectKind::Shape { shape, .. } = object.kind else {
+                return false;
+            };
+            if shape == ShapeKind::Triangle {
+                return true;
+            }
+            port.perimeter
+                && (object.rect.size.x <= 0.0
+                    || object.rect.size.y <= 0.0
+                    || !matches!(
+                        shape,
+                        ShapeKind::Rectangle
+                            | ShapeKind::RoundedRectangle
+                            | ShapeKind::Process
+                            | ShapeKind::PredefinedProcess
+                            | ShapeKind::Ellipse
+                            | ShapeKind::Diamond
+                    ))
+        }
+        Endpoint::Topic(id) if port.perimeter => {
+            let Some(topic) = sheet.topic(id) else {
+                return false;
+            };
+            let Some(node) = layout.and_then(|layout| layout.topics.get(&id)) else {
+                return false;
+            };
+            node.rect.size.x <= 0.0
+                || node.rect.size.y <= 0.0
+                || topic.card.is_none()
+                    && matches!(node.style.shape, TopicShape::Ellipse | TopicShape::Diamond)
+        }
+        Endpoint::Topic(_) | Endpoint::Point(_) => false,
+    }
+}
+
 fn common_keys(out: &mut String, style: &ObjectStyle, rotation: f32, locked: bool, band: Band) {
     if style.opacity < 1.0 {
         out.push_str(&format!("opacity={};", num(style.opacity * 100.0)));
@@ -2989,6 +3203,15 @@ fn common_keys(out: &mut String, style: &ObjectStyle, rotation: f32, locked: boo
 enum Terminal {
     Cell(String),
     Point(Vec2),
+}
+
+pub(crate) fn exported_topics(sheet: &Sheet, layout: &thinoda_core::Layout) -> HashSet<TopicId> {
+    layout
+        .order
+        .iter()
+        .copied()
+        .filter(|id| !sheet.is_anchor(*id))
+        .collect()
 }
 
 pub(crate) fn card_image<'a>(
@@ -3010,6 +3233,7 @@ struct PageWriter<'a> {
     object_zone: HashMap<CanvasObjectId, ZoneId>,
     root_zone: HashMap<TopicId, ZoneId>,
     connector_midpoints: HashMap<CanvasObjectId, Vec2>,
+    detached_fixed_points: HashMap<CanvasObjectId, (Vec2, Vec2)>,
     groups: HashMap<CanvasGroupId, (String, Rect)>,
     written_groups: HashSet<CanvasGroupId>,
     written: HashSet<BoardMember>,
@@ -3018,30 +3242,51 @@ struct PageWriter<'a> {
 impl<'a> PageWriter<'a> {
     fn new(sheet: &'a Sheet) -> Self {
         let layout = layout_sheet(sheet, &ApproxMeasure, false);
-        let topics = layout
-            .order
-            .iter()
-            .copied()
-            .filter(|id| !sheet.is_anchor(*id))
-            .collect();
+        let topics = exported_topics(sheet, &layout);
         let edge_targets = crate::board_export::connector_attachment_counts(sheet);
-        let connector_midpoints = if edge_targets.is_empty() {
-            HashMap::new()
-        } else {
-            thinoda_core::build_scene(sheet, &layout)
-                .items
-                .into_iter()
-                .filter_map(|item| match (item.id, item.geometry) {
-                    (
-                        thinoda_core::SceneId::Object(id),
-                        thinoda_core::scene::SceneGeometry::Polyline { points, .. },
-                    ) if edge_targets.contains_key(&id) => {
-                        thinoda_core::board::polyline_midpoint(&points).map(|point| (id, point))
+        let detached_fixed: HashSet<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector)
+                    if [
+                        (connector.from, connector.from_port),
+                        (connector.to, connector.to_port),
+                    ]
+                    .into_iter()
+                    .any(|(end, port)| {
+                        port.is_some()
+                            && matches!(end, Endpoint::Topic(id) if !topics.contains(&id))
+                    }) =>
+                {
+                    Some(object.id)
+                }
+                _ => None,
+            })
+            .collect();
+        let mut connector_midpoints = HashMap::new();
+        let mut detached_fixed_points = HashMap::new();
+        if !edge_targets.is_empty() || !detached_fixed.is_empty() {
+            for item in thinoda_core::build_scene(sheet, &layout).items {
+                if let (
+                    thinoda_core::SceneId::Object(id),
+                    thinoda_core::scene::SceneGeometry::Polyline { points, .. },
+                ) = (item.id, item.geometry)
+                {
+                    if edge_targets.contains_key(&id)
+                        && let Some(point) = thinoda_core::board::polyline_midpoint(&points)
+                    {
+                        connector_midpoints.insert(id, point);
                     }
-                    _ => None,
-                })
-                .collect()
-        };
+                    if detached_fixed.contains(&id)
+                        && let (Some(first), Some(last)) = (points.first(), points.last())
+                    {
+                        detached_fixed_points.insert(id, (*first, *last));
+                    }
+                }
+            }
+        }
         let mut writer = Self {
             sheet,
             out: String::new(),
@@ -3050,6 +3295,7 @@ impl<'a> PageWriter<'a> {
             object_zone: HashMap::new(),
             root_zone: HashMap::new(),
             connector_midpoints,
+            detached_fixed_points,
             groups: HashMap::new(),
             written_groups: HashSet::new(),
             written: HashSet::new(),
@@ -3482,7 +3728,40 @@ impl<'a> PageWriter<'a> {
                 }
                 style.push_str(&format!("strokeWidth={};", num(connector.width)));
                 common_keys(&mut style, &object.style, 0.0, object.locked, object.band);
-                let ends = [self.terminal(connector.from), self.terminal(connector.to)];
+                let mut ends = [self.terminal(connector.from), self.terminal(connector.to)];
+                for (side, port) in [connector.from_port, connector.to_port]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if port.is_some() && matches!(ends[side], Terminal::Point(_)) {
+                        if let Some(points) = self.detached_fixed_points.get(&object.id) {
+                            ends[side] =
+                                Terminal::Point(if side == 0 { points.0 } else { points.1 });
+                        } else {
+                            log::warn!(
+                                "draw.io fixed connector end {}:{side} has no resolved path",
+                                object.id
+                            );
+                        }
+                    }
+                }
+                for (port, terminal, prefix) in [
+                    (connector.from_port, &ends[0], "exit"),
+                    (connector.to_port, &ends[1], "entry"),
+                ] {
+                    if let Some(port) = port
+                        && matches!(terminal, Terminal::Cell(_))
+                    {
+                        style.push_str(&format!(
+                            "{prefix}X={};{prefix}Y={};{prefix}Dx={};{prefix}Dy={};{prefix}Perimeter={};",
+                            num(port.position.x),
+                            num(port.position.y),
+                            num(port.offset.x),
+                            num(port.offset.y),
+                            u8::from(port.perimeter)
+                        ));
+                    }
+                }
                 self.edge(
                     &cell_id,
                     &connector.label,

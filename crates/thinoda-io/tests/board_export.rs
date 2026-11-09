@@ -4,8 +4,8 @@
 use std::io::{Cursor, Read, Write};
 use thinoda_core::{
     CanvasConnector, CanvasObject, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
-    DrawioRectangleStencil, Endpoint, InkStroke, InkTool, PresentationSource, ShapeKind,
-    ShapeRounding, Sheet, SheetRootMode, Workbook,
+    ConnectorPort, DrawioRectangleStencil, Endpoint, InkStroke, InkTool, PresentationSource,
+    ShapeKind, ShapeRounding, Sheet, SheetRootMode, Workbook,
     board::{CanvasObjectKind, RootProjection},
     geometry::{Color, Rect, Vec2},
     outline::{project_to_outline, to_outline},
@@ -600,6 +600,51 @@ fn rectangle_sides_require_v20_and_aware_xmind_snapshots() {
         String::from_utf8(entry(&xmind, "metadata.json"))
             .unwrap()
             .contains("THINODA-XMIND-RECTANGLE-SIDES-1")
+    );
+}
+
+#[test]
+fn fixed_connector_ports_require_v22_and_aware_xmind_snapshots() {
+    let mut book = Workbook::new(Sheet::new("Ports", "Root"));
+    let shape = book
+        .active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(shape),
+        Endpoint::Point(Vec2::new(200.0, 0.0)),
+    );
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.25),
+        offset: Vec2::new(5.0, 0.0),
+        perimeter: false,
+    });
+    book.active_mut()
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    assert_eq!(required_native_version(&book), 22);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 22);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 3..22 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        assert!(import_bytes(Format::Thinoda, &forged).is_err(), "{version}");
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-FIXED-PORTS-1")
     );
 }
 

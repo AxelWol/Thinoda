@@ -28,6 +28,8 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::BoardSettingsDropped,
         ExportLoss::InlineTextDropped(16),
         ExportLoss::ConnectorAttachmentsDetached(17),
+        ExportLoss::FixedConnectorAttachmentsDetached(27),
+        ExportLoss::DrawioFixedConnectorPositionApproximated(28),
         ExportLoss::LegacyConnectorMarkersApproximated(18),
         ExportLoss::DrawioLabelAppearanceApproximated(19),
         ExportLoss::ConnectorLabelCompositingApproximated(20),
@@ -51,17 +53,14 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     for (line, count) in lines.iter().take(14).zip(2..=15) {
         assert!(line.starts_with(&format!("{count} — ")), "{line}");
     }
-    assert!(lines[15].starts_with("16 — "), "{}", lines[15]);
-    assert!(lines[16].starts_with("17 — "), "{}", lines[16]);
-    assert!(lines[17].starts_with("18 — "), "{}", lines[17]);
-    assert!(lines[18].starts_with("19 — "), "{}", lines[18]);
-    assert!(lines[19].starts_with("20 — "), "{}", lines[19]);
-    assert!(lines[20].starts_with("21 — "), "{}", lines[20]);
-    assert!(lines[21].starts_with("22 — "), "{}", lines[21]);
-    assert!(lines[22].starts_with("23 — "), "{}", lines[22]);
-    assert!(lines[23].starts_with("24 — "), "{}", lines[23]);
-    assert!(lines[24].starts_with("25 — "), "{}", lines[24]);
-    assert!(lines[25].starts_with("26 — "), "{}", lines[25]);
+    for count in 16..=28 {
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with(&format!("{count} — "))),
+            "missing count {count}: {lines:?}"
+        );
+    }
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -80,6 +79,8 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         (24, "Page background may differ in draw.io"),
         (25, "Cards may show folded corners in draw.io"),
         (26, "Double-ellipse appearance may differ in draw.io"),
+        (27, "Fixed connector attachments detached"),
+        (28, "Fixed connector positions may differ in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -139,6 +140,42 @@ fn drawio_label_appearance_loss_requires_export_consent() {
     let message = require_board_consent(&book, Format::DrawIo, &options, false).unwrap_err();
     assert!(message.contains(t("Label color or opacity may differ in draw.io")));
     assert!(require_board_consent(&book, Format::DrawIo, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn drawio_fixed_connector_position_loss_requires_localized_export_consent() {
+    use thinoda_core::{CanvasConnector, ConnectorPort, Endpoint};
+
+    let mut book = Workbook::default();
+    let target = book
+        .active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Star,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        ))
+        .unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(target),
+        Endpoint::Point(Vec2::new(200.0, 50.0)),
+    );
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 1.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    });
+    book.active_mut()
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let options = ExportOptions::default();
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message = require_board_consent(&book, format, &options, false).unwrap_err();
+        assert!(
+            message.contains(t("Fixed connector positions may differ in draw.io")),
+            "{message}"
+        );
+        assert!(require_board_consent(&book, format, &options, true).is_ok());
+    }
     assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
 }
 

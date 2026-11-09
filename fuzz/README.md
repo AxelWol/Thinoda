@@ -65,6 +65,8 @@ identity and the custom inner-outline inset on document and clipboard import.
 A flowchart-annotation seed exercises the transparent,
 open-sided bracket conversion. A flowchart-process seed covers both the
 rounded stencil warning and Thinoda's square-rectangle interchange marker.
+A fixed-ports seed covers attached points, offsets, perimeter flags and
+malformed constraints through file and clipboard import.
 A label-sizes seed exercises named-style font and alignment changes and folded
 connector labels through document and clipboard imports.
 An HTML-label seed exercises quoted attributes, named entities, hidden script

@@ -211,6 +211,14 @@ impl CanvasLayer {
         })
     }
 
+    /// Whether this layer needs fixed-connector-port-aware persistence.
+    pub fn has_fixed_connector_ports(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.from_port.is_some() || c.to_port.is_some())
+        })
+    }
+
     /// Whether this layer needs marker-aware persistence.
     pub fn has_connector_markers(&self) -> bool {
         self.objects.iter().any(|object| {
@@ -1091,6 +1099,23 @@ pub enum Endpoint {
     Point(Vec2),
 }
 
+/// A fixed attachment in the unrotated bounds of an endpoint target.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorPort {
+    pub position: Vec2,
+    pub offset: Vec2,
+    pub perimeter: bool,
+}
+
+impl ConnectorPort {
+    pub fn is_valid(self) -> bool {
+        (0.0..=1.0).contains(&self.position.x)
+            && (0.0..=1.0).contains(&self.position.y)
+            && valid_board_position(self.offset)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectorRoute {
@@ -1144,6 +1169,10 @@ pub struct ConnectorMarker {
 pub struct CanvasConnector {
     pub from: Endpoint,
     pub to: Endpoint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_port: Option<ConnectorPort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_port: Option<ConnectorPort>,
     #[serde(default)]
     pub route: ConnectorRoute,
     /// Explicit bend points or curve controls in sheet coordinates.
@@ -1179,6 +1208,10 @@ pub struct CanvasConnector {
 struct StoredCanvasConnector {
     from: Endpoint,
     to: Endpoint,
+    #[serde(default)]
+    from_port: Option<ConnectorPort>,
+    #[serde(default)]
+    to_port: Option<ConnectorPort>,
     #[serde(default)]
     route: ConnectorRoute,
     #[serde(default)]
@@ -1230,9 +1263,16 @@ impl<'de> Deserialize<'de> for CanvasConnector {
         {
             return Err(serde::de::Error::custom("invalid connector marker fill"));
         }
+        if !valid_connector_port(stored.from, stored.from_port)
+            || !valid_connector_port(stored.to, stored.to_port)
+        {
+            return Err(serde::de::Error::custom("invalid fixed connector port"));
+        }
         Ok(Self {
             from: stored.from,
             to: stored.to,
+            from_port: stored.from_port,
+            to_port: stored.to_port,
             route: stored.route,
             waypoints: stored.waypoints,
             arrow_start: stored.arrow_start,
@@ -1267,6 +1307,8 @@ impl CanvasConnector {
         Self {
             from,
             to,
+            from_port: None,
+            to_port: None,
             route: ConnectorRoute::Straight,
             waypoints: Arc::default(),
             arrow_start: false,
@@ -1300,6 +1342,10 @@ impl CanvasConnector {
             self.end_marker_unfilled = false;
         }
     }
+}
+
+fn valid_connector_port(end: Endpoint, port: Option<ConnectorPort>) -> bool {
+    port.is_none_or(|port| !matches!(end, Endpoint::Point(_)) && port.is_valid())
 }
 
 /// Whether a numeric draw.io marker size can be represented safely.
@@ -1606,6 +1652,10 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
         }
         CanvasObjectKind::Connector(c) => {
             valid_text(&c.label, "connector label")?;
+            if !valid_connector_port(c.from, c.from_port) || !valid_connector_port(c.to, c.to_port)
+            {
+                return Err(format!("connector {id} has an invalid fixed port"));
+            }
             if !valid_width(c.width) {
                 return Err(format!("connector {id} has an invalid width"));
             }
@@ -1706,12 +1756,15 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             return Err(format!("duplicate canvas group id {}", g.id));
         }
     }
-    let mut ids = HashSet::new();
+    let mut ids = HashMap::new();
     let mut group_counts: HashMap<CanvasGroupId, usize> = HashMap::new();
     let mut total_points = 0usize;
     let mut total_waypoints = 0usize;
     for o in &canvas.objects {
-        if !ids.insert(o.id) {
+        if ids
+            .insert(o.id, matches!(o.kind, CanvasObjectKind::Shape { .. }))
+            .is_some()
+        {
             return Err(format!("duplicate canvas object id {}", o.id));
         }
         validate_object(o)?;
@@ -1778,13 +1831,16 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     }
     for o in &canvas.objects {
         if let CanvasObjectKind::Connector(c) = &o.kind {
-            for end in [c.from, c.to] {
+            for (end, port) in [(c.from, c.from_port), (c.to, c.to_port)] {
                 match end {
                     Endpoint::Topic(t) if !sheet.contains(t) || sheet.is_anchor(t) => {
                         return Err(format!("connector {} references missing topic {t}", o.id));
                     }
-                    Endpoint::Object(x) if !ids.contains(&x) => {
+                    Endpoint::Object(x) if !ids.contains_key(&x) => {
                         return Err(format!("connector {} references missing object {x}", o.id));
+                    }
+                    Endpoint::Object(x) if port.is_some() && ids.get(&x) == Some(&false) => {
+                        return Err(format!("fixed connector port target {x} is not a shape"));
                     }
                     _ => {}
                 }
@@ -2414,8 +2470,9 @@ impl Sheet {
                     "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
                 ));
             }
-            for end in [c.from, c.to] {
+            for (end, port) in [(c.from, c.from_port), (c.to, c.to_port)] {
                 self.check_endpoint(end)?;
+                self.check_connector_port_target(end, port)?;
             }
         }
         let id = object.id;
@@ -2436,6 +2493,23 @@ impl Sheet {
         }
     }
 
+    fn check_connector_port_target(
+        &self,
+        end: Endpoint,
+        port: Option<ConnectorPort>,
+    ) -> Result<(), String> {
+        if port.is_some()
+            && let Endpoint::Object(id) = end
+            && !self
+                .canvas
+                .object(id)
+                .is_some_and(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        {
+            return Err(format!("fixed connector port target {id} is not a shape"));
+        }
+        Ok(())
+    }
+
     fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
         for id in ids {
             if self.canvas.object(*id).is_none() {
@@ -2452,8 +2526,9 @@ impl Sheet {
         Ok(())
     }
 
-    /// Removes objects. Attached connectors keep a free end at the removed shape's
-    /// centre or connector's path midpoint; emptied groups are dissolved.
+    /// Removes objects. Attached connectors keep a free end at their fixed point,
+    /// the removed shape's centre, or the connector's path midpoint; emptied
+    /// groups are dissolved.
     pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> Result<(), String> {
         if ids.is_empty() {
             return Err("nothing selected".into());
@@ -2475,6 +2550,29 @@ impl Sheet {
                 _ => None,
             })
             .collect();
+        let fixed_connectors: HashSet<_> = self
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| !removed.contains(&object.id))
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector)
+                    if [
+                        (connector.from, connector.from_port),
+                        (connector.to, connector.to_port),
+                    ]
+                    .into_iter()
+                    .any(|(end, port)| {
+                        port.is_some()
+                            && matches!(end, Endpoint::Object(id) if removed.contains(&id))
+                    }) =>
+                {
+                    Some(object.id)
+                }
+                _ => None,
+            })
+            .collect();
+        let mut fixed_points = HashMap::new();
         let centers = if referenced.is_empty() {
             HashMap::new()
         } else {
@@ -2483,8 +2581,50 @@ impl Sheet {
             if centers.len() != referenced.len() {
                 return Err("cannot resolve a deleted connector target".into());
             }
+            fixed_points =
+                crate::scene::resolved_connector_endpoints(self, &layout, &fixed_connectors);
+            if fixed_points.len() != fixed_connectors.len() {
+                return Err("cannot resolve a fixed connector port before deletion".into());
+            }
             centers
         };
+        let mut detached = HashMap::new();
+        for object in &self.canvas.objects {
+            if removed.contains(&object.id) {
+                continue;
+            }
+            if let CanvasObjectKind::Connector(connector) = &object.kind {
+                for (side, (end, port)) in [
+                    (connector.from, connector.from_port),
+                    (connector.to, connector.to_port),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if let Endpoint::Object(target) = end
+                        && let Some(center) = centers.get(&target)
+                    {
+                        let point = if port.is_some() {
+                            let points = fixed_points
+                                .get(&object.id)
+                                .ok_or("cannot resolve a fixed connector port before deletion")?;
+                            if side == 0 { points.0 } else { points.1 }
+                        } else {
+                            *center
+                        };
+                        if !valid_position(point) {
+                            return Err(if port.is_some() {
+                                "fixed connector port exceeds supported limits"
+                            } else {
+                                "deleted connector endpoint is outside the board"
+                            }
+                            .into());
+                        }
+                        detached.insert((object.id, side), point);
+                    }
+                }
+            }
+        }
         self.canvas.objects.retain(|o| !removed.contains(&o.id));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
@@ -2494,11 +2634,14 @@ impl Sheet {
         }
         for o in &mut self.canvas.objects {
             if let CanvasObjectKind::Connector(c) = &mut o.kind {
-                for end in [&mut c.from, &mut c.to] {
-                    if let Endpoint::Object(x) = *end
-                        && let Some(center) = centers.get(&x)
-                    {
-                        *end = Endpoint::Point(*center);
+                for (side, (end, port)) in
+                    [(&mut c.from, &mut c.from_port), (&mut c.to, &mut c.to_port)]
+                        .into_iter()
+                        .enumerate()
+                {
+                    if let Some(point) = detached.get(&(o.id, side)) {
+                        *end = Endpoint::Point(*point);
+                        *port = None;
                     }
                 }
             }
@@ -2815,8 +2958,9 @@ impl Sheet {
                     "connectors exceed {MAX_TOTAL_CONNECTOR_WAYPOINTS} waypoints per sheet"
                 ));
             }
-            for end in [c.from, c.to] {
+            for (end, port) in [(c.from, c.from_port), (c.to, c.to_port)] {
                 self.check_endpoint(end)?;
+                self.check_connector_port_target(end, port)?;
             }
         }
         if let CanvasObjectKind::Ink(ink) = &object.kind {
@@ -3184,14 +3328,14 @@ impl Sheet {
         })
     }
 
-    /// Converts connector ends whose topic or object was deleted into free points at the
-    /// target's centre, or a connector's path midpoint, in `before` (the sheet state
-    /// before the deletion). Used by every deletion path so a deletion and its endpoint
-    /// conversion form one edit.
-    /// Returns the number of converted ends.
-    pub fn fix_dangling_endpoints(&mut self, before: &Sheet) -> usize {
+    /// Converts connector ends whose topic or object was deleted into free points
+    /// at their fixed point, the target's centre, or a connector's path midpoint
+    /// in `before` (the sheet state before deletion).
+    /// Returns the number of converted ends. No ends are changed if a fixed
+    /// attachment cannot be represented as a valid free point.
+    pub fn fix_dangling_endpoints(&mut self, before: &Sheet) -> Result<usize, String> {
         if !self.has_dangling_endpoints() {
-            return 0;
+            return Ok(0);
         }
         let layout = crate::layout::layout_sheet(before, &crate::layout::ApproxMeasure, false);
         let objects: HashSet<_> = self.canvas.objects.iter().map(|o| o.id).collect();
@@ -3212,12 +3356,42 @@ impl Sheet {
         let centers = crate::scene::resolved_object_centers(before, &layout, &missing_objects);
         let mut converted = 0;
         let alive_topic = |t: TopicId| self.contains(t) && !self.is_anchor(t);
+        let fixed_connectors: HashSet<_> = self
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector)
+                    if [
+                        (connector.from, connector.from_port),
+                        (connector.to, connector.to_port),
+                    ]
+                    .into_iter()
+                    .any(|(end, port)| {
+                        port.is_some()
+                            && match end {
+                                Endpoint::Topic(id) => !alive_topic(id),
+                                Endpoint::Object(id) => !objects.contains(&id),
+                                Endpoint::Point(_) => false,
+                            }
+                    }) =>
+                {
+                    Some(object.id)
+                }
+                _ => None,
+            })
+            .collect();
+        let fixed_points =
+            crate::scene::resolved_connector_endpoints(before, &layout, &fixed_connectors);
         let mut ends = Vec::new();
         for (index, o) in self.canvas.objects.iter().enumerate() {
             let CanvasObjectKind::Connector(c) = &o.kind else {
                 continue;
             };
-            for (side, end) in [c.from, c.to].into_iter().enumerate() {
+            for (side, (end, port)) in [(c.from, c.from_port), (c.to, c.to_port)]
+                .into_iter()
+                .enumerate()
+            {
                 let center = match end {
                     Endpoint::Topic(t) if !alive_topic(t) => Some(
                         crate::scene::topic_anchor_rect(before, &layout, t)
@@ -3231,18 +3405,35 @@ impl Sheet {
                     _ => None,
                 };
                 if let Some(center) = center {
-                    ends.push((index, side, center));
+                    let point = if port.is_some() {
+                        let points = fixed_points
+                            .get(&o.id)
+                            .ok_or("cannot resolve a fixed connector port before deletion")?;
+                        let point = if side == 0 { points.0 } else { points.1 };
+                        if !valid_position(point) {
+                            return Err("fixed connector port exceeds supported limits".into());
+                        }
+                        point
+                    } else {
+                        center
+                    };
+                    ends.push((index, side, point));
                 }
             }
         }
         for (index, side, center) in ends {
             if let CanvasObjectKind::Connector(c) = &mut self.canvas.objects[index].kind {
-                let end = if side == 0 { &mut c.from } else { &mut c.to };
+                let (end, port) = if side == 0 {
+                    (&mut c.from, &mut c.from_port)
+                } else {
+                    (&mut c.to, &mut c.to_port)
+                };
                 *end = Endpoint::Point(center);
+                *port = None;
                 converted += 1;
             }
         }
-        converted
+        Ok(converted)
     }
 
     /// Zone of a floating root, if any.

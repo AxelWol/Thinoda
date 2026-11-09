@@ -737,8 +737,13 @@ those system-owned controls. WinGet publishing remains paused.
   filled or hollow independently; open arrows, half-circles and bars remain
   open and retain their fill setting when changed directly to a fillable draw.io marker.
   Unsupported marker shapes, sizes outside
-  that range, unsupported fill values, and fixed-port hints trigger a formatting
-  warning. Existing Thinoda triangle arrows retain
+  that range, and unsupported fill values trigger a formatting warning.
+  Supported fixed connector points, offsets and perimeter settings are retained
+  for attached shapes and topics. Shift-drag an endpoint onto a target to fix
+  it; Enter or Space toggles a focused endpoint. Unsupported constraints and
+  possible position differences are reported. Export requires consent if a
+  fixed point may move or if an unexported collapsed topic detaches it.
+  Existing Thinoda triangle arrows retain
   their appearance in native files; exporting them for draw.io warns that their
   appearance is approximated.
   Import converts supported CSS named, RGB/RGBA, HSL/HSLA, HWB and hex colors

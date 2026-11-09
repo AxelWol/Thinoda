@@ -255,8 +255,11 @@ impl Sheet {
                 self.detach_subtree(id);
             }
         }
-        if let Some(before) = before {
-            self.fix_dangling_endpoints(&before);
+        if let Some(before) = before
+            && let Err(error) = self.fix_dangling_endpoints(&before)
+        {
+            *self = before;
+            return Err(EditError::Invalid(error));
         }
         Ok(next_sel
             .filter(|s| self.contains(*s))

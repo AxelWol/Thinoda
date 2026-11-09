@@ -201,8 +201,9 @@ Rules (each backed by a test):
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
   oval markers, v17 adds half-circle markers, v18 adds bar markers, v19 adds
-  adjustable rectangle corners, v20 adds rectangle outline sides, and v21 adds
-  double ellipses. Every later field or passthrough representation that a v21
+  adjustable rectangle corners, v20 adds rectangle outline sides, v21 adds
+  double ellipses, and v22 adds fixed connector attachments. Every later field
+  or passthrough representation that a v22
   reader cannot preserve must require a higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
@@ -348,9 +349,12 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
 - **Floating vs fixed ends**: drop on the shape body/outline → *floating* (end slides
   along the perimeter, outline highlighted); drop on a connection point (×) → *fixed*
   port. Endpoint handles show state like draw.io (filled = connected, outline-highlight =
-  floating, × = fixed point); Alt while dragging toggles; connection points (`×`) appear
+  floating, × = fixed point); connection points (`×`) appear
   on hover over any shape while dragging an end (built-ins: 4/8/16 default points per
-  shape kind; stencils: `<constraint>`s).
+  shape kind; stencils: `<constraint>`s). The current partial implementation uses
+  Shift-drag onto a shape or topic, or Enter/Space on a focused endpoint, to
+  toggle an editable fixed attachment; named/default port sets and hover affordances
+  remain planned.
 - **Direction arrows on hover** (light-blue ↑→↓←): click = clone + connect in that
   direction (respecting spacing/grid, avoiding overlaps); drag = draw connector, drop on a
   shape/port to connect or on empty space to create a connected clone; hold/hover on an
@@ -427,8 +431,9 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   34-marker grid, sizes, line jumps, waypoint reset), Data (link, tooltip, properties,
   tags). Advanced: "draw.io style" text field, validated on apply, writes through the
   ownership table (3.1.1).
-- **Connectors**: waypoint handles (drag to add/move, double-click remove), ports on
-  hover, fixed vs floating (Alt toggles), Tab between ports.
+- **Connectors**: waypoint handles (drag to add/move, double-click remove); fixed
+  attachments use Shift-drag or Enter/Space today. Explicit named/default ports
+  on hover and Tab between ports remain planned.
 - **Layers panel**: compact side panel (View menu + board toolbar), visibility/lock,
   rename, reorder, move selection to layer; hidden when only the default layer exists.
 - **Clipboard**: copy also as draw.io XML; paste of draw.io XML / compressed payloads /
@@ -767,8 +772,8 @@ connections arrive in Phase 8 without changing the gestures).
   and thin markers, v13 covers marker sizes, v14 covers marker fill overrides,
   v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
   markers, v18 covers bar markers, v19 covers adjustable rectangle corners,
-  v20 covers rectangle outline sides, v21 covers double ellipses, and
-  subsequent additions need a higher version.
+  v20 covers rectangle outline sides, v21 covers double ellipses, v22 covers
+  fixed connector attachments, and subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -815,8 +820,8 @@ connections arrive in Phase 8 without changing the gestures).
   corpus file; Thinoda-native sheet → draw.io → Thinoda stable.
 
 ### Phase 8 — Connector editing UX (`p8-connectors`)
-- Remaining 3.4.1a items that need further model extensions: fixed connection points (×) incl.
-  default per-kind point sets and stencil constraints, floating/fixed toggle (Alt),
+- Remaining 3.4.1a items that need further model extensions: explicit connection
+  point handles (×), default per-kind point sets and stencil constraints,
   orthogonal segment dragging, all route styles in the edge
   toolbar, 34-marker picker, line jumps, multiple edge labels, smart guides; direction
   arrows/quick-shape popover become port-aware; stencil perimeters; persisted
@@ -2651,6 +2656,63 @@ test passed when run separately. The current supplied corpus passed all 88
 files and all five corpus tests. Native all-target and WebAssembly Clippy,
 formatting and diff checks passed. These checks do not close the independent
 label-appearance, device, Office or full PDF acceptance work above.
+
+**Fixed connector attachments (partial Phases 3, 6 and 8) — critique.**
+Connectors can retain a normalized fixed point, offset and perimeter flag on
+each attached shape or topic. Shift-drag fixes a dropped endpoint; dragging
+without Shift returns it to automatic attachment. A focused endpoint also
+supports Enter/Space, arrow-key movement and Ctrl/Command-arrow target cycling.
+The accessibility control describes the state and gesture. Edits, target
+deletion and clipboard remapping remain undoable; copying without a target
+detaches the end at its resolved visible point. Invalid or unrepresentable
+deletion points fail the edit atomically instead of silently losing the port.
+
+Native files using fixed attachments require v22; complete-sheet and board
+clipboard payloads use v18 and v15, and recovery and private XMind snapshots
+use new port-aware envelopes. Older envelopes that claim to contain ports are
+rejected. Files without ports retain their previous version. The public
+`Sheet::fix_dangling_endpoints` return type changes from `usize` to
+`Result<usize, String>` so callers can handle an unrepresentable attachment.
+The new public `CanvasConnector` and `BoardLabels` fields and `ExportLoss` and
+`IoError` variants also affect downstream struct literals and exhaustive
+matches. These are Rust source API changes, not a native-file migration.
+
+**Rubber-duck findings.** The first keyboard implementation preserved the
+perimeter flag while nudging an already projected point; moving inward snapped
+back to the old boundary. Direct movement now pins the visible point without
+projection, and undo restores the original metadata. Import warns when source
+orientation, flips, perimeter, or resized image/card/waypoint geometry can
+change the attachment. Export and copy report potentially repositioned or
+detached ends; strict draw.io export requires explicit consent, including when
+other connector-detachment losses occur at the same time. Import and export
+preflight index fixed targets, and board validation indexes object kinds, so
+these checks do not add a per-port linear lookup. This does not establish a
+general large-document performance bound for the existing importer or writer.
+
+The published editor's rectangular, elliptical and rhombus projections were
+checked numerically, including offsets, rotation and points close to an ellipse
+centre. For the latter, a separate editor probe at 50%, 100%, 200% and 400%
+zoom produced the same graph-space results; the ellipse implementation
+unscales before truncating. Source and target ports on all tested straight,
+elbow and curved routes use the common scene geometry. The supplied corpus
+passed all 88 files and checked 547 fixed ports across the draw.io and native
+round trips, accounting for reported detachments and explicitly consenting to
+strict attachment losses. A dedicated importer seed covers valid and malformed
+port constraints; deterministic style and byte mutations exercise the same
+file and clipboard paths, and the fuzz dictionary includes port keys.
+
+After the final code edits, the five affected library suites passed 2,212 tests
+with four ignored, and the export, corpus and importer-seed integration suites
+passed 76 tests with three ignored. Native and WebAssembly Clippy, formatting
+and a Windows build also passed. The review build uses a separate profile.
+
+These are supported subsets, not full draw.io parity. Unsupported stencil and
+shape perimeters, orientation/flips, named ports, port constraints and
+advanced routing may still differ. The import warning is not preserved as source
+metadata for a later export; keep the original diagram. Localized accessibility
+metadata and simulated activation are covered, but physical-device and
+screen-reader acceptance remain open. The separate Office, PDF-viewer and
+four-target long fuzz campaign gates also remain open.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

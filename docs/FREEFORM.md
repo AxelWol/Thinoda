@@ -47,6 +47,29 @@ existing straight, elbow and curve routes. Exact draw.io orthogonal routing
 and segment dragging are not yet available; see
 [DRAWIO.md](DRAWIO.md) for conversion warnings and remaining work.
 
+### Fixed connector attachments
+
+Select a connector and Shift-drag an endpoint onto a shape or topic to fix the
+attachment at that position. Drag without Shift to reconnect normally and
+return to automatic attachment. A focused endpoint can also be fixed or reset
+with Enter or Space; arrow keys adjust a fixed point, while Ctrl+arrows
+(Command+arrows on macOS) cycle targets. Alt+arrows still duplicate the
+selection. Moving a projected point with an arrow pins its visible position
+without further perimeter projection. These edits are undoable and the
+endpoint control describes them to assistive technology.
+
+Supported draw.io fixed points use normalized positions, optional offsets and
+perimeter projection. Native files with fixed attachments require format v22;
+sheet and board clipboard use v18 and v15, with matching recovery and private
+XMind envelopes. Copying an endpoint without its target detaches it at its
+visible location. Import warns when a source perimeter, orientation or changed
+target geometry may alter that position. draw.io export requires consent if
+the position may differ or a fixed attachment points to a collapsed topic that
+cannot be exported; a detached endpoint remains at its visible location.
+Rectangle, ellipse and diamond projections follow the tested draw.io subset;
+named ports, directional constraints, and exact perimeter and routing parity
+for every draw.io shape remain incomplete.
+
 ### Imported rectangle corners
 
 Supported draw.io mockup and iOS rectangles retain their absolute corner radius.

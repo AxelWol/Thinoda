@@ -750,6 +750,11 @@ impl Sheet {
         self.canvas.has_connector_waypoints()
     }
 
+    /// Whether the sheet needs fixed-connector-port-aware persistence.
+    pub fn has_fixed_connector_ports(&self) -> bool {
+        self.canvas.has_fixed_connector_ports()
+    }
+
     /// Whether the sheet needs marker-aware persistence.
     pub fn has_connector_markers(&self) -> bool {
         self.canvas.has_connector_markers()
@@ -2283,6 +2288,11 @@ impl Workbook {
     /// Whether any sheet needs waypoint-aware persistence.
     pub fn has_connector_waypoints(&self) -> bool {
         self.sheets.iter().any(Sheet::has_connector_waypoints)
+    }
+
+    /// Whether any sheet needs fixed-connector-port-aware persistence.
+    pub fn has_fixed_connector_ports(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_fixed_connector_ports)
     }
 
     /// Whether any sheet needs marker-aware persistence.

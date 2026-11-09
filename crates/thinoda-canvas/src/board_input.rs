@@ -4,8 +4,8 @@ use super::*;
 use crate::actions::{BoardAction, apply_board_action, board_actions};
 use std::collections::{HashMap, HashSet, VecDeque};
 use thinoda_core::{
-    CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, EditError, EditResult,
-    Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
+    CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorPort, EditError,
+    EditResult, Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
     board::{
         BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
         rotate_around, rotated_corners, shape_geometry_with_style,
@@ -1492,6 +1492,7 @@ fn set_endpoint(
     id: CanvasObjectId,
     start: bool,
     endpoint: Endpoint,
+    port: Option<ConnectorPort>,
 ) -> EditResult<()> {
     if !board_actions::member_is_movable(doc.sheet(), BoardMember::Object(id)) {
         return Err(EditError::Invalid("connector is locked".into()));
@@ -1500,11 +1501,122 @@ fn set_endpoint(
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             if start {
                 connector.from = endpoint;
+                connector.from_port = port;
             } else {
                 connector.to = endpoint;
+                connector.to_port = port;
             }
         }
     })
+}
+
+fn connector_end(
+    sheet: &Sheet,
+    id: CanvasObjectId,
+    start: bool,
+) -> Option<(Endpoint, Option<ConnectorPort>)> {
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(id)?.kind else {
+        return None;
+    };
+    Some(if start {
+        (connector.from, connector.from_port)
+    } else {
+        (connector.to, connector.to_port)
+    })
+}
+
+fn port_target(sheet: &Sheet, scene: &Scene, end: Endpoint) -> Option<(thinoda_core::Rect, f32)> {
+    match end {
+        Endpoint::Object(id) => {
+            let object = sheet.canvas.object(id)?;
+            matches!(object.kind, CanvasObjectKind::Shape { .. })
+                .then_some((object.rect, object.rotation))
+        }
+        Endpoint::Topic(mut id) => loop {
+            if sheet.is_anchor(id) {
+                return None;
+            }
+            if let Some(SceneItem {
+                geometry: SceneGeometry::Rect { rect, rotation },
+                ..
+            }) = scene.item(SceneId::Topic(id))
+            {
+                return Some((*rect, *rotation));
+            }
+            id = sheet.topic(id)?.parent?;
+        },
+        Endpoint::Point(_) => None,
+    }
+}
+
+fn fixed_port_at(
+    sheet: &Sheet,
+    scene: &Scene,
+    end: Endpoint,
+    point: Vec2,
+    previous: Option<ConnectorPort>,
+) -> EditResult<Option<ConnectorPort>> {
+    if matches!(end, Endpoint::Point(_)) {
+        return Ok(None);
+    }
+    let (rect, rotation) = port_target(sheet, scene, end).ok_or_else(|| {
+        EditError::Invalid("fixed connector ports require a shape or topic".into())
+    })?;
+    let local = rotate_around(point, rect.center(), -rotation);
+    let old_offset = previous.map_or(Vec2::ZERO, |port| port.offset);
+    let position_axis = |value: f32, min: f32, size: f32, offset: f32| {
+        if size.abs() <= f32::EPSILON {
+            0.5
+        } else {
+            ((value - min - offset) / size).clamp(0.0, 1.0)
+        }
+    };
+    let position = Vec2::new(
+        position_axis(local.x, rect.min.x, rect.size.x, old_offset.x),
+        position_axis(local.y, rect.min.y, rect.size.y, old_offset.y),
+    );
+    let port = ConnectorPort {
+        position,
+        offset: Vec2::new(
+            local.x - rect.min.x - rect.size.x * position.x,
+            local.y - rect.min.y - rect.size.y * position.y,
+        ),
+        // A direct move pins the visible point rather than projecting it again.
+        perimeter: false,
+    };
+    if !port.is_valid() {
+        return Err(EditError::Invalid(
+            "fixed connector port exceeds supported limits".into(),
+        ));
+    }
+    Ok(Some(port))
+}
+
+fn toggle_fixed_endpoint(
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    control: Control,
+    out: &mut CanvasOutput,
+) {
+    let SceneId::Object(id) = control.item else {
+        return;
+    };
+    let start = control.kind == ControlKind::From;
+    let Some((end, current)) = connector_end(doc.sheet(), id, start) else {
+        return;
+    };
+    if matches!(end, Endpoint::Point(_)) || !prepare_edit(doc, view, out) {
+        return;
+    }
+    let port = if current.is_some() {
+        Ok(None)
+    } else {
+        fixed_port_at(doc.sheet(), scene, end, control.point, None)
+    };
+    if let Err(error) = port.and_then(|port| set_endpoint(doc, id, start, end, port)) {
+        out.error = Some(error);
+    }
 }
 
 enum WaypointEdit {
@@ -2227,6 +2339,15 @@ fn keyboard_control(
         activate_waypoint_insertion(ui, doc, view, out, control);
         return;
     }
+    if matches!(control.kind, ControlKind::From | ControlKind::To)
+        && ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter)
+                || input.consume_key(Modifiers::NONE, Key::Space)
+        })
+    {
+        toggle_fixed_endpoint(doc, view, scene, control, out);
+        return;
+    }
     // Let the canvas own Alt+arrow duplication/rotation even when a handle is
     // focused. `consume_key` otherwise accepts extra Alt modifiers.
     if alt_arrow_pressed(ui) {
@@ -2274,6 +2395,26 @@ fn keyboard_control(
             let SceneId::Object(id) = control.item else {
                 return;
             };
+            let start = control.kind == ControlKind::From;
+            if !modifiers.command
+                && let Some((end, Some(previous))) = connector_end(doc.sheet(), id, start)
+            {
+                if !prepare_edit(doc, view, out) {
+                    return;
+                }
+                let result = fixed_port_at(
+                    doc.sheet(),
+                    scene,
+                    end,
+                    control.point + delta,
+                    Some(previous),
+                )
+                .and_then(|port| set_endpoint(doc, id, start, end, port));
+                if let Err(error) = result {
+                    out.error = Some(error);
+                }
+                return;
+            }
             let endpoint = if modifiers.command {
                 let choices: Vec<_> = scene
                     .items
@@ -2311,7 +2452,7 @@ fn keyboard_control(
             } else {
                 Endpoint::Point(control.point + delta)
             };
-            set_endpoint(doc, id, control.kind == ControlKind::From, endpoint).map(|()| true)
+            set_endpoint(doc, id, start, endpoint, None).map(|()| true)
         }
         ControlKind::Waypoint(index) | ControlKind::InsertWaypoint(index, _) => {
             let SceneId::Object(id) = control.item else {
@@ -2380,9 +2521,17 @@ fn interact_controls(
             Sense::click_and_drag() | Sense::FOCUSABLE
         };
         let response = ui.interact(rect, control_id(control), sense);
-        let label = control_label(view, control.kind);
+        let mut label = control_label(view, control.kind);
+        if matches!(control.kind, ControlKind::From | ControlKind::To)
+            && let SceneId::Object(id) = control.item
+            && connector_end(doc.sheet(), id, control.kind == ControlKind::From)
+                .is_some_and(|(_, port)| port.is_some())
+        {
+            label = format!("{label}, {}", view.board_labels.fixed_attachment);
+        }
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
         let hint = match control.kind {
+            ControlKind::From | ControlKind::To => Some(&view.board_labels.connector_end_hint),
             ControlKind::Waypoint(_) => Some(&view.board_labels.waypoint_hint),
             ControlKind::InsertWaypoint(_, _) => Some(&view.board_labels.insert_waypoint_hint),
             _ => None,
@@ -2517,6 +2666,11 @@ fn interact_controls(
             })
         {
             match control.kind {
+                ControlKind::From | ControlKind::To => {
+                    response.request_focus();
+                    toggle_fixed_endpoint(doc, view, scene, control, out);
+                    return true;
+                }
                 ControlKind::InsertWaypoint(_, _) => {
                     activate_waypoint_insertion(ui, doc, view, out, control);
                     return true;
@@ -2582,8 +2736,8 @@ fn update_gesture(
                     pos,
                     button: PointerButton::Primary,
                     pressed: false,
-                    ..
-                } => release = Some(*pos),
+                    modifiers,
+                } => release = Some((*pos, *modifiers)),
                 egui::Event::PointerGone if release.is_none() => canceled = true,
                 egui::Event::WindowFocused(false)
                 | egui::Event::Touch {
@@ -2595,6 +2749,8 @@ fn update_gesture(
         }
         (release, canceled)
     });
+    let release_modifiers = release.map_or(Modifiers::NONE, |(_, modifiers)| modifiers);
+    let release = release.map(|(point, _)| point);
     let pointer = release.or(pointer);
     let changed = drag.guard.changed(doc, view);
     drag.canceled |= !enabled
@@ -2765,7 +2921,13 @@ fn update_gesture(
                 }
                 GestureKind::Endpoint { id, start, point } => {
                     let end = endpoint_at(doc.sheet(), scene, point, Some(id));
-                    set_endpoint(doc, id, start, end).map(|()| true)
+                    let port = if release_modifiers.shift {
+                        fixed_port_at(doc.sheet(), scene, end, point, None)
+                    } else {
+                        Ok(None)
+                    };
+                    port.and_then(|port| set_endpoint(doc, id, start, end, port))
+                        .map(|()| true)
                 }
                 GestureKind::Waypoint {
                     id,

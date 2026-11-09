@@ -219,6 +219,16 @@ fn localize_model_error_in(language: Lang, error: &str) -> &str {
         }
         "connector is locked" => t_in(language, "Connector is locked."),
         "connector no longer exists" => t_in(language, "Connector no longer exists."),
+        "fixed connector ports require a shape or topic" => {
+            t_in(language, "Fixed connector ports require a shape or topic.")
+        }
+        "fixed connector port exceeds supported limits" => {
+            t_in(language, "Fixed connector port exceeds supported limits.")
+        }
+        "cannot resolve a fixed connector port before deletion" => t_in(
+            language,
+            "Cannot preserve the fixed connector attachment before deletion.",
+        ),
         "connector waypoint no longer exists" => {
             t_in(language, "Connector waypoint no longer exists.")
         }
@@ -522,6 +532,14 @@ const DE: &[(&str, &str)] = &[
         "Verbindungen zwischen Verbindungslinien gelöst",
     ),
     (
+        "Fixed connector attachments detached",
+        "Feste Verbindungspunkte gelöst",
+    ),
+    (
+        "Fixed connector positions may differ in draw.io",
+        "Feste Verbindungspunkte können in draw.io anders positioniert sein",
+    ),
+    (
         "Label color or opacity may differ in draw.io",
         "Farbe oder Deckkraft der Beschriftung können in draw.io abweichen",
     ),
@@ -669,6 +687,23 @@ const DE: &[(&str, &str)] = &[
     ("Locked", "Gesperrt"),
     ("From", "Von"),
     ("To", "Nach"),
+    ("Fixed attachment", "Fester Verbindungspunkt"),
+    (
+        "Drag to reconnect; Shift-drag onto a shape or topic fixes the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS).",
+        "Zum Neuverbinden ziehen; mit Umschalt auf eine Form oder ein Thema ziehen, um den Verbindungspunkt zu fixieren. Eingabe schaltet die Fixierung um; Pfeiltasten verschieben einen festen Punkt, Strg+Pfeiltasten wechseln das Ziel (Befehlstaste auf macOS).",
+    ),
+    (
+        "Fixed connector ports require a shape or topic.",
+        "Feste Verbindungspunkte benötigen eine Form oder ein Thema.",
+    ),
+    (
+        "Fixed connector port exceeds supported limits.",
+        "Der feste Verbindungspunkt überschreitet die zulässigen Grenzen.",
+    ),
+    (
+        "Cannot preserve the fixed connector attachment before deletion.",
+        "Der feste Verbindungspunkt kann vor dem Löschen nicht erhalten werden.",
+    ),
     ("Free point", "Freier Punkt"),
     ("Resize board item", "Größe des Board-Elements ändern"),
     ("Rotate board item", "Board-Element drehen"),
@@ -4249,6 +4284,18 @@ mod tests {
             ("connector is locked", "Connector is locked."),
             ("connector no longer exists", "Connector no longer exists."),
             (
+                "fixed connector ports require a shape or topic",
+                "Fixed connector ports require a shape or topic.",
+            ),
+            (
+                "fixed connector port exceeds supported limits",
+                "Fixed connector port exceeds supported limits.",
+            ),
+            (
+                "cannot resolve a fixed connector port before deletion",
+                "Cannot preserve the fixed connector attachment before deletion.",
+            ),
+            (
                 "connector waypoint no longer exists",
                 "Connector waypoint no longer exists.",
             ),
@@ -4804,6 +4851,11 @@ mod tests {
             "Locked",
             "From",
             "To",
+            "Fixed attachment",
+            "Drag to reconnect; Shift-drag onto a shape or topic fixes the attachment. Press Enter to toggle fixed; arrows move a fixed point, Ctrl+arrows cycle targets (Command on macOS).",
+            "Fixed connector ports require a shape or topic.",
+            "Fixed connector port exceeds supported limits.",
+            "Cannot preserve the fixed connector attachment before deletion.",
             "Free point",
             "Resize board item",
             "Rotate board item",
@@ -5133,6 +5185,8 @@ mod tests {
             "Inline card text and list formatting omitted",
             "Mind-map topics and links flattened to shapes",
             "Connector-to-connector attachments detached",
+            "Fixed connector attachments detached",
+            "Fixed connector positions may differ in draw.io",
             "Label color or opacity may differ in draw.io",
             "Rectangle colors or automatic outlines may differ in draw.io",
             "Double-ellipse appearance may differ in draw.io",

@@ -25,6 +25,7 @@ const CLIPBOARD_PAGE_WARNINGS: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/clipboard-page-warnings");
 const DETACHED_CONNECTOR: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/connector-detached");
+const FIXED_PORTS: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/fixed-ports");
 const MALFORMED_POINT: &[u8] = include_bytes!("../../../fuzz/corpus/drawio_import/malformed-point");
 const MALFORMED_GEOMETRY: &[u8] =
     include_bytes!("../../../fuzz/corpus/drawio_import/malformed-geometry");
@@ -55,6 +56,7 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
             PARTIAL_RECTANGLE_CONTAINER,
         ),
         ("detached connector", Format::DrawIo, DETACHED_CONNECTOR),
+        ("fixed ports", Format::DrawIo, FIXED_PORTS),
         ("malformed point", Format::DrawIo, MALFORMED_POINT),
         ("malformed geometry", Format::DrawIo, MALFORMED_GEOMETRY),
         ("out-of-range points", Format::DrawIo, OUT_OF_RANGE_POINTS),
@@ -157,6 +159,37 @@ fn document_seeds_reach_their_importers_and_native_roundtrip() {
                     .warnings
                     .contains(&thinoda_io::ImportWarning::DetachedConnectors)
             );
+        }
+        if name == "fixed ports" {
+            assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Formatting]);
+            let ports: Vec<_> = report.workbook.sheets[0]
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|object| match &object.kind {
+                    thinoda_core::CanvasObjectKind::Connector(connector) => {
+                        Some((connector.from_port, connector.to_port))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(ports.len(), 2);
+            assert!(ports.contains(&(
+                Some(thinoda_core::ConnectorPort {
+                    position: thinoda_core::Vec2::new(1.0, 0.25),
+                    offset: thinoda_core::Vec2::new(5.0, -3.0),
+                    perimeter: true,
+                }),
+                Some(thinoda_core::ConnectorPort {
+                    position: thinoda_core::Vec2::new(0.0, 0.75),
+                    offset: thinoda_core::Vec2::ZERO,
+                    perimeter: false,
+                }),
+            )));
+            assert!(ports.contains(&(None, None)));
+            let pasted =
+                thinoda_io::drawio_clipboard::decode(std::str::from_utf8(bytes).unwrap()).unwrap();
+            assert_eq!(pasted.warnings, report.warnings);
         }
         if name == "malformed point" {
             assert_eq!(report.warnings, vec![thinoda_io::ImportWarning::Other]);
@@ -431,6 +464,32 @@ fn partial_rectangle_style_and_byte_mutations_reach_the_fuzz_harness() {
     for index in (0..PARTIAL_RECTANGLE.len()).step_by(3) {
         for byte in [0, b'<', 0xff] {
             let mut input = PARTIAL_RECTANGLE.to_vec();
+            input[index] = byte;
+            drawio_support::exercise(&input);
+        }
+    }
+}
+
+#[test]
+fn fixed_port_style_and_byte_mutations_reach_the_fuzz_harness() {
+    let seed = std::str::from_utf8(FIXED_PORTS).unwrap();
+    for (key, original) in [
+        ("exitX", "1"),
+        ("exitY", "0.25"),
+        ("exitDx", "5"),
+        ("exitDy", "-3"),
+        ("exitPerimeter", "1"),
+    ] {
+        let original_style = format!("{key}={original};");
+        assert_eq!(seed.matches(&original_style).count(), 1, "{original_style}");
+        for value in ["", "-1", "0", "0.5", "1", "1.1", "NaN", "1e30", "none"] {
+            let input = seed.replacen(&original_style, &format!("{key}={value};"), 1);
+            drawio_support::exercise(input.as_bytes());
+        }
+    }
+    for index in (0..FIXED_PORTS.len()).step_by(17) {
+        for byte in [0, b'<', 0xff] {
+            let mut input = FIXED_PORTS.to_vec();
             input[index] = byte;
             drawio_support::exercise(&input);
         }
