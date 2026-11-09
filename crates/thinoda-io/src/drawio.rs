@@ -8,7 +8,8 @@
 //! Export writes one uncompressed page per sheet. Board content maps back to the
 //! same draw.io cells; ordinary mind-map topics, branches and annotations are
 //! written as drawn shapes and reported by the export preflight. Thinoda-only
-//! details use `thinoda*` style keys, which draw.io preserves.
+//! details use `thinoda*` style keys or model attributes, which other editors
+//! may discard when saving.
 
 use crate::{Format, ImportReport, ImportWarning, IoError};
 use base64::Engine;
@@ -2526,6 +2527,109 @@ fn image_card_rect(rect: Rect, pixels: Vec2, label: &str, keep_aspect: bool) -> 
     (Rect::from_min_size(min, card), size)
 }
 
+/// draw.io reads grid sizes with JavaScript's `parseFloat`, which accepts a
+/// numeric prefix even when non-numeric characters follow it.
+fn grid_number(value: &str) -> Option<(f64, bool)> {
+    // ECMAScript whitespace includes BOM but excludes Unicode's next-line character.
+    let js_whitespace = |c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}';
+    let value = value.trim_start_matches(js_whitespace);
+    let bytes = value.as_bytes();
+    let mut end = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let mut digits = 0;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+        digits += 1;
+    }
+    if bytes.get(end) == Some(&b'.') {
+        end += 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+            digits += 1;
+        }
+    }
+    if digits == 0 {
+        return None;
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let mut exponent_end = end + 1;
+        if matches!(bytes.get(exponent_end), Some(b'+' | b'-')) {
+            exponent_end += 1;
+        }
+        let exponent_start = exponent_end;
+        while bytes.get(exponent_end).is_some_and(u8::is_ascii_digit) {
+            exponent_end += 1;
+        }
+        if exponent_end > exponent_start {
+            end = exponent_end;
+        }
+    }
+    let number = value[..end].parse::<f64>().ok()?;
+    let trailing = !value[end..].trim_matches(js_whitespace).is_empty();
+    Some((number, trailing))
+}
+
+fn warn_grid_adjustment(warnings: &mut BTreeSet<ImportWarning>) {
+    warnings.insert(ImportWarning::DrawioGridAdjusted);
+}
+
+fn import_grid(model: &Element, sheet: &mut Sheet, warnings: &mut BTreeSet<ImportWarning>) {
+    const DEFAULT_DRAWIO_GRID_SIZE: f32 = 10.0;
+    let enabled = model.attr("grid") != Some("0");
+    let mut grid = if enabled {
+        GridKind::Lines
+    } else {
+        GridKind::None
+    };
+    let mut snap = enabled;
+    match (model.attr("thinodaGrid"), model.attr("thinodaSnap")) {
+        (None, None) => {}
+        (Some(grid_value), Some(snap_value)) => {
+            let saved_grid = match grid_value {
+                "none" => Some(GridKind::None),
+                "dots" => Some(GridKind::Dots),
+                "lines" => Some(GridKind::Lines),
+                _ => None,
+            };
+            let saved_snap = match snap_value {
+                "0" => Some(false),
+                "1" => Some(true),
+                _ => None,
+            };
+            if let (Some(saved_grid), Some(saved_snap)) = (saved_grid, saved_snap)
+                && (saved_grid != GridKind::None) == enabled
+            {
+                grid = saved_grid;
+                snap = saved_snap;
+            } else {
+                warn_grid_adjustment(warnings);
+            }
+        }
+        _ => {
+            warn_grid_adjustment(warnings);
+        }
+    }
+    let size = match model.attr("gridSize") {
+        None => DEFAULT_DRAWIO_GRID_SIZE,
+        Some(value) => match grid_number(value) {
+            Some((size, trailing)) if size.is_finite() && size > 0.0 => {
+                let min = f64::from(MIN_GRID_SIZE);
+                let max = f64::from(MAX_GRID_SIZE);
+                if trailing || !(min..=max).contains(&size) {
+                    warn_grid_adjustment(warnings);
+                }
+                size.clamp(min, max) as f32
+            }
+            _ => {
+                warn_grid_adjustment(warnings);
+                DEFAULT_DRAWIO_GRID_SIZE
+            }
+        },
+    };
+    sheet.board.grid = grid;
+    sheet.board.grid_size = size;
+    sheet.board.snap = snap;
+}
+
 fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning>) -> Sheet {
     let title = if page.name.trim().is_empty() {
         format!("Page-{number}")
@@ -2535,18 +2639,7 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
     let mut sheet = Sheet::new(title, "");
     sheet.root_mode = SheetRootMode::Hidden;
     let model = &page.model;
-    sheet.board.grid = if model.attr("grid") == Some("1") {
-        GridKind::Lines
-    } else {
-        GridKind::None
-    };
-    if let Some(size) = model
-        .attr("gridSize")
-        .and_then(|v| v.parse::<f32>().ok())
-        .filter(|v| v.is_finite())
-    {
-        sheet.board.grid_size = size.clamp(MIN_GRID_SIZE, MAX_GRID_SIZE);
-    }
+    import_grid(model, &mut sheet, warnings);
     let cells = read_cells(model, warnings);
     let index: HashMap<&str, usize> = cells
         .iter()
@@ -3525,13 +3618,14 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
 fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> String {
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
     for (index, sheet) in sheets.into_iter().enumerate() {
-        let grid = if sheet.board.grid == GridKind::None {
-            0
-        } else {
-            1
+        let (grid, thinoda_grid) = match sheet.board.grid {
+            GridKind::None => (0, "none"),
+            GridKind::Dots => (1, "dots"),
+            GridKind::Lines => (1, "lines"),
         };
+        let thinoda_snap = u8::from(sheet.board.snap);
         out.push_str(&format!(
-            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
+            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
             index + 1,
             esc(&sheet.title),
             num(sheet.board.grid_size),

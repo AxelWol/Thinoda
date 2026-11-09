@@ -224,6 +224,8 @@ pub enum ExportLoss {
     DrawioRectangleAppearanceApproximated(usize),
     /// A zero-width or zero-height process outline can be omitted by draw.io.
     DrawioCollapsedProcessApproximated(usize),
+    /// draw.io couples grid visibility to snapping and cannot display a dot grid.
+    DrawioGridSettingsApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
     /// Presentation slides are not written.
@@ -426,7 +428,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut label_appearance = 0;
     let mut rectangle_appearance = 0;
     let mut collapsed_processes = 0;
-    let mut settings = false;
+    let mut grid_settings = 0;
     for sheet in sheets {
         for (id, topic) in &sheet.topics {
             if topic.card.is_none() && !sheet.is_anchor(*id) {
@@ -491,7 +493,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
                     usize::from(connector.arrow_end && connector.end_marker.is_none());
             }
         }
-        settings |= sheet.board.grid == thinoda_core::GridKind::Dots || sheet.board.snap;
+        grid_settings += usize::from(
+            sheet.board.grid == thinoda_core::GridKind::Dots
+                || sheet.board.snap != (sheet.board.grid != thinoda_core::GridKind::None),
+        );
     }
     let mut out = Vec::new();
     for (loss, count) in [
@@ -519,6 +524,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
             ExportLoss::DrawioCollapsedProcessApproximated,
             collapsed_processes,
         ),
+        (ExportLoss::DrawioGridSettingsApproximated, grid_settings),
         (ExportLoss::TopicDetailsDropped, details),
         (ExportLoss::InlineTextDropped, inline_text),
         (ExportLoss::SlidesDropped, slides),
@@ -526,9 +532,6 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         if count > 0 {
             out.push(loss(count));
         }
-    }
-    if settings {
-        out.push(ExportLoss::BoardSettingsDropped);
     }
     out
 }

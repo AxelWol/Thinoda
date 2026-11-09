@@ -33,6 +33,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::ConnectorLabelCompositingApproximated(20),
         ExportLoss::DrawioRectangleAppearanceApproximated(21),
         ExportLoss::DrawioCollapsedProcessApproximated(22),
+        ExportLoss::DrawioGridSettingsApproximated(23),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -54,6 +55,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     assert!(lines[19].starts_with("20 — "), "{}", lines[19]);
     assert!(lines[20].starts_with("21 — "), "{}", lines[20]);
     assert!(lines[21].starts_with("22 — "), "{}", lines[21]);
+    assert!(lines[22].starts_with("23 — "), "{}", lines[22]);
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -68,6 +70,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
             "Rectangle colors or automatic outlines may differ in draw.io",
         ),
         (22, "Collapsed process outlines may be omitted in draw.io"),
+        (23, "Grid or snapping may differ in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -167,6 +170,30 @@ fn collapsed_process_loss_requires_localized_export_consent() {
         assert!(require_board_consent(&book, format, &options, true).is_ok());
     }
     assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+}
+
+#[test]
+fn drawio_grid_approximation_requires_localized_export_consent() {
+    let mut book = Workbook::default();
+    book.active_mut().board.grid = thinoda_core::GridKind::Lines;
+    book.active_mut().board.snap = false;
+    let key = "Grid or snapping may differ in draw.io";
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        let message =
+            require_board_consent(&book, format, &ExportOptions::default(), false).unwrap_err();
+        assert!(message.contains(t(key)), "{format:?}: {message}");
+        assert!(require_board_consent(&book, format, &ExportOptions::default(), true).is_ok());
+    }
+    assert!(
+        require_board_consent(&book, Format::Thinoda, &ExportOptions::default(), false).is_ok()
+    );
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
 }
 
 #[test]

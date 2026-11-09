@@ -476,6 +476,41 @@ mod tests {
     }
 
     #[test]
+    fn adjusted_grid_link_shows_a_cancelable_specific_warning() {
+        let xml = r#"<mxGraphModel grid="1" gridSize="3"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#;
+        let link = format!(
+            "#R{}",
+            thinoda_io::drawio_clipboard::encode_uri_component(xml)
+        );
+        let mut h = harness();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        h.state_mut().import_drawio_link_text(&link).unwrap();
+        h.run_steps(3);
+        assert_eq!(
+            h.state().dialogs.imports.front().unwrap().2,
+            vec![ImportWarning::DrawioGridAdjusted]
+        );
+        assert!(h.query_all_by_role(Role::Label).any(|node| {
+            node.value()
+                .is_some_and(|value| value.contains(t("draw.io grid settings were adjusted")))
+        }));
+        h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+        h.run_steps(3);
+        assert!(h.state().dialogs.imports.is_empty());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+
+        h.state_mut().import_drawio_link_text(&link).unwrap();
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, t("Import converted copy"))
+            .click();
+        h.run_steps(3);
+        let board = h.state().doc().unwrap().doc.sheet().board;
+        assert_eq!(board.grid, thinoda_core::GridKind::Lines);
+        assert_eq!(board.grid_size, 4.0);
+        assert!(board.snap);
+    }
+
+    #[test]
     fn rejected_link_does_not_change_documents_or_queue_warnings() {
         let mut app = app_with_changes();
         let before = app.doc().unwrap().doc.workbook().clone();

@@ -1707,6 +1707,32 @@ mod tests {
     }
 
     #[test]
+    fn adjusted_drawio_grid_requires_consent_and_preserves_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("grid.drawio");
+        let xml = r#"<mxGraphModel grid="1" gridSize="3"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(
+            warnings,
+            vec![thinoda_io::ImportWarning::DrawioGridAdjusted]
+        );
+        assert_eq!(document.doc.sheet().board.grid_size, 4.0);
+        assert!(document.doc.sheet().board.snap);
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), xml);
+    }
+
+    #[test]
     fn supported_drawio_markers_open_without_confirmation_and_save_as_native() {
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 

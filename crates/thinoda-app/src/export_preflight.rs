@@ -203,6 +203,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     *count,
                     "Collapsed process outlines may be omitted in draw.io",
                 ),
+                ExportLoss::DrawioGridSettingsApproximated(count) => {
+                    (*count, "Grid or snapping may differ in draw.io")
+                }
                 ExportLoss::TopicDetailsDropped(count) => {
                     (*count, "Topic notes, labels, markers or tasks omitted")
                 }

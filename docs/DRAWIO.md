@@ -894,7 +894,8 @@ Phase 3 scene-model extensions exist:
   topics, relationships, boundaries and summaries are flattened to shapes and connectors;
   the board loss preflight lists *Mind-map topics and links flattened to shapes*, *Topic
   notes, labels, markers or tasks omitted*, *Presentation slides omitted*, inline text
-  formatting and board grid/snap settings. Sheets with equations or embedded resources
+  formatting and board grid/snap settings at that milestone. The grid checkpoint
+  below records the current, more specific behavior. Sheets with equations or embedded resources
   are refused, as for other editable formats.
 - Opening a `.drawio` file imports a copy (like MindManager): Save asks for a
   destination and cannot overwrite the imported source. In-place, lossless save-back
@@ -1518,6 +1519,47 @@ undo rather than the toast text. App tests assert the sticky notice and
 cancelable link warning. Formatting and native, WebAssembly and fuzz Clippy
 passed with warnings denied. Real system clipboard and accessibility acceptance
 remain open.
+
+**Grid and snapping checkpoint (partial Phases 6, 7 and 11).** Import now follows
+the published editor's usual defaults: absent grid attributes enable a 10-unit
+grid and snapping, while `grid="0"` disables both. A numeric prefix in `gridSize`
+is read as in JavaScript; invalid or nonpositive sizes fall back to 10, and
+positive values outside Thinoda's 4–512 range are clamped. Invalid or
+out-of-range sizes, numeric prefixes with trailing nonnumeric text, and
+malformed or stale Thinoda grid metadata produce a specific, localized
+conversion warning. The source remains protected. Grid settings do not travel
+with clipboard fragments, so grid-only warnings are suppressed for paste
+without suppressing actual content warnings.
+
+Export writes ordinary draw.io grid visibility and size plus `thinodaGrid` and
+`thinodaSnap` model attributes for direct Thinoda reimport. It restores those
+attributes only when both are valid and their visibility agrees with the current
+draw.io grid. A per-sheet preflight warns when dot grids or independent
+visibility and snapping cannot be represented by draw.io's coupled controls;
+editable images count only the selected sheet, while `.drawio` counts all pages.
+Native workbooks keep the existing independent settings.
+
+**Rubber-duck self-critique.** The published diagrams.net editor drops unknown
+`mxGraphModel` attributes when it saves. Therefore the private attributes do
+not provide cross-editor preservation: after such a save Thinoda imports the
+editor's current visible grid and coupled snapping instead. An editor that
+retains the attributes but changes the grid to the same visibility cannot be
+distinguished from an unchanged direct round trip. Thinoda renders a single
+weight of grid line rather than draw.io's minor/major lines. These are editing
+preferences, not a claim of visual or source fidelity; keep a `.thinoda` copy
+and the original draw.io file. Other page settings and lossless save-back remain
+open. The new warning and export-loss variants are public API additions that
+exhaustive Rust matches must handle.
+
+Validation passed 163 draw.io I/O library tests, ten supplied-corpus tests and
+48 board-export consent integrations, including grid-enabled and grid-disabled
+examples and per-page round trips. The CLI rejects an unconfirmed grid
+approximation without overwriting an existing destination; confirmed conversion
+retains the native settings for direct reimport. Six synthetic
+import-and-placement journeys passed against a production web build across
+Chromium, Firefox and WebKit. Native, WebAssembly and fuzz Clippy checks passed
+with warnings denied. The grid and snap controls still need physical-device and
+accessibility acceptance.
 
 **Embedded PNG drop checkpoint and critique (partial Phase 11).** Dropping a
 file explicitly named `.drawio.png` now opens its embedded diagram through the

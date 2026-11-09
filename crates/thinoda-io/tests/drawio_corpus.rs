@@ -226,6 +226,11 @@ fn check(path: &Path) -> Result<String, String> {
             again.sheets.len()
         ));
     }
+    for (index, (original, restored)) in book.sheets.iter().zip(&again.sheets).enumerate() {
+        if original.board != restored.board {
+            return Err(format!("page {} changed its grid settings", index + 1));
+        }
+    }
     let round_trip = items(&again);
     if round_trip < count {
         return Err(format!("round trip lost items {count} -> {round_trip}"));
@@ -323,6 +328,41 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
     }
     eprintln!("{} file(s), {} failure(s)", files.len(), failures.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn supplied_diagrams_follow_their_grid_and_snap_settings() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    for (name, grid, snap) in [
+        (
+            "requirements-flow.drawio",
+            thinoda_core::GridKind::Lines,
+            true,
+        ),
+        ("horse-labelled.drawio", thinoda_core::GridKind::None, false),
+        (
+            "board-visual-tutorial.drawio",
+            thinoda_core::GridKind::None,
+            false,
+        ),
+    ] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
+        for sheet in &report.workbook.sheets {
+            assert_eq!(
+                (sheet.board.grid, sheet.board.grid_size, sheet.board.snap),
+                (grid, 10.0, snap),
+                "{name}: {}",
+                sheet.title
+            );
+        }
+    }
 }
 
 #[test]

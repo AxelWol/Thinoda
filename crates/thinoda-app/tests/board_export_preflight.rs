@@ -756,6 +756,7 @@ fn all_catalogs_preserve_preflight_keys_and_placeholders() {
         "Relationships omitted",
         "Boundaries omitted",
         "Board grid and snapping settings omitted",
+        "Grid or snapping may differ in draw.io",
         "Sheet {sheet}: a root named “{title}” will be created.",
         "Sheet {sheet}: hidden root mode omitted.",
         "Autosave skipped because this format cannot preserve board content. Save as Thinoda to keep it.",
@@ -837,7 +838,10 @@ fn export_menu_preflights_every_lossy_format_before_opening_a_picker() {
             assert!(lacks_label(&h, &format!("1 — {}", t("Shapes omitted"))));
         } else if format.is_drawio() {
             // draw.io keeps cards, shapes, ink, connectors and frames editable.
-            has_label(&h, t("Board grid and snapping settings omitted"));
+            has_label(
+                &h,
+                &format!("1 — {}", t("Grid or snapping may differ in draw.io")),
+            );
             has_label(&h, &format!("1 — {}", t("Presentation slides omitted")));
             assert!(lacks_label(&h, &format!("1 — {}", t("Shapes omitted"))));
         } else {
@@ -854,7 +858,7 @@ fn editable_image_disclosure_is_localized_and_mandatory_without_losses() {
     let mut sheet = Sheet::new("Board", "");
     sheet.root_mode = SheetRootMode::Hidden;
     sheet.board.grid = thinoda_core::GridKind::Lines;
-    sheet.board.snap = false;
+    sheet.board.snap = true;
     sheet
         .add_canvas_object(CanvasObject::shape(
             ShapeKind::Rectangle,
@@ -893,6 +897,36 @@ fn editable_image_disclosure_is_localized_and_mandatory_without_losses() {
             h.run_steps(3);
             assert!(lacks_label(&h, t("Editable image export")));
             assert!(h.state().file_activity().is_empty());
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+    }
+}
+
+#[test]
+fn drawio_grid_loss_preflight_is_localized_and_cancelable() {
+    let _guard = lock_ui();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.snap = false;
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        for language in Language::ALL {
+            let mut h = harness(app(book.clone(), language));
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Export(format));
+            h.run_steps(3);
+            has_label(
+                &h,
+                &format!("1 — {}", t("Grid or snapping may differ in draw.io")),
+            );
+            click(&mut h, t("Cancel"));
+            assert!(
+                h.state().file_activity().is_empty(),
+                "{format:?}, {language:?}"
+            );
             assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
             assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
         }
@@ -1832,6 +1866,56 @@ fn cli_requires_loss_consent_and_preserves_existing_destination() {
 }
 
 #[test]
+fn cli_drawio_grid_approximation_requires_loss_consent() {
+    let _guard = lock_ui();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("board.thinoda");
+    let output = directory.path().join("board.drawio");
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet.board.grid = thinoda_core::GridKind::Lines;
+    sheet.board.grid_size = 10.0;
+    sheet.board.snap = false;
+    let book = Workbook::new(sheet);
+    let source = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    std::fs::write(&input, &source).unwrap();
+    std::fs::write(&output, b"existing").unwrap();
+
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(error.contains("--allow-lossy"), "{error}");
+    assert!(
+        Lang::ALL
+            .iter()
+            .any(|&lang| error.contains(t_in(lang, "Grid or snapping may differ in draw.io"))),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"existing");
+
+    let accepted = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+        .arg("--convert")
+        .arg(&input)
+        .arg(&output)
+        .arg("--allow-lossy")
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let reopened = import_bytes(Format::DrawIo, &std::fs::read(&output).unwrap()).unwrap();
+    assert_eq!(reopened.active().board, book.active().board);
+    assert_eq!(std::fs::read(&input).unwrap(), source);
+}
+
+#[test]
 fn cli_editable_image_exports_disclose_embedded_data_and_keep_only_the_active_sheet() {
     let _guard = lock_ui();
     let directory = tempfile::tempdir().unwrap();
@@ -1839,7 +1923,7 @@ fn cli_editable_image_exports_disclose_embedded_data_and_keep_only_the_active_sh
     let mut first = Sheet::new("Not exported", "");
     first.root_mode = SheetRootMode::Hidden;
     first.board.grid = thinoda_core::GridKind::Lines;
-    first.board.snap = false;
+    first.board.snap = true;
     let mut second = first.clone();
     second.title = "Selected".into();
     second

@@ -55,6 +55,7 @@ Connector-to-connector attachments detached|Conexões entre conectores desfeitas
 Label color or opacity may differ in draw.io|A cor ou opacidade dos rótulos pode ser diferente no draw.io
 Rectangle colors or automatic outlines may differ in draw.io|As cores ou os contornos automáticos dos retângulos podem ser diferentes no draw.io
 Collapsed process outlines may be omitted in draw.io|Os contornos de processos sem largura ou altura podem ser omitidos no draw.io
+Grid or snapping may differ in draw.io|A grade ou o encaixe na grade podem ser diferentes no draw.io
 Translucent connector labels may render differently|Rótulos translúcidos de conexões podem ser exibidos de forma diferente
 Topic notes, labels, markers or tasks omitted|Notas, rótulos, marcadores ou tarefas dos tópicos omitidos
 Presentation slides omitted|Slides de apresentação omitidos
@@ -465,6 +466,7 @@ Additional or unsupported links|Links adicionais ou não suportados
 Connector attachments were detached|As conexões foram separadas de seus pontos de ancoragem
 Connector attachments may have been detached|As conexões podem ter sido separadas de seus pontos de ancoragem
 Unsupported shapes or styles in the draw.io source may appear as rectangles|Formas ou estilos não compatíveis na origem do draw.io podem aparecer como retângulos
+draw.io grid settings were adjusted|As configurações de grade do draw.io foram ajustadas
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão

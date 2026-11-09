@@ -49,6 +49,289 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
 }
 
 #[test]
+fn drawio_grid_settings_follow_editor_defaults_and_report_adjustments() {
+    for (attributes, grid, size, snap, adjusted) in [
+        ("", GridKind::Lines, 10.0, true, false),
+        (
+            r#"grid="0" gridSize="20""#,
+            GridKind::None,
+            20.0,
+            false,
+            false,
+        ),
+        (
+            r#"grid="1" gridSize="10.5""#,
+            GridKind::Lines,
+            10.5,
+            true,
+            false,
+        ),
+        (
+            r#"grid="false" gridSize="12px""#,
+            GridKind::Lines,
+            12.0,
+            true,
+            true,
+        ),
+        (r#"grid="1" gridSize="3""#, GridKind::Lines, 4.0, true, true),
+        (
+            r#"grid="0" gridSize="1000""#,
+            GridKind::None,
+            512.0,
+            false,
+            true,
+        ),
+        (r#"gridSize="0""#, GridKind::Lines, 10.0, true, true),
+        (r#"gridSize="-1""#, GridKind::Lines, 10.0, true, true),
+        (r#"gridSize="NaN""#, GridKind::Lines, 10.0, true, true),
+        (r#"gridSize="Infinity""#, GridKind::Lines, 10.0, true, true),
+        (r#"gridSize="1e309""#, GridKind::Lines, 10.0, true, true),
+        (r#"gridSize="0x10""#, GridKind::Lines, 10.0, true, true),
+        (
+            r#"gridSize=" +12.5tail""#,
+            GridKind::Lines,
+            12.5,
+            true,
+            true,
+        ),
+        (r#"gridSize=".5e+2px""#, GridKind::Lines, 50.0, true, true),
+        (r#"gridSize="1e""#, GridKind::Lines, 4.0, true, true),
+        (r#"gridSize="1e2""#, GridKind::Lines, 100.0, true, false),
+        (r#"gridSize="4.e1""#, GridKind::Lines, 40.0, true, false),
+    ] {
+        let xml = format!(
+            r#"<mxGraphModel {attributes}><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#
+        );
+        let report = load(&xml);
+        let board = report.workbook.sheets[0].board;
+        assert_eq!(
+            (board.grid, board.grid_size, board.snap),
+            (grid, size, snap),
+            "{attributes}"
+        );
+        assert_eq!(
+            report.warnings,
+            if adjusted {
+                vec![ImportWarning::DrawioGridAdjusted]
+            } else {
+                vec![]
+            },
+            "{attributes}"
+        );
+        if adjusted {
+            assert!(matches!(
+                crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+                Err(IoError::ImportNeedsConfirmation(warnings))
+                    if warnings == vec![ImportWarning::DrawioGridAdjusted]
+            ));
+        }
+        report.workbook.validate().unwrap();
+    }
+    assert_eq!(grid_number("\u{feff}12"), Some((12.0, false)));
+    assert_eq!(grid_number("\u{85}12"), None);
+    assert_eq!(grid_number("12\u{85}"), Some((12.0, true)));
+}
+
+#[test]
+fn thinoda_grid_settings_round_trip_and_stale_extensions_never_override_drawio() {
+    for grid in [GridKind::None, GridKind::Dots, GridKind::Lines] {
+        for snap in [false, true] {
+            let mut sheet = Sheet::new("Grid", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            sheet.board.grid = grid;
+            sheet.board.snap = snap;
+            sheet.board.grid_size = 12.5;
+            let expected = sheet.board;
+            let xml = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+            let report = load(&xml);
+            assert!(
+                report.warnings.is_empty(),
+                "{grid:?}, {snap}: {:?}",
+                report.warnings
+            );
+            assert_eq!(
+                report.workbook.sheets[0].board, expected,
+                "{grid:?}, {snap}"
+            );
+
+            let external = xml
+                .replace(
+                    &format!(
+                        " thinodaGrid=\"{}\"",
+                        match grid {
+                            GridKind::None => "none",
+                            GridKind::Dots => "dots",
+                            GridKind::Lines => "lines",
+                        }
+                    ),
+                    "",
+                )
+                .replace(&format!(" thinodaSnap=\"{}\"", u8::from(snap)), "");
+            let imported = load(&external);
+            assert!(imported.warnings.is_empty());
+            let visible = grid != GridKind::None;
+            assert_eq!(
+                (
+                    imported.workbook.sheets[0].board.grid,
+                    imported.workbook.sheets[0].board.snap
+                ),
+                (
+                    if visible {
+                        GridKind::Lines
+                    } else {
+                        GridKind::None
+                    },
+                    visible
+                ),
+                "{grid:?}, {snap}"
+            );
+        }
+    }
+
+    for (attributes, grid, snap) in [
+        (
+            r#"grid="0" thinodaGrid="dots" thinodaSnap="1""#,
+            GridKind::None,
+            false,
+        ),
+        (
+            r#"grid="1" thinodaGrid="none" thinodaSnap="1""#,
+            GridKind::Lines,
+            true,
+        ),
+        (r#"grid="1" thinodaGrid="dots""#, GridKind::Lines, true),
+        (
+            r#"grid="1" thinodaGrid="dots" thinodaSnap="invalid""#,
+            GridKind::Lines,
+            true,
+        ),
+    ] {
+        let xml = format!(
+            r#"<mxGraphModel {attributes}><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>"#
+        );
+        let report = load(&xml);
+        assert_eq!(
+            (
+                report.workbook.sheets[0].board.grid,
+                report.workbook.sheets[0].board.snap
+            ),
+            (grid, snap)
+        );
+        assert_eq!(
+            report.warnings,
+            vec![ImportWarning::DrawioGridAdjusted],
+            "{attributes}"
+        );
+    }
+}
+
+#[test]
+fn drawio_grid_loss_reports_every_combination_and_exported_page() {
+    let mut book = Workbook::new({
+        let mut sheet = Sheet::new("Grid", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        sheet
+    });
+    for grid in [GridKind::None, GridKind::Dots, GridKind::Lines] {
+        for snap in [false, true] {
+            book.sheets[0].board.grid = grid;
+            book.sheets[0].board.snap = snap;
+            let expected = if grid == GridKind::Dots || snap != (grid != GridKind::None) {
+                vec![ExportLoss::DrawioGridSettingsApproximated(1)]
+            } else {
+                vec![]
+            };
+            for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+                assert_eq!(
+                    export_losses(&book, format, &ExportOptions::default()),
+                    expected,
+                    "{format:?}, {grid:?}, snap={snap}"
+                );
+            }
+            assert!(export_losses(&book, Format::Thinoda, &ExportOptions::default()).is_empty());
+        }
+    }
+
+    book.sheets[0].board.grid = GridKind::Lines;
+    book.sheets[0].board.snap = true;
+    let mut second = book.sheets[0].clone();
+    second.title = "Dots".into();
+    second.board.grid = GridKind::Dots;
+    let mut third = second.clone();
+    third.title = "Hidden snap".into();
+    third.board.grid = GridKind::None;
+    third.board.snap = true;
+    book.sheets.extend([second, third]);
+    book.active_sheet = 2;
+    for (index, expected) in [
+        (0, vec![]),
+        (1, vec![ExportLoss::DrawioGridSettingsApproximated(1)]),
+        (2, vec![ExportLoss::DrawioGridSettingsApproximated(1)]),
+    ] {
+        let options = ExportOptions {
+            sheet: Some(index),
+            ..Default::default()
+        };
+        assert_eq!(
+            export_losses(&book, Format::DrawIo, &options),
+            vec![ExportLoss::DrawioGridSettingsApproximated(2)]
+        );
+        for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+            assert_eq!(
+                export_losses(&book, format, &options),
+                expected,
+                "{format:?}, {index}"
+            );
+        }
+    }
+    for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioGridSettingsApproximated(1)],
+            "{format:?}: active sheet"
+        );
+    }
+}
+
+#[test]
+fn editable_drawio_images_preserve_selected_sheet_grid_settings() {
+    let mut first = Sheet::new("Other", "");
+    first.root_mode = SheetRootMode::Hidden;
+    first.board.grid = GridKind::Lines;
+    first.board.snap = true;
+    let mut second = first.clone();
+    second.title = "Selected".into();
+    second
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 100.0, 60.0),
+        ))
+        .unwrap();
+    let mut book = Workbook::new(first);
+    book.sheets.push(second);
+    let options = ExportOptions {
+        sheet: Some(1),
+        ..Default::default()
+    };
+    for (grid, snap) in [
+        (GridKind::Dots, true),
+        (GridKind::None, true),
+        (GridKind::Lines, false),
+    ] {
+        book.sheets[1].board.grid = grid;
+        book.sheets[1].board.grid_size = 12.5;
+        book.sheets[1].board.snap = snap;
+        for format in [Format::DrawIoSvg, Format::DrawIoPng] {
+            let bytes = export_bytes(&book, format, &options).unwrap();
+            let report = import(&bytes).unwrap();
+            assert!(report.warnings.is_empty(), "{format:?}, {grid:?}, {snap}");
+            assert_eq!(report.workbook.sheets.len(), 1);
+            assert_eq!(report.workbook.sheets[0].board, book.sheets[1].board);
+        }
+    }
+}
+
+#[test]
 fn sticky_and_text_card_alignment_survives_drawio_interchange() {
     use thinoda_core::TextAlign;
 
@@ -3327,6 +3610,7 @@ fn editable_image_exports_embed_only_the_selected_sheet() {
     let mut second = Sheet::new("Second", "");
     second.root_mode = SheetRootMode::Hidden;
     second.board.grid = GridKind::Lines;
+    second.board.snap = true;
     let label = "A < B & \"C\" \u{fc}";
     second
         .add_canvas_object(shape(
@@ -5597,6 +5881,7 @@ fn export_reports_flattened_map_content() {
         vec![
             ExportLoss::LegacyConnectorMarkersApproximated(2),
             ExportLoss::DrawioLabelAppearanceApproximated(2),
+            ExportLoss::DrawioGridSettingsApproximated(1),
         ]
     );
     let sheet = &mut book.sheets[0];
@@ -5616,6 +5901,7 @@ fn export_reports_flattened_map_content() {
             ExportLoss::MapElementsFlattened(2),
             ExportLoss::LegacyConnectorMarkersApproximated(2),
             ExportLoss::DrawioLabelAppearanceApproximated(2),
+            ExportLoss::DrawioGridSettingsApproximated(1),
             ExportLoss::TopicDetailsDropped(1),
             ExportLoss::SlidesDropped(1),
         ]

@@ -388,6 +388,8 @@ pub enum ImportWarning {
     DetachedConnectors,
     /// An unrecognized draw.io shape or named style was represented by a rectangle.
     UnsupportedDrawioShapes,
+    /// A draw.io grid size or Thinoda grid extension was adjusted or ignored.
+    DrawioGridAdjusted,
     Other,
 }
 

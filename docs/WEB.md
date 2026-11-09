@@ -133,6 +133,13 @@ rectangle placeholders and are identified in the import or paste warning.
 Named styles combined with an explicit shape can also lose formatting. Original
 stencil and style data are not retained; keep the source file.
 
+draw.io grid visibility and spacing are imported, with snapping enabled when the
+grid is enabled. Unsupported grid sizes are adjusted with a warning. Thinoda
+preserves its independent grid and snapping settings on direct export and
+reimport, but draw.io may discard those settings when saving. Export warns when
+dot grids or independent snapping can differ; keep a `.thinoda` copy.
+Line-grid appearance is approximate.
+
 Double ellipses import as editable single ellipses with a formatting warning;
 their inner outline and exact label bounds are not preserved.
 

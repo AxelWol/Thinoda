@@ -178,6 +178,7 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::UnsupportedDrawioShapes => {
             "Unsupported shapes or styles in the draw.io source may appear as rectangles"
         }
+        ImportWarning::DrawioGridAdjusted => "draw.io grid settings were adjusted",
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -525,6 +526,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Collapsed process outlines may be omitted in draw.io",
         "Konturen von Prozessen ohne Breite oder Höhe können in draw.io fehlen",
+    ),
+    (
+        "Grid or snapping may differ in draw.io",
+        "Raster oder Einrasten können in draw.io abweichen",
     ),
     (
         "Translucent connector labels may render differently",
@@ -1367,6 +1372,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Unsupported shapes or styles in the draw.io source may appear as rectangles",
         "Nicht unterstützte Formen oder Stile in der draw.io-Quelle können als Rechtecke erscheinen",
+    ),
+    (
+        "draw.io grid settings were adjusted",
+        "draw.io-Rastereinstellungen wurden angepasst",
     ),
     (
         "Other unsupported map data",
@@ -4859,6 +4868,7 @@ mod tests {
             "Connector attachments were detached",
             "Connector attachments may have been detached",
             "Unsupported shapes or styles in the draw.io source may appear as rectangles",
+            "draw.io grid settings were adjusted",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",
             "Could not paste draw.io content",
@@ -5093,6 +5103,7 @@ mod tests {
             "Label color or opacity may differ in draw.io",
             "Rectangle colors or automatic outlines may differ in draw.io",
             "Collapsed process outlines may be omitted in draw.io",
+            "Grid or snapping may differ in draw.io",
             "Translucent connector labels may render differently",
             "Topic notes, labels, markers or tasks omitted",
             "Presentation slides omitted",

@@ -142,6 +142,8 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
         .chain(canvas_bounds(&sheet, &layout))
         .reduce(|a, b| a.union(&b));
     let mut warnings = report.warnings;
+    // Board settings are not part of a clipboard fragment.
+    warnings.retain(|warning| *warning != ImportWarning::DrawioGridAdjusted);
     if !losses.is_empty() && !warnings.contains(&ImportWarning::Other) {
         warnings.push(ImportWarning::Other);
         warnings.sort_unstable();
@@ -319,6 +321,23 @@ mod tests {
             assert!((bounds.min.x - 100.0).abs() < 1.0, "{bounds:?}");
             assert!((bounds.max().x - 400.0).abs() < 1.0, "{bounds:?}");
         }
+    }
+
+    #[test]
+    fn clipboard_ignores_grid_adjustments_but_keeps_content_warnings() {
+        let adjusted = MODEL.replace("<mxGraphModel", "<mxGraphModel gridSize=\"3\"");
+        let report = drawio::import(adjusted.as_bytes()).unwrap();
+        assert_eq!(report.warnings, vec![ImportWarning::DrawioGridAdjusted]);
+        let pasted = decode(&adjusted).unwrap();
+        assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
+        assert_eq!(kinds(&pasted.payload), (2, 1));
+
+        let unsupported = adjusted.replace("rounded=1;", "rounded=1;dashed=1;");
+        let report = drawio::import(unsupported.as_bytes()).unwrap();
+        assert!(report.warnings.contains(&ImportWarning::Formatting));
+        let pasted = decode(&unsupported).unwrap();
+        assert!(pasted.warnings.contains(&ImportWarning::Formatting));
+        assert!(!pasted.warnings.contains(&ImportWarning::DrawioGridAdjusted));
     }
 
     #[test]
