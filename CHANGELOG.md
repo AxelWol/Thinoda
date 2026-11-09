@@ -1,4 +1,4 @@
-_Last updated: 2026-11-05 18:46:09 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-06 00:39:01 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -26,6 +26,13 @@ while the version is `0.x`, breaking changes bump the minor version). See
   notes/changelog and download links (no automatic native installation).
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
+## [0.23.1](https://github.com/AxelWol/Thinoda/compare/v0.23.0...v0.23.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* stabilize macOS Intel ticket delivery ([95f8998](https://github.com/AxelWol/Thinoda/commit/95f8998804008b649878991062197640d34e531c))
 
 ## [0.23.0](https://github.com/AxelWol/Thinoda/compare/v0.22.1...v0.23.0) (2026-11-05)
 
