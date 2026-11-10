@@ -1660,8 +1660,74 @@ fn classify(style: &Style) -> Kind {
 /// draw.io `partialRectangle` side flags, in clockwise path order.
 const PARTIAL_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 
-/// draw.io draws waypoints as fixed-size dots regardless of the cell geometry.
+/// Default draw.io waypoint size before stroke-width adjustment.
 const WAYPOINT_SIZE: f32 = 6.0;
+
+fn waypoint_diameter(style: &Style) -> f32 {
+    let size = style.num("size").unwrap_or(WAYPOINT_SIZE);
+    let width = style
+        .num("strokeWidth")
+        .filter(|width| *width >= 0.0)
+        .unwrap_or(1.0);
+    let diameter = (size - 2.0).max(0.0) + 2.0 * width;
+    if diameter.is_finite() && diameter <= MAX_BOARD_COORDINATE {
+        diameter
+    } else {
+        WAYPOINT_SIZE
+    }
+}
+
+fn waypoint_absolute_port(cell: &Cell, port: ConnectorPort) -> Option<ConnectorPort> {
+    let style = &cell.style;
+    let direction = match style.get("direction") {
+        None | Some("" | "none" | "east") => "east",
+        Some("north") => "north",
+        Some("west") => "west",
+        Some("south") => "south",
+        Some(_) => return None,
+    };
+    let anchor_direction = match style.get("anchorPointDirection") {
+        None | Some("" | "none") => true,
+        Some(_) => style.num("anchorPointDirection")? == 1.0,
+    };
+    let spacing = match style.get("perimeterSpacing") {
+        None | Some("" | "none") => 0.0,
+        Some(_) => style.num("perimeterSpacing")?,
+    };
+    let sideways = matches!(direction, "north" | "south");
+    let mut width = cell.geometry.width + 2.0 * spacing;
+    let mut height = cell.geometry.height + 2.0 * spacing;
+    if sideways && anchor_direction {
+        std::mem::swap(&mut width, &mut height);
+    }
+    let mut offset = Vec2::new(
+        (port.position.x - 0.5) * width + port.offset.x,
+        (port.position.y - 0.5) * height + port.offset.y,
+    );
+    let mut flip_h = style.num("flipH") == Some(1.0);
+    let mut flip_v = style.num("flipV") == Some(1.0);
+    if sideways {
+        std::mem::swap(&mut flip_h, &mut flip_v);
+    }
+    if flip_h {
+        offset.x = -offset.x;
+    }
+    if flip_v {
+        offset.y = -offset.y;
+    }
+    let direction_rotation = if anchor_direction {
+        direction_degrees(style)
+    } else {
+        0.0
+    };
+    let rotation = (style.rotation() + direction_rotation).rem_euclid(360.0);
+    let mapped = ConnectorPort {
+        position: Vec2::new(0.5, 0.5),
+        offset: rotate_around(offset, Vec2::ZERO, rotation),
+        perimeter: false,
+    };
+    mapped.is_valid().then_some(mapped)
+}
 
 fn direction_degrees(style: &Style) -> f32 {
     match style.get("direction") {
@@ -1769,6 +1835,7 @@ struct PageImport<'a> {
     items: HashMap<usize, Item>,
     shapes: HashMap<CanvasObjectId, ShapeKind>,
     visited: Vec<bool>,
+    paint_order: Vec<usize>,
     zones: Vec<(ZoneId, Vec<TopicId>, Vec<CanvasObjectId>)>,
     buckets: Vec<(Vec<BoardMember>, bool)>,
     locked: Vec<BoardMember>,
@@ -1929,6 +1996,7 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Other);
             return;
         }
+        self.paint_order.push(index);
         if cell.edge {
             for &child in &self.children[index] {
                 // Edge labels are child vertices; they are folded into the edge.
@@ -2185,12 +2253,23 @@ impl<'a> PageImport<'a> {
                 object
             }
             Kind::Waypoint => {
-                let frame =
-                    Rect::from_center_size(rect.center(), Vec2::new(WAYPOINT_SIZE, WAYPOINT_SIZE));
+                self.warn(ImportWarning::Formatting);
+                let diameter = waypoint_diameter(style);
+                let frame = Rect::from_center_size(rect.center(), Vec2::new(diameter, diameter));
                 let mut object = shape_object(ShapeKind::Ellipse, frame, 0.0, label);
-                let color = object.style.stroke.unwrap_or(Color::BLACK);
+                let color = style
+                    .color("strokeColor", "fillOpacity")
+                    .unwrap_or_else(|| {
+                        let fallback =
+                            if style.suppress_defaults && style.get("strokeColor").is_none() {
+                                Color::TRANSPARENT
+                            } else {
+                                Color::BLACK
+                            };
+                        style.color_with_opacity(fallback, "fillOpacity")
+                    });
                 object.style.fill = Some(color);
-                object.style.stroke = Some(color);
+                object.style.stroke = Some(Color::TRANSPARENT);
                 object
             }
             Kind::Anchor => {
@@ -2415,7 +2494,18 @@ impl<'a> PageImport<'a> {
         let target_cell = terminal
             .and_then(|id| self.index.get(id))
             .and_then(|index| self.cells.get(*index));
+        let waypoint = matches!(endpoint, Endpoint::Object(_))
+            && target_cell.is_some_and(|cell| classify(&cell.style) == Kind::Waypoint);
+        let waypoint_center = waypoint
+            && target_cell
+                .is_some_and(|cell| cell.style.get("perimeter") == Some("centerPerimeter"));
+        let center_port = ConnectorPort {
+            position: Vec2::new(0.5, 0.5),
+            offset: Vec2::ZERO,
+            perimeter: false,
+        };
         match style.connector_port(source) {
+            Ok(None) if waypoint_center => Some(center_port),
             Ok(None) => {
                 if matches!(endpoint, Endpoint::Object(id)
                     if self.shapes.get(&id) == Some(&ShapeKind::DoubleEllipse))
@@ -2426,6 +2516,19 @@ impl<'a> PageImport<'a> {
                     self.warn(ImportWarning::Formatting);
                 }
                 None
+            }
+            Ok(Some(port)) if supported_target && waypoint_center && port.perimeter => {
+                Some(center_port)
+            }
+            Ok(Some(port)) if supported_target && waypoint && !port.perimeter => {
+                if let Some(mapped) =
+                    target_cell.and_then(|cell| waypoint_absolute_port(cell, port))
+                {
+                    Some(mapped)
+                } else {
+                    self.warn(ImportWarning::Formatting);
+                    Some(port)
+                }
             }
             Ok(Some(port)) if supported_target => {
                 let compatible = target_cell.is_some_and(|cell| {
@@ -2689,6 +2792,20 @@ impl<'a> PageImport<'a> {
                 self.warn(ImportWarning::Other);
             }
         }
+        // Deferred edges must retain their place in the source cell traversal.
+        let order: HashMap<_, _> = self
+            .paint_order
+            .iter()
+            .enumerate()
+            .filter_map(|(rank, cell)| match self.items.get(cell) {
+                Some(Item::Object(id)) => Some((*id, rank)),
+                _ => None,
+            })
+            .collect();
+        self.sheet
+            .canvas
+            .objects
+            .sort_by_key(|object| order.get(&object.id).copied().unwrap_or(usize::MAX));
         self.sheet
     }
 }
@@ -3060,6 +3177,7 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
         items: HashMap::new(),
         shapes: HashMap::new(),
         visited: vec![false; cells.len()],
+        paint_order: Vec::with_capacity(cells.len()),
         zones: Vec::new(),
         buckets: Vec::new(),
         locked: Vec::new(),

@@ -7411,39 +7411,522 @@ fn partial_rectangle_default_colors_are_resolved_or_reported() {
 }
 
 #[test]
-fn waypoints_become_small_dots_in_the_stroke_color() {
+fn waypoint_dots_follow_drawio_size_and_fill_alpha() {
+    for (size, width, diameter) in [
+        ("6", "1", 6.0),
+        ("12", "2", 14.0),
+        ("1", "3", 6.0),
+        ("-4", "4", 8.0),
+        ("1", "0", 0.0),
+        ("none", "1", 6.0),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="w" style="shape=waypoint;size={size};strokeWidth={width};strokeColor=#FF0000;fillColor=none;fillOpacity=50;strokeOpacity=20;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "waypoint identity and original cell bounds are not preserved"
+        );
+        let sheet = &report.workbook.sheets[0];
+        let dot = shapes(sheet)[0];
+        assert!(matches!(
+            dot.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Ellipse,
+                ..
+            }
+        ));
+        assert_eq!(
+            dot.rect,
+            Rect::from_center_size(Vec2::new(110.0, 70.0), Vec2::new(diameter, diameter)),
+            "size={size}, strokeWidth={width}"
+        );
+        assert_eq!(dot.style.fill, Some(Color::rgba(255, 0, 0, 128)));
+        assert_eq!(dot.style.stroke, Some(Color::TRANSPARENT));
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn waypoint_invalid_sizes_are_bounded_and_reported() {
+    for (size, width) in [
+        ("NaN", "1"),
+        ("Infinity", "1"),
+        ("1e30", "1"),
+        ("6", "1e30"),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="w" style="shape=waypoint;size={size};strokeWidth={width};" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.contains(&ImportWarning::Formatting));
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0].rect,
+            Rect::from_center_size(Vec2::new(110.0, 70.0), Vec2::new(6.0, 6.0)),
+            "size={size}, strokeWidth={width}"
+        );
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn waypoint_dots_use_the_resolved_stroke_color() {
+    for (style, color) in [
+        ("shape=waypoint;", Color::BLACK),
+        ("shape=waypoint;strokeColor=none;", Color::TRANSPARENT),
+        (";shape=waypoint;", Color::TRANSPARENT),
+    ] {
+        let xml = page(&format!(
+            r#"<mxCell id="w" style="{style}" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>"#
+        ));
+        let report = load(&xml);
+        let dot = shapes(&report.workbook.sheets[0])[0];
+        assert_eq!(dot.style.fill, Some(color), "{style}");
+        assert_eq!(dot.style.stroke, Some(Color::TRANSPARENT), "{style}");
+    }
+}
+
+#[test]
+fn waypoint_svg_and_png_render_only_the_filled_dot() {
     let xml = page(
-        r##"
-        <mxCell id="a" value="A" vertex="1" parent="1"><mxGeometry x="0" y="40" width="40" height="40" as="geometry"/></mxCell>
-        <mxCell id="w" style="shape=waypoint;fillStyle=solid;size=6;strokeColor=#FF0000;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="20" as="geometry"/></mxCell>
-        <mxCell id="e" edge="1" parent="1" source="a" target="w"><mxGeometry relative="1" as="geometry"/></mxCell>
-        "##,
+        r##"<mxCell id="w" style="shape=waypoint;size=12;strokeWidth=2;strokeColor=#FF0000;fillColor=none;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>"##,
     );
-    let sheet = clean(&xml);
-    let dot = shapes(&sheet)
-        .into_iter()
-        .find(|o| {
-            matches!(
-                o.kind,
-                CanvasObjectKind::Shape {
-                    shape: ShapeKind::Ellipse,
-                    ..
-                }
+    let book = load(&xml).workbook;
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            transparent: true,
+            ..Default::default()
+        };
+        let svg = String::from_utf8(
+            crate::export_bytes_with_consent(&book, Format::Svg, &options, true).unwrap(),
+        )
+        .unwrap();
+        let id = shapes(book.active())[0].id;
+        let group = svg
+            .split_once(&format!("id=\"object-{}\"", id.0))
+            .unwrap()
+            .1
+            .split_once("</g>")
+            .unwrap()
+            .0;
+        assert!(
+            group.contains(r##"fill="#FF0000" stroke="#00000000""##),
+            "{group}"
+        );
+        let png = image::load_from_memory(
+            &crate::export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+        )
+        .unwrap()
+        .to_rgba8();
+        let red: Vec<_> = png
+            .enumerate_pixels()
+            .filter(|(_, _, pixel)| {
+                pixel[0] > 240 && pixel[1] < 20 && pixel[2] < 20 && pixel[3] > 0
+            })
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        let width = red.iter().map(|(x, _)| x).max().unwrap()
+            - red.iter().map(|(x, _)| x).min().unwrap()
+            + 1;
+        let height = red.iter().map(|(_, y)| y).max().unwrap()
+            - red.iter().map(|(_, y)| y).min().unwrap()
+            + 1;
+        assert!((13..=15).contains(&width), "dark={dark}, width={width}");
+        assert!((13..=15).contains(&height), "dark={dark}, height={height}");
+    }
+}
+
+#[test]
+fn waypoint_and_deferred_connector_follow_source_paint_order() {
+    let dot = r##"<mxCell id="w" style="shape=waypoint;size=12;strokeColor=#FF0000;perimeter=centerPerimeter;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>"##;
+    let edge = r##"<mxCell id="e" style="endArrow=none;strokeColor=#00FF00;strokeWidth=4;" edge="1" target="w" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="70" as="sourcePoint"/></mxGeometry></mxCell>"##;
+    for edge_first in [true, false] {
+        let cells = if edge_first {
+            format!("{edge}{dot}")
+        } else {
+            format!("{dot}{edge}")
+        };
+        let book = load(&page(&cells)).workbook;
+        let mut books = vec![("import", book.clone())];
+        for format in [Format::Thinoda, Format::DrawIo] {
+            let bytes =
+                crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                    .unwrap();
+            let restored = crate::import_bytes(format, &bytes).unwrap();
+            if format == Format::Thinoda {
+                assert_eq!(restored, book);
+            }
+            books.push((
+                if format == Format::Thinoda {
+                    "native"
+                } else {
+                    "draw.io"
+                },
+                restored,
+            ));
+        }
+        for (source, book) in books {
+            book.validate().unwrap();
+            let sheet = book.active();
+            let dot = shapes(sheet)[0].id;
+            let connector = sheet
+                .canvas
+                .objects
+                .iter()
+                .find(|object| object.is_connector())
+                .unwrap()
+                .id;
+            let ids: Vec<_> = sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| object.id)
+                .collect();
+            assert_eq!(
+                ids,
+                if edge_first {
+                    vec![connector, dot]
+                } else {
+                    vec![dot, connector]
+                },
+                "{source}"
+            );
+            let layout = layout_sheet(sheet, &ApproxMeasure, false);
+            let scene = thinoda_core::scene::build_scene(sheet, &layout);
+            assert_eq!(
+                scene.hit_test(Vec2::new(110.0, 70.0)),
+                Some(thinoda_core::scene::SceneHit::Object(if edge_first {
+                    dot
+                } else {
+                    connector
+                })),
+                "{source}"
+            );
+
+            let options = ExportOptions {
+                transparent: true,
+                ..Default::default()
+            };
+            let svg = String::from_utf8(
+                crate::export_bytes_with_consent(&book, Format::Svg, &options, true).unwrap(),
             )
+            .unwrap();
+            let dot_position = svg.find(&format!("id=\"object-{}\"", dot.0)).unwrap();
+            let edge_position = svg.find(&format!("id=\"object-{}\"", connector.0)).unwrap();
+            assert_eq!(edge_position < dot_position, edge_first, "{source}");
+            let png = image::load_from_memory(
+                &crate::export_bytes_with_consent(&book, Format::Png, &options, true).unwrap(),
+            )
+            .unwrap()
+            .to_rgba8();
+            let red: Vec<_> = png
+                .enumerate_pixels()
+                .filter(|(_, _, pixel)| pixel[0] > 240 && pixel[1] < 20 && pixel[2] < 20)
+                .map(|(x, y, _)| (x, y))
+                .collect();
+            let x = (red.iter().map(|(x, _)| x).min().unwrap()
+                + red.iter().map(|(x, _)| x).max().unwrap())
+                / 2;
+            let y = (red.iter().map(|(_, y)| y).min().unwrap()
+                + red.iter().map(|(_, y)| y).max().unwrap())
+                / 2;
+            let center = png.get_pixel(x, y);
+            assert!(
+                if edge_first {
+                    center[0] > 240 && center[1] < 20
+                } else {
+                    center[1] > 240 && center[0] < 20
+                },
+                "{source}, edge_first={edge_first}, center={center:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn deferred_edges_follow_nested_cell_order_not_global_xml_order() {
+    let xml = page(
+        r#"<mxCell id="g" style="group;locked=1;" vertex="1" parent="1"><mxGeometry width="150" height="100" as="geometry"/></mxCell>
+        <mxCell id="outside" value="outside" vertex="1" parent="1"><mxGeometry x="200" width="40" height="40" as="geometry"/></mxCell>
+        <mxCell id="first" value="first" edge="1" source="a" target="b" parent="g"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a" value="a" style="thinodaBand=below;" vertex="1" parent="g"><mxGeometry width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="middle" value="middle" style="thinodaBand=below;" edge="1" source="a" target="b" parent="g"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="b" value="b" vertex="1" parent="g"><mxGeometry x="100" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="last" value="last" edge="1" source="a" target="b" parent="g"><mxGeometry relative="1" as="geometry"/></mxCell>"#,
+    );
+    let book = load(&xml).workbook;
+    let mut books = vec![("import", book.clone())];
+    for format in [Format::Thinoda, Format::DrawIo] {
+        let bytes =
+            crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap();
+        let report = crate::import_bytes_with_report(format, &bytes).unwrap();
+        if format == Format::DrawIo {
+            assert!(report.warnings.contains(&ImportWarning::Formatting));
+        }
+        books.push((
+            if format == Format::Thinoda {
+                "native"
+            } else {
+                "draw.io"
+            },
+            report.workbook,
+        ));
+    }
+    for (source, book) in books {
+        book.validate().unwrap();
+        let sheet = book.active();
+        let labels: Vec<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .map(CanvasObject::label)
+            .collect();
+        assert_eq!(
+            labels,
+            ["first", "a", "middle", "b", "last", "outside"],
+            "{source}"
+        );
+        let group = sheet.canvas.groups.first().unwrap();
+        assert!(group.locked, "{source}");
+        for object in &sheet.canvas.objects {
+            assert_eq!(
+                object.group,
+                (object.label() != "outside").then_some(group.id),
+                "{source}: {}",
+                object.label()
+            );
+        }
+        let layout = layout_sheet(sheet, &ApproxMeasure, false);
+        let scene = thinoda_core::scene::build_scene(sheet, &layout);
+        let scene_labels: Vec<_> = scene
+            .items
+            .iter()
+            .filter_map(|item| match item.id {
+                thinoda_core::scene::SceneId::Object(id) => {
+                    Some(sheet.canvas.object(id).unwrap().label())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            scene_labels,
+            ["a", "middle", "first", "b", "last", "outside"],
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn waypoint_center_perimeter_connectors_attach_to_the_dot_center() {
+    let center = Vec2::new(110.0, 70.0);
+    for (source, constraint) in [
+        (true, ""),
+        (false, ""),
+        (true, "exitX=1;exitY=0;exitDx=5;exitPerimeter=1;"),
+        (false, "entryX=1;entryY=0;entryDy=5;entryPerimeter=1;"),
+    ] {
+        let terminal = if source {
+            r#"source="w""#
+        } else {
+            r#"target="w""#
+        };
+        let xml = page(&format!(
+            r#"<mxCell id="w" style="shape=waypoint;size=12;perimeter=centerPerimeter;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>
+            <mxCell id="e" style="endArrow=none;{constraint}" edge="1" {terminal} parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="250" y="70" as="sourcePoint"/><mxPoint x="250" y="70" as="targetPoint"/></mxGeometry></mxCell>"#
+        ));
+        let report = load(&xml);
+        let sheet = &report.workbook.sheets[0];
+        let connector = connectors(sheet)[0];
+        let port = if source {
+            connector.from_port
+        } else {
+            connector.to_port
+        };
+        assert_eq!(
+            port,
+            Some(ConnectorPort {
+                position: Vec2::new(0.5, 0.5),
+                offset: Vec2::ZERO,
+                perimeter: false,
+            }),
+            "source={source}, constraint={constraint}"
+        );
+        let layout = layout_sheet(sheet, &ApproxMeasure, false);
+        let path = thinoda_core::scene::connector_path(sheet, &layout, connector);
+        let endpoint = if source {
+            path[0]
+        } else {
+            *path.last().unwrap()
+        };
+        assert_eq!(endpoint, center, "source={source}, constraint={constraint}");
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
+fn supplied_circuit_waypoints_keep_centered_connector_endpoints() {
+    let report = import(include_bytes!(
+        "../../../../docs/draw-io-examples/waypoint-shape.drawio"
+    ))
+    .unwrap();
+    let sheet = &report.workbook.sheets[0];
+    let layout = layout_sheet(sheet, &ApproxMeasure, false);
+    for center in [
+        Vec2::new(230.0, 220.0),
+        Vec2::new(470.0, 220.0),
+        Vec2::new(230.0, 60.0),
+        Vec2::new(230.0, 390.0),
+    ] {
+        let dot = shapes(sheet)
+            .into_iter()
+            .find(|object| {
+                matches!(
+                    object.kind,
+                    CanvasObjectKind::Shape {
+                        shape: ShapeKind::Ellipse,
+                        ..
+                    }
+                ) && object.rect.center() == center
+                    && object.rect.size == Vec2::new(6.0, 6.0)
+            })
+            .expect("circuit waypoint");
+        let mut attached = 0;
+        for connector in connectors(sheet) {
+            let path = thinoda_core::scene::connector_path(sheet, &layout, connector);
+            if connector.from == Endpoint::Object(dot.id) {
+                assert_eq!(path[0], center);
+                attached += 1;
+            }
+            if connector.to == Endpoint::Object(dot.id) {
+                assert_eq!(*path.last().unwrap(), center);
+                attached += 1;
+            }
+        }
+        assert!(attached >= 2, "center={center:?}, attached={attached}");
+    }
+    report.workbook.validate().unwrap();
+}
+
+#[test]
+fn waypoint_absolute_constraints_use_original_cell_bounds() {
+    for (vertex_style, expected) in [
+        ("", Vec2::new(123.0, 46.0)),
+        ("rotation=90;", Vec2::new(134.0, 83.0)),
+        ("direction=south;", Vec2::new(124.0, 93.0)),
+        ("direction=south;flipH=1;", Vec2::new(96.0, 93.0)),
+        (
+            "direction=south;anchorPointDirection=0;flipH=1;",
+            Vec2::new(123.0, 94.0),
+        ),
+        ("perimeterSpacing=2;", Vec2::new(125.0, 44.0)),
+    ] {
+        for source in [true, false] {
+            let (terminal, prefix) = if source {
+                (r#"source="w""#, "exit")
+            } else {
+                (r#"target="w""#, "entry")
+            };
+            let xml = page(&format!(
+                r#"<mxCell id="w" style="shape=waypoint;perimeter=centerPerimeter;{vertex_style}" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>
+                <mxCell id="e" style="endArrow=none;{prefix}X=1;{prefix}Y=0;{prefix}Dx=3;{prefix}Dy=-4;{prefix}Perimeter=0;" edge="1" {terminal} parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="250" y="70" as="sourcePoint"/><mxPoint x="250" y="70" as="targetPoint"/></mxGeometry></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert!(report.warnings.contains(&ImportWarning::Formatting));
+            let sheet = &report.workbook.sheets[0];
+            let connector = connectors(sheet)[0];
+            let port = if source {
+                connector.from_port
+            } else {
+                connector.to_port
+            }
+            .unwrap();
+            assert_eq!(port.position, Vec2::new(0.5, 0.5));
+            assert!(!port.perimeter);
+            let layout = layout_sheet(sheet, &ApproxMeasure, false);
+            let path = thinoda_core::scene::connector_path(sheet, &layout, connector);
+            let point = if source {
+                path[0]
+            } else {
+                *path.last().unwrap()
+            };
+            assert!(
+                (point - expected).length() < 0.001,
+                "vertex_style={vertex_style}, source={source}, point={point:?}"
+            );
+            report.workbook.validate().unwrap();
+        }
+    }
+}
+
+#[test]
+fn waypoint_connector_positions_survive_moves_and_format_round_trips() {
+    let xml = page(
+        r#"<mxCell id="w" style="shape=waypoint;perimeter=centerPerimeter;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>
+        <mxCell id="absolute" style="endArrow=none;exitX=1;exitY=0;exitDx=3;exitDy=-4;exitPerimeter=0;" edge="1" source="w" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="250" y="70" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="center" style="endArrow=none;" edge="1" target="w" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="70" as="sourcePoint"/></mxGeometry></mxCell>"#,
+    );
+    let mut book = load(&xml).workbook;
+    let dot = shapes(book.active())[0].id;
+    let delta = Vec2::new(10.0, 20.0);
+    book.active_mut()
+        .move_canvas_objects(&[dot], delta)
+        .unwrap();
+    assert_eq!(crate::required_native_version(&book), 22);
+    for format in [Format::Thinoda, Format::DrawIo] {
+        let bytes =
+            crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap();
+        let restored = crate::import_bytes(format, &bytes).unwrap();
+        if format == Format::Thinoda {
+            assert_eq!(restored, book);
+        }
+        let sheet = restored.active();
+        let layout = layout_sheet(sheet, &ApproxMeasure, false);
+        let mut points = Vec::new();
+        for connector in connectors(sheet) {
+            let path = thinoda_core::scene::connector_path(sheet, &layout, connector);
+            if matches!(connector.from, Endpoint::Object(_)) {
+                points.push(path[0]);
+            }
+            if matches!(connector.to, Endpoint::Object(_)) {
+                points.push(*path.last().unwrap());
+            }
+        }
+        assert_eq!(points.len(), 2);
+        for expected in [
+            Vec2::new(123.0, 46.0) + delta,
+            Vec2::new(110.0, 70.0) + delta,
+        ] {
+            assert!(
+                points
+                    .iter()
+                    .any(|point| (*point - expected).length() < 0.001),
+                "{format:?}: missing {expected:?} in {points:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn waypoint_unrepresentable_fixed_ports_fall_back_with_a_warning() {
+    let xml = page(
+        r#"<mxCell id="w" style="shape=waypoint;perimeterSpacing=1000000;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="20" height="40" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=none;exitX=1;exitY=0;exitDx=10;exitPerimeter=0;" edge="1" source="w" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="250" y="70" as="targetPoint"/></mxGeometry></mxCell>"#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert_eq!(
+        connectors(&report.workbook.sheets[0])[0].from_port,
+        Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.0),
+            offset: Vec2::new(10.0, 0.0),
+            perimeter: false,
         })
-        .expect("waypoint dot");
-    assert_eq!(
-        dot.rect,
-        Rect::from_center_size(Vec2::new(110.0, 60.0), Vec2::new(6.0, 6.0))
     );
-    let red = Color::rgba(255, 0, 0, 255);
-    assert_eq!(dot.style.fill, Some(red));
-    assert_eq!(dot.style.stroke, Some(red));
-    assert_eq!(
-        connectors(&sheet).len(),
-        1,
-        "edges still attach to the waypoint"
-    );
+    report.workbook.validate().unwrap();
 }
 
 fn tiny_png(width: u32, height: u32) -> Vec<u8> {

@@ -2873,8 +2873,10 @@ workspace run passed 3,354 tests (16 ignored) before the final bounds and
 warning follow-up; afterwards the affected app and canvas library suites
 passed 1,474 tests (four ignored). Native Clippy for the affected crates and
 wasm Clippy including the web crate passed with warnings denied, and the
-Windows debug application built successfully. A full workspace run against
-the final tree and full UI acceptance remain open. A manual Chromium smoke
+Windows debug application built successfully. A later serialized workspace run
+passed 3,366 tests (16 ignored), but it overlapped subsequent edits and is not
+a stable final-tree run. A full workspace run against the final tree and full
+UI acceptance remain open. A manual Chromium smoke
 check covered the Stencils tab, searching, click and drag insertion, scratchpad
 and imported library persistence across reloads, and the unchanged left-side
 Shape library.
@@ -2919,6 +2921,44 @@ partially transparent native image-card exports retain their previous behavior;
 their broader differences from canvas card painting remain out of scope.
 This fixes the extra borders, not font, connector or other source fidelity.
 
+**Waypoint dots and attachments (partial Phases 5 and 8) — critique.** The
+published draw.io waypoint renderer paints a filled dot whose diameter is
+`max(0, size - 2) + 2 * strokeWidth`, independent of the cell's bounds; the
+dot uses the stroke color and fill opacity without a separate outline.
+Thinoda now approximates that dot with an ellipse of the corresponding size.
+For `centerPerimeter`, floating and perimeter-constrained connector ends
+attach to its center. Absolute fixed constraints are mapped from the original
+cell bounds, including supported spacing, rotation, direction and flips.
+Tests cover the supplied circuit's four junctions, both connector ends, visual
+exports, movement and native/draw.io round trips. Oversized or invalid values
+remain bounded and are reported.
+
+This is not full waypoint support: the original waypoint identity and its
+larger interaction bounds are not retained, and save-back produces an
+ellipse. Other perimeter styles, unsupported or unrepresentable constraints,
+labels, precise device-pixel rounding and source-preserving edits still need
+work. Import now reports a formatting warning for the approximation instead of
+silently presenting it as lossless. The size calculation was checked against
+the fixture's [draw.io renderer](https://github.com/jgraph/drawio/blob/v14.6.9/src/main/webapp/js/grapheditor/Shapes.js).
+
+**Deferred-edge paint order (partial Phase 5) — critique.** Edges whose
+terminals had not yet been imported were appended after later shapes, so a
+connector could cover a waypoint that appeared above it in the source.
+Imported canvas objects now retain the source hierarchy traversal order even
+when edges need deferred resolution. Regressions cover both edge/waypoint
+orders, nested groups, interleaved bands, locked groups, hit testing, PNG
+and SVG output, and native/draw.io round trips. The supplied circuit's
+junction dots are now solid where earlier connectors meet them.
+
+This preserves order only among canvas objects within a Thinoda band. Frames,
+cards and different bands retain their separate scene layers; flattened groups
+and unsupported source structures can still differ from draw.io. The circuit
+continues to have missing stencil geometry and wiring differences. An
+independent rubber-duck review found no blocking defect in this slice. The
+I/O suite passed 576 tests (10 ignored); native and wasm Clippy passed with
+warnings denied, the Windows workspace build passed, and the serialized
+workspace suite passed 3,376 tests (16 ignored).
+
 **Example preview comparison.** A local render probe exported all 116 supplied
 PNG-backed pages from 60 draw.io documents. All pages rendered, but that is not
 a fidelity pass: document-level import warnings reported formatting differences
@@ -2927,17 +2967,35 @@ for all 60 documents, unsupported shapes for 45, resources for 15, links for
 `board-visual-tutorial.png` shows font and connector differences; its three
 extra image outlines have since been removed as described above. The first
 `waypoint-shape.png` page contains black blocks and altered wiring instead of
-several reference symbols. `floorplan-apartment.page-2.png` also has large
-black blocks and missing architectural symbols; `arista.png` replaces the rack
-equipment images with generic containers. A side-by-side gallery was generated
-for all pages, but only these examples were inspected manually. Full visual and
-feature parity therefore remains incomplete. The probe can be rerun with
+several reference symbols. Its second page substitutes logic gates with
+rectangles and wraps the output label vertically; its third page loses line
+dashes and wraps labels; its fourth page changes rounded corners and some
+connections. `floorplan-apartment.page-2.png` also has large black blocks and
+missing architectural symbols; `arista.png` replaces the rack equipment images
+with generic containers. In `uml-activity-example.png`, swimlane headings and
+backgrounds, the dashed boundary, the final-state symbol and some connectors
+differ. `kanban-examples.png` loses the left-hand sticky notes and several
+colors and symbols; some labels show unresolved placeholders. `C4.png` also
+shows placeholder text instead of the reference labels, with missing person
+geometry and different line and corner styles. A side-by-side gallery was
+generated for all pages, but only these examples were inspected manually. Full
+visual and feature parity therefore remains incomplete. The probe can be rerun with
 `cargo run -p thinoda-io --example drawio_visual_probe -- docs\draw-io-examples <new-output-directory>`;
 it writes converted PNGs and a JSON report, and refuses an existing output
 directory.
 
 The next visual-parity work remains open:
 
+- Preserve standard rounded-rectangle `arcSize` and `absoluteArcSize`, including
+  their resize behavior. The published
+  [rectangle renderer](https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/shape/mxRectangleShape.js)
+  uses a circular radius based on the smaller side for relative arcs, or a
+  bounded half-`arcSize` for absolute arcs; Thinoda's existing default rounded
+  rectangle instead scales each corner axis independently. A scan found 529
+  `rounded=1` cells with the default or `rectangle` shape in 26 supplied
+  `.drawio` documents, including the fourth waypoint page. Preserve existing
+  native shapes while adding source-aware geometry, save-back, version gates,
+  editing and cross-renderer tests.
 - Implement and exercise the floor-plan and circuit stencil geometry rather
   than substituting generic filled rectangles; verify symbols and connections
   against the corresponding reference pages. The supplied circuit pages use
@@ -2945,8 +3003,20 @@ The next visual-parity work remains open:
   `mxgraph.electrical.miscellaneous.monocell_battery`,
   `mxgraph.electrical.logic_gates.logic_gate`, and
   `mxgraph.lean_mapping.physical_pull`; these remain unsupported. Their
-  `waypoint` cells are currently approximated as small ellipses, so attachment
-  and save-back fidelity still need separate verification.
+  `waypoint` cells are approximated as ellipses with the size and supported
+  attachment improvements above; source identity and save-back fidelity remain
+  open.
+- Resolve supported placeholder labels from draw.io metadata without executing
+  expressions, and preserve the underlying values for editing and save-back.
+  Exercise the C4 and kanban examples; report unsupported substitutions rather
+  than presenting placeholder text as faithful output. The kanban source's
+  sticky notes become map-layer cards, while opaque background rectangles
+  default to the Above band, which paints over those cards despite their source
+  order. Preserve mixed card/object order without globally putting every card
+  in front; also address the missing colors and symbols.
+- Preserve swimlane header orientation, backgrounds and dashed boundaries, and
+  recheck the final-state symbol and connector routing against the UML activity
+  example.
 - Preserve the external SVG references used by the Arista rack equipment and
   render safely supplied, appropriately licensed resources, with explicit
   diagnostics for unresolved images. Keep the existing no-auto-fetch policy;
