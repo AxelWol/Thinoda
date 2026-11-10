@@ -49,6 +49,53 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
 }
 
 #[test]
+fn drawio_placeholder_data_loss_requires_confirmation() {
+    for tag in ["object", "UserObject"] {
+        let xml = page(&format!(
+            r#"<{tag} id="a" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></{tag}>"#
+        ));
+        let report = load(&xml);
+        assert_eq!(
+            report.warnings,
+            vec![ImportWarning::DrawioPlaceholdersUnsupported],
+            "{tag}"
+        );
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0].label(),
+            "Width %width%"
+        );
+        assert!(matches!(
+            crate::import_bytes(Format::DrawIo, xml.as_bytes()),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings == vec![ImportWarning::DrawioPlaceholdersUnsupported]
+        ));
+        let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+        assert_eq!(
+            pasted.warnings,
+            vec![ImportWarning::DrawioPlaceholdersUnsupported]
+        );
+    }
+
+    let disabled = page(
+        r#"<object id="a" label="Width %width%" placeholders="0"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object>"#,
+    );
+    assert!(load(&disabled).warnings.is_empty());
+    assert!(crate::import_bytes(Format::DrawIo, disabled.as_bytes()).is_ok());
+
+    let malformed = disabled.replace(r#"placeholders="0""#, r#"placeholders="true""#);
+    assert_eq!(load(&malformed).warnings, vec![ImportWarning::Other]);
+
+    let bound_label = disabled.replace(r#"placeholders="0""#, r#"placeholder="status""#);
+    assert_eq!(
+        load(&bound_label).warnings,
+        vec![
+            ImportWarning::DrawioPlaceholdersUnsupported,
+            ImportWarning::Other
+        ]
+    );
+}
+
+#[test]
 fn drawio_grid_settings_follow_editor_defaults_and_report_adjustments() {
     for (attributes, grid, size, snap, adjusted) in [
         ("", GridKind::Lines, 10.0, true, false),

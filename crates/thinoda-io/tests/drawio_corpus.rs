@@ -750,6 +750,51 @@ fn supplied_floorplan_chair_placeholders_are_explicitly_reported() {
 }
 
 #[test]
+fn supplied_diagrams_report_unresolved_metadata_placeholders() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    for (name, token) in [
+        ("C4.drawio", "%c4Name%"),
+        ("kanban-examples.drawio", "%status%"),
+        ("home-lab-example.drawio", "%subnet%"),
+    ] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
+        assert!(
+            report
+                .warnings
+                .contains(&thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported),
+            "{name}"
+        );
+        assert!(
+            report.workbook.sheets.iter().any(|sheet| {
+                sheet
+                    .topics
+                    .values()
+                    .any(|topic| topic.title.contains(token))
+                    || sheet
+                        .canvas
+                        .objects
+                        .iter()
+                        .any(|object| object.label().contains(token))
+            }),
+            "{name}: expected unresolved {token}"
+        );
+        assert!(matches!(
+            thinoda_io::import_bytes(Format::DrawIo, &bytes),
+            Err(IoError::ImportNeedsConfirmation(warnings))
+                if warnings.contains(&thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported)
+        ));
+        report.workbook.validate().unwrap();
+    }
+}
+
+#[test]
 fn supplied_uml_activity_keeps_its_rgb_colors() {
     let Some(dir) = corpus_dir() else {
         return;

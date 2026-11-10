@@ -399,6 +399,8 @@ pub enum ImportWarning {
     DrawioBackgroundAdjusted,
     /// A draw.io folded note's appearance was approximated.
     DrawioFoldedNotesApproximated,
+    /// draw.io placeholder resolution and its metadata are not represented.
+    DrawioPlaceholdersUnsupported,
     Other,
 }
 

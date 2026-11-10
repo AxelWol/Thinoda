@@ -3029,6 +3029,40 @@ visual and feature parity therefore remains incomplete. The probe can be rerun w
 it writes converted PNGs and a JSON report, and refuses an existing output
 directory.
 
+**Placeholder loss disclosure and critique (partial Phase 9).** draw.io's
+[placeholder documentation](https://www.drawio.com/docs/manual/advanced/placeholders/)
+and [scope rules](https://www.drawio.com/docs/manual/advanced/placeholder-scope/)
+describe opt-in label and tooltip substitution, nearest-ancestor overrides,
+page and file properties, and a special `placeholder` property whose label
+edits update the nearest matching value. The supplied C4 pages use
+`placeholders="1"` with properties such as `c4Name`; the kanban tasks inherit
+`status` from their columns, and the home-network example inherits `subnet`
+from containers. Predefined values and escaped percent signs also need
+separate handling. Thinoda currently neither resolves these labels nor
+preserves the placeholder setting or custom property data in converted
+documents.
+
+Import now specifically reports enabled `placeholders="1"` and the special
+`placeholder` property instead of silently treating them as supported. A
+disabled flag does not warn; unrecognized flag values and other custom data
+remain reported as unsupported data. File and link imports require consent,
+and file conversion protects the original source; clipboard paste shows a
+persistent specific warning and remains undoable. Tests cover both wrapper
+names, disabled and malformed flags, special-property labels, first-page paste,
+localized UI, source protection, and the three supplied examples. A Chromium
+test of the production web bundle checks the paste warning and undo. This is a
+safety disclosure, not placeholder support: a converted copy still loses the
+metadata, and other metadata representations may need additional diagnostics.
+Preserving properties, dynamic scope, edits and save-back remains open.
+
+**Rubber Duck:** An enabled flag can affect tooltips or later label edits even
+when the current label has no `%` token, so the warning does not depend on
+visible text. A disabled flag leaves literal percent text unchanged, while an
+unknown flag is reported rather than silently interpreted. Multi-page
+clipboard warnings refer to the pasted page, not an omitted page. The source
+file protection prevents this disclosure from implying safe round-tripping;
+it does not restore metadata in the converted copy.
+
 The next visual-parity work remains open:
 
 - Extend the standard rounded-rectangle slice above to exact curves,

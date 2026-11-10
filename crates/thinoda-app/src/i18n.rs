@@ -185,6 +185,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::DrawioFoldedNotesApproximated => {
             "draw.io folded notes may be flattened or simplified"
         }
+        ImportWarning::DrawioPlaceholdersUnsupported => {
+            "draw.io placeholders are not resolved and their data is not preserved"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -1461,6 +1464,10 @@ const DE: &[(&str, &str)] = &[
     (
         "draw.io folded notes may be flattened or simplified",
         "Gefaltete draw.io-Notizen können abgeflacht oder vereinfacht werden",
+    ),
+    (
+        "draw.io placeholders are not resolved and their data is not preserved",
+        "draw.io-Platzhalter werden nicht aufgelöst und ihre Daten nicht übernommen",
     ),
     (
         "Other unsupported map data",
@@ -5073,6 +5080,7 @@ mod tests {
             "draw.io page background was approximated or omitted",
             "Page background may differ in draw.io",
             "draw.io folded notes may be flattened or simplified",
+            "draw.io placeholders are not resolved and their data is not preserved",
             "Cards may show folded corners in draw.io",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",

@@ -1810,6 +1810,32 @@ mod tests {
     }
 
     #[test]
+    fn drawio_placeholders_require_consent_and_preserve_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("placeholder.drawio");
+        let xml = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="shape" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object></root></mxGraphModel>"#;
+        std::fs::write(&path, xml).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).err().unwrap(),
+            t("Import requires confirmation")
+        );
+        let (mut document, warnings) = OpenDoc::open_with_report(&path).unwrap();
+        assert_eq!(
+            warnings,
+            vec![thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported]
+        );
+        assert!(document.path.is_none());
+        assert!(document.is_dirty());
+        assert_eq!(
+            document.save_to(&path, false).unwrap_err(),
+            t("Choose a different destination to preserve the imported source.")
+        );
+        let native = directory.path().join("placeholder.thinoda");
+        document.save_to(&native, false).unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), xml);
+    }
+
+    #[test]
     fn supported_drawio_markers_open_without_confirmation_and_save_as_native() {
         use thinoda_core::{CanvasObjectKind, ConnectorMarkerKind};
 

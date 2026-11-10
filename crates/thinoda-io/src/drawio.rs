@@ -1351,6 +1351,18 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
                     warnings.insert(ImportWarning::Other);
                     continue;
                 };
+                match element.attr("placeholders") {
+                    Some("1") => {
+                        warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                    }
+                    None | Some("0") => {}
+                    Some(_) => {
+                        warnings.insert(ImportWarning::Other);
+                    }
+                }
+                if element.attr("placeholder").is_some() {
+                    warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                }
                 if element.attrs.iter().any(|(key, _)| {
                     !matches!(
                         key.as_str(),

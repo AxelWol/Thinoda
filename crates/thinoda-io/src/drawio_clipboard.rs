@@ -503,6 +503,26 @@ mod tests {
     }
 
     #[test]
+    fn placeholder_warning_follows_the_pasted_page() {
+        let marked = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="a" label="%width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object></root></mxGraphModel>"#;
+        for (first, later, marked_is_pasted) in [(MODEL, marked, false), (marked, MODEL, true)] {
+            let file = format!(
+                "<mxfile><diagram name=\"First\">{first}</diagram><diagram name=\"Later\">{later}</diagram></mxfile>"
+            );
+            for text in [file.clone(), encode_uri_component(&file)] {
+                let pasted = decode(&text).unwrap();
+                assert_eq!(
+                    pasted
+                        .warnings
+                        .contains(&ImportWarning::DrawioPlaceholdersUnsupported),
+                    marked_is_pasted
+                );
+                assert_eq!(pasted.losses, vec![DrawioPasteLoss::AdditionalPages(1)]);
+            }
+        }
+    }
+
+    #[test]
     fn clipboard_still_rejects_malformed_omitted_pages() {
         let file = format!(
             "<mxfile><diagram name=\"First\">{MODEL}</diagram><diagram name=\"Broken\">not-base64!</diagram></mxfile>"

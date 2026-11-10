@@ -488,6 +488,7 @@ Unsupported shapes or styles in the draw.io source may appear as rectangles|Form
 draw.io grid settings were adjusted|As configurações de grade do draw.io foram ajustadas
 draw.io page background was approximated or omitted|O fundo da página do draw.io foi aproximado ou omitido
 draw.io folded notes may be flattened or simplified|As notas dobradas do draw.io podem ser achatadas ou simplificadas
+draw.io placeholders are not resolved and their data is not preserved|Os espaços reservados do draw.io não são resolvidos e seus dados não são preservados
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão

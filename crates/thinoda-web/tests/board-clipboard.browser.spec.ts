@@ -699,6 +699,34 @@ test("draw.io paste warns about an unsupported chair placeholder", async ({ page
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io metadata placeholders warn on paste and can be undone", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<object id="shape" label="Width %width%" placeholders="1">',
+        '<mxCell style="shape=rectangle;" vertex="1" parent="1">',
+        '<mxGeometry width="100" height="60" as="geometry"/></mxCell></object>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-placeholder-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    await expectWarningToast(page, testInfo.outputPath("drawio-placeholder-warning.png"));
+    const after = archive(await saveAs(page, "drawio-placeholder-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape?.label).toBe("Width %width%");
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-placeholder-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("draw.io paste omits a connector with a malformed endpoint", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
