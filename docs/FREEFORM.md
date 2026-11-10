@@ -1735,6 +1735,18 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   and compact sizes; this is not browser screen-reader or physical-touch
   acceptance. The other contextual editing slices remain open.
 
+### Format-panel stencils checkpoint
+
+- The right Format Panel has a separate Stencils tab with searchable built-in
+  sections, imported draw.io XML libraries and a persistent selection scratchpad.
+  Clicking inserts an undoable copy at the canvas center; dragging positions a
+  copy on the board. The existing left-hand Shape library is unchanged.
+- Duck check: imported content goes through the draw.io conversion path, so
+  unsupported details can be simplified rather than becoming faithful stencil
+  geometry. A damaged saved library disables saving instead of overwriting it.
+  Library export, connecting on insertion, arrow-key tile navigation and
+  physical touch and assistive-technology acceptance remain open.
+
 ### Whole-card formatting checkpoint and critique
 
 - Selected sticky notes and text cards expose bold, italic, underline, alignment,

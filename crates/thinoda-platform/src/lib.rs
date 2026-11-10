@@ -67,6 +67,7 @@ pub mod recovery;
 pub mod remote_storage;
 pub mod settings;
 pub mod single_instance;
+pub mod stencils;
 pub mod storage;
 pub mod system;
 pub mod vfs;
@@ -86,6 +87,8 @@ pub enum Error {
     InvalidCustomThemes(String),
     #[error("invalid quick style library: {0}")]
     InvalidQuickStyles(String),
+    #[error("invalid stencil libraries: {0}")]
+    InvalidStencils(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

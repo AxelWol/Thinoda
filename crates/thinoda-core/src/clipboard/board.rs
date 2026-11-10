@@ -8,8 +8,8 @@ use crate::board::{
     BoardMember, CanvasGroupId, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_OBJECTS,
     SheetRootMode,
 };
-use crate::geometry::Vec2;
-use crate::layout::Layout;
+use crate::geometry::{Rect, Vec2};
+use crate::layout::{ApproxMeasure, Layout, layout_sheet};
 use crate::model::{Sheet, Subtree, Topic, TopicId, valid_position};
 use crate::scene::{SceneGeometry, SceneId, build_scene, topic_anchor_rect};
 use crate::schedule::Weekday;
@@ -101,6 +101,22 @@ impl BoardClipboardPayload {
     /// Source objects after group expansion, in their original paint order.
     pub fn source_object_ids(&self) -> impl Iterator<Item = CanvasObjectId> + '_ {
         self.fragment.canvas.objects.iter().map(|object| object.id)
+    }
+
+    /// Bounds of the copied content, measured with the approximate layout.
+    ///
+    /// Calculate these from the fragment rather than its source: source-only
+    /// frames and clipping are not copied. The payload must be validated first.
+    /// Returns `None` if the fragment has no measurable scene items; a valid
+    /// clipboard payload does not necessarily have measurable bounds.
+    pub fn content_bounds(&self) -> Option<Rect> {
+        let layout = layout_sheet(&self.fragment, &ApproxMeasure, false);
+        build_scene(&self.fragment, &layout)
+            .items
+            .into_iter()
+            .filter(|item| !matches!(item.id, SceneId::Topic(id) if self.fragment.is_anchor(id)))
+            .filter_map(|item| item.visible_bounds())
+            .reduce(|a, b| a.union(&b))
     }
 
     /// Validates the current payload, including any changes to its public text.

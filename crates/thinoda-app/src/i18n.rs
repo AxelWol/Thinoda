@@ -4197,6 +4197,96 @@ const DE: &[(&str, &str)] = &[
         "Could not paste draw.io content",
         "draw.io-Inhalt konnte nicht eingefügt werden",
     ),
+    ("Stencils", "Schablonen"),
+    ("Scratchpad", "Notizblock"),
+    ("Arrows", "Pfeile"),
+    ("Library", "Bibliothek"),
+    ("Search stencils", "Schablonen durchsuchen"),
+    (
+        "Click to insert or drag onto the board",
+        "Zum Einfügen klicken oder auf das Board ziehen",
+    ),
+    (
+        "Open a board or mind map to insert stencils",
+        "Öffne ein Board oder eine Mindmap, um Schablonen einzufügen",
+    ),
+    ("Add selection", "Auswahl hinzufügen"),
+    (
+        "Add the selected board items to the scratchpad",
+        "Ausgewählte Board-Elemente zum Notizblock hinzufügen",
+    ),
+    (
+        "Select board items and add them here for reuse",
+        "Board-Elemente auswählen und hier zur Wiederverwendung hinzufügen",
+    ),
+    ("Remove library", "Bibliothek entfernen"),
+    ("More shapes…", "Weitere Formen…"),
+    ("Import library…", "Bibliothek importieren…"),
+    ("Remove from scratchpad", "Aus dem Notizblock entfernen"),
+    (
+        "The library has no usable shapes",
+        "Die Bibliothek enthält keine verwendbaren Formen",
+    ),
+    (
+        "Too many stencil libraries; remove one first",
+        "Zu viele Schablonenbibliotheken; entferne zuerst eine",
+    ),
+    ("The scratchpad is full", "Der Notizblock ist voll"),
+    (
+        "Stencil libraries exceed the size or processing limit",
+        "Schablonenbibliotheken überschreiten die Größen- oder Verarbeitungsgrenze",
+    ),
+    (
+        "Some library entries could not be used",
+        "Einige Bibliothekseinträge konnten nicht verwendet werden",
+    ),
+    (
+        "Could not load stencil libraries",
+        "Schablonenbibliotheken konnten nicht geladen werden",
+    ),
+    (
+        "Changes cannot be saved because existing stencil libraries could not be loaded",
+        "Änderungen können nicht gespeichert werden, weil vorhandene Schablonenbibliotheken nicht geladen werden konnten",
+    ),
+    (
+        "Could not save stencil libraries",
+        "Schablonenbibliotheken konnten nicht gespeichert werden",
+    ),
+    (
+        "Could not insert stencil",
+        "Schablone konnte nicht eingefügt werden",
+    ),
+    (
+        "Could not add to the scratchpad",
+        "Konnte nicht zum Notizblock hinzugefügt werden",
+    ),
+    (
+        "Select board items to add to the scratchpad",
+        "Wähle Board-Elemente aus, um sie zum Notizblock hinzuzufügen",
+    ),
+    (
+        "Could not import library",
+        "Bibliothek konnte nicht importiert werden",
+    ),
+    (
+        "Inserted; some draw.io content may have been omitted or simplified",
+        "Eingefügt; einige draw.io-Inhalte wurden eventuell ausgelassen oder vereinfacht",
+    ),
+    (
+        "Added to the scratchpad; some content may differ when inserted",
+        "Zum Notizblock hinzugefügt; einige Inhalte können beim Einfügen abweichen",
+    ),
+    (
+        "Some draw.io details are simplified",
+        "Einige draw.io-Details sind vereinfacht",
+    ),
+    ("Square", "Quadrat"),
+    ("Circle", "Kreis"),
+    ("Bidirectional arrow", "Doppelpfeil (beidseitig)"),
+    ("Database", "Datenbank"),
+    ("On-page reference", "Seitenverweis"),
+    ("Extract", "Extrahieren"),
+    ("Merge", "Zusammenführen"),
 ];
 
 #[cfg(test)]
@@ -5343,6 +5433,7 @@ mod tests {
             include_str!("quick_styles.rs"),
             include_str!("theme_editor.rs"),
             include_str!("template_gallery.rs"),
+            include_str!("stencils.rs"),
             include_str!("structure_picker.rs"),
             include_str!("shortcut_browser.rs"),
             include_str!("keymap_editor.rs"),

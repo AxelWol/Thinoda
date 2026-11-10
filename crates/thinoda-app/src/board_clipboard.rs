@@ -2603,6 +2603,49 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn drawio_clipboard_centers_children_after_clipping_frames_are_omitted() {
+        use crate::app::Cmd;
+
+        for x in [220, 350] {
+            let xml = format!(
+                r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="frame" value="Frame" style="swimlane;thinodaClip=1;" vertex="1" parent="1"><mxGeometry x="100" y="200" width="240" height="120" as="geometry"/></mxCell><mxCell id="child" value="Child" style="shape=rectangle;" vertex="1" parent="frame"><mxGeometry x="{x}" y="30" width="50" height="40" as="geometry"/></mxCell></root></mxGraphModel>"#
+            );
+            for text in [
+                xml.clone(),
+                thinoda_io::drawio_clipboard::encode_uri_component(&xml),
+            ] {
+                let (mut app, clipboard) = empty_board_app();
+                let doc = app.doc_mut().unwrap();
+                doc.view.offset = egui::vec2(71.3, -63.9);
+                doc.view.zoom = 1.25;
+                let center = doc.view.visible_sheet_center();
+                let before = doc.doc.workbook().clone();
+                clipboard.borrow_mut().text = text;
+                let ctx = egui::Context::default();
+                app.exec(&ctx, Cmd::MenuPaste);
+
+                let sheet = app.doc().unwrap().doc.sheet();
+                assert_eq!(sheet.canvas.objects.len(), 1);
+                let child = &sheet.canvas.objects[0];
+                assert_eq!(child.label(), "Child");
+                assert!(
+                    (child.rect.center() - center).length() < 0.72,
+                    "pasted child must be centered at x={x}"
+                );
+                assert!(
+                    app.toasts
+                        .texts()
+                        .any(|text| text.contains(crate::i18n::t("Container frames omitted")))
+                );
+
+                app.exec(&ctx, Cmd::Canvas(Action::Undo));
+                assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn drawio_clipboard_reports_omitted_frames_and_pages_until_dismissed() {
         use crate::app::Cmd;
 

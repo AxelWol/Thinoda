@@ -252,12 +252,89 @@ fn uri_decode(text: String) -> String {
 }
 
 /// Decodes `base64(deflateRaw(encodeURIComponent(xml)))` diagram text.
-fn decode_compressed(text: &str) -> Result<String, IoError> {
+pub(crate) fn decode_compressed(text: &str) -> Result<String, IoError> {
     let cleaned: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     let data = base64::engine::general_purpose::STANDARD
         .decode(cleaned.as_bytes())
         .map_err(|_| invalid("draw.io page is neither XML nor compressed diagram data"))?;
     decode_compressed_bytes(&data)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BoundedDecodeError {
+    Invalid,
+    Limit,
+}
+
+/// Decodes a library fragment while charging both successful and failed
+/// inflations against the caller's remaining expansion budget.
+pub(crate) fn decode_compressed_bounded(
+    text: &str,
+    max_decoded: usize,
+    work_remaining: &mut usize,
+) -> Result<String, BoundedDecodeError> {
+    use miniz_oxide::inflate::{
+        TINFLStatus, decompress_to_vec_with_limit, decompress_to_vec_zlib_with_limit,
+    };
+
+    let cleaned: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(cleaned.as_bytes())
+        .map_err(|_| BoundedDecodeError::Invalid)?;
+    let max_inflated = max_decoded.saturating_mul(3);
+    let mut attempt = |zlib: bool| {
+        let limit = max_inflated.min(*work_remaining);
+        if limit == 0 {
+            return Err(BoundedDecodeError::Limit);
+        }
+        let result = if zlib {
+            decompress_to_vec_zlib_with_limit(&data, limit)
+        } else {
+            decompress_to_vec_with_limit(&data, limit)
+        };
+        match result {
+            Ok(output) => {
+                *work_remaining = work_remaining.saturating_sub(output.len());
+                Ok(output)
+            }
+            Err(error) => {
+                // miniz may retain a partially filled buffer on failure. Charging
+                // the whole buffer is conservative and bounds repeated failures.
+                *work_remaining = work_remaining.saturating_sub(error.output.len());
+                if error.status == TINFLStatus::HasMoreOutput {
+                    Err(BoundedDecodeError::Limit)
+                } else {
+                    Err(BoundedDecodeError::Invalid)
+                }
+            }
+        }
+    };
+    let zlib_header = data.len() >= 2
+        && data[0] & 0x0F == 8
+        && (u16::from(data[0]) << 8 | u16::from(data[1])) % 31 == 0;
+    let raw = if zlib_header {
+        match attempt(true) {
+            Ok(output) => output,
+            Err(first) => match attempt(false) {
+                Ok(output) => output,
+                Err(second)
+                    if first == BoundedDecodeError::Limit
+                        || second == BoundedDecodeError::Limit =>
+                {
+                    return Err(BoundedDecodeError::Limit);
+                }
+                Err(_) => return Err(BoundedDecodeError::Invalid),
+            },
+        }
+    } else {
+        attempt(false)?
+    };
+    let text = String::from_utf8(raw).map_err(|_| BoundedDecodeError::Invalid)?;
+    let decoded = uri_decode(text);
+    if decoded.len() > max_decoded {
+        return Err(BoundedDecodeError::Limit);
+    }
+    Ok(decoded)
 }
 
 fn decode_compressed_bytes(data: &[u8]) -> Result<String, IoError> {

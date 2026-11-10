@@ -34,6 +34,8 @@ pub(super) struct State {
     pub(super) ghost: Option<Pos2>,
     /// Shape dragged from a library and where it would drop.
     pub(super) drop_ghost: Option<(ShapeKind, Pos2)>,
+    /// Size of a dragged stencil's content and where it would drop.
+    pub(super) stencil_ghost: Option<(Vec2, Pos2)>,
     /// Unselected shape whose draw.io-style direction arrows are shown on hover.
     hover_shape: Option<CanvasObjectId>,
     /// Open quick-shape picker of a direction arrow.
@@ -3704,6 +3706,34 @@ pub(super) fn interact(
         return true;
     }
     view.board_input.drop_ghost = None;
+    view.board_input.stencil_ghost = None;
+    if let Some(drop) = egui::DragAndDrop::payload::<StencilDrop>(&ctx) {
+        let point = ctx
+            .input(|input| input.pointer.latest_pos())
+            .filter(|point| {
+                ui.is_enabled()
+                    && !view.board_input.is_active()
+                    && canvas_point_unobscured(ui, response, *point)
+            });
+        if !ctx.input(|input| input.pointer.any_released()) {
+            view.board_input.stencil_ghost = point.map(|point| (drop.bounds.size, point));
+        } else if let Some(point) = point {
+            egui::DragAndDrop::clear_payload(&ctx);
+            let center = snapped(doc.sheet(), view.xf().sheet(point));
+            match view.paste_foreign_board_at(
+                doc,
+                &drop.payload,
+                Some(drop.bounds),
+                Some(center),
+                &drop.label,
+            ) {
+                Ok(inserted) => out.stencil_insert_simplified = inserted && drop.simplified,
+                Err(error) => out.error = Some(error),
+            }
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+        }
+        return true;
+    }
     if let Some(drop) = egui::DragAndDrop::payload::<ShapeDrop>(&ctx) {
         // A library shape previews where it lands and is created on release;
         // Escape cancels (egui clears the payload) and the tool is unchanged.
@@ -4961,6 +4991,24 @@ pub(super) fn paint(
         }
         _ => None,
     };
+    if let Some((size, pointer)) = view.board_input.stencil_ghost {
+        let center = snapped(sheet, xf.sheet(pointer));
+        let ghost = thinoda_core::Rect::from_center_size(center, size);
+        let corners = [
+            ghost.min,
+            Vec2::new(ghost.max().x, ghost.min.y),
+            ghost.max(),
+            Vec2::new(ghost.min.x, ghost.max().y),
+            ghost.min,
+        ]
+        .map(|point| xf.pos(point));
+        painter.extend(egui::Shape::dashed_line(
+            &corners,
+            Stroke::new(1.5, view.accent.gamma_multiply(0.6)),
+            6.0,
+            4.0,
+        ));
+    }
     if let Some((kind, pointer)) = view.board_input.drop_ghost.or(armed_ghost) {
         let center = snapped(sheet, xf.sheet(pointer));
         let ghost =

@@ -13,7 +13,6 @@ use thinoda_core::{
         paste_board_selection,
     },
     layout_sheet,
-    scene::canvas_bounds,
 };
 
 /// Largest clipboard text accepted or produced, matching the board clipboard.
@@ -134,13 +133,7 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
                 IoError::DrawioClipboardEmptyPage
             }
         })?;
-    let bounds = layout
-        .order
-        .iter()
-        .filter(|id| !sheet.is_anchor(**id))
-        .filter_map(|id| layout.topics.get(id).map(|topic| topic.rect))
-        .chain(canvas_bounds(&sheet, &layout))
-        .reduce(|a, b| a.union(&b));
+    let bounds = payload.content_bounds();
     // Board and page settings are not part of a clipboard fragment.
     warnings.retain(|warning| {
         !matches!(
@@ -399,6 +392,46 @@ mod tests {
             assert_eq!(kinds(&pasted.payload), (1, 0));
             assert_eq!(pasted.losses, vec![DrawioPasteLoss::ContainerFrames(1)]);
             assert_eq!(pasted.warnings, vec![ImportWarning::Other]);
+        }
+    }
+
+    #[test]
+    fn clipboard_bounds_match_content_after_a_clipping_frame_is_omitted() {
+        for (x, source_bounds) in [
+            (
+                220,
+                Some(Rect::from_min_size(
+                    Vec2::new(320.0, 230.0),
+                    Vec2::new(20.0, 40.0),
+                )),
+            ),
+            (350, None),
+        ] {
+            let xml = format!(
+                r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="frame" value="Frame" style="swimlane;thinodaClip=1;" vertex="1" parent="1"><mxGeometry x="100" y="200" width="240" height="120" as="geometry"/></mxCell><mxCell id="child" value="Child" style="shape=rectangle;" vertex="1" parent="frame"><mxGeometry x="{x}" y="30" width="50" height="40" as="geometry"/></mxCell></root></mxGraphModel>"#
+            );
+            let imported = drawio::import(xml.as_bytes()).unwrap();
+            let original = &imported.workbook.sheets[0];
+            let layout = layout_sheet(original, &ApproxMeasure, false);
+            assert_eq!(
+                thinoda_core::scene::canvas_bounds(original, &layout),
+                source_bounds
+            );
+
+            for text in [xml.clone(), encode_uri_component(&xml)] {
+                let pasted = decode(&text).unwrap();
+                assert_eq!(pasted.losses, vec![DrawioPasteLoss::ContainerFrames(1)]);
+                let mut sheet = Sheet::new("Paste", "");
+                sheet.root_mode = SheetRootMode::Hidden;
+                paste_board_selection(&mut sheet, &pasted.payload, Vec2::ZERO).unwrap();
+                let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+                let actual = thinoda_core::scene::canvas_bounds(&sheet, &layout).unwrap();
+                assert_eq!(
+                    actual,
+                    Rect::from_min_size(Vec2::new(100.0 + x as f32, 230.0), Vec2::new(50.0, 40.0))
+                );
+                assert_eq!(pasted.bounds, Some(actual));
+            }
         }
     }
 

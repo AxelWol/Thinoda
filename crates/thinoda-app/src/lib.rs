@@ -49,6 +49,7 @@ mod sheet_clipboard;
 mod shortcut_browser;
 pub mod shortcut_conflicts;
 pub mod startup;
+mod stencils;
 mod structure_picker;
 mod symbols;
 mod template_gallery;

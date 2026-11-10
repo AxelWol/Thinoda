@@ -3149,6 +3149,11 @@ impl ThinodaApp {
                 i18n::localize_model_error(&error)
             ));
         }
+        if out.stencil_insert_simplified {
+            self.toasts.warning(t(
+                "Inserted; some draw.io content may have been omitted or simplified",
+            ));
+        }
         if let Some(preview) = preview {
             self.accept_fim_rendered_preview(&ctx, preview);
         }
@@ -5887,9 +5892,10 @@ impl ThinodaApp {
             (FormatTab::Style, t("Style")),
             (FormatTab::Data, t("Data")),
             (FormatTab::Map, t("Map")),
+            (FormatTab::Stencils, t("Stencils")),
             (FormatTab::Fim, "FIM"),
         ];
-        widgets::segmented(ui, &mut tab, &tabs[..3 + usize::from(has_fim)]);
+        widgets::segmented(ui, &mut tab, &tabs[..4 + usize::from(has_fim)]);
         if self.format_tab != tab {
             let result = self
                 .doc_mut()
@@ -5912,6 +5918,7 @@ impl ThinodaApp {
                 FormatTab::Style => "style_scroll",
                 FormatTab::Data => "data_scroll",
                 FormatTab::Map => "map_scroll",
+                FormatTab::Stencils => "stencils_scroll",
                 FormatTab::Fim => "fim_scroll",
             })
             .show(ui, |ui| {
@@ -5920,12 +5927,14 @@ impl ThinodaApp {
                         FormatTab::Style => "style_content",
                         FormatTab::Data => "data_content",
                         FormatTab::Map => "map_content",
+                        FormatTab::Stencils => "stencils_content",
                         FormatTab::Fim => "fim_content",
                     },
                     |ui| match tab {
                         FormatTab::Style => self.style_tab(ui),
                         FormatTab::Data => self.data_tab(ui),
                         FormatTab::Map => self.map_tab(ui),
+                        FormatTab::Stencils => self.stencils_tab(ui),
                         FormatTab::Fim => self.fim_tab(ui),
                     },
                 );

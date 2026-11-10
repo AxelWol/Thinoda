@@ -72,6 +72,7 @@ pub enum Purpose {
     Image(u64),
     Attachment(u64),
     FimSchemas,
+    StencilLibrary,
 }
 
 /// A bounded image picker upload, owned only until the app consumes the result.
@@ -528,6 +529,10 @@ fn normalized_upload_name(name: &str) -> String {
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn document_upload_size_error(purpose: Purpose, name: &str, size: u64) -> Option<String> {
+    if purpose == Purpose::StencilLibrary {
+        return (size > thinoda_io::drawio_library::MAX_LIBRARY_BYTES as u64)
+            .then(|| crate::i18n::t(crate::file_ops::DOCUMENT_TOO_LARGE).to_owned());
+    }
     let document = matches!(purpose, Purpose::Open | Purpose::Import | Purpose::Merge)
         || matches!(purpose, Purpose::Dropped) && !is_dropped_image(name);
     if !document {
@@ -712,7 +717,10 @@ mod browser_upload {
                 },
                 Err(error) => picked.errors.push(format!("{name}: {error}")),
             }
-        } else if matches!(picked.purpose, Purpose::Merge | Purpose::FimSchemas) {
+        } else if matches!(
+            picked.purpose,
+            Purpose::Merge | Purpose::FimSchemas | Purpose::StencilLibrary
+        ) {
             match bytes.and_then(|bytes| {
                 store_vfs(Path::new(WEB_UPLOAD_INPUTS), name, &bytes)
                     .map_err(|error| error.to_string())
@@ -1200,6 +1208,15 @@ mod tests {
         assert_eq!(
             document_upload_size_error(Purpose::Image(1), "image.xdf2", u64::MAX),
             None
+        );
+        let library_limit = thinoda_io::drawio_library::MAX_LIBRARY_BYTES as u64;
+        assert_eq!(
+            document_upload_size_error(Purpose::StencilLibrary, "shapes.xml", library_limit),
+            None
+        );
+        assert_eq!(
+            document_upload_size_error(Purpose::StencilLibrary, "shapes.xml", library_limit + 1),
+            Some(crate::i18n::t(crate::file_ops::DOCUMENT_TOO_LARGE).into())
         );
     }
 

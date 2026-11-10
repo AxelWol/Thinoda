@@ -25,6 +25,36 @@ fn copy(sheet: &Sheet, topics: &[TopicId], objects: &[CanvasObjectId]) -> BoardC
         .unwrap()
 }
 
+#[test]
+fn copied_content_bounds_match_the_pasted_rotated_card_and_shape() {
+    let mut source = hidden_sheet("Source", "Hidden anchor");
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(100.0, 60.0));
+    card.rotation = 35.0;
+    let card = source
+        .add_card("Card", Vec2::new(400.0, 300.0), card)
+        .unwrap();
+    let object = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            rect(600.0, 350.0, 80.0, 40.0),
+        ))
+        .unwrap();
+    let payload = copy(&source, &[card], &[object]);
+    let mut pasted = hidden_sheet("Destination", "Another hidden anchor");
+    paste_board_selection(&mut pasted, &payload, Vec2::ZERO).unwrap();
+    let layout = layout_sheet(&pasted, &ApproxMeasure, false);
+    let expected = build_scene(&pasted, &layout)
+        .items
+        .iter()
+        .filter_map(|item| item.visible_bounds())
+        .reduce(|a, b| a.union(&b))
+        .unwrap();
+    let bounds = payload.content_bounds().unwrap();
+    assert_eq!(bounds, expected);
+    assert!(bounds.min.x > 300.0, "the hidden anchor is not content");
+    assert!(bounds.min.y < 270.0, "the card's rotation is included");
+}
+
 fn depth_fixture(depth: usize, summaries: bool) -> (Sheet, TopicId) {
     let mut sheet = hidden_sheet("", "");
     let root = sheet.add_floating("Root", Vec2::new(100.0, 100.0));

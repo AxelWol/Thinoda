@@ -368,6 +368,7 @@ pub struct ThinodaApp {
     pub(crate) font_source: Option<(String, u64)>,
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
     pub(crate) theme_dialog: Option<crate::theme_editor::ThemeDialog>,
+    pub(crate) stencils: crate::stencils::StencilPanel,
     last_titles: HashMap<egui::ViewportId, String>,
     /// Startup work still pending behind the splash; `None` once ready.
     pub(crate) launch: Option<crate::startup::Launch>,
@@ -487,6 +488,7 @@ impl ThinodaApp {
             font_source: None,
             quick_style_dialog: None,
             theme_dialog: None,
+            stencils: Default::default(),
             last_titles: HashMap::new(),
             launch: None,
         };
@@ -3158,6 +3160,18 @@ impl ThinodaApp {
                 }
                 files::Purpose::FimSchemas => {
                     self.install_fim_schema_files(&picked.paths);
+                }
+                files::Purpose::StencilLibrary => {
+                    self.import_stencil_libraries(&picked.paths);
+                    #[cfg(target_arch = "wasm32")]
+                    for path in &picked.paths {
+                        if let Err(error) = thinoda_platform::fs::remove_file(path) {
+                            log::warn!(
+                                "Could not remove temporary stencil upload {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
                 }
                 files::Purpose::Attachment(request) => {
                     self.complete_attachment_pick(request, &picked.paths);

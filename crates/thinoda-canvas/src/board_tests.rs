@@ -1461,6 +1461,99 @@ fn library_drop_previews_then_creates_one_undoable_shape_without_changing_the_to
 }
 
 #[test]
+fn stencil_drop_previews_then_pastes_centred_on_the_pointer_as_one_undoable_edit() {
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Stencil");
+    let mut h = harness(sheet);
+    let payload = {
+        let state = h.state_mut();
+        state.view.board_selection = vec![source];
+        state
+            .view
+            .selection_board_payload(&state.doc)
+            .unwrap()
+            .unwrap()
+    };
+    h.state_mut().view.board_selection.clear();
+    let before = h.state().doc.workbook().clone();
+    let bounds = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0));
+    egui::DragAndDrop::set_payload(
+        &h.ctx,
+        StencilDrop {
+            payload: std::sync::Arc::new(payload),
+            bounds,
+            label: "Insert stencil".into(),
+            simplified: false,
+        },
+    );
+    let target = point(&h, Vec2::new(-360.0, -240.0));
+    h.hover_at(target);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_input.stencil_ghost,
+        Some((bounds.size, target))
+    );
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    release(&mut h, target);
+    let objects = &h.state().doc.sheet().canvas.objects;
+    assert_eq!(objects.len(), 2);
+    let created = objects.last().unwrap();
+    let board = &h.state().doc.sheet().board;
+    let expected = if board.snap {
+        let grid = board.grid_size;
+        Vec2::new(
+            (-360.0 / grid).round() * grid,
+            (-240.0 / grid).round() * grid,
+        )
+    } else {
+        Vec2::new(-360.0, -240.0)
+    };
+    assert!((created.rect.center() - expected).length() < 0.51);
+    assert_eq!(h.state().view.board_selection, vec![created.id]);
+    assert_eq!(h.state().view.board_input.stencil_ghost, None);
+    assert!(egui::DragAndDrop::payload::<StencilDrop>(&h.ctx).is_none());
+    assert_eq!(h.state().doc.undo_label(), Some("Insert stencil"));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn stencil_drop_over_obscured_targets_does_nothing() {
+    let overlay = Rect::from_min_size(pos2(40.0, 40.0), vec2(120.0, 120.0));
+    let mut sheet = board();
+    let source = shape(&mut sheet, 0.0, 0.0, "Stencil");
+    let mut h = harness_with_overlay(sheet, Some(overlay));
+    let payload = {
+        let state = h.state_mut();
+        state.view.board_selection = vec![source];
+        state
+            .view
+            .selection_board_payload(&state.doc)
+            .unwrap()
+            .unwrap()
+    };
+    let before = h.state().doc.workbook().clone();
+    egui::DragAndDrop::set_payload(
+        &h.ctx,
+        StencilDrop {
+            payload: std::sync::Arc::new(payload),
+            bounds: thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+            label: "Insert stencil".into(),
+            simplified: false,
+        },
+    );
+    h.hover_at(overlay.center());
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_input.stencil_ghost, None);
+    release(&mut h, overlay.center());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(egui::DragAndDrop::payload::<StencilDrop>(&h.ctx).is_none());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn library_drop_is_canceled_by_escape_or_obscured_targets() {
     let overlay = Rect::from_min_size(pos2(40.0, 40.0), vec2(120.0, 120.0));
     let mut h = harness_with_overlay(board(), Some(overlay));

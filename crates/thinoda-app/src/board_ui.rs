@@ -3999,6 +3999,7 @@ mod tests {
                             if path.closed == closed
                                 && path.points == points
                                 && path.fill == Color32::TRANSPARENT
+                                && path.stroke.width == 1.5
                                 && path.stroke.color == egui::epaint::ColorMode::Solid(color))
                     })
                 };
@@ -4025,6 +4026,64 @@ mod tests {
                     }),
                     "missing rounded tile for {shape:?} in dark={dark}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn ellipse_shape_tiles_keep_transparent_consistent_outlines_on_hover() {
+        for dark in [false, true] {
+            for (shape, outlines) in [(ShapeKind::Ellipse, 1), (ShapeKind::DoubleEllipse, 2)] {
+                for selected in [false, true] {
+                    for hover in [false, true] {
+                        let mut harness = Harness::builder()
+                            .with_size(vec2(180.0, 180.0))
+                            .build_ui(move |ui| {
+                                shape_test_theme(ui.ctx(), dark);
+                                shape_tile(ui, shape, shape_name(shape), selected, 44.0, false);
+                            });
+                        harness.run_steps(3);
+                        let tile = harness.get_by_label(shape_name(shape)).rect();
+                        if hover {
+                            harness.event(egui::Event::PointerMoved(tile.center()));
+                            harness.run_steps(3);
+                        }
+                        let palette = thinoda_ui::Palette::of(&harness.ctx);
+                        let color = if selected {
+                            palette.accent
+                        } else {
+                            palette.text
+                        };
+                        let paths: Vec<_> = harness
+                            .output()
+                            .shapes
+                            .iter()
+                            .filter_map(|clipped| match &clipped.shape {
+                                egui::Shape::Path(path)
+                                    if path.points.len() >= 48
+                                        && path
+                                            .points
+                                            .iter()
+                                            .all(|point| tile.contains(*point)) =>
+                                {
+                                    Some(path)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(
+                            paths.len(),
+                            outlines,
+                            "{shape:?} in dark={dark}, selected={selected}, hover={hover}"
+                        );
+                        assert_eq!(paths.iter().filter(|path| path.closed).count(), 1);
+                        for path in paths {
+                            assert_eq!(path.fill, Color32::TRANSPARENT);
+                            assert_eq!(path.stroke.width, 1.5);
+                            assert_eq!(path.stroke.color, egui::epaint::ColorMode::Solid(color));
+                        }
+                    }
+                }
             }
         }
     }

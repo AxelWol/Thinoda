@@ -88,6 +88,19 @@ impl MapView {
         bounds: Option<thinoda_core::Rect>,
         label: &str,
     ) -> EditResult<bool> {
+        self.paste_foreign_board_at(doc, payload, bounds, None, label)
+    }
+
+    /// Like [`Self::paste_foreign_board`], but centres the content on
+    /// `center` (sheet space) when given, e.g. where a stencil was dropped.
+    pub fn paste_foreign_board_at(
+        &mut self,
+        doc: &mut Document,
+        payload: &BoardClipboardPayload,
+        bounds: Option<thinoda_core::Rect>,
+        center: Option<Vec2>,
+        label: &str,
+    ) -> EditResult<bool> {
         self.invalidate_clipboard();
         payload.validate().map_err(EditError::Invalid)?;
         if self.has_title_changes() {
@@ -95,8 +108,9 @@ impl MapView {
         }
         self.try_commit_board_label(doc)?;
         self.prune_selection(doc.sheet());
+        let center = center.unwrap_or_else(|| self.visible_sheet_center());
         let delta = bounds.map_or(PASTE_OFFSET, |bounds| {
-            let target = self.visible_sheet_center() - bounds.center();
+            let target = center - bounds.center();
             Vec2::new(target.x.round(), target.y.round())
         });
         paste_board_at(doc, self, payload, delta, label)

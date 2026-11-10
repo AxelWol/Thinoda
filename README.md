@@ -586,9 +586,13 @@ those system-owned controls. WinGet publishing remains paused.
   undoable ancestor expansion for a collapsed target.
   In Outline, structural shortcuts apply only to topic rows; toolbar/sidebar
   focus keeps its own keyboard behavior, while non-text Undo/Redo stays available.
-- Shared right sidebar: Format Panel for Style/Data/Map and the smiley for grouped Symbols;
+- Shared right sidebar: Format Panel for Style/Data/Map/Stencils and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
-  and Style/Data/Map tabs stay visible while their contents scroll independently.
+  and the format tabs stay visible while their contents scroll independently.
+  Stencils offers searchable built-in sections, imported draw.io XML libraries and
+  a scratchpad for reusing selected board items. Click a stencil to insert it or
+  drag it onto the canvas; the existing left-hand Shape library is unchanged.
+  Unsupported draw.io content can be simplified or omitted with a warning.
   Style reflects the selected topic's resolved properties, including inherited/custom
   colors with checked swatches and hex values; Map controls apply to the entire sheet.
   Data groups Local Image, Attachment, Hyperlink, Labels, Notes and notes equations

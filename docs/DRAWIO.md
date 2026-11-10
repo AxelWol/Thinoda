@@ -2833,6 +2833,103 @@ explicitly confirms the existing appearance-loss dialog. Native and
 WebAssembly Clippy, formatting and a Windows build also passed. These checks do
 not establish pixel-level or assistive-technology parity.
 
+**Format-panel Stencils (partial Phases 5 and 9) — critique.** A separate
+Stencils tab offers searchable General, Basic, Flowchart and Arrows sections,
+imported draw.io XML libraries and a scratchpad for selected board content.
+Clicking inserts an undoable copy at the view center; a pointer drag drops it
+at the canvas position. The existing Shape library on the left is unchanged.
+Built-in and imported entries use the existing draw.io conversion path, with
+warnings when content may be simplified or omitted. Library preferences and
+scratchpad contents are stored separately from documents.
+
+**Ellipse picker previews — complete locally.** The built-in double-ellipse
+thumbnail uses a transparent fill and the same automatic, theme-aware stroke
+as the other built-in stencils. The left Shape library already drew transparent
+icons with a consistent stroke; regression coverage now checks both pickers
+in light and dark themes, including hover. The ordinary ellipse and circle
+have one outline. The separately named double ellipse retains its two outlines,
+which identify that distinct draw.io shape.
+
+**Rubber-duck critique.** The built-in double ellipse's source explicitly
+specifies a white fill and black stroke, so changing the source stencil would
+also change inserted diagrams. Only the built-in thumbnail's separate preview
+sheet is restyled; its insertion payload, existing diagrams, imported colored
+libraries and scratchpad entries retain their original appearance. Focused
+egui tests check the paths, stroke and insertion payload, and an isolated
+Chromium preview was inspected in both themes. Physical-device and
+screen-reader acceptance remain open.
+
+**Rubber-duck findings and remaining scope.** Damaged saved library data is
+not overwritten: saving is disabled and the user is told when changes cannot
+persist. Inputs are capped at 8 MiB and 1,000 entries per library; imported
+and scratchpad XML share a 32 MiB decoded-content limit, and each import batch
+or saved-state reload shares a 128 MiB input/expansion-work budget. Preview
+entries use an estimated 64 MiB cache budget, not a hard process-memory cap;
+one large preview can exceed that estimate. Generic and vendor stencil
+geometry, click-with-selection connection, library export, arrow-key grid
+navigation and real touch and screen-reader acceptance remain open. Targeted
+panel, canvas-drop, library-parser and persistence tests passed. A serialized
+workspace run passed 3,354 tests (16 ignored) before the final bounds and
+warning follow-up; afterwards the affected app and canvas library suites
+passed 1,474 tests (four ignored). Native Clippy for the affected crates and
+wasm Clippy including the web crate passed with warnings denied, and the
+Windows debug application built successfully. A full workspace run against
+the final tree and full UI acceptance remain open. A manual Chromium smoke
+check covered the Stencils tab, searching, click and drag insertion, scratchpad
+and imported library persistence across reloads, and the unchanged left-side
+Shape library.
+This does not replace cross-browser, touch or screen-reader acceptance.
+
+**Stencil bounds and failure feedback — rubber-duck follow-up.** A copied
+draw.io container can be omitted while its child objects are retained. The
+source's clipped bounds then no longer describe the copied content: a
+partially clipped thumbnail could be cropped, and a fully clipped thumbnail
+could be blank and insert at an arbitrary offset. Clipboard conversion now
+measures the copied fragment's scene, excluding its hidden anchor; the same
+content bounds drive the stencil preview, click placement and drag placement.
+An entry without measurable content is marked unavailable and reports a
+warning when activated instead of inserting at a fallback offset. Tests cover
+partially and fully clipped source objects, actual click and drag placement,
+clipboard paste placement, undo, rotated cards, and the unavailable-entry
+feedback. A follow-up review found that a drag previously omitted the
+simplification warning shown by click insertion. Both paths now report it
+after a successful insertion; a canceled drag does not report an insertion.
+
+The frame itself is still omitted and reported as a conversion loss, so the
+copied child may become more visible than in the source; this is not frame or
+clipping preservation. Bounds use approximate layout, not a guarantee of
+pixel-identical text metrics across destination themes or platforms.
+
+**Example preview comparison.** A local render probe exported all 116 supplied
+PNG-backed pages from 60 draw.io documents. All pages rendered, but that is not
+a fidelity pass: document-level import warnings reported formatting differences
+for all 60 documents, unsupported shapes for 45, resources for 15, links for
+10 and detached connectors for six. Side-by-side inspection of
+`board-visual-tutorial.png` shows font and extra-outline differences; the first
+`waypoint-shape.png` page contains black blocks and altered wiring instead of
+several reference symbols. `floorplan-apartment.page-2.png` also has large
+black blocks and missing architectural symbols; `arista.png` replaces the rack
+equipment images with generic containers. A side-by-side gallery was generated
+for all pages, but only these examples were inspected manually. Full visual and
+feature parity therefore remains incomplete. The probe can be rerun with
+`cargo run -p thinoda-io --example drawio_visual_probe -- docs\draw-io-examples <new-output-directory>`;
+it writes converted PNGs and a JSON report, and refuses an existing output
+directory.
+
+The next visual-parity work remains open:
+
+- Implement and exercise the floor-plan and circuit stencil geometry rather
+  than substituting generic filled rectangles; verify symbols and connections
+  against the corresponding reference pages.
+- Preserve the external SVG references used by the Arista rack equipment and
+  render safely supplied, appropriately licensed resources, with explicit
+  diagnostics for unresolved images. Keep the existing no-auto-fetch policy;
+  any network access requires a separate, consented design.
+- Recheck label alignment, font metrics and unwanted outlines against the
+  tutorial reference, then inspect the remaining gallery pages and add
+  representative regression fixtures. Normalized pixel difference alone is
+  not an acceptance threshold.
+
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,
   draw.io plugins, animated GIF export, real-time collaboration.
