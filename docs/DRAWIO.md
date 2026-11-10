@@ -3116,6 +3116,33 @@ and Wasm Clippy, the workspace build and the production web build passed.
 Against that final web build, the final-state paste, edit, copy and undo
 journey passed in Chromium, Firefox and WebKit.
 
+**PR #128 browser-gate repair.** Linux CI exposed two test assumptions rather
+than an application regression. Adding the final-state tile moved the triangle
+out of the drag journey's hard-coded grid slot; the saved archive correctly
+contained the diamond that the test actually dragged. The journey now searches
+for "Triangle" before dragging the first result and retains its canceled-drop,
+obscured-drop, labeling, geometry, undo and redo assertions. The search is
+replaced through keyboard selection because egui retains its query separately
+from the browser's text-input bridge.
+
+The final-state copy warning was visibly present in the retained CI screenshot,
+but preceding save notifications placed it above the bottom 100 pixels. Warning
+checks now inspect the bottom-center notification stack, excluding matching
+canvas and inspector colors instead of requiring a single toast position.
+Both repaired journeys passed three consecutive Chromium runs against the
+final-state production bundle. The complete 36-test clipboard browser suite
+also passed with the final notification crop, including long placeholder-loss
+notifications whose warning icon lies left of a fixed-width center crop.
+
+**Rubber-duck self-critique.** Moving the old triangle coordinate by one tile
+would fail again when the library changes; filtering by its name removes that
+ordering dependency. Merely removing the warning's position check would allow
+inspector color swatches to satisfy it, so the screenshot is restricted to the
+notification stack. Neither check is skipped or retried to hide a failure, and
+the app's rendering, shape order and notification behavior are unchanged.
+This repair does not close the parent interoperability or device-acceptance
+gates.
+
 The next visual-parity work remains open:
 
 - Extend the standard rounded-rectangle slice above to exact curves,

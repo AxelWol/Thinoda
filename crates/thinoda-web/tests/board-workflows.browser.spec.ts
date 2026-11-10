@@ -859,10 +859,17 @@ test("a shape library drag creates one selected, undoable shape", async ({ page 
     const startLibraryDrag = async () => {
         await page.mouse.click(35, 330);
         await frames(page);
-        await page.mouse.move(288, 428);
+        await page.mouse.click(150, 370);
+        await frames(page);
+        const search = page.locator("input[type='text']");
+        await expect(search).toBeFocused();
+        await page.keyboard.press("Control+a");
+        await search.pressSequentially("Triangle");
+        await frames(page);
+        await page.mouse.move(48, 428);
         await page.mouse.down();
         for (let step = 1; step <= 4; step++) {
-            await page.mouse.move(288, 428 + 6 * step);
+            await page.mouse.move(48, 428 + 6 * step);
             await frames(page);
         }
     };

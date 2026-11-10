@@ -193,12 +193,22 @@ async function paste(page: Page) {
 }
 
 async function expectWarningToast(page: Page, path: string) {
-    const screenshot = await page.screenshot({ path });
     const viewport = page.viewportSize();
     if (!viewport) throw new Error("Cannot inspect the warning without a viewport");
+    // Save notifications can stack below the warning; exclude canvas and inspector colors.
+    const width = Math.floor(viewport.width * 0.75);
+    const height = Math.min(320, viewport.height);
+    const screenshot = await page.screenshot({
+        path,
+        clip: {
+            x: 0,
+            y: viewport.height - height,
+            width,
+            height,
+        },
+    });
     const warning = (await colorBounds(page, screenshot, [[224, 142, 0]], 30))[0];
     expect(warning.count).toBeGreaterThan(5);
-    expect(warning.maxY).toBeGreaterThan(viewport.height - 100);
 }
 
 test.beforeEach(async ({ page, context }) => {
