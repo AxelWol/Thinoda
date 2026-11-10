@@ -73,6 +73,40 @@ fn double_click_shape(h: &mut Harness<'_, State>) {
 }
 
 #[test]
+fn double_click_with_realistic_press_duration_opens_label_editing() {
+    let mut h = harness("");
+    let center = h.state().view.canvas_rect().center() + h.state().view.offset;
+    h.hover_at(center);
+    let mut releases = Vec::new();
+    for _ in 0..2 {
+        h.event(egui::Event::PointerButton {
+            pos: center,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(6);
+        h.event(egui::Event::PointerButton {
+            pos: center,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+        releases.push(h.ctx.input(|input| input.time));
+    }
+    let interval = releases[1] - releases[0];
+    assert!((0.1..0.3).contains(&interval), "interval: {interval}");
+    h.run_steps(3);
+    assert_eq!(h.state().view.editing_board_object(), Some(h.state().shape));
+    assert!(
+        h.ctx
+            .memory(|memory| memory.has_focus(MapCanvas::board_label_editor_id()))
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn double_click_explains_label_editing_and_commits_multiline_text() {
     let mut h = harness("");
     double_click_shape(&mut h);
