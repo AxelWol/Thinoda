@@ -27,6 +27,39 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.24.0](https://github.com/AxelWol/Thinoda/compare/v0.23.1...v0.24.0) (2026-11-09)
+
+
+### Features
+
+* add contextual shape formatting controls ([19cf155](https://github.com/AxelWol/Thinoda/commit/19cf15502ff2437199c22e429614043d8788434d))
+* add draw.io connector drop modifiers ([3219ebe](https://github.com/AxelWol/Thinoda/commit/3219ebee61ef4deec583c8b3d0dd2965ff2d3046))
+* **drawio:** add default connector points ([6e7f6a0](https://github.com/AxelWol/Thinoda/commit/6e7f6a01ed9c4a4fffd924762841391046277f4a))
+* **drawio:** import folded notes as editable cards ([f99294f](https://github.com/AxelWol/Thinoda/commit/f99294f1b5bbdac0bae1c43533182ef7efe241de))
+* **drawio:** preserve editable double ellipses ([3f76bc1](https://github.com/AxelWol/Thinoda/commit/3f76bc1bf424f04c9516f364480734c672a67019))
+* **drawio:** preserve fixed connector attachments ([b6c5b3b](https://github.com/AxelWol/Thinoda/commit/b6c5b3b9289df3a32f47cd7fd27a7a24232400e6))
+* **drawio:** preserve grid and snapping settings ([ee1c2dc](https://github.com/AxelWol/Thinoda/commit/ee1c2dc55a8f77485dc055ed9660deaf1d11ac55))
+* **drawio:** preserve page background colors ([0b98806](https://github.com/AxelWol/Thinoda/commit/0b9880687e7a76f5ec8f3fdf3c3f9cee23d281cf))
+* **drawio:** support double-ellipse connector points ([d9a5ebb](https://github.com/AxelWol/Thinoda/commit/d9a5ebb0d6521de7459eb580b7a36ed983c259de))
+* export editable draw.io images ([de51596](https://github.com/AxelWol/Thinoda/commit/de51596a84c3ec8a047d42a6b555c9ff76baa73c))
+* import embedded draw.io HTML ([5a637a9](https://github.com/AxelWol/Thinoda/commit/5a637a9ff435fd9ae7906ef4f95fb11ef420b047))
+* retain draw.io partial rectangle sides ([97203b4](https://github.com/AxelWol/Thinoda/commit/97203b46cc9dd8025a185aa8a7fc2d64e8d00d82))
+
+
+### Bug Fixes
+
+* **ci:** unblock native test jobs ([d6d85a3](https://github.com/AxelWol/Thinoda/commit/d6d85a3d69229c7a778d7e532a6102c5fdb15463))
+* **drawio:** scope paste warnings to the first page ([c596a83](https://github.com/AxelWol/Thinoda/commit/c596a839d3e5c0078f8cfe6ae37f147059e0e1ba))
+* import legacy draw.io image metadata ([41606be](https://github.com/AxelWol/Thinoda/commit/41606befcddb89d2bc8cec05f8ea5fd38130354a))
+* report draw.io clipboard omissions ([c49cf2c](https://github.com/AxelWol/Thinoda/commit/c49cf2cc355636e5b385e06872aa4523a5aca4ed))
+* report draw.io connector detachments ([79518b3](https://github.com/AxelWol/Thinoda/commit/79518b34aba0112d2e9a8a0d0cad322f0f87ad6a))
+* report malformed draw.io points ([0e5817c](https://github.com/AxelWol/Thinoda/commit/0e5817c1da5330b85e084765f2e7d3c67767a64b))
+
+
+### Documentation
+
+* add draw.io reference PNG exports ([36d067c](https://github.com/AxelWol/Thinoda/commit/36d067ce99955686b633b906565b89d021078098))
+
 ## [0.23.1](https://github.com/AxelWol/Thinoda/compare/v0.23.0...v0.23.1) (2026-11-06)
 
 

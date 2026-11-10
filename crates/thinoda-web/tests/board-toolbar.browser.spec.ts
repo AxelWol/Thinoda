@@ -162,8 +162,8 @@ test("double-click label editing handles multiline, cancel and outside click", a
     await canvas.click({ position: { x: 450, y: 350 } });
     await frames(page);
 
-    const edit = async (delay = 0) => {
-        await canvas.dblclick({ position: { x: 450, y: 350 }, delay });
+    const edit = async () => {
+        await canvas.dblclick({ position: { x: 450, y: 350 } });
         await frames(page);
         const input = page.locator("input[type='text']");
         await expect(input).toBeFocused();
@@ -178,7 +178,9 @@ test("double-click label editing handles multiline, cancel and outside click", a
             .filter((object) => object.kind.shape);
     };
 
-    const first = await edit(100);
+    // Keep browser scheduling out of the double-click interval; realistic
+    // press durations are covered by the canvas integration test.
+    const first = await edit();
     await page.screenshot({ path: testInfo.outputPath("shape-label-mode.png") });
     await first.pressSequentially("First");
     await page.keyboard.press("Shift+Enter");
@@ -195,7 +197,7 @@ test("double-click label editing handles multiline, cancel and outside click", a
     expect((await savedShapes("canceled-label.thinoda"))[0].kind.shape?.label)
         .toBe("First\nSecond");
 
-    const outside = await edit(100);
+    const outside = await edit();
     await outside.pressSequentially("Outside");
     await canvas.click({ position: { x: 700, y: 500 } });
     await frames(page);

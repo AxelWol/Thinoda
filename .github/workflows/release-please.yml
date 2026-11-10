@@ -31,8 +31,8 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # The release-please config updates Cargo.toml and Cargo.lock in the same PR
-  # commit. A later lockfile push can lose a race with merging that PR.
+  # The release-please config updates Cargo.toml and both Cargo.lock files in
+  # the same PR commit. A later lockfile push can race with merging that PR.
   # Call packaging directly: GITHUB_TOKEN-created tags do not trigger push
   # workflows. Existing releases need Release's workflow_dispatch, not a rerun
   # of release-please (which only reports newly created releases).
