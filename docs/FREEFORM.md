@@ -98,6 +98,17 @@ clones retain the radius; changing the shape kind removes it, and undo restores
 it. Native files containing this property require format v19; legacy shapes
 and documents keep their previous behavior and format version.
 
+Standard draw.io rounded rectangles also retain their relative or absolute
+corner settings. Select one in the Format Panel to edit **Corner radius**:
+it is a percentage of the shorter side when **Relative corner radius** is
+enabled, and drawing units otherwise. Switching modes preserves the visible
+radius where representable. **Connect at rounded corners** controls whether
+supported connector endpoints use the rounded or rectangular perimeter.
+Changes are undoable. Native files containing these settings require format
+v23; earlier applications reject them rather than discard the settings.
+Elbow and curved connector routing remains approximate; see
+[DRAWIO.md](DRAWIO.md) for the current limits.
+
 ### Rectangle outline sides
 
 Select an ordinary rectangle and use **Outline sides** in its inspector to

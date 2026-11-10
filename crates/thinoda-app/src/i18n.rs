@@ -621,6 +621,11 @@ const DE: &[(&str, &str)] = &[
     ("Ink width", "Strichbreite"),
     ("Eraser radius", "Radius des Radierers"),
     ("Corner radius", "Eckenradius"),
+    ("Relative corner radius", "Relativer Eckenradius"),
+    (
+        "Connect at rounded corners",
+        "An abgerundeten Ecken verbinden",
+    ),
     ("Outline sides", "Konturseiten"),
     ("Top outline", "Obere Kontur"),
     ("Right outline", "Rechte Kontur"),
@@ -882,6 +887,14 @@ const DE: &[(&str, &str)] = &[
     (
         "Browser storage migration conflict",
         "Konflikt bei der Browser-Speichermigration",
+    ),
+    (
+        "Recovered browser documents",
+        "Wiederhergestellte Browser-Dokumente",
+    ),
+    (
+        "Preserved browser documents are available in File > Recovered browser documents.",
+        "Gesicherte Browser-Dokumente sind unter Datei > Wiederhergestellte Browser-Dokumente verfügbar.",
     ),
     ("Downloading file:", "Datei wird heruntergeladen:"),
     ("Reload file", "Datei neu laden"),

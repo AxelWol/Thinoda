@@ -10,6 +10,51 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, io, path::Path};
 
+#[cfg(any(test, target_arch = "wasm32"))]
+fn browser_io_diagnostic(
+    reason: Option<&str>,
+    name: Option<&str>,
+) -> (io::ErrorKind, &'static str) {
+    match (reason, name) {
+        (_, Some("QuotaExceededError")) => (
+            io::ErrorKind::StorageFull,
+            "browser storage quota was exceeded",
+        ),
+        (_, Some("SecurityError" | "NotAllowedError")) => (
+            io::ErrorKind::PermissionDenied,
+            "the browser denied access to storage",
+        ),
+        (_, Some("VersionError")) => (
+            io::ErrorKind::Other,
+            "the browser document database version is not supported",
+        ),
+        (Some("blocked"), _) => (
+            io::ErrorKind::Other,
+            "another browser tab is blocking the document database; close other Thinoda tabs and retry",
+        ),
+        (Some("invalid_legacy"), _) => (
+            io::ErrorKind::InvalidData,
+            "a legacy document record is invalid",
+        ),
+        (Some("invalid_durable"), _) => (
+            io::ErrorKind::InvalidData,
+            "a stored document is missing or failed verification",
+        ),
+        (Some("path_conflict"), _) => (
+            io::ErrorKind::Other,
+            "a document path conflicts with an existing file or folder",
+        ),
+        (Some("migration_changed"), _) => (
+            io::ErrorKind::Other,
+            "documents changed during migration; retry initialization",
+        ),
+        _ => (
+            io::ErrorKind::Other,
+            "browser storage failed; original data was retained where possible",
+        ),
+    }
+}
+
 /// Strictly decoded legacy VFS document. Timestamps are not revision identities.
 #[derive(Debug, PartialEq, Eq)]
 pub struct LegacyDocument {
@@ -73,8 +118,9 @@ pub enum MigrationDecision {
     PreserveConflict { copy_id: String },
 }
 
-/// Pure migration planner. `durable` must be actual verified stored bytes, not
-/// length/mtime or metadata supplied by a cache.
+/// Pure same-ID migration planner. `durable` must be actual verified stored
+/// bytes, not length/mtime or metadata supplied by a cache. A create can
+/// additionally encounter an ancestor/descendant path conflict.
 pub fn plan_migration(legacy: &LegacyDocument, durable: Option<&[u8]>) -> MigrationDecision {
     match durable {
         None => MigrationDecision::CreateOriginal,
@@ -196,7 +242,7 @@ pub fn known_document(path: &Path) -> Option<bool> {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{KnownDocuments, MigrationReport, StorageEstimate};
+    use super::{KnownDocuments, MigrationReport, StorageEstimate, browser_io_diagnostic};
     use crate::storage::{
         Availability, CancelToken, Capabilities, Entry, ExpectedRevision, ReadResult, Revision,
         StorageError, StorageFuture, StorageId, StorageProvider,
@@ -291,8 +337,15 @@ mod wasm {
 
     fn error(value: JsValue) -> StorageError {
         let get = |name: &str| Reflect::get(&value, &JsValue::from_str(name)).ok();
+        let reason = get("reason").and_then(|v| v.as_string());
         match get("code").and_then(|v| v.as_string()).as_deref() {
             Some("cancelled") => StorageError::Cancelled,
+            Some("unsupported") if reason.as_deref() == Some("indexeddb_unavailable") => {
+                StorageError::Io(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "browser document storage is unavailable",
+                ))
+            }
             Some("unsupported") => StorageError::Unsupported,
             Some("too_large") => StorageError::TooLarge,
             Some("notfound") => StorageError::Io(io::Error::new(
@@ -304,17 +357,9 @@ mod wasm {
             },
             _ => {
                 // Do not echo browser errors containing user filenames/content.
-                let kind = if get("name").and_then(|v| v.as_string()).as_deref()
-                    == Some("QuotaExceededError")
-                {
-                    io::ErrorKind::StorageFull
-                } else {
-                    io::ErrorKind::Other
-                };
-                StorageError::Io(io::Error::new(
-                    kind,
-                    "browser storage failed; original data was retained where possible",
-                ))
+                let name = get("name").and_then(|v| v.as_string());
+                let (kind, message) = browser_io_diagnostic(reason.as_deref(), name.as_deref());
+                StorageError::Io(io::Error::new(kind, message))
             }
         }
     }
@@ -655,6 +700,68 @@ mod tests {
             bytes: bytes.to_vec(),
             modified_ms: 42,
         }
+    }
+
+    #[test]
+    fn browser_storage_diagnostics_are_specific_and_do_not_echo_input() {
+        let cases = [
+            (
+                Some("blocked"),
+                None,
+                io::ErrorKind::Other,
+                "another browser tab",
+            ),
+            (
+                Some("invalid_legacy"),
+                None,
+                io::ErrorKind::InvalidData,
+                "legacy document",
+            ),
+            (
+                Some("invalid_durable"),
+                None,
+                io::ErrorKind::InvalidData,
+                "failed verification",
+            ),
+            (
+                Some("path_conflict"),
+                None,
+                io::ErrorKind::Other,
+                "file or folder",
+            ),
+            (
+                Some("migration_changed"),
+                None,
+                io::ErrorKind::Other,
+                "changed during migration",
+            ),
+            (
+                None,
+                Some("QuotaExceededError"),
+                io::ErrorKind::StorageFull,
+                "quota",
+            ),
+            (
+                None,
+                Some("SecurityError"),
+                io::ErrorKind::PermissionDenied,
+                "denied",
+            ),
+            (
+                None,
+                Some("NotAllowedError"),
+                io::ErrorKind::PermissionDenied,
+                "denied",
+            ),
+            (None, Some("VersionError"), io::ErrorKind::Other, "version"),
+        ];
+        for (reason, name, expected_kind, expected_text) in cases {
+            let (kind, message) = browser_io_diagnostic(reason, name);
+            assert_eq!(kind, expected_kind);
+            assert!(message.contains(expected_text), "{message}");
+        }
+        let (_, message) = browser_io_diagnostic(Some("private filename"), Some("private content"));
+        assert!(!message.contains("private"));
     }
 
     #[test]

@@ -68,6 +68,8 @@ const DOUBLE_ELLIPSE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DOUBLE-ELLIPSE-1
 const DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DOUBLE-ELLIPSE-1";
 const FIXED_PORT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-FIXED-PORTS-1";
 const FIXED_PORT_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-FIXED-PORTS-1";
+const DRAWIO_ROUNDING_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-ROUNDING-1";
+const DRAWIO_ROUNDING_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-ROUNDING-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -89,7 +91,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_fixed_connector_ports() {
+        tuple.serialize_element(if self.workbook.has_drawio_rectangle_rounding() {
+            DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_fixed_connector_ports() {
             FIXED_PORT_INK_WORKBOOK_VERSION
         } else if self.workbook.has_double_ellipses() {
             DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
@@ -174,7 +178,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_fixed_connector_ports() {
+    let version = if workbook.has_drawio_rectangle_rounding() {
+        DRAWIO_ROUNDING_WORKBOOK_VERSION
+    } else if workbook.has_fixed_connector_ports() {
         FIXED_PORT_WORKBOOK_VERSION
     } else if workbook.has_double_ellipses() {
         DOUBLE_ELLIPSE_WORKBOOK_VERSION
@@ -298,6 +304,8 @@ where
                 && version != DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
                 && version != FIXED_PORT_WORKBOOK_VERSION
                 && version != FIXED_PORT_INK_WORKBOOK_VERSION
+                && version != DRAWIO_ROUNDING_WORKBOOK_VERSION
+                && version != DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -306,6 +314,19 @@ where
             let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != DRAWIO_ROUNDING_WORKBOOK_VERSION
+                && version != DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
+                && workbook.has_drawio_rectangle_rounding()
+            {
+                return Err(A::Error::custom(
+                    "standard draw.io rectangle rounding requires a rounding-aware recovery workbook",
+                ));
+            }
+            let version = match version.as_str() {
+                DRAWIO_ROUNDING_WORKBOOK_VERSION => FIXED_PORT_WORKBOOK_VERSION,
+                DRAWIO_ROUNDING_INK_WORKBOOK_VERSION => FIXED_PORT_INK_WORKBOOK_VERSION,
+                version => version,
+            };
             if version != FIXED_PORT_WORKBOOK_VERSION
                 && version != FIXED_PORT_INK_WORKBOOK_VERSION
                 && workbook.has_fixed_connector_ports()
@@ -314,7 +335,7 @@ where
                     "fixed connector ports require a port-aware recovery workbook",
                 ));
             }
-            let version = match version.as_str() {
+            let version = match version {
                 FIXED_PORT_WORKBOOK_VERSION => DOUBLE_ELLIPSE_WORKBOOK_VERSION,
                 FIXED_PORT_INK_WORKBOOK_VERSION => DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION,
                 version => version,
@@ -1876,6 +1897,7 @@ mod lock_tests {
         shape.rounding = Some(ShapeRounding {
             radius: 16.0,
             stencil: DrawioRectangleStencil::Ios,
+            ..Default::default()
         });
         book.active_mut().add_canvas_object(shape).unwrap();
         let mut connector = CanvasConnector::new(
@@ -1958,6 +1980,7 @@ mod lock_tests {
         rounded.rounding = Some(ShapeRounding {
             radius: 16.0,
             stencil: DrawioRectangleStencil::Ios,
+            ..Default::default()
         });
         book.active_mut().add_canvas_object(rounded).unwrap();
         for ink in [None, Some("pending ink")] {
@@ -2070,6 +2093,70 @@ mod lock_tests {
     }
 
     #[test]
+    fn drawio_rounding_requires_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorPort, DrawioRectangleStencil, Endpoint, Rect,
+            ShapeKind, ShapeRounding, ShapeRoundingMode, Vec2,
+        };
+
+        let mut book = formatted_workbook(thinoda_core::CardKind::Text);
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 15.5,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: ShapeRoundingMode::Relative,
+            rounded_perimeter: true,
+        });
+        let id = book.active_mut().add_canvas_object(shape).unwrap();
+        let mut connector =
+            CanvasConnector::new(Endpoint::Object(id), Endpoint::Point(Vec2::new(200.0, 0.0)));
+        connector.from_port = Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.0),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["workbook"][0],
+                if ink.is_some() {
+                    DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
+                } else {
+                    DRAWIO_ROUNDING_WORKBOOK_VERSION
+                }
+            );
+            value["workbook"][0] = serde_json::json!(if ink.is_some() {
+                FIXED_PORT_INK_WORKBOOK_VERSION
+            } else {
+                FIXED_PORT_WORKBOOK_VERSION
+            });
+            assert!(
+                serde_json::from_value::<Snapshot>(value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("standard draw.io rectangle rounding requires")
+            );
+        }
+    }
+
+    #[test]
     fn double_ellipses_require_aware_recovery_with_and_without_pending_ink() {
         use thinoda_core::{
             CanvasObject, DrawioRectangleStencil, Rect, RectangleSides, ShapeKind, ShapeRounding,
@@ -2097,6 +2184,7 @@ mod lock_tests {
             rounded.rounding = Some(ShapeRounding {
                 radius: 15.0,
                 stencil: DrawioRectangleStencil::Forms,
+                ..Default::default()
             });
             book.active_mut().add_canvas_object(rounded).unwrap();
 

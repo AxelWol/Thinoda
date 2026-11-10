@@ -1,5 +1,7 @@
 # Regional wording overrides.
 Corner radius|Raio dos cantos
+Relative corner radius|Raio relativo dos cantos
+Connect at rounded corners|Conectar nos cantos arredondados
 Double ellipse|Elipse dupla
 Automatic inner inset|Espaçamento interno automático
 Inner outline inset|Espaçamento do contorno interno
@@ -128,6 +130,8 @@ AI provider is not ready. Check AI settings.|O provedor de IA não está pronto.
 Ollama uses its local OpenAI-compatible API. No API key is sent.|Ollama usa sua API local compatível com OpenAI. Nenhuma chave de API é enviada.
 Compare|Comparar
 Browser storage migration conflict|Conflito na migração do armazenamento do navegador
+Recovered browser documents|Documentos recuperados do navegador
+Preserved browser documents are available in File > Recovered browser documents.|Os documentos preservados estão disponíveis em Arquivo > Documentos recuperados do navegador.
 Downloading file:|Baixando arquivo:
 Reload file|Recarregar arquivo
 Keep my edits|Manter minhas alterações

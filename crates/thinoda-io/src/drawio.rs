@@ -26,8 +26,8 @@ use thinoda_core::{
         ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil,
         Endpoint, GridKind, InkStroke, InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS,
         MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH,
-        ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, SheetRootMode, normalize_rotation,
-        rotate_around, valid_board_position, valid_connector_marker_size,
+        ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode, SheetRootMode,
+        normalize_rotation, rotate_around, valid_board_position, valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -1504,6 +1504,64 @@ fn is_mockup_rectangle(style: &Style) -> bool {
     mockup_rectangle_stencil(style).is_some()
 }
 
+fn is_standard_rounded_rectangle(style: &Style) -> bool {
+    matches!(style.shape(), "" | "rect" | "rectangle" | "label")
+        && style.num("rounded") == Some(1.0)
+}
+
+fn native_rounded_rectangle_hint(style: &Style) -> bool {
+    style.get("thinodaShape") == Some("nativeRoundedRectangle")
+        && ["arcSize", "absoluteArcSize"]
+            .into_iter()
+            .all(|key| style.get(key).is_none_or(|value| value == "none"))
+        && style
+            .get("roundedPerimeter")
+            .is_none_or(|value| matches!(value, "none" | "0"))
+}
+
+fn standard_rectangle_rounding(style: &Style) -> (ShapeRounding, bool) {
+    let mut approximate = false;
+    let mut flag = |key| match style.get(key) {
+        None | Some("none") => false,
+        Some(_) if style.num(key) == Some(1.0) => true,
+        Some(_) if style.num(key) == Some(0.0) => false,
+        Some(_) => {
+            approximate = true;
+            false
+        }
+    };
+    let absolute = flag("absoluteArcSize");
+    let rounded_perimeter = flag("roundedPerimeter");
+    let default = if absolute { 20.0 } else { 15.0 };
+    let radius = match style.get("arcSize") {
+        None | Some("none") => default,
+        Some(_) => match style.num("arcSize") {
+            Some(value) if (0.0..=MAX_BOARD_COORDINATE).contains(&value) => value,
+            Some(value) => {
+                approximate = true;
+                value.clamp(0.0, MAX_BOARD_COORDINATE)
+            }
+            None => {
+                approximate = true;
+                0.0
+            }
+        },
+    };
+    (
+        ShapeRounding {
+            radius,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: if absolute {
+                ShapeRoundingMode::AbsoluteArc
+            } else {
+                ShapeRoundingMode::Relative
+            },
+            rounded_perimeter,
+        },
+        approximate,
+    )
+}
+
 const FLOWCHART_ANNOTATION_1: &str = "mxgraph.flowchart.annotation_1";
 const FLOWCHART_PROCESS: &str = "mxgraph.flowchart.process";
 
@@ -1591,7 +1649,7 @@ fn classify(style: &Style) -> Kind {
     let symmetric = |kind| Kind::Shape(kind, 0.0, true);
     match name {
         "" | "rect" | "rectangle" | "label" => {
-            if style.flag("rounded") {
+            if style.num("rounded") == Some(1.0) {
                 symmetric(S::RoundedRectangle)
             } else if style.get("shape") == Some("rectangle")
                 && style.get("rounded") == Some("0")
@@ -2178,7 +2236,21 @@ impl<'a> PageImport<'a> {
                     object.rounding = Some(ShapeRounding {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
                         stencil,
+                        ..Default::default()
                     });
+                } else if is_standard_rounded_rectangle(style)
+                    && !native_rounded_rectangle_hint(style)
+                {
+                    let (rounding, approximate) = standard_rectangle_rounding(style);
+                    object.rounding = Some(rounding);
+                    if approximate
+                        || style.constraint_perimeter != ConstraintPerimeter::Rectangle
+                        || style
+                            .get("direction")
+                            .is_some_and(|value| !matches!(value, "" | "east" | "none"))
+                    {
+                        self.warn(ImportWarning::Formatting);
+                    }
                 }
                 if style.get("shape") == Some(FLOWCHART_ANNOTATION_1) {
                     let has_area = frame.size.x > 0.0 && frame.size.y > 0.0;
@@ -2504,11 +2576,22 @@ impl<'a> PageImport<'a> {
             offset: Vec2::ZERO,
             perimeter: false,
         };
+        if target_cell.is_some_and(|cell| {
+            is_standard_rounded_rectangle(&cell.style)
+                && cell.style.num("roundedPerimeter") == Some(1.0)
+        }) && (style
+            .get("edgeStyle")
+            .is_some_and(|value| !matches!(value, "" | "none"))
+            || style.flag("curved"))
+        {
+            self.warn(ImportWarning::Formatting);
+        }
         match style.connector_port(source) {
             Ok(None) if waypoint_center => Some(center_port),
             Ok(None) => {
                 if matches!(endpoint, Endpoint::Object(id)
-                    if self.shapes.get(&id) == Some(&ShapeKind::DoubleEllipse))
+                    if self.shapes.get(&id) == Some(&ShapeKind::DoubleEllipse)
+                        || target_cell.is_some_and(|cell| is_standard_rounded_rectangle(&cell.style)))
                     && !target_cell.is_some_and(|cell| {
                         self.connector_geometry_matches_source(cell, endpoint, true)
                     })
@@ -3290,7 +3373,7 @@ fn shape_style(shape: ShapeKind) -> &'static str {
     use ShapeKind as S;
     match shape {
         S::Rectangle => "rounded=0;",
-        S::RoundedRectangle => "rounded=1;",
+        S::RoundedRectangle => "rounded=1;thinodaShape=nativeRoundedRectangle;",
         S::Ellipse => "ellipse;",
         S::DoubleEllipse => "shape=doubleEllipse;perimeter=ellipsePerimeter;",
         S::Diamond => "rhombus;",
@@ -3331,6 +3414,7 @@ fn rounded_stencil_name(stencil: DrawioRectangleStencil) -> &'static str {
         DrawioRectangleStencil::Graphics => "mxgraph.mockup.graphics.rrect",
         DrawioRectangleStencil::Text => "mxgraph.mockup.text.rrect",
         DrawioRectangleStencil::Ios => "mxgraph.ios.rrect",
+        DrawioRectangleStencil::Standard => "rectangle",
     }
 }
 
@@ -3797,11 +3881,20 @@ impl<'a> PageWriter<'a> {
                         u8::from(sides.left),
                     ));
                 } else if let Some(rounding) = object.rounding {
-                    style.push_str(&format!(
-                        "shape={};rSize={};",
-                        rounded_stencil_name(rounding.stencil),
-                        num(rounding.radius)
-                    ));
+                    if rounding.is_standard() {
+                        style.push_str(&format!(
+                            "shape=rectangle;rounded=1;arcSize={};absoluteArcSize={};roundedPerimeter={};",
+                            num(rounding.radius),
+                            u8::from(rounding.mode == ShapeRoundingMode::AbsoluteArc),
+                            u8::from(rounding.rounded_perimeter),
+                        ));
+                    } else {
+                        style.push_str(&format!(
+                            "shape={};rSize={};",
+                            rounded_stencil_name(rounding.stencil),
+                            num(rounding.radius)
+                        ));
+                    }
                 } else if *shape == ShapeKind::Rectangle
                     && style_ref.fill.is_some_and(|c| c.a == 0)
                     && style_ref.stroke.is_some_and(|c| c.a == 0)

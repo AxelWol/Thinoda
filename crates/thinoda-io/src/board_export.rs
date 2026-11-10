@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 22;
+pub const NATIVE_FORMAT_VERSION: u64 = 23;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -23,10 +23,13 @@ pub const NATIVE_FORMAT_VERSION: u64 = 22;
 /// 13 custom connector marker sizes, 14 connector marker fill overrides,
 /// 15 diamond connector markers, 16 oval connector markers, 17 half-circle markers,
 /// 18 bar connector markers, 19 adjustable rectangle corners, and
-/// 20 partial rectangle outline sides, 21 double ellipses, and 22 fixed connector ports.
+/// 20 partial rectangle outline sides, 21 double ellipses, 22 fixed connector ports,
+/// and 23 standard draw.io rectangle rounding.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_fixed_connector_ports() {
+    if book.has_drawio_rectangle_rounding() {
+        23
+    } else if book.has_fixed_connector_ports() {
         22
     } else if book.has_double_ellipses() {
         21

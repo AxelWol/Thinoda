@@ -37,9 +37,8 @@ pub fn record_browser_migration(report: MigrationReport) {
     BROWSER_MIGRATION.with(|slot| *slot.borrow_mut() = Some(report));
 }
 
-/// The startup migration report, once. Conflicts list legacy documents whose
-/// different bytes were preserved as copies next to a newer durable original;
-/// the app must tell the user about them.
+/// The startup migration report, once. Conflicts list preserved legacy copies,
+/// including prior copies whose original legacy records have since changed.
 pub fn take_browser_migration() -> Option<MigrationReport> {
     BROWSER_MIGRATION.with(|slot| slot.borrow_mut().take())
 }

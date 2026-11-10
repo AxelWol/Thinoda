@@ -36,8 +36,8 @@ export function watchDocuments(callback) {
     };
 }
 
-function failure(code, message, actual = null) {
-    return Object.assign(new Error(message), { code, actual });
+function failure(code, message, actual = null, reason = null) {
+    return Object.assign(new Error(message), { code, actual, reason });
 }
 
 function check(cancelled) {
@@ -68,11 +68,15 @@ async function fileBytes(file, limit) {
     return bytes;
 }
 
+function validDocumentId(id, directory = false) {
+    return typeof id === "string" &&
+        (id.startsWith("/Documents/") || (directory && id === "/Documents")) &&
+        !id.includes("\\") && !id.includes("\0") &&
+        !id.split("/").slice(1).some(p => !p || p === "." || p === "..");
+}
+
 function documentId(id, directory = false) {
-    if (typeof id !== "string" ||
-        !(id.startsWith("/Documents/") || (directory && id === "/Documents")) ||
-        id.includes("\\") || id.includes("\0") ||
-        id.split("/").slice(1).some(p => !p || p === "." || p === "..")) {
+    if (!validDocumentId(id, directory)) {
         throw failure("io", "Invalid browser document identifier");
     }
     return id;
@@ -117,7 +121,7 @@ function upgrade(request, oldVersion) {
 function openDatabase() {
     return new Promise((resolve, reject) => {
         if (!globalThis.indexedDB) {
-            reject(failure("unsupported", "IndexedDB is unavailable"));
+            reject(failure("unsupported", "IndexedDB is unavailable", null, "indexeddb_unavailable"));
             return;
         }
         const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -134,7 +138,8 @@ function openDatabase() {
         request.onerror = () => reject(request.error);
         request.onblocked = () => {
             failed = true;
-            reject(failure("io", "Another tab is blocking document storage initialization"));
+            reject(failure("io", "Another tab is blocking document storage initialization",
+                null, "blocked"));
         };
         request.onsuccess = () => {
             if (failed) {
@@ -244,7 +249,7 @@ async function revision(bytes) {
 
 async function verify(record, bytes) {
     if (bytes.length !== record.size || await revision(bytes) !== record.revision) {
-        throw failure("io", "Durable document verification failed");
+        throw failure("io", "Durable document verification failed", null, "invalid_durable");
     }
     return bytes;
 }
@@ -278,14 +283,18 @@ async function readCurrent(state, id, limit = null) {
         });
         const record = found.record;
         if (!record) return null;
-        if (found.invalidSize) throw failure("io", "Invalid durable document size");
+        if (found.invalidSize) throw failure("io", "Invalid durable document size", null, "invalid_durable");
         if (found.tooLarge) throw failure("too_large", "File exceeds its read size limit");
         if (record.backend === "indexeddb") {
-            if (found.bytes === undefined) throw failure("io", "Durable document content is missing");
+            if (found.bytes === undefined) {
+                throw failure("io", "Durable document content is missing", null, "invalid_durable");
+            }
             checkSize(found.bytes.byteLength, limit);
             return { record, bytes: await verify(record, new Uint8Array(found.bytes)) };
         }
-        if (record.backend !== "opfs") throw failure("io", "Invalid durable document backend");
+        if (record.backend !== "opfs") {
+            throw failure("io", "Invalid durable document backend", null, "invalid_durable");
+        }
         let bytes;
         try {
             // The recorded backend is authoritative, even when OPFS probing failed.
@@ -298,7 +307,7 @@ async function readCurrent(state, id, limit = null) {
             if (error?.name !== "NotFoundError" && error?.name !== "NotReadableError") throw error;
             const latest = await query(state.db, id);
             if (latest && latest.blob !== record.blob) continue;
-            throw failure("io", "Durable document blob is missing");
+            throw failure("io", "Durable document blob is missing", null, "invalid_durable");
         }
         return { record, bytes: await verify(record, bytes) };
     }
@@ -393,7 +402,7 @@ function commit(db, record, content, expected, cancelled, backup) {
                 check(cancelled);
                 if (scan.result.some(id => ids.some(own => id !== own &&
                     (id.startsWith(own + "/") || own.startsWith(id + "/"))))) {
-                    throw failure("io", "Document path conflicts with a directory");
+                    throw failure("io", "Document path conflicts with a directory", null, "path_conflict");
                 }
                 if (content) contents.put(content);
                 // `.bak` shares the previous immutable blob and is committed
@@ -586,45 +595,82 @@ function decodeLegacy(key, raw) {
         if (btoa(binary) !== entry.d || binary.length !== entry.l) throw new Error("base64");
         return { id, bytes: Uint8Array.from(binary, c => c.charCodeAt(0)) };
     } catch {
-        throw failure("io", "Malformed legacy /Documents entry; original data was retained");
+        throw failure("io", "Malformed legacy /Documents entry; original data was retained",
+            null, "invalid_legacy");
     }
 }
 
-async function conflictId(id, bytes) {
+async function conflictIdForRevision(id, contentRevision) {
     const pathHash = (await revision(new TextEncoder().encode(id))).slice(7);
-    const contentHash = (await revision(bytes)).slice(7);
+    const contentHash = contentRevision.slice(7);
     return `/Documents/.thinoda-legacy/${pathHash}/${contentHash}/${id.split("/").at(-1)}`;
+}
+
+function recordLegacyConflict(db, copy, original, expectedRevision) {
+    return transaction(db, STORE, "readwrite", (tx, _, fail) => {
+        const documents = tx.objectStore(STORE);
+        const request = documents.get(copy);
+        request.onsuccess = () => {
+            try {
+                const record = request.result;
+                if (!record || record.revision !== expectedRevision ||
+                    (record.legacyOriginal !== undefined && record.legacyOriginal !== original)) {
+                    throw failure("io", "Legacy conflict copy verification failed", null, "invalid_durable");
+                }
+                if (record.legacyOriginal !== original) {
+                    documents.put({ ...record, legacyOriginal: original });
+                }
+            } catch (error) {
+                fail(error);
+            }
+        };
+    });
+}
+
+async function preserveLegacy(entry, state) {
+    const expectedRevision = await revision(entry.bytes);
+    const copy = await conflictIdForRevision(entry.id, expectedRevision);
+    const existing = await readCurrent(state, copy);
+    if (existing) {
+        if (!equal(existing.bytes, entry.bytes)) {
+            throw failure("io", "Legacy conflict copy verification failed", null, "invalid_durable");
+        }
+    } else {
+        try {
+            await writeDocument(copy, entry.bytes, "missing");
+        } catch (error) {
+            if (error?.code !== "conflict") throw error;
+        }
+        const verified = await readDocument(copy);
+        if (!equal(verified.bytes, entry.bytes)) {
+            throw failure("io", "Migration verification failed", null, "invalid_durable");
+        }
+    }
+    // Keep the mapping with the durable copy, even if an older tab later
+    // changes or removes the legacy key. The CAS prevents annotating a
+    // different document after the verified read.
+    await recordLegacyConflict(state.db, copy, entry.id, expectedRevision);
+    return { copied: true, original: entry.id, preserved: copy };
 }
 
 async function migrateOne(entry, retries = 3) {
     if (retries === 0) {
-        throw failure("io", "Durable documents kept changing during migration; retry initialization");
+        throw failure("io", "Durable documents kept changing during migration; retry initialization",
+            null, "migration_changed");
     }
     const state = await storage();
     const current = await readCurrent(state, entry.id);
     if (current) {
         if (equal(current.bytes, entry.bytes)) return { copied: false };
-        const copy = await conflictId(entry.id, entry.bytes);
-        const existingCopy = await readCurrent(state, copy);
-        if (existingCopy) {
-            if (!equal(existingCopy.bytes, entry.bytes)) {
-                throw failure("io", "Legacy conflict copy verification failed");
-            }
-        } else {
-            try {
-                await writeDocument(copy, entry.bytes, "missing");
-            } catch (error) {
-                if (error.code !== "conflict") throw error;
-            }
-            const verified = await readDocument(copy);
-            if (!equal(verified.bytes, entry.bytes)) throw failure("io", "Migration verification failed");
-        }
-        return { copied: true, original: entry.id, preserved: copy };
+        return preserveLegacy(entry, state);
     }
     try {
         await writeDocument(entry.id, entry.bytes, "missing");
     } catch (error) {
-        if (error.code !== "conflict") throw error;
+        if (error?.code === "io" && error.reason === "path_conflict") {
+            return preserveLegacy(entry, state);
+        }
+        if (error?.code !== "conflict") throw error;
         // A concurrent writer won. Re-evaluate without overwriting its revision.
         return migrateOne(entry, retries - 1);
     }
@@ -641,32 +687,49 @@ export async function initializeDocuments() {
     // Validate the complete snapshot before migrating any entries.
     const snapshot = legacyEntries();
     const decoded = snapshot.map(([key, raw]) => decodeLegacy(key, raw));
-    const conflicts = [];
     for (const entry of decoded) {
-        const result = await migrateOne(entry);
-        if (result.copied) conflicts.push({ original: result.original, preserved: result.preserved });
+        await migrateOne(entry);
     }
     // Legacy writers may still exist. Detect edits during migration and require
     // a retry; never remove legacy keys or mark a stale snapshot complete.
     const after = legacyEntries();
     if (JSON.stringify(snapshot) !== JSON.stringify(after)) {
-        throw failure("io", "Legacy documents changed during migration; retry initialization");
+        throw failure("io", "Legacy documents changed during migration; retry initialization",
+            null, "migration_changed");
     }
     const state = await storage();
     // Best-effort reclamation of blobs orphaned by earlier interrupted writes.
     try { await collectGarbage(); } catch (error) {
         console.warn("Thinoda could not sweep unreferenced document blobs", error);
     }
-    // Metadata-only snapshot (keys) for the app's synchronous existence index.
-    const documents = await transaction(state.db, STORE, "readonly", (tx, out) => {
-        const request = tx.objectStore(STORE).getAllKeys();
-        request.onsuccess = () => { out.result = request.result; };
+    // Metadata only: the app gets both its existence index and every preserved
+    // conflict, including copies from earlier legacy snapshots.
+    const indexed = await transaction(state.db, STORE, "readonly", (tx, out) => {
+        const documents = tx.objectStore(STORE);
+        const prefix = "/Documents/.thinoda-legacy/";
+        const keys = documents.getAllKeys();
+        const copies = documents.getAll(IDBKeyRange.bound(prefix, prefix + "\uffff", false, true));
+        out.result = {};
+        keys.onsuccess = () => { out.result.documents = keys.result; };
+        copies.onsuccess = () => { out.result.copies = copies.result; };
     });
+    const conflicts = [];
+    for (const record of indexed.copies) {
+        if (record.legacyOriginal === undefined) continue;
+        if (!validDocumentId(record.legacyOriginal) ||
+            typeof record.revision !== "string" ||
+            !/^sha256:[0-9a-f]{64}$/.test(record.revision) ||
+            record.id !== await conflictIdForRevision(record.legacyOriginal, record.revision)) {
+            throw failure("io", "Legacy conflict copy verification failed", null, "invalid_durable");
+        }
+        conflicts.push({ original: record.legacyOriginal, preserved: record.id });
+    }
+    conflicts.sort((a, b) => a.original.localeCompare(b.original) || a.preserved.localeCompare(b.preserved));
     return JSON.stringify({
         backend: state.opfs ? "opfs" : "indexeddb",
         verified: decoded.length,
         conflicts,
-        documents
+        documents: indexed.documents
     });
 }
 

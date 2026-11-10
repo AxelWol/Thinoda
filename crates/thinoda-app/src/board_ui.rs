@@ -4,7 +4,7 @@ use egui::{Color32, Context, Rect, Ui, vec2};
 use thinoda_canvas::{Action, BoardTool, MapView};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
-    ConnectorRoute, InkTool, ObjectStyle, ShapeKind, TopicId,
+    ConnectorRoute, InkTool, ObjectStyle, ShapeKind, ShapeRoundingMode, TopicId,
     board::{
         BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, MAX_BOARD_COORDINATE,
         MAX_CONNECTOR_MARKER_SIZE, MIN_CARD_SIZE,
@@ -1546,16 +1546,68 @@ impl ThinodaApp {
                         edited.double_ellipse_margin = None;
                     }
                     if let Some(rounding) = &mut edited.rounding {
+                        let standard = rounding.is_standard();
+                        if standard {
+                            let mut relative = rounding.mode == ShapeRoundingMode::Relative;
+                            let shortest = edited.rect.size.x.min(edited.rect.size.y);
+                            if ui
+                                .add_enabled(
+                                    shortest > 0.0,
+                                    egui::Checkbox::new(&mut relative, t("Relative corner radius")),
+                                )
+                                .changed()
+                            {
+                                let radius = rounding.radius_for_rect(edited.rect);
+                                rounding.mode = if relative {
+                                    ShapeRoundingMode::Relative
+                                } else {
+                                    ShapeRoundingMode::AbsoluteArc
+                                };
+                                rounding.radius = if relative {
+                                    (radius / shortest * 100.0).min(MAX_BOARD_COORDINATE)
+                                } else {
+                                    (radius * 2.0).min(MAX_BOARD_COORDINATE)
+                                };
+                            }
+                        }
+                        let relative = rounding.mode == ShapeRoundingMode::Relative;
+                        let absolute = rounding.mode == ShapeRoundingMode::AbsoluteArc;
+                        let mut radius = if absolute {
+                            rounding.radius / 2.0
+                        } else {
+                            rounding.radius
+                        };
                         let response = widgets::property_field(ui, t("Corner radius"), |ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut rounding.radius)
-                                    .range(0.0..=MAX_BOARD_COORDINATE)
-                                    .speed(1.0)
-                                    .fixed_decimals(0),
-                            )
+                            let limit = if absolute {
+                                MAX_BOARD_COORDINATE / 2.0
+                            } else {
+                                MAX_BOARD_COORDINATE
+                            };
+                            let field = egui::DragValue::new(&mut radius)
+                                .range(0.0..=limit)
+                                .speed(if standard { 0.5 } else { 1.0 });
+                            let field = if standard {
+                                let field = field.max_decimals(2);
+                                if relative { field.suffix("%") } else { field }
+                            } else {
+                                field.fixed_decimals(0)
+                            };
+                            ui.add(field)
                         });
                         if response.changed() {
-                            rounding.radius = rounding.radius.round();
+                            rounding.radius = if absolute {
+                                radius * 2.0
+                            } else if standard {
+                                radius
+                            } else {
+                                radius.round()
+                            };
+                        }
+                        if standard {
+                            ui.checkbox(
+                                &mut rounding.rounded_perimeter,
+                                t("Connect at rounded corners"),
+                            );
                         }
                     }
                     if *shape == ShapeKind::Rectangle && edited.rounding.is_none() {
@@ -6534,6 +6586,7 @@ mod tests {
             shape.rounding = Some(ShapeRounding {
                 radius,
                 stencil: DrawioRectangleStencil::Mockup,
+                ..Default::default()
             });
             sheet.add_canvas_object(shape).unwrap();
         }
@@ -6564,12 +6617,18 @@ mod tests {
 
     #[test]
     fn shape_rounding_inspector_is_localized() {
-        assert!(i18n::has_translations("Corner radius"));
-        for language in i18n::Lang::ALL {
-            let translated = i18n::t_in(language, "Corner radius");
-            assert!(!translated.is_empty(), "{language:?}");
-            if language != i18n::Lang::En {
-                assert_ne!(translated, "Corner radius", "{language:?}");
+        for key in [
+            "Corner radius",
+            "Relative corner radius",
+            "Connect at rounded corners",
+        ] {
+            assert!(i18n::has_translations(key), "{key}");
+            for language in i18n::Lang::ALL {
+                let translated = i18n::t_in(language, key);
+                assert!(!translated.is_empty(), "{language:?}: {key}");
+                if language != i18n::Lang::En {
+                    assert_ne!(translated, key, "{language:?}");
+                }
             }
         }
     }
@@ -6812,6 +6871,7 @@ mod tests {
         let rounding = ShapeRounding {
             radius: 15.0,
             stencil: DrawioRectangleStencil::Forms,
+            ..Default::default()
         };
         shape.rounding = Some(rounding);
         let id = doc.doc.add_canvas_object(shape).unwrap();
@@ -6876,6 +6936,83 @@ mod tests {
         assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
         harness.run_steps(3);
         assert_eq!(current(harness.state()).rounding, Some(rounding));
+    }
+
+    #[test]
+    fn drawio_rounding_inspector_edits_modes_and_perimeter_with_undo() {
+        use thinoda_core::{DrawioRectangleStencil, ShapeRounding};
+
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            BoardRect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 30.0,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: ShapeRoundingMode::Relative,
+            rounded_perimeter: true,
+        });
+        let id = doc.doc.add_canvas_object(shape).unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let rounding = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .rounding
+                .unwrap()
+        };
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Relative corner radius")
+            .click();
+        harness.run_steps(3);
+        assert_eq!(
+            rounding(harness.state()).mode,
+            ShapeRoundingMode::AbsoluteArc
+        );
+        assert!((rounding(harness.state()).radius - 36.0).abs() < 0.001);
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Relative corner radius")
+            .click();
+        harness.run_steps(3);
+        assert_eq!(rounding(harness.state()).mode, ShapeRoundingMode::Relative);
+        assert!((rounding(harness.state()).radius - 30.0).abs() < 0.001);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(
+            rounding(harness.state()).mode,
+            ShapeRoundingMode::AbsoluteArc
+        );
+        assert!((rounding(harness.state()).radius - 36.0).abs() < 0.001);
+        harness.get_by_label("Corner radius").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Corner radius").type_text("12.5");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert!((rounding(harness.state()).radius - 25.0).abs() < 0.001);
+        harness
+            .get_by_role_and_label(egui::Role::CheckBox, "Connect at rounded corners")
+            .click();
+        harness.run_steps(3);
+        assert!(!rounding(harness.state()).rounded_perimeter);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert!(rounding(harness.state()).rounded_perimeter);
     }
 
     #[test]

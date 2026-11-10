@@ -1089,6 +1089,7 @@ fn shape_toolbar_preserves_or_clears_rounding_as_the_kind_changes() {
     let rounding = ShapeRounding {
         radius: 18.0,
         stencil: DrawioRectangleStencil::Misc,
+        ..Default::default()
     };
     app.doc_mut()
         .unwrap()

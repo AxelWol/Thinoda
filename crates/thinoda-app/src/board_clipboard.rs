@@ -1216,6 +1216,7 @@ mod tests {
         let rounding = ShapeRounding {
             radius: 25.0,
             stencil: DrawioRectangleStencil::Text,
+            ..Default::default()
         };
         doc.doc
             .update_canvas_object("Rounding", id, |object| object.rounding = Some(rounding))

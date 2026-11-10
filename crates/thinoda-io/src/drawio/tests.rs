@@ -3619,6 +3619,146 @@ fn mockup_rectangle_radius_uses_drawio_style_resolution() {
 }
 
 #[test]
+fn drawio_standard_rounding_imports_and_exports_arc_modes() {
+    for (style, mode, radius, perimeter) in [
+        ("rounded=1;", ShapeRoundingMode::Relative, 15.0, false),
+        (
+            "shape=rect;rounded=1;arcSize=12.5;roundedPerimeter=1;",
+            ShapeRoundingMode::Relative,
+            12.5,
+            true,
+        ),
+        (
+            "shape=rectangle;rounded=1;absoluteArcSize=1;",
+            ShapeRoundingMode::AbsoluteArc,
+            20.0,
+            false,
+        ),
+        (
+            "shape=label;rounded=1.0;absoluteArcSize=1;arcSize=21.5;roundedPerimeter=1;",
+            ShapeRoundingMode::AbsoluteArc,
+            21.5,
+            true,
+        ),
+        (
+            "rounded=1;arcSize=none;roundedPerimeter=0;",
+            ShapeRoundingMode::Relative,
+            15.0,
+            false,
+        ),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" style="{style}fillColor=#fff;strokeColor=#000;" vertex="1" parent="1"><mxGeometry x="20" y="120" width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let expected = ShapeRounding {
+            radius,
+            stencil: DrawioRectangleStencil::Standard,
+            mode,
+            rounded_perimeter: perimeter,
+        };
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0].rounding,
+            Some(expected)
+        );
+        assert_eq!(crate::required_native_version(&report.workbook), 23);
+        let exported = export(&report.workbook).unwrap();
+        let text = std::str::from_utf8(&exported).unwrap();
+        assert!(
+            text.contains(&format!(
+                "shape=rectangle;rounded=1;arcSize={};absoluteArcSize={};roundedPerimeter={};",
+                num(radius),
+                u8::from(mode == ShapeRoundingMode::AbsoluteArc),
+                u8::from(perimeter)
+            )),
+            "{text}"
+        );
+        let reopened = import(&exported).unwrap();
+        assert_eq!(
+            shapes(&reopened.workbook.sheets[0])[0].rounding,
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn drawio_standard_rounding_warns_on_unrepresentable_values_and_perimeters() {
+    for (style, expected_radius) in [
+        ("rounded=1;arcSize=-2;", 0.0),
+        ("rounded=1;arcSize=not-a-number;", 0.0),
+        ("rounded=1;arcSize=1e30;", MAX_BOARD_COORDINATE),
+        ("rounded=1;roundedPerimeter=2;", 15.0),
+        ("rounded=1;absoluteArcSize=unknown;", 15.0),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" style="{style}fillColor=#fff;strokeColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}"
+        );
+        assert_eq!(
+            shapes(&report.workbook.sheets[0])[0]
+                .rounding
+                .unwrap()
+                .radius,
+            expected_radius,
+            "{style}"
+        );
+    }
+    let xml = page(
+        r##"<mxCell id="a" style="rounded=1;roundedPerimeter=1;perimeter=ellipsePerimeter;fillColor=#fff;strokeColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell><mxCell id="edge" source="a" style="endArrow=none;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="200" y="10" as="targetPoint"/></mxGeometry></mxCell>"##,
+    );
+    assert!(load(&xml).warnings.contains(&ImportWarning::Formatting));
+}
+
+#[test]
+fn native_rounded_rectangle_hint_yields_to_external_rounding_edits() {
+    let mut sheet = Sheet::new("Native", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            rect(0.0, 0.0, 200.0, 60.0),
+        ))
+        .unwrap();
+    let exported = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(exported.contains("rounded=1;thinodaShape=nativeRoundedRectangle;"));
+    let reopened = load(&exported);
+    assert_eq!(shapes(&reopened.workbook.sheets[0])[0].rounding, None);
+
+    let edited = exported.replacen(
+        "rounded=1;thinodaShape=nativeRoundedRectangle;",
+        "rounded=1;arcSize=30;roundedPerimeter=1;thinodaShape=nativeRoundedRectangle;",
+        1,
+    );
+    let reopened = load(&edited);
+    assert_eq!(
+        shapes(&reopened.workbook.sheets[0])[0].rounding,
+        Some(ShapeRounding {
+            radius: 30.0,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: ShapeRoundingMode::Relative,
+            rounded_perimeter: true,
+        })
+    );
+}
+
+#[test]
+fn drawio_rounded_perimeter_is_used_for_imported_fixed_ports() {
+    let xml = page(
+        r##"<mxCell id="a" style="rounded=1;arcSize=30;roundedPerimeter=1;fillColor=#fff;strokeColor=#000;" vertex="1" parent="1"><mxGeometry x="20" y="120" width="100" height="60" as="geometry"/></mxCell><mxCell id="edge" source="a" style="endArrow=none;exitX=1;exitY=0;exitPerimeter=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="220" y="20" as="targetPoint"/></mxGeometry></mxCell>"##,
+    );
+    let report = load(&xml);
+    let sheet = &report.workbook.sheets[0];
+    let layout = layout_sheet(sheet, &ApproxMeasure, false);
+    let endpoint = thinoda_core::connector_path(sheet, &layout, connectors(sheet)[0])[0];
+    assert!((endpoint - Vec2::new(114.7279, 125.2721)).length() < 0.001);
+}
+
+#[test]
 fn mockup_rectangle_radius_is_bounded_and_preserved_on_drawio_round_trip() {
     for (value, expected) in [
         ("none", 10.0),
@@ -3658,6 +3798,7 @@ fn mockup_rectangle_radius_is_bounded_and_preserved_on_drawio_round_trip() {
             let expected = ShapeRounding {
                 radius: expected_radius,
                 stencil,
+                ..Default::default()
             };
             assert_eq!(
                 shapes(&imported.workbook.sheets[0])[0].rounding,
@@ -3983,6 +4124,7 @@ fn supplied_requirements_flow_classifies_real_mockup_rectangles() {
                 Some(ShapeRounding {
                     radius: cell.style.get("rSize").map_or(10.0, mockup_radius),
                     stencil: mockup_rectangle_stencil(&cell.style).unwrap(),
+                    ..Default::default()
                 })
             );
             if expected == ShapeKind::RoundedRectangle {

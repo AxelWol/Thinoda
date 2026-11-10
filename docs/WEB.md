@@ -281,15 +281,28 @@ apparently successful empty migration. Settings and recovery keys are untouched.
 
 For each document it writes with `ExpectedRevision::Missing` and rereads the
 durable bytes. Equal existing bytes need no write. Different durable bytes win,
-regardless of legacy mtime; the legacy content is preserved and verified under
-`/Documents/.thinoda-legacy/<path hash>/<content hash>/<original name>`.
-The migration report lists original and preserved IDs so an app can offer both
-versions. Repeated migration reuses and verifies that same copy. Concurrent
+regardless of legacy mtime. If a durable file conflicts with a legacy directory
+or vice versa, neither is overwritten. The legacy content is preserved and
+verified under `/Documents/.thinoda-legacy/<path hash>/<content hash>/<original
+name>`. Each verified copy carries its original ID in durable metadata, so its
+entry remains discoverable even if a legacy record later changes. Repeated
+migration reuses and verifies the same copy. Concurrent
 conditional-write conflicts are re-evaluated with bounded retries; continuous
 changes fail safely. Changes to the localStorage snapshot during migration
 also fail and require retry. **No legacy key is removed, even after verification.**
 This retention supports rollback while older tabs or the old synchronous app
 can still write VFS documents. It is not continuous synchronization.
+
+When copies exist, a sticky notice points to **File > Recovered browser
+documents**, which lists every preserved version by its original path and a
+content identifier. The menu remains available if the notice is dismissed.
+Opening one creates an unsaved editable document; saving it
+chooses a separate destination and does not change the preserved source. During
+migration, a conflicting or unverifiable recovery-copy destination blocks
+startup rather than overwriting either document. Keep the legacy browser data
+until the recovered files have been checked and backed up. The notice is also
+announced through a browser live region; the editor's broader browser
+accessibility bridge remains an open issue.
 
 Wiring status:
 

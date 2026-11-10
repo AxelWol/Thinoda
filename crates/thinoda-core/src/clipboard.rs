@@ -35,12 +35,15 @@ const ROUNDING_SHEET_PREFIX: &str = "THINODA-SHEET-15\n";
 const RECTANGLE_SIDES_SHEET_PREFIX: &str = "THINODA-SHEET-16\n";
 const DOUBLE_ELLIPSE_SHEET_PREFIX: &str = "THINODA-SHEET-17\n";
 const FIXED_PORT_SHEET_PREFIX: &str = "THINODA-SHEET-18\n";
+const DRAWIO_ROUNDING_SHEET_PREFIX: &str = "THINODA-SHEET-19\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_fixed_connector_ports() {
+    let prefix = if sheet.has_drawio_rectangle_rounding() {
+        DRAWIO_ROUNDING_SHEET_PREFIX
+    } else if sheet.has_fixed_connector_ports() {
         FIXED_PORT_SHEET_PREFIX
     } else if sheet.has_double_ellipses() {
         DOUBLE_ELLIPSE_SHEET_PREFIX
@@ -95,9 +98,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(FIXED_PORT_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-18\r\n"))
-        .map(|json| (18, json))
+        .strip_prefix(DRAWIO_ROUNDING_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-19\r\n"))
+        .map(|json| (19, json))
+        .or_else(|| {
+            text.strip_prefix(FIXED_PORT_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-18\r\n"))
+                .map(|json| (18, json))
+        })
         .or_else(|| {
             text.strip_prefix(DOUBLE_ELLIPSE_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-17\r\n"))
@@ -220,6 +228,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     if version < 18 && sheet.has_fixed_connector_ports() {
         return Err("fixed connector ports require sheet clipboard version 18".into());
+    }
+    if version < 19 && sheet.has_drawio_rectangle_rounding() {
+        return Err(
+            "standard draw.io rectangle rounding requires sheet clipboard version 19".into(),
+        );
     }
     if version < 6 && sheet.has_connector_waypoints() {
         return Err("connector waypoints require sheet clipboard version 6".into());
@@ -937,6 +950,7 @@ mod tests {
         shape.rounding = Some(ShapeRounding {
             radius: 12.0,
             stencil: DrawioRectangleStencil::Ios,
+            ..Default::default()
         });
         sheet.add_canvas_object(shape).unwrap();
         let mut connector = CanvasConnector::new(
@@ -959,6 +973,39 @@ mod tests {
         for version in 1..15 {
             let forged =
                 encoded.replacen("THINODA-SHEET-15", &format!("THINODA-SHEET-{version}"), 1);
+            assert!(decode_sheet(&forged).is_err(), "version {version}");
+        }
+    }
+
+    #[test]
+    fn drawio_rectangle_rounding_sheet_clipboard_requires_version_nineteen() {
+        use crate::{
+            CanvasObject, DrawioRectangleStencil, Rect, ShapeKind, ShapeRounding,
+            ShapeRoundingMode, Vec2,
+        };
+
+        let mut sheet = formatted_card_sheet(crate::CardKind::Text);
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 15.5,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: ShapeRoundingMode::Relative,
+            rounded_perimeter: true,
+        });
+        sheet.add_canvas_object(shape).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(DRAWIO_ROUNDING_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        for version in 1..19 {
+            let forged =
+                encoded.replacen("THINODA-SHEET-19", &format!("THINODA-SHEET-{version}"), 1);
             assert!(decode_sheet(&forged).is_err(), "version {version}");
         }
     }

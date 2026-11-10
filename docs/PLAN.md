@@ -89,6 +89,7 @@ complete:
 | Ink input and performance | Partial | Define budgets and verify representative native, browser, GPU, touch and stylus workloads |
 | Presentation scenes and exports | Partial | Finish browser, PDF viewer and current Office acceptance; clipping is not redaction |
 | Board accessibility and rich editing | Partial | Complete browser/assistive-technology and IME acceptance, plus rich-aware range/list editing and its persistence and exports |
+| GitHub Pages browser-storage startup failure | Partial; candidate validated | A synthetic legacy file/folder collision reproduces the message; the candidate preserves both copies and adds safe diagnostics. The user's actual cause is unconfirmed; verify deployment and the affected device without accessing or clearing user data. See [WEB-STARTUP.md](WEB-STARTUP.md#reported-pages-storage-startup-failure) |
 | Storage and clipboard safeguards | Partial | Keep cloud providers gated; finish revision, cancellation, recovery, real-host and provider acceptance |
 | Preserve Ink and Slides artifacts | Blocked | A consistent backup of the separate worktree and session artifacts needs a suitable destination and a quiescent snapshot; do not delete or archive the source as a substitute |
 | Bounded draw.io PDF import | Research in progress | Metadata and attachments require strict aggregate decoding limits; the evaluated parser limits are per stream and do not yet meet that requirement |

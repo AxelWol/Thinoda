@@ -293,6 +293,15 @@ impl CanvasLayer {
         self.objects.iter().any(|object| object.rounding.is_some())
     }
 
+    /// Whether this layer needs standard draw.io rectangle rounding.
+    pub fn has_drawio_rectangle_rounding(&self) -> bool {
+        self.objects.iter().any(|object| {
+            object
+                .rounding
+                .is_some_and(|rounding| rounding.is_standard())
+        })
+    }
+
     /// Whether this layer needs partial-rectangle-aware persistence.
     pub fn has_rectangle_sides(&self) -> bool {
         self.objects
@@ -377,7 +386,7 @@ impl ObjectStyle {
     }
 }
 
-/// draw.io rounded-rectangle stencil identifiers with the same radius behavior.
+/// Supported draw.io rounded-rectangle identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DrawioRectangleStencil {
@@ -388,13 +397,66 @@ pub enum DrawioRectangleStencil {
     Graphics,
     Text,
     Ios,
+    Standard,
 }
 
-/// An absolute, integer corner radius and its draw.io stencil identity.
+/// The interpretation of the radius in a rounded draw.io rectangle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ShapeRoundingMode {
+    /// The absolute integer radius used by legacy mockup stencils.
+    #[default]
+    Stencil,
+    /// The percentage of the shorter side used by a standard rectangle.
+    Relative,
+    /// The diameter in drawing units used by a standard rectangle.
+    AbsoluteArc,
+}
+
+impl ShapeRoundingMode {
+    fn is_stencil(&self) -> bool {
+        *self == Self::Stencil
+    }
+}
+
+/// Rounded-rectangle parameters and their draw.io shape identity.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ShapeRounding {
+    /// A stencil radius or the standard rectangle's `arcSize`.
     pub radius: f32,
     pub stencil: DrawioRectangleStencil,
+    #[serde(default, skip_serializing_if = "ShapeRoundingMode::is_stencil")]
+    pub mode: ShapeRoundingMode,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rounded_perimeter: bool,
+}
+
+impl Default for ShapeRounding {
+    fn default() -> Self {
+        Self {
+            radius: 0.0,
+            stencil: DrawioRectangleStencil::Mockup,
+            mode: ShapeRoundingMode::Stencil,
+            rounded_perimeter: false,
+        }
+    }
+}
+
+impl ShapeRounding {
+    pub fn is_standard(self) -> bool {
+        self.stencil == DrawioRectangleStencil::Standard
+    }
+
+    /// Radius before any per-axis SVG clamping.
+    pub fn radius_for_rect(self, rect: Rect) -> f32 {
+        match self.mode {
+            ShapeRoundingMode::Stencil => self.radius,
+            ShapeRoundingMode::Relative => rect.size.x.min(rect.size.y) * self.radius / 100.0,
+            ShapeRoundingMode::AbsoluteArc => (self.radius / 2.0)
+                .min(rect.size.x / 2.0)
+                .min(rect.size.y / 2.0),
+        }
+    }
 }
 
 /// Visible outline sides of a draw.io partial rectangle, before rotation.
@@ -474,7 +536,7 @@ pub struct CanvasObject {
     pub alt_text: String,
     #[serde(default)]
     pub style: ObjectStyle,
-    /// Optional absolute corner radius for an imported draw.io rectangle.
+    /// Optional corner parameters for an imported draw.io rectangle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rounding: Option<ShapeRounding>,
     /// Optional per-side outline for an imported draw.io partial rectangle.
@@ -948,7 +1010,7 @@ pub fn shape_geometry(kind: ShapeKind, rect: Rect, rotation: f32) -> ShapeGeomet
     shape_geometry_with_rounding(kind, rect, rotation, None)
 }
 
-/// Shape geometry with an optional absolute rectangle corner radius.
+/// Shape geometry with optional draw.io rectangle corner parameters.
 pub fn shape_geometry_with_rounding(
     kind: ShapeKind,
     rect: Rect,
@@ -980,8 +1042,9 @@ pub fn shape_geometry_with_style(
     };
     let outline = match rounding {
         Some(rounding) if rect.size.x > 0.0 && rect.size.y > 0.0 && rounding.radius > 0.0 => {
-            let rx = (rounding.radius / rect.size.x).min(0.5);
-            let ry = (rounding.radius / rect.size.y).min(0.5);
+            let radius = rounding.radius_for_rect(rect);
+            let rx = (radius / rect.size.x).min(0.5);
+            let ry = (radius / rect.size.y).min(0.5);
             rounded_rect(rx, ry)
         }
         Some(_) => ShapeKind::Rectangle.unit_outline(),
@@ -1595,7 +1658,13 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             }
         ) || !rounding.radius.is_finite()
             || !(0.0..=MAX_BOARD_COORDINATE).contains(&rounding.radius)
-            || rounding.radius.fract() != 0.0)
+            || if rounding.is_standard() {
+                rounding.mode == ShapeRoundingMode::Stencil
+            } else {
+                rounding.mode != ShapeRoundingMode::Stencil
+                    || rounding.rounded_perimeter
+                    || rounding.radius.fract() != 0.0
+            })
     {
         return Err(format!("canvas object {id} has invalid shape rounding"));
     }

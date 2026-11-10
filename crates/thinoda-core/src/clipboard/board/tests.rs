@@ -1056,6 +1056,7 @@ fn shape_rounding_board_clipboard_requires_version_twelve() {
     let rounding = ShapeRounding {
         radius: 15.0,
         stencil: DrawioRectangleStencil::Graphics,
+        ..Default::default()
     };
     let mut shape = CanvasObject::shape(
         ShapeKind::RoundedRectangle,
@@ -1084,6 +1085,51 @@ fn shape_rounding_board_clipboard_requires_version_twelve() {
     for version in 1..12 {
         let forged = encoded.replacen(
             "THINODA-BOARD-CLIPBOARD-12",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(decode_board_payload(&forged).is_err(), "version {version}");
+    }
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    assert_eq!(
+        destination
+            .canvas
+            .object(pasted.objects[0])
+            .unwrap()
+            .rounding,
+        Some(rounding)
+    );
+}
+
+#[test]
+fn drawio_rectangle_rounding_board_clipboard_requires_version_sixteen() {
+    use crate::{DrawioRectangleStencil, Rect, ShapeRounding, ShapeRoundingMode};
+
+    let mut source = Sheet::new("Source", "Root");
+    let rounding = ShapeRounding {
+        radius: 21.5,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::AbsoluteArc,
+        rounded_perimeter: true,
+    };
+    let mut shape = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rounding = Some(rounding);
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(DRAWIO_ROUNDING_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..16 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-16",
             &format!("THINODA-BOARD-CLIPBOARD-{version}"),
             1,
         );

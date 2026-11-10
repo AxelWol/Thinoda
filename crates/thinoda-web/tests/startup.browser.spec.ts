@@ -117,6 +117,87 @@ test("storage failure is announced and reload preserves legacy data", async ({ p
     await openCommandPalette(page);
 });
 
+for (const scenario of [
+    { name: "quota", error: "QuotaExceededError", message: "storage quota was exceeded" },
+    { name: "permission", error: "SecurityError", message: "browser denied access to storage" },
+] as const) {
+    test(`a ${scenario.name} storage failure gives a private, actionable diagnosis`, async ({ page }) => {
+        const key = "thinoda.vfs:/Documents/private-document.thinoda";
+        const value = '{"m":1,"l":3,"d":"YWJj"}';
+        await page.addInitScript(({ key, value, error }) => {
+            localStorage.setItem(key, value);
+            Object.defineProperty(window, "indexedDB", {
+                configurable: true,
+                value: {
+                    open() { throw new DOMException("private document contents", error); },
+                },
+            });
+        }, { key, value, error: scenario.error });
+        await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+        const alert = page.locator("#loading");
+        await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
+        await expect(alert).toContainText(scenario.message);
+        await expect(alert).not.toContainText("private");
+        await expect(alert).toContainText("did not delete legacy data");
+        expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe(value);
+    });
+}
+
+test("a blocked database upgrade identifies the other tab and can be retried", async ({ page }) => {
+    let release!: () => void;
+    let requested!: () => void;
+    const key = "thinoda.vfs:/Documents/blocked-upgrade.thinoda";
+    const value = '{"m":1,"l":3,"d":"YWJj"}';
+    await page.addInitScript(({ key, value }) => {
+        if (!sessionStorage.getItem("thinoda-blocked-upgrade-seeded")) {
+            localStorage.setItem(key, value);
+            sessionStorage.setItem("thinoda-blocked-upgrade-seeded", "yes");
+        }
+    }, { key, value });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const wasmRequested = new Promise<void>(resolve => { requested = resolve; });
+    await page.route(/\.wasm(?:[?#].*)?$/, async route => {
+        requested();
+        await gate;
+        await route.continue();
+    });
+    try {
+        await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+        await wasmRequested;
+        await page.evaluate(() => new Promise<void>((resolve, reject) => {
+            const request = indexedDB.open("thinoda.documents.v1", 1);
+            request.onupgradeneeded = () => {
+                request.result.createObjectStore("documents", { keyPath: "id" });
+            };
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                Reflect.set(window, "__thinoda_test_open_database", request.result);
+                resolve();
+            };
+        }));
+    } finally {
+        release();
+    }
+
+    const alert = page.locator("#loading");
+    await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
+    await expect(alert).toContainText("another browser tab");
+    await expect(alert).toContainText("close other Thinoda tabs");
+    expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe(value);
+    await page.evaluate(() => {
+        const database = Reflect.get(window, "__thinoda_test_open_database") as IDBDatabase;
+        database.close();
+    });
+    await page.unroute(/\.wasm(?:[?#].*)?$/);
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: "commit", timeout: 120_000 }),
+        alert.getByRole("link", { name: "Reload Thinoda" }).click(),
+    ]);
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe(value);
+    await openCommandPalette(page);
+});
+
 for (const scenario of ["unavailable", "invalid"] as const) {
     test(`an ${scenario} Wasm response announces a recoverable failure`, async ({ page }) => {
         const wasm = /\.wasm(?:[?#].*)?$/;

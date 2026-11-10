@@ -7969,6 +7969,7 @@ fn quick_shape_picker_preserves_rounding_only_for_the_same_kind() {
     let rounding = ShapeRounding {
         radius: 25.0,
         stencil: DrawioRectangleStencil::Mockup,
+        ..Default::default()
     };
     for (chosen, expected) in [("Rectangle", Some(rounding)), ("Diamond", None)] {
         let mut sheet = board();

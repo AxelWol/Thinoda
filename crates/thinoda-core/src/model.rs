@@ -800,6 +800,11 @@ impl Sheet {
         self.canvas.has_shape_rounding()
     }
 
+    /// Whether this sheet needs standard draw.io rectangle rounding.
+    pub fn has_drawio_rectangle_rounding(&self) -> bool {
+        self.canvas.has_drawio_rectangle_rounding()
+    }
+
     /// Whether the sheet needs partial-rectangle-aware persistence.
     pub fn has_rectangle_sides(&self) -> bool {
         self.canvas.has_rectangle_sides()
@@ -2342,6 +2347,11 @@ impl Workbook {
     /// Whether any sheet needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.sheets.iter().any(Sheet::has_shape_rounding)
+    }
+
+    /// Whether any sheet needs standard draw.io rectangle rounding.
+    pub fn has_drawio_rectangle_rounding(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_rectangle_rounding)
     }
 
     /// Whether any sheet needs partial-rectangle-aware persistence.

@@ -2959,6 +2959,46 @@ I/O suite passed 576 tests (10 ignored); native and wasm Clippy passed with
 warnings denied, the Windows workspace build passed, and the serialized
 workspace suite passed 3,376 tests (16 ignored).
 
+**Standard rounded rectangles (partial Phases 3, 4, 6, 8 and 9) — critique.**
+Standard draw.io rounded rectangles now retain `arcSize`, `absoluteArcSize` and
+`roundedPerimeter`. Relative corners use `min(width, height) * arcSize / 100`;
+absolute corners use `min(width / 2, height / 2, arcSize / 2)`. The respective
+defaults are 15 and 20. Relative radii above 50% are clamped separately on
+each visual axis, as in the source renderer. The corner parameters survive
+resize, editing, copy/paste, recovery and draw.io/native round trips. The
+inspector exposes relative versus absolute radius and rounded-corner
+connections; switching modes preserves the physical radius where the target
+mode can represent it, and both options remain undoable.
+
+The rounded connector perimeter clamps to the smaller half-dimension, even
+when the visible relative corner has unequal axes. With `roundedPerimeter=0`,
+connectors use the rectangular perimeter; with it enabled, floating connectors
+intersect the circular corner on the center ray and fixed perimeter constraints
+project from the corner center. Perimeter calculations use stable intermediate
+precision for long or very thin frames. Orthogonal/curved routes and other
+unsupported perimeter, direction and malformed-value combinations are reported
+as formatting approximations rather than advertised as exact.
+
+Only documents containing the new standard-rectangle representation require
+native format v23, sheet clipboard v19, board clipboard v16, new recovery
+envelopes (including pending ink), or the new private XMind snapshot; readers
+reject forged older envelopes. Existing native rounded rectangles retain their
+old independently scaled corner axes. New draw.io exports mark that native
+identity so an unchanged export re-imports as a native shape, while external
+arc or `roundedPerimeter` edits take precedence. Previously exported files lack the
+marker and are ambiguous; draw.io itself can still render the native shape's
+corners differently.
+
+The shared outline is a sampled polygon rather than an exact SVG curve at all
+scales. Connector routing, unsupported shapes, source-preserving save-back,
+and cross-platform visual acceptance remain open. The independent rubber-duck
+review's proposed validation and inspector blockers were withdrawn after
+checking the error conditions, mode conversion and bounded input; separate
+published-editor comparisons exposed and fixed precision loss in wide and
+near-axis thin connector targets. Production-bundle browser coverage imports
+and selects a rounded rectangle, changes its radius mode and perimeter,
+exercises undo/redo, and checks native save and draw.io export.
+
 **Example preview comparison.** A local render probe exported all 116 supplied
 PNG-backed pages from 60 draw.io documents. All pages rendered, but that is not
 a fidelity pass: document-level import warnings reported formatting differences
@@ -2969,8 +3009,13 @@ extra image outlines have since been removed as described above. The first
 `waypoint-shape.png` page contains black blocks and altered wiring instead of
 several reference symbols. Its second page substitutes logic gates with
 rectangles and wraps the output label vertically; its third page loses line
-dashes and wraps labels; its fourth page changes rounded corners and some
-connections. `floorplan-apartment.page-2.png` also has large black blocks and
+dashes and wraps labels. Re-rendering all 116 PNG-backed pages after the
+standard rounded-rectangle change again completed without a render error. On
+the fourth waypoint page, the wide CEO and COO boxes now have small corners
+resembling the reference instead of the earlier stretched, nearly oval ends.
+Their connector paths still differ, as do text wrapping, shadows and
+typography; this spot check is not a full-page fidelity pass.
+`floorplan-apartment.page-2.png` also has large black blocks and
 missing architectural symbols; `arista.png` replaces the rack equipment images
 with generic containers. In `uml-activity-example.png`, swimlane headings and
 backgrounds, the dashed boundary, the final-state symbol and some connectors
@@ -2986,16 +3031,11 @@ directory.
 
 The next visual-parity work remains open:
 
-- Preserve standard rounded-rectangle `arcSize` and `absoluteArcSize`, including
-  their resize behavior. The published
-  [rectangle renderer](https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/shape/mxRectangleShape.js)
-  uses a circular radius based on the smaller side for relative arcs, or a
-  bounded half-`arcSize` for absolute arcs; Thinoda's existing default rounded
-  rectangle instead scales each corner axis independently. A scan found 529
-  `rounded=1` cells with the default or `rectangle` shape in 26 supplied
-  `.drawio` documents, including the fourth waypoint page. Preserve existing
-  native shapes while adding source-aware geometry, save-back, version gates,
-  editing and cross-renderer tests.
+- Extend the standard rounded-rectangle slice above to exact curves,
+  unsupported connector routes and perimeters, source-preserving save-back and
+  broader visual acceptance. A scan found 529 `rounded=1` cells with the
+  default or `rectangle` shape in 26 supplied `.drawio` documents, including
+  the fourth waypoint page; the slice does not establish parity for them all.
 - Implement and exercise the floor-plan and circuit stencil geometry rather
   than substituting generic filled rectangles; verify symbols and connections
   against the corresponding reference pages. The supplied circuit pages use

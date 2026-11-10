@@ -35,8 +35,8 @@ pub fn start_after_storage_ready(
                 log::error!("browser document storage initialization failed: {error}");
                 show_loading_error(|loading| {
                     loading.set_inner_text(&format!(
-                        "Thinoda could not verify browser document storage ({error}). Legacy \
-                         data was retained. Retry after checking storage permissions and free \
+                        "Thinoda could not verify browser document storage ({error}). Thinoda \
+                         did not delete legacy data. Retry after checking storage permissions and free \
                          space; do not clear site data to fix this error."
                     ));
                 });

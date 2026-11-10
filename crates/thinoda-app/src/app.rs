@@ -332,6 +332,7 @@ pub struct ThinodaApp {
     pub sheet_paste_request: Option<(Instant, String)>,
     pub discard_late_sheet_paste: bool,
     pub toasts: Toasts,
+    pub(crate) browser_migration_conflicts: Vec<files::MigrationConflict>,
     pub(crate) recovery_discovery_incomplete: bool,
     recovery_warning: Option<u64>,
     recovery_cleanup_warning: Option<u64>,
@@ -451,6 +452,7 @@ impl ThinodaApp {
             sheet_paste_request: None,
             discard_late_sheet_paste: false,
             toasts: Toasts::default(),
+            browser_migration_conflicts: Vec::new(),
             recovery_discovery_incomplete: false,
             recovery_warning: None,
             recovery_cleanup_warning: None,
@@ -802,7 +804,7 @@ impl ThinodaApp {
     pub(crate) fn add_opened(
         &mut self,
         path: &Path,
-        opened: Result<(OpenDoc, Vec<thinoda_io::ImportWarning>), String>,
+        mut opened: Result<(OpenDoc, Vec<thinoda_io::ImportWarning>), String>,
     ) {
         if let Some(i) = self
             .docs
@@ -811,6 +813,21 @@ impl ThinodaApp {
         {
             self.active = i;
             return;
+        }
+        if self
+            .browser_migration_conflicts
+            .iter()
+            .any(|conflict| Path::new(&conflict.preserved) == path)
+            && let Ok((doc, _)) = &mut opened
+        {
+            // A preserved migration copy is an immutable recovery source.
+            // Saving must create another document, not change that source.
+            doc.path = None;
+            doc.import_source = Some(path.to_path_buf());
+            doc.fingerprint = None;
+            doc.storage_revision = None;
+            doc.chat_identity = None;
+            doc.doc.mark_dirty();
         }
         match opened {
             Ok((d, warnings)) if !warnings.is_empty() => {
@@ -3061,6 +3078,20 @@ impl ThinodaApp {
 
     // ----- per-frame housekeeping -------------------------------------------------------------
 
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn apply_browser_migration(&mut self, report: files::MigrationReport) {
+        self.browser_migration_conflicts = report.conflicts;
+        if !self.browser_migration_conflicts.is_empty() {
+            let message = t(
+                "Preserved browser documents are available in File > Recovered browser documents.",
+            );
+            #[cfg(target_arch = "wasm32")]
+            set_browser_recovery_announcement("thinoda-browser-migration", Some(message));
+            self.toasts
+                .sticky(thinoda_ui::toast::ToastKind::Warning, message);
+        }
+    }
+
     /// Applies theme/accent/scale settings when they changed.
     pub fn apply_appearance(&mut self, ctx: &Context) {
         let accent = self.accent;
@@ -3092,14 +3123,7 @@ impl ThinodaApp {
                     .error(format!("{}: {error}", t("Download failed")));
             }
             if let Some(report) = files::take_browser_migration() {
-                for conflict in report.conflicts {
-                    self.toasts.warning(format!(
-                        "{}: {} -> {}",
-                        t("Browser storage migration conflict"),
-                        conflict.original,
-                        conflict.preserved
-                    ));
-                }
+                self.apply_browser_migration(report);
             }
         }
         for doc in &mut self.docs {
