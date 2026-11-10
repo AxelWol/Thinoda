@@ -208,6 +208,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::DrawioDoubleEllipseAppearanceApproximated(count) => {
                     (*count, "Double-ellipse appearance may differ in draw.io")
                 }
+                ExportLoss::DrawioFinalStateAppearanceApproximated(count) => {
+                    (*count, "Final-state appearance may differ in draw.io")
+                }
                 ExportLoss::DrawioCollapsedProcessApproximated(count) => (
                     *count,
                     "Collapsed process outlines may be omitted in draw.io",

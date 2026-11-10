@@ -321,6 +321,19 @@ impl CanvasLayer {
             ) || object.double_ellipse_margin.is_some()
         })
     }
+
+    /// Whether this layer needs final-state-aware persistence.
+    pub fn has_final_states(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::FinalState,
+                    ..
+                }
+            )
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -572,13 +585,18 @@ impl CanvasObject {
 
     /// Shape with the given label.
     pub fn shape(shape: ShapeKind, rect: Rect) -> Self {
-        Self::new(
+        let mut object = Self::new(
             CanvasObjectKind::Shape {
                 shape,
                 label: String::new(),
             },
             rect,
-        )
+        );
+        if shape == ShapeKind::FinalState {
+            object.style.fill = Some(Color::BLACK);
+            object.style.stroke = Some(Color::BLACK);
+        }
+        object
     }
 
     /// Ink stroke; the frame is the bounding box of the points.
@@ -632,6 +650,7 @@ pub enum ShapeKind {
     RoundedRectangle,
     Ellipse,
     DoubleEllipse,
+    FinalState,
     Diamond,
     Triangle,
     RightTriangle,
@@ -661,11 +680,12 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
-    pub const ALL: [ShapeKind; 30] = [
+    pub const ALL: [ShapeKind; 31] = [
         ShapeKind::Rectangle,
         ShapeKind::RoundedRectangle,
         ShapeKind::Ellipse,
         ShapeKind::DoubleEllipse,
+        ShapeKind::FinalState,
         ShapeKind::Diamond,
         ShapeKind::Triangle,
         ShapeKind::RightTriangle,
@@ -719,6 +739,7 @@ impl ShapeKind {
             ShapeKind::RoundedRectangle => "rounded-rectangle",
             ShapeKind::Ellipse => "ellipse",
             ShapeKind::DoubleEllipse => "double-ellipse",
+            ShapeKind::FinalState => "final-state",
             ShapeKind::Diamond => "diamond",
             ShapeKind::Triangle => "triangle",
             ShapeKind::RightTriangle => "right-triangle",
@@ -758,7 +779,7 @@ impl ShapeKind {
             }
             ShapeKind::RoundedRectangle => rounded_rect(0.15, 0.15),
             ShapeKind::Terminator => rounded_rect(0.5, 0.5),
-            ShapeKind::Ellipse | ShapeKind::DoubleEllipse => {
+            ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::FinalState => {
                 ellipse_arc(0.5, 0.5, 0.5, 0.5, 0.0, 360.0, 48)
             }
             ShapeKind::Diamond | ShapeKind::Decision => {
@@ -916,7 +937,7 @@ impl ShapeKind {
     pub fn unit_details(self) -> Vec<Vec<Vec2>> {
         let p = Vec2::new;
         match self {
-            ShapeKind::DoubleEllipse => {
+            ShapeKind::DoubleEllipse | ShapeKind::FinalState => {
                 let mut inner = ellipse_arc(0.5, 0.5, 0.4, 0.4, 0.0, 360.0, 48);
                 inner.push(inner[0]);
                 vec![inner]
@@ -934,7 +955,7 @@ impl ShapeKind {
     pub fn unit_label_rect(self) -> Rect {
         let (x0, y0, x1, y1) = match self {
             ShapeKind::Ellipse | ShapeKind::Cloud => (0.15, 0.15, 0.85, 0.85),
-            ShapeKind::DoubleEllipse => (0.05, 0.05, 0.95, 0.95),
+            ShapeKind::DoubleEllipse | ShapeKind::FinalState => (0.05, 0.05, 0.95, 0.95),
             ShapeKind::Diamond | ShapeKind::Decision => (0.25, 0.25, 0.75, 0.75),
             ShapeKind::Triangle => (0.25, 0.45, 0.75, 0.95),
             ShapeKind::RightTriangle => (0.05, 0.5, 0.5, 0.95),
@@ -1050,8 +1071,12 @@ pub fn shape_geometry_with_style(
         Some(_) => ShapeKind::Rectangle.unit_outline(),
         None => kind.unit_outline(),
     };
-    let details = if kind == ShapeKind::DoubleEllipse {
-        let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
+    let details = if matches!(kind, ShapeKind::DoubleEllipse | ShapeKind::FinalState) {
+        let inset = if kind == ShapeKind::FinalState {
+            4.0_f32.min(rect.size.x / 5.0).min(rect.size.y / 5.0)
+        } else {
+            double_ellipse_inset(rect, stroke_width, double_ellipse_margin)
+        };
         let rx = rect.size.x / 2.0 - inset;
         let ry = rect.size.y / 2.0 - inset;
         if rx > 0.0 && ry > 0.0 {
@@ -1099,7 +1124,7 @@ pub fn shape_label_rect_with_style(
     stroke_width: f32,
     double_ellipse_margin: Option<f32>,
 ) -> Rect {
-    if kind == ShapeKind::DoubleEllipse {
+    if matches!(kind, ShapeKind::DoubleEllipse | ShapeKind::FinalState) {
         let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
         return Rect::from_center_size(
             rect.center(),

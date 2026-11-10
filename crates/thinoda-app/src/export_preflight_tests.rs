@@ -39,6 +39,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::DrawioBackgroundAppearanceApproximated(24),
         ExportLoss::DrawioCardAppearanceApproximated(25),
         ExportLoss::DrawioDoubleEllipseAppearanceApproximated(26),
+        ExportLoss::DrawioFinalStateAppearanceApproximated(29),
         ExportLoss::SynthesizedRoot {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
@@ -53,7 +54,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     for (line, count) in lines.iter().take(14).zip(2..=15) {
         assert!(line.starts_with(&format!("{count} — ")), "{line}");
     }
-    for count in 16..=28 {
+    for count in 16..=29 {
         assert!(
             lines
                 .iter()
@@ -81,6 +82,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         (26, "Double-ellipse appearance may differ in draw.io"),
         (27, "Fixed connector attachments detached"),
         (28, "Fixed connector positions may differ in draw.io"),
+        (29, "Final-state appearance may differ in draw.io"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }

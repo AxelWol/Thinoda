@@ -988,6 +988,94 @@ fn drawio_note_fallbacks_report_only_cards_on_exported_pages() {
 }
 
 #[test]
+fn final_state_import_preserves_editable_geometry_colors_and_connectors() {
+    let xml = page(
+        r##"<mxCell id="a" value="" style="shape=endState;perimeter=ellipsePerimeter;fillColor=#CC2233;strokeColor=#2244AA;strokeWidth=2;rotation=30;" vertex="1" parent="1"><mxGeometry x="10" y="20" width="60" height="40" as="geometry"/></mxCell>
+        <mxCell id="b" value="" style="ellipse;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="200" y="20" width="100" height="60" as="geometry"/></mxCell>
+        <mxCell id="e" style="endArrow=none;exitX=1;exitY=0.5;exitPerimeter=1;" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>"##,
+    )
+    .replacen(
+        "<mxGraphModel>",
+        r#"<mxGraphModel adaptiveColors="none">"#,
+        1,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let sheet = &report.workbook.sheets[0];
+    let objects = shapes(sheet);
+    assert!(matches!(
+        objects[0].kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::FinalState,
+            ..
+        }
+    ));
+    assert_eq!(objects[0].rect, rect(10.0, 20.0, 60.0, 40.0));
+    assert_eq!(objects[0].rotation, 30.0);
+    assert_eq!(objects[0].style.fill, Some(Color::rgb(204, 34, 51)));
+    assert_eq!(objects[0].style.stroke, Some(Color::rgb(34, 68, 170)));
+    assert_eq!(objects[0].style.stroke_width, 2.0);
+    assert_eq!(connectors(sheet)[0].from, Endpoint::Object(objects[0].id));
+    assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
+    assert!(connectors(sheet)[0].from_port.is_some());
+    report.workbook.validate().unwrap();
+    assert_eq!(crate::required_native_version(&report.workbook), 24);
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(exported.contains("shape=endState;perimeter=ellipsePerimeter;"));
+    let reimported = load(&exported);
+    let restored = shapes(&reimported.workbook.sheets[0]);
+    assert!(matches!(
+        restored[0].kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::FinalState,
+            ..
+        }
+    ));
+    assert_eq!(restored[0].rect, objects[0].rect);
+    assert_eq!(restored[0].rotation, objects[0].rotation);
+    assert_eq!(restored[0].style, objects[0].style);
+    assert!(
+        connectors(&reimported.workbook.sheets[0])[0]
+            .from_port
+            .is_some()
+    );
+}
+
+#[test]
+fn final_state_reports_dynamic_color_and_unsupported_label_layout() {
+    let linked_color = page(
+        r##"<mxCell id="a" value="" style="shape=endState;perimeter=ellipsePerimeter;fillColor=strokeColor;fillOpacity=80;strokeColor=#334455;strokeOpacity=20;" vertex="1" parent="1"><mxGeometry width="30" height="30" as="geometry"/></mxCell>"##,
+    );
+    let report = load(&linked_color);
+    let shape = shapes(&report.workbook.sheets[0])[0];
+    assert_eq!(shape.style.fill, Some(Color::rgba(51, 68, 85, 204)));
+    assert_eq!(shape.style.stroke, Some(Color::rgba(51, 68, 85, 51)));
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes)
+    );
+
+    for unsupported in ["margin=8;", "labelPosition=left;spacingRight=7;"] {
+        let xml = page(&format!(
+            r##"<mxCell id="a" value="End" style="shape=endState;perimeter=ellipsePerimeter;fillColor=#000000;strokeColor=#000000;fontColor=#000000;{unsupported}" vertex="1" parent="1"><mxGeometry width="30" height="30" as="geometry"/></mxCell>"##
+        ));
+        let report = load(&xml);
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{unsupported}: {:?}",
+            report.warnings
+        );
+    }
+
+    let no_fill = linked_color.replace("fillColor=strokeColor;fillOpacity=80;", "fillColor=none;");
+    let shape = shapes(&load(&no_fill).workbook.sheets[0])[0].style;
+    assert_eq!(shape.fill, Some(Color::TRANSPARENT));
+    assert_eq!(shape.stroke, Some(Color::rgba(51, 68, 85, 51)));
+}
+
+#[test]
 fn double_ellipse_import_preserves_inset_rotation_and_connectors() {
     for (margin_style, expected_margin) in [
         ("", None),
@@ -1718,6 +1806,62 @@ fn drawio_export_matches_relationship_label_font_size_at_normal_zoom() {
             .iter()
             .any(|connector| connector.label == "Relates")
     );
+}
+
+#[test]
+fn final_state_appearance_losses_cover_visible_fill_outline_and_label() {
+    let mut sheet = Sheet::new("Final states", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let frame = rect(0.0, 0.0, 100.0, 60.0);
+    let mut automatic = CanvasObject::shape(ShapeKind::FinalState, frame);
+    automatic.style.fill = None;
+    automatic.style.stroke = None;
+    automatic.style.stroke_width = 17.0;
+    sheet.add_canvas_object(automatic).unwrap();
+    let mut fill = CanvasObject::shape(ShapeKind::FinalState, frame);
+    fill.style.fill = Some(Color::rgb(20, 40, 60));
+    fill.style.stroke = None;
+    sheet.add_canvas_object(fill).unwrap();
+    let mut outline = CanvasObject::shape(ShapeKind::FinalState, frame);
+    outline.style.fill = Some(Color::TRANSPARENT);
+    sheet.add_canvas_object(outline).unwrap();
+    let mut label = CanvasObject::shape(ShapeKind::FinalState, frame);
+    label.style.fill = Some(Color::TRANSPARENT);
+    label.style.stroke = Some(Color::TRANSPARENT);
+    if let CanvasObjectKind::Shape { label, .. } = &mut label.kind {
+        *label = "Visible label".into();
+    }
+    sheet.add_canvas_object(label).unwrap();
+    let mut invisible = CanvasObject::shape(ShapeKind::FinalState, frame);
+    invisible.style.fill = Some(Color::TRANSPARENT);
+    invisible.style.stroke = Some(Color::TRANSPARENT);
+    sheet.add_canvas_object(invisible).unwrap();
+    let mut transparent = CanvasObject::shape(ShapeKind::FinalState, frame);
+    transparent.style.opacity = 0.0;
+    sheet.add_canvas_object(transparent).unwrap();
+
+    let book = Workbook::new(sheet);
+    for format in [Format::DrawIo, Format::DrawIoSvg, Format::DrawIoPng] {
+        assert_eq!(
+            export_losses(&book, format, &ExportOptions::default()),
+            vec![ExportLoss::DrawioFinalStateAppearanceApproximated(4)],
+            "{format:?}"
+        );
+    }
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    let automatic = exported
+        .split("<mxCell ")
+        .find(|cell| cell.contains("shape=endState;") && cell.contains("strokeWidth=2;"))
+        .unwrap();
+    assert!(automatic.contains("fillColor=none;"));
+    let restored = load(&exported);
+    assert_eq!(
+        shapes(&restored.workbook.sheets[0])[0]
+            .style
+            .effective_shape_stroke_width(),
+        2.0
+    );
+    assert!(export_losses(&book, Format::Thinoda, &ExportOptions::default()).is_empty());
 }
 
 #[test]
@@ -7326,7 +7470,7 @@ fn built_in_shape_aliases_map_to_their_thinoda_equivalents() {
             ("cu".into(), S::Rectangle),
             ("me".into(), S::Rectangle),
             ("uf".into(), S::Rectangle),
-            ("es".into(), S::Ellipse),
+            ("es".into(), S::FinalState),
             ("pc".into(), S::Ellipse),
             ("ar".into(), S::Arrow),
             ("ps".into(), S::Rectangle),

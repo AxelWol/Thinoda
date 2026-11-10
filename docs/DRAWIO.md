@@ -202,8 +202,9 @@ Rules (each backed by a test):
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
   oval markers, v17 adds half-circle markers, v18 adds bar markers, v19 adds
   adjustable rectangle corners, v20 adds rectangle outline sides, v21 adds
-  double ellipses, and v22 adds fixed connector attachments. Every later field
-  or passthrough representation that a v22
+  double ellipses, v22 adds fixed connector attachments, v23 adds standard
+  draw.io rectangle rounding, and v24 adds final-state shapes. Every later field
+  or passthrough representation that a v24
   reader cannot preserve must require a higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
@@ -777,7 +778,8 @@ connections arrive in Phase 8 without changing the gestures).
   v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
   markers, v18 covers bar markers, v19 covers adjustable rectangle corners,
   v20 covers rectangle outline sides, v21 covers double ellipses, v22 covers
-  fixed connector attachments, and subsequent additions need a higher version.
+  fixed connector attachments, v23 covers standard draw.io rectangle rounding,
+  and v24 covers final-state shapes. Subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -3063,6 +3065,57 @@ clipboard warnings refer to the pasted page, not an omitted page. The source
 file protection prevents this disclosure from implying safe round-tripping;
 it does not restore metadata in the converted copy.
 
+**Editable UML final states (partial Phases 3, 4, 6, 8, 9 and 11).**
+Standalone `shape=endState` cells import as editable final-state shapes rather
+than single ellipses. Their inner ellipse is inset by
+`min(4, width / 5, height / 5)`, filled and stroked before the unfilled outer
+ring is drawn. Canvas, visual exports, picker and insertion previews use the
+same two-part identity. New shapes start at 30 by 30 units with black or white
+fill and stroke chosen for contrast against the current board background;
+those explicit colors do not follow later theme changes. Changing an existing
+shape keeps its prior size and style. Eight connection crosses and supported
+fixed endpoints use the outer ellipse. Rotation, native edits and
+undo remain available. Native files use v24 only when needed; complete-sheet
+and mixed-board clipboard payloads use v20 and v17, and recovery and private
+XMind snapshots use final-state-aware envelopes. Forged older envelopes are
+rejected.
+
+The importer reports unsupported custom margins and label layout. A
+`fillColor=strokeColor` final state receives the currently resolved color, but
+the dynamic link is not preserved and triggers a formatting warning.
+Export and **Copy as draw.io** report that visible final-state appearance may
+differ. These warnings do not provide source-preserving save-back; keep the
+original file. The supplied UML diagram imports both final states and retains
+the first page's two attached incoming connectors. Side-by-side PNG inspection
+shows the first page's black final-state symbol with its outer ring, but routing,
+swimlane styling and other elements still differ. The second page's external
+left label is still placed inside its symbol; labels, fonts and other shapes
+also differ. This is not a visual-fidelity pass for either page.
+
+**Rubber-duck self-critique.** The new symbol initially used the double-ellipse
+outline in the main shape picker, making the two choices indistinguishable;
+the picker now fills the final-state inner ellipse in both themes. The
+review also exposed poor contrast from a fixed black insertion color on dark
+boards; new symbols now choose a contrasting color at creation without
+recoloring imports or existing objects. This is not adaptive theme support.
+The independent review questioned the differing label and paint insets and the
+inner stroke. The published editor's `endState` actually inherits the
+double-ellipse label bounds, uses a separate four-unit paint inset and calls
+`fillAndStroke` on the inner ellipse, so making those insets or strokes equal
+would be incorrect. Automatic and explicit colors, opacity, collapsed shapes,
+older persistence envelopes, mixed features and connector perimeter behavior
+remain covered by regressions. As with other sampled outlines, exact curves,
+adaptive colors, external labels and full draw.io rendering remain open; the
+parent phases are not complete.
+
+**Validation.** The affected library suites passed 2,338 tests with four
+ignored before the final insertion-contrast change; the complete canvas library
+suite subsequently passed 537 tests with two ignored. The board-export and
+draw.io corpus integration suites passed 78 tests with three ignored. Native
+and Wasm Clippy, the workspace build and the production web build passed.
+Against that final web build, the final-state paste, edit, copy and undo
+journey passed in Chromium, Firefox and WebKit.
+
 The next visual-parity work remains open:
 
 - Extend the standard rounded-rectangle slice above to exact curves,
@@ -3089,8 +3142,8 @@ The next visual-parity work remains open:
   order. Preserve mixed card/object order without globally putting every card
   in front; also address the missing colors and symbols.
 - Preserve swimlane header orientation, backgrounds and dashed boundaries, and
-  recheck the final-state symbol and connector routing against the UML activity
-  example.
+  recheck external final-state labels and connector routing against both pages
+  of the UML activity example.
 - Preserve the external SVG references used by the Arista rack equipment and
   render safely supplied, appropriately licensed resources, with explicit
   diagnostics for unresolved images. Keep the existing no-auto-fetch policy;

@@ -795,6 +795,77 @@ fn supplied_diagrams_report_unresolved_metadata_placeholders() {
 }
 
 #[test]
+fn supplied_uml_activity_final_states_remain_editable_and_connected() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let path = dir.join("uml-activity-example.drawio");
+    if !path.is_file() {
+        return;
+    }
+    let report =
+        thinoda_io::import_bytes_with_report(Format::DrawIo, &std::fs::read(path).unwrap())
+            .unwrap();
+    let states: Vec<_> = report
+        .workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| &sheet.canvas.objects)
+        .filter(|object| {
+            matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::FinalState,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(states.len(), 2);
+    assert!(
+        states
+            .iter()
+            .all(|object| object.rect.size == Vec2::new(30.0, 30.0))
+    );
+    assert!(
+        states
+            .iter()
+            .all(|object| object.style.fill == Some(Color::BLACK))
+    );
+    assert!(states.iter().any(|object| object.label() == "End"));
+    let first = states
+        .iter()
+        .find(|object| object.label().is_empty())
+        .unwrap();
+    let attached = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| {
+            matches!(
+                &object.kind,
+                CanvasObjectKind::Connector(connector)
+                    if connector.to == thinoda_core::Endpoint::Object(first.id)
+            )
+        })
+        .count();
+    assert_eq!(attached, 2);
+    assert!(
+        report
+            .warnings
+            .contains(&thinoda_io::ImportWarning::Formatting)
+    );
+    report.workbook.validate().unwrap();
+    let native =
+        thinoda_io::export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default())
+            .unwrap();
+    assert_eq!(
+        thinoda_io::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
 fn supplied_uml_activity_keeps_its_rgb_colors() {
     let Some(dir) = corpus_dir() else {
         return;

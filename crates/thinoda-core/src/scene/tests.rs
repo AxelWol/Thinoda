@@ -228,7 +228,7 @@ fn fixed_connector_ports_match_drawio_rectangle_ellipse_and_rhombus_perimeters()
 }
 
 #[test]
-fn double_ellipse_fixed_ports_follow_the_same_perimeter_as_ellipses() {
+fn double_ellipse_and_final_state_fixed_ports_follow_ellipse_perimeters() {
     let positions = [
         (Vec2::new(0.0, 0.0), Vec2::ZERO),
         (Vec2::new(1.0, 1.0), Vec2::ZERO),
@@ -253,16 +253,18 @@ fn double_ellipse_fixed_ports_follow_the_same_perimeter_as_ellipses() {
                         Some((ShapeKind::Ellipse, None)),
                         port,
                     );
-                    let double = fixed_connector_port_position(
-                        bounds,
-                        rotation,
-                        Some((ShapeKind::DoubleEllipse, None)),
-                        port,
-                    );
-                    assert!(
-                        (ellipse - double).length() < 0.001,
-                        "{width}x{height}, {rotation}, {port:?}: {double:?} != {ellipse:?}"
-                    );
+                    for kind in [ShapeKind::DoubleEllipse, ShapeKind::FinalState] {
+                        let actual = fixed_connector_port_position(
+                            bounds,
+                            rotation,
+                            Some((kind, None)),
+                            port,
+                        );
+                        assert!(
+                            (ellipse - actual).length() < 0.001,
+                            "{kind:?}, {width}x{height}, {rotation}, {port:?}: {actual:?} != {ellipse:?}"
+                        );
+                    }
                 }
             }
         }

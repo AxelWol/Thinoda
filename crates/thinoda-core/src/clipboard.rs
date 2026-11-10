@@ -36,12 +36,15 @@ const RECTANGLE_SIDES_SHEET_PREFIX: &str = "THINODA-SHEET-16\n";
 const DOUBLE_ELLIPSE_SHEET_PREFIX: &str = "THINODA-SHEET-17\n";
 const FIXED_PORT_SHEET_PREFIX: &str = "THINODA-SHEET-18\n";
 const DRAWIO_ROUNDING_SHEET_PREFIX: &str = "THINODA-SHEET-19\n";
+const FINAL_STATE_SHEET_PREFIX: &str = "THINODA-SHEET-20\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_drawio_rectangle_rounding() {
+    let prefix = if sheet.has_final_states() {
+        FINAL_STATE_SHEET_PREFIX
+    } else if sheet.has_drawio_rectangle_rounding() {
         DRAWIO_ROUNDING_SHEET_PREFIX
     } else if sheet.has_fixed_connector_ports() {
         FIXED_PORT_SHEET_PREFIX
@@ -98,9 +101,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(DRAWIO_ROUNDING_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-19\r\n"))
-        .map(|json| (19, json))
+        .strip_prefix(FINAL_STATE_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-20\r\n"))
+        .map(|json| (20, json))
+        .or_else(|| {
+            text.strip_prefix(DRAWIO_ROUNDING_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-19\r\n"))
+                .map(|json| (19, json))
+        })
         .or_else(|| {
             text.strip_prefix(FIXED_PORT_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-18\r\n"))
@@ -233,6 +241,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         return Err(
             "standard draw.io rectangle rounding requires sheet clipboard version 19".into(),
         );
+    }
+    if version < 20 && sheet.has_final_states() {
+        return Err("final states require sheet clipboard version 20".into());
     }
     if version < 6 && sheet.has_connector_waypoints() {
         return Err("connector waypoints require sheet clipboard version 6".into());
@@ -973,6 +984,31 @@ mod tests {
         for version in 1..15 {
             let forged =
                 encoded.replacen("THINODA-SHEET-15", &format!("THINODA-SHEET-{version}"), 1);
+            assert!(decode_sheet(&forged).is_err(), "version {version}");
+        }
+    }
+
+    #[test]
+    fn final_state_sheet_clipboard_requires_version_twenty() {
+        use crate::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        let mut sheet = formatted_card_sheet(crate::CardKind::Text);
+        sheet
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::FinalState,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+            ))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(FINAL_STATE_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        for version in 1..20 {
+            let forged =
+                encoded.replacen("THINODA-SHEET-20", &format!("THINODA-SHEET-{version}"), 1);
             assert!(decode_sheet(&forged).is_err(), "version {version}");
         }
     }

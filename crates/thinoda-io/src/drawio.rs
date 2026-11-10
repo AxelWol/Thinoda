@@ -1681,6 +1681,7 @@ fn classify(style: &Style) -> Kind {
         | "mxgraph.flowchart.start_2"
         | "mxgraph.flowchart.on-page_reference" => symmetric(S::Ellipse),
         "doubleEllipse" => symmetric(S::DoubleEllipse),
+        "endState" => symmetric(S::FinalState),
         FLOWCHART_ANNOTATION_1 if style.get("shape") == Some(FLOWCHART_ANNOTATION_1) => {
             Kind::Approx(S::Rectangle, 0.0, false)
         }
@@ -1689,7 +1690,7 @@ fn classify(style: &Style) -> Kind {
         "mxgraph.bootstrap.rrect" => symmetric(S::RoundedRectangle),
         "waypoint" => Kind::Waypoint,
         "folder" | "cube" | "message" | "umlFrame" => Kind::Approx(S::Rectangle, 0.0, true),
-        "endState" | "mxgraph.basic.partConcEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
+        "mxgraph.basic.partConcEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
         "mxgraph.arrows2.arrow" => Kind::Approx(S::Arrow, 0.0, false),
         "rhombus" => symmetric(S::Diamond),
         "triangle" => shape(S::Triangle, 90.0),
@@ -2334,6 +2335,39 @@ impl<'a> PageImport<'a> {
                         self.warn(ImportWarning::Formatting);
                     }
                 }
+                if shape == ShapeKind::FinalState {
+                    let has_label = !object.label().is_empty();
+                    if style.double_ellipse_label_loss(has_label)
+                        || style
+                            .get("margin")
+                            .is_some_and(|value| !matches!(value, "" | "none"))
+                    {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    if resolved_shape_colors(
+                        style,
+                        &mut object,
+                        has_label,
+                        self.adaptive_fixed_colors,
+                        true,
+                    ) {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    if style.get("fillColor") == Some("strokeColor") {
+                        let fill = match style.get("strokeColor") {
+                            None if style.suppress_defaults => Color::TRANSPARENT,
+                            Some("none") => Color::TRANSPARENT,
+                            _ => style
+                                .color("strokeColor", "fillOpacity")
+                                .unwrap_or_else(|| {
+                                    style.color_with_opacity(Color::BLACK, "fillOpacity")
+                                }),
+                        };
+                        object.style.fill = Some(fill);
+                        // The live link between fill and stroke is not retained.
+                        self.warn(ImportWarning::Formatting);
+                    }
+                }
                 object
             }
             Kind::Waypoint => {
@@ -2602,7 +2636,10 @@ impl<'a> PageImport<'a> {
             Ok(None) if waypoint_center => Some(center_port),
             Ok(None) => {
                 if matches!(endpoint, Endpoint::Object(id)
-                    if self.shapes.get(&id) == Some(&ShapeKind::DoubleEllipse)
+                    if matches!(
+                        self.shapes.get(&id),
+                        Some(ShapeKind::DoubleEllipse | ShapeKind::FinalState)
+                    )
                         || target_cell.is_some_and(|cell| is_standard_rounded_rectangle(&cell.style)))
                     && !target_cell.is_some_and(|cell| {
                         self.connector_geometry_matches_source(cell, endpoint, true)
@@ -2703,7 +2740,9 @@ impl<'a> PageImport<'a> {
                     | ShapeKind::Process
                     | ShapeKind::PredefinedProcess,
                 ) => ConstraintPerimeter::Rectangle,
-                Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse) => ConstraintPerimeter::Ellipse,
+                Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::FinalState) => {
+                    ConstraintPerimeter::Ellipse
+                }
                 Some(ShapeKind::Diamond) => ConstraintPerimeter::Rhombus,
                 _ => return false,
             },
@@ -3388,6 +3427,7 @@ fn shape_style(shape: ShapeKind) -> &'static str {
         S::RoundedRectangle => "rounded=1;thinodaShape=nativeRoundedRectangle;",
         S::Ellipse => "ellipse;",
         S::DoubleEllipse => "shape=doubleEllipse;perimeter=ellipsePerimeter;",
+        S::FinalState => "shape=endState;perimeter=ellipsePerimeter;",
         S::Diamond => "rhombus;",
         S::Triangle => "triangle;direction=north;",
         S::RightTriangle => "shape=mxgraph.basic.orthogonal_triangle;",
@@ -3470,6 +3510,7 @@ pub(crate) fn fixed_port_position_approximate(
                             | ShapeKind::PredefinedProcess
                             | ShapeKind::Ellipse
                             | ShapeKind::DoubleEllipse
+                            | ShapeKind::FinalState
                             | ShapeKind::Diamond
                     ))
         }
@@ -3919,30 +3960,27 @@ impl<'a> PageWriter<'a> {
                     style.push_str(&format!("margin={};", num(margin)));
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
-                let fill = if object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse
-                {
+                let special_outline = object.rectangle_sides.is_some()
+                    || matches!(*shape, ShapeKind::DoubleEllipse | ShapeKind::FinalState);
+                let fill = if special_outline {
                     Some(style_ref.fill.unwrap_or(Color::TRANSPARENT))
                 } else {
                     style_ref.fill
                 };
-                let stroke = if (object.rectangle_sides.is_some()
-                    || *shape == ShapeKind::DoubleEllipse)
-                    && style_ref.stroke.is_none()
-                    && style_ref.fill.is_some()
-                {
-                    Some(Color::TRANSPARENT)
-                } else {
-                    style_ref.stroke
-                };
+                let stroke =
+                    if special_outline && style_ref.stroke.is_none() && style_ref.fill.is_some() {
+                        Some(Color::TRANSPARENT)
+                    } else {
+                        style_ref.stroke
+                    };
                 color_keys(&mut style, "fillColor", "fillOpacity", fill);
                 color_keys(&mut style, "strokeColor", "strokeOpacity", stroke);
                 color_keys(&mut style, "fontColor", "textOpacity", style_ref.text_color);
-                let width =
-                    if object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse {
-                        style_ref.effective_shape_stroke_width()
-                    } else {
-                        style_ref.stroke_width
-                    };
+                let width = if special_outline {
+                    style_ref.effective_shape_stroke_width()
+                } else {
+                    style_ref.stroke_width
+                };
                 style.push_str(&format!("strokeWidth={};", num(width)));
                 common_keys(
                     &mut style,

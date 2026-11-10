@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 23;
+pub const NATIVE_FORMAT_VERSION: u64 = 24;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -24,10 +24,12 @@ pub const NATIVE_FORMAT_VERSION: u64 = 23;
 /// 15 diamond connector markers, 16 oval connector markers, 17 half-circle markers,
 /// 18 bar connector markers, 19 adjustable rectangle corners, and
 /// 20 partial rectangle outline sides, 21 double ellipses, 22 fixed connector ports,
-/// and 23 standard draw.io rectangle rounding.
+/// 23 standard draw.io rectangle rounding, and 24 final-state shapes.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_drawio_rectangle_rounding() {
+    if book.has_final_states() {
+        24
+    } else if book.has_drawio_rectangle_rounding() {
         23
     } else if book.has_fixed_connector_ports() {
         22
@@ -235,6 +237,8 @@ pub enum ExportLoss {
     DrawioRectangleAppearanceApproximated(usize),
     /// Double-ellipse colors, automatic outlines or labels can differ in draw.io.
     DrawioDoubleEllipseAppearanceApproximated(usize),
+    /// Final-state colors, automatic outlines or labels can differ in draw.io.
+    DrawioFinalStateAppearanceApproximated(usize),
     /// A zero-width or zero-height process outline can be omitted by draw.io.
     DrawioCollapsedProcessApproximated(usize),
     /// draw.io couples grid visibility to snapping and cannot display a dot grid.
@@ -447,6 +451,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut label_appearance = 0;
     let mut rectangle_appearance = 0;
     let mut double_ellipse_appearance = 0;
+    let mut final_state_appearance = 0;
     let mut collapsed_processes = 0;
     let mut grid_settings = 0;
     let mut background_appearance = 0;
@@ -574,6 +579,24 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
                 double_ellipse_appearance +=
                     usize::from(visible_outline || visible_fill || visible_label);
             }
+            if matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::FinalState,
+                    ..
+                }
+            ) && object.style.opacity > 0.0
+            {
+                let visible_outline = match object.style.stroke {
+                    Some(color) => color.a > 0,
+                    None => object.style.fill.is_none(),
+                };
+                let visible_fill = object.style.fill.is_some_and(|color| color.a > 0);
+                let visible_label = !object.label().is_empty()
+                    && object.style.text_color.is_none_or(|color| color.a > 0);
+                final_state_appearance +=
+                    usize::from(visible_outline || visible_fill || visible_label);
+            }
             let opacity_differs = !object.label().is_empty()
                 && object.style.opacity < 1.0
                 && object.style.text_color.is_none_or(|color| color.a > 0);
@@ -632,6 +655,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
         (
             ExportLoss::DrawioDoubleEllipseAppearanceApproximated,
             double_ellipse_appearance,
+        ),
+        (
+            ExportLoss::DrawioFinalStateAppearanceApproximated,
+            final_state_appearance,
         ),
         (
             ExportLoss::DrawioCollapsedProcessApproximated,

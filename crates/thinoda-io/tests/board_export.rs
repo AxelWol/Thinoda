@@ -552,6 +552,56 @@ fn shape_rounding_requires_v19_and_aware_xmind_snapshots() {
 }
 
 #[test]
+fn final_states_require_v24_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let mut rounded = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    rounded.rounding = Some(ShapeRounding {
+        radius: 15.5,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::Relative,
+        rounded_perimeter: true,
+    });
+    book.active_mut().add_canvas_object(rounded).unwrap();
+    book.active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::FinalState,
+            Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(30.0, 30.0)),
+        ))
+        .unwrap();
+    assert_eq!(required_native_version(&book), 24);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 24);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 1..24 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+        if version == 23 {
+            assert!(
+                error
+                    .to_string()
+                    .contains("final states require native format version 24")
+            );
+        }
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-FINAL-STATE-1")
+    );
+}
+
+#[test]
 fn drawio_rectangle_rounding_requires_v23_and_aware_xmind_snapshots() {
     let (mut book, _) = half_circle_marker_book();
     let mut shape = CanvasObject::shape(
@@ -764,6 +814,93 @@ fn double_ellipses_require_v21_and_aware_xmind_snapshots() {
                 .unwrap()
                 .contains("THINODA-XMIND-DOUBLE-ELLIPSE-1")
         );
+    }
+}
+
+#[test]
+fn final_state_renders_inner_fill_and_unfilled_outer_ring_in_visual_exports() {
+    let mut sheet = Sheet::new("Final state", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::FinalState,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.fill = Some(Color::rgb(200, 30, 40));
+    shape.style.stroke = Some(Color::rgb(20, 40, 200));
+    shape.style.stroke_width = 1.0;
+    let id = sheet.add_canvas_object(shape).unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 150.0));
+    let frame = Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 220.0));
+    sheet
+        .add_presentation_slide("Editable", PresentationSource::Branch(root), frame)
+        .unwrap();
+    sheet
+        .add_presentation_slide("Viewport", PresentationSource::Viewport, frame)
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let group = svg
+        .split(&format!("id=\"object-{id}\""))
+        .nth(1)
+        .unwrap()
+        .split("</g>")
+        .next()
+        .unwrap();
+    assert_eq!(group.matches("<path ").count(), 2, "{group}");
+    let mut paths = group.split("<path ").skip(1);
+    let inner = paths.next().unwrap();
+    let outer = paths.next().unwrap();
+    assert!(inner.contains("fill=\"#C81E28\""), "{inner}");
+    assert!(outer.contains("fill=\"none\""), "{outer}");
+    let image = image::load_from_memory(&export(&book, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    assert_eq!(sample(50.0, 30.0).0, [200, 30, 40, 255]);
+    assert_eq!(sample(2.0, 30.0), sample(-5.0, 30.0));
+    assert_ne!(sample(0.0, 30.0), sample(-5.0, 30.0));
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let pptx = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&pptx, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(slide.matches(&format!("Canvas object {id}")).count(), 2);
+    assert!(slide.contains("C81E28"), "{slide}");
+    assert!(!entry(&pptx, "ppt/media/slide2-viewport.png").is_empty());
+}
+
+#[test]
+fn final_state_visual_exports_apply_fill_stroke_and_object_opacity() {
+    let mut sheet = Sheet::new("Final state opacity", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::FinalState,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.fill = Some(Color::rgba(200, 30, 40, 128));
+    shape.style.stroke = Some(Color::rgba(20, 40, 200, 64));
+    shape.style.opacity = 0.5;
+    sheet.add_canvas_object(shape).unwrap();
+    let background =
+        thinoda_core::theme::Theme::for_settings(&sheet.theme).background(&sheet.theme, false);
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(svg.contains(&Color::rgba(200, 30, 40, 64).to_hex()));
+    assert!(svg.contains(&Color::rgba(20, 40, 200, 32).to_hex()));
+    let png = image::load_from_memory(&export(&book, Format::Png))
+        .unwrap()
+        .to_rgb8();
+    let [x, y, w, h] = view_box(&svg);
+    let center = png.get_pixel(
+        ((50.0 - x) / w * png.width() as f32) as u32,
+        ((30.0 - y) / h * png.height() as f32) as u32,
+    );
+    let expected = Color::rgba(200, 30, 40, 64).over(background);
+    for (actual, expected) in center.0.iter().zip([expected.r, expected.g, expected.b]) {
+        assert!(actual.abs_diff(expected) <= 2, "{center:?} vs {expected}");
     }
 }
 

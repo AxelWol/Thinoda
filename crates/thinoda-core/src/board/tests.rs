@@ -803,6 +803,53 @@ fn double_ellipse_uses_absolute_insets_for_outline_and_label() {
 }
 
 #[test]
+fn final_state_uses_drawio_inner_inset_and_separate_label_bounds() {
+    for (width, height, inset) in [
+        (100.0, 60.0, 4.0),
+        (30.0, 30.0, 4.0),
+        (10.0, 5.0, 1.0),
+        (1.0, 50.0, 0.2),
+    ] {
+        let frame = rect(10.0, 20.0, width, height);
+        for stroke in [1.0, 6.0] {
+            let geometry =
+                shape_geometry_with_style(ShapeKind::FinalState, frame, 0.0, None, stroke, None);
+            let bounds = points_bounds(&geometry.details[0]).unwrap();
+            let expected = rect(
+                frame.min.x + inset,
+                frame.min.y + inset,
+                width - 2.0 * inset,
+                height - 2.0 * inset,
+            );
+            assert!((bounds.min - expected.min).length() < 0.001);
+            assert!((bounds.size - expected.size).length() < 0.001);
+            assert_eq!(geometry.details[0].first(), geometry.details[0].last());
+            let rotated =
+                shape_geometry_with_style(ShapeKind::FinalState, frame, 90.0, None, stroke, None);
+            for (original, actual) in geometry.details[0].iter().zip(&rotated.details[0]) {
+                assert!(
+                    (*actual - rotate_around(*original, frame.center(), 90.0)).length() < 0.001
+                );
+            }
+            assert_eq!(
+                shape_label_rect_with_style(ShapeKind::FinalState, frame, stroke, None),
+                shape_label_rect_with_style(ShapeKind::DoubleEllipse, frame, stroke, None)
+            );
+        }
+    }
+    let collapsed = rect(0.0, 0.0, 0.0, 30.0);
+    assert!(
+        shape_geometry(ShapeKind::FinalState, collapsed, 0.0)
+            .details
+            .is_empty()
+    );
+    let object = CanvasObject::shape(ShapeKind::FinalState, rect(0.0, 0.0, 30.0, 30.0));
+    assert_eq!(object.style.fill, Some(Color::BLACK));
+    assert_eq!(object.style.stroke, Some(Color::BLACK));
+    validate_object(&object).unwrap();
+}
+
+#[test]
 fn double_ellipse_inset_is_optional_and_validated() {
     let mut object = CanvasObject::shape(ShapeKind::DoubleEllipse, rect(0.0, 0.0, 100.0, 60.0));
     assert!(

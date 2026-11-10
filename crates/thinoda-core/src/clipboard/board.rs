@@ -33,6 +33,7 @@ const RECTANGLE_SIDES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-13\n";
 const DOUBLE_ELLIPSE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-14\n";
 const FIXED_PORT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-15\n";
 const DRAWIO_ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-16\n";
+const FINAL_STATE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-17\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -51,7 +52,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_drawio_rectangle_rounding() {
+        if self.fragment.has_final_states() {
+            FINAL_STATE_BOARD_PREFIX
+        } else if self.fragment.has_drawio_rectangle_rounding() {
             DRAWIO_ROUNDING_BOARD_PREFIX
         } else if self.fragment.has_fixed_connector_ports() {
             FIXED_PORT_BOARD_PREFIX
@@ -280,9 +283,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(DRAWIO_ROUNDING_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-16\r\n"))
-        .map(|json| (16, json))
+        .strip_prefix(FINAL_STATE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-17\r\n"))
+        .map(|json| (17, json))
+        .or_else(|| {
+            text.strip_prefix(DRAWIO_ROUNDING_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-16\r\n"))
+                .map(|json| (16, json))
+        })
         .or_else(|| {
             text.strip_prefix(FIXED_PORT_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-15\r\n"))
@@ -401,6 +409,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err(
             "standard draw.io rectangle rounding requires board clipboard version 16".into(),
         );
+    }
+    if version < 17 && payload.fragment.has_final_states() {
+        return Err("final states require board clipboard version 17".into());
     }
     if version < 3 && payload.fragment.has_connector_waypoints() {
         return Err("connector waypoints require board clipboard version 3".into());

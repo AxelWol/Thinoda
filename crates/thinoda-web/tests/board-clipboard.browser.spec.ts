@@ -984,6 +984,81 @@ test("draw.io named text styling is disclosed on paste", async ({ page }, testIn
     expect(undone.content.sheets).toEqual(before.content.sheets);
 });
 
+test("draw.io paste and copy preserve an editable final state", async ({ page }, testInfo) => {
+    const text = [
+        '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
+        '<mxCell id="shape" vertex="1" parent="1" value="" ',
+        'style="shape=endState;perimeter=ellipsePerimeter;fillColor=#ed1234;',
+        'strokeColor=#2244aa;strokeWidth=2;">',
+        '<mxGeometry width="90" height="70" as="geometry"/></mxCell>',
+        '</root></mxGraphModel>',
+    ].join("");
+    const before = archive(await saveAs(page, "drawio-final-state-before.thinoda"));
+    await page.evaluate((value) => {
+        window.__thinodaTestClipboard.items = [new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+        })];
+    }, text);
+    await paste(page);
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error("Cannot inspect the canvas without a viewport");
+    const canvas = await page.screenshot({
+        path: testInfo.outputPath("drawio-final-state-paste.png"),
+        clip: {
+            x: 0,
+            y: 100,
+            width: Math.floor(viewport.width * 0.75),
+            height: viewport.height - 150,
+        },
+    });
+    const fill = (await colorBounds(page, canvas, [[237, 18, 52]], 15))[0];
+    expect(fill.count).toBeGreaterThan(2500);
+    expect(fill.maxX - fill.minX).toBeGreaterThan(70);
+    expect(fill.maxY - fill.minY).toBeGreaterThan(50);
+    const after = archive(await saveAs(page, "drawio-final-state-after.thinoda"));
+    const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
+    expect(objects).toHaveLength(1);
+    expect(objects[0].kind.shape?.shape).toBe("final-state");
+    expect(objects[0].kind.shape?.label ?? "").toBe("");
+    expect(after.manifest.version).toBe(24);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("F2");
+    await frames(page);
+    const label = page.locator("input[type='text']");
+    await expect(label).toBeFocused();
+    await label.fill("Finish");
+    await page.keyboard.press("Enter");
+    await frames(page);
+    const edited = archive(await saveAs(page, "drawio-final-state-edited.thinoda"));
+    expect(edited.content.sheets[edited.content.active_sheet].canvas?.objects?.[0].kind.shape)
+        .toMatchObject({ shape: "final-state", label: "Finish" });
+
+    const previous = await page.evaluate(() => window.__thinodaTestClipboard.plainWrites);
+    await command(page, "Copy as draw.io");
+    await expect.poll(() => page.evaluate(() => window.__thinodaTestClipboard.plainWrites))
+        .toBe(previous + 1);
+    const copied = await page.evaluate(async () =>
+        (await window.__thinodaTestClipboard.items[0].getType("text/plain")).text());
+    const model = decodeURIComponent(copied);
+    expect(model).toContain("shape=endState;perimeter=ellipsePerimeter;");
+    expect(model).toContain("Finish");
+    await expectWarningToast(page, testInfo.outputPath("drawio-final-state-copy-warning.png"));
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const labelUndone = archive(await saveAs(page, "drawio-final-state-label-undo.thinoda"));
+    const restored = labelUndone.content.sheets[labelUndone.content.active_sheet].canvas?.objects?.[0];
+    expect(restored?.kind.shape?.shape).toBe("final-state");
+    expect(restored?.kind.shape?.label ?? "").toBe("");
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "drawio-final-state-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+});
+
 test("draw.io paste and copy preserve an editable double ellipse", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel adaptiveColors="none"><root><mxCell id="0"/><mxCell id="1" parent="0"/>',

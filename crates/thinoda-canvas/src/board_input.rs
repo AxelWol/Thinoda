@@ -443,7 +443,8 @@ impl MapView {
         let size = default_size(BoardTool::Shape(kind));
         let center = insert_spot(doc.sheet(), self, &scene, size);
         let rect = thinoda_core::Rect::from_center_size(center, size);
-        let id = doc.add_canvas_object(CanvasObject::shape(kind, rect))?;
+        let object = new_board_shape(kind, rect, doc.sheet(), self.dark);
+        let id = doc.add_canvas_object(object)?;
         select_hit(self, doc.sheet(), SceneHit::Object(id), false);
         self.reveal_board_object(id);
         Ok(id)
@@ -629,10 +630,28 @@ fn default_size(tool: BoardTool) -> Vec2 {
     match tool {
         BoardTool::Sticky => Vec2::new(180.0, 150.0),
         BoardTool::Text => Vec2::new(200.0, 80.0),
+        BoardTool::Shape(ShapeKind::FinalState) => Vec2::new(30.0, 30.0),
         BoardTool::Shape(_) => Vec2::new(160.0, 100.0),
         BoardTool::Frame => Vec2::new(360.0, 240.0),
         _ => Vec2::new(120.0, 0.0),
     }
+}
+
+fn new_board_shape(
+    kind: ShapeKind,
+    rect: thinoda_core::Rect,
+    sheet: &Sheet,
+    dark: bool,
+) -> CanvasObject {
+    let mut object = CanvasObject::shape(kind, rect);
+    if kind == ShapeKind::FinalState {
+        let background =
+            thinoda_core::theme::Theme::for_settings(&sheet.theme).background(&sheet.theme, dark);
+        let color = thinoda_core::Color::highest_contrast_on(background);
+        object.style.fill = Some(color);
+        object.style.stroke = Some(color);
+    }
+    object
 }
 
 fn endpoint_at(
@@ -717,9 +736,10 @@ fn connection_points_for_item(
                 ShapeKind::Rectangle | ShapeKind::RoundedRectangle => {
                     &RECTANGLE_CONNECTION_POINTS[..]
                 }
-                ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::Diamond => {
-                    &PERIMETER_CONNECTION_POINTS[..]
-                }
+                ShapeKind::Ellipse
+                | ShapeKind::DoubleEllipse
+                | ShapeKind::FinalState
+                | ShapeKind::Diamond => &PERIMETER_CONNECTION_POINTS[..],
                 _ => return None,
             };
             (
@@ -945,6 +965,7 @@ mod connection_point_tests {
             (ShapeKind::RoundedRectangle, 16),
             (ShapeKind::Ellipse, 8),
             (ShapeKind::DoubleEllipse, 8),
+            (ShapeKind::FinalState, 8),
             (ShapeKind::Diamond, 8),
         ] {
             for rotation in [0.0, 37.0, 90.0] {
@@ -1391,7 +1412,8 @@ fn create(
             Ok(true)
         }
         BoardTool::Shape(kind) => {
-            let id = doc.add_canvas_object(CanvasObject::shape(kind, rect))?;
+            let object = new_board_shape(kind, rect, doc.sheet(), view.dark);
+            let id = doc.add_canvas_object(object)?;
             select_hit(view, doc.sheet(), SceneHit::Object(id), false);
             Ok(true)
         }
@@ -2570,10 +2592,13 @@ fn quick_content(
                     stroke,
                 ));
                 for detail in shape.unit_details() {
-                    ui.painter().add(egui::Shape::line(
-                        detail.into_iter().map(point).collect(),
-                        stroke,
-                    ));
+                    let points = detail.into_iter().map(point).collect();
+                    if *shape == ShapeKind::FinalState {
+                        ui.painter()
+                            .add(egui::Shape::convex_polygon(points, stroke.color, stroke));
+                    } else {
+                        ui.painter().add(egui::Shape::line(points, stroke));
+                    }
                 }
                 if hot {
                     result.preview = Some(*shape);
@@ -5024,10 +5049,16 @@ pub(super) fn paint(
             stroke,
         ));
         for detail in geometry.details {
-            painter.add(egui::Shape::line(
-                detail.into_iter().map(|point| xf.pos(point)).collect(),
-                stroke,
-            ));
+            let points = detail.into_iter().map(|point| xf.pos(point)).collect();
+            if kind == ShapeKind::FinalState {
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    stroke.color.gamma_multiply(0.35),
+                    stroke,
+                ));
+            } else {
+                painter.add(egui::Shape::line(points, stroke));
+            }
         }
     }
 
@@ -5074,10 +5105,16 @@ pub(super) fn paint(
             stroke,
         ));
         for detail in geometry.details {
-            painter.add(egui::Shape::line(
-                detail.into_iter().map(|point| xf.pos(point)).collect(),
-                stroke,
-            ));
+            let points = detail.into_iter().map(|point| xf.pos(point)).collect();
+            if shape == ShapeKind::FinalState {
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    stroke.color.gamma_multiply(0.35),
+                    stroke,
+                ));
+            } else {
+                painter.add(egui::Shape::line(points, stroke));
+            }
         }
     }
 

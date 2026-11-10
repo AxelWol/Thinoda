@@ -49,8 +49,8 @@ and segment dragging are not yet available; see
 
 ### Fixed connector attachments
 
-Hover a rectangle, rounded rectangle, ellipse, double ellipse, diamond or
-rectangular topic to reveal connection crosses. Drag from a cross to start a
+Hover a rectangle, rounded rectangle, ellipse, double ellipse, final state,
+diamond or rectangular topic to reveal connection crosses. Drag from a cross to start a
 connector, or drop an endpoint, Connector-tool drag, direction arrow or outline
 drag on one to fix the attachment. The Connector tool also supports clicking a
 source and then a destination. Dropping on a body away from a cross leaves a
@@ -78,14 +78,27 @@ visible location. Import warns when a source perimeter, orientation or changed
 target geometry may alter that position. draw.io export requires consent if
 the position may differ or a fixed attachment points to a collapsed topic that
 cannot be exported; a detached endpoint remains at its visible location.
-Rectangle, ellipse, double-ellipse and diamond projections follow the tested
-draw.io subset; named ports, directional constraints, and exact perimeter and
-routing parity for every draw.io shape remain incomplete.
+Rectangle, ellipse, double-ellipse, final-state and diamond projections follow
+the tested draw.io subset; named ports, directional constraints, and exact
+perimeter and routing parity for every draw.io shape remain incomplete.
 
 Import warns when a connected double ellipse uses a different source perimeter.
 Previously saved fixed perimeter attachments on double ellipses can move
 slightly because they now use the analytic ellipse rather than its flattened
 outline; floating and non-perimeter attachments are unchanged.
+
+### UML final states
+
+The shape library includes an editable final-state symbol with a filled inner
+ellipse and an unfilled outer ring. Newly placed symbols start at 30 by 30
+units with black or white fill and stroke chosen for contrast against the
+current board background. Those explicit colors do not change with later theme
+changes. Changing an existing shape to this kind retains its colors and
+dimensions. Fixed connections use the outer ellipse.
+Native files containing final states require format v24, with corresponding
+clipboard, recovery and private XMind envelope versions. Imported dynamic
+color links and external label positions can be approximated and are reported;
+keep the original draw.io file.
 
 ### Imported rectangle corners
 

@@ -449,6 +449,7 @@ pub(crate) fn shape_name(shape: ShapeKind) -> &'static str {
         ShapeKind::RoundedRectangle => "Rounded rectangle",
         ShapeKind::Ellipse => "Ellipse",
         ShapeKind::DoubleEllipse => "Double ellipse",
+        ShapeKind::FinalState => "Final state",
         ShapeKind::Diamond => "Diamond",
         ShapeKind::Triangle => "Triangle",
         ShapeKind::RightTriangle => "Right triangle",
@@ -2699,10 +2700,13 @@ fn shape_tile(
             stroke,
         ));
         for detail in shape.unit_details() {
-            ui.painter().add(egui::Shape::line(
-                detail.into_iter().map(point).collect(),
-                stroke,
-            ));
+            let points = detail.into_iter().map(point).collect();
+            if shape == ShapeKind::FinalState {
+                ui.painter()
+                    .add(egui::Shape::convex_polygon(points, color, stroke));
+            } else {
+                ui.painter().add(egui::Shape::line(points, stroke));
+            }
         }
     }
     if inserting && ui.is_enabled() && response.drag_started() {
@@ -4045,23 +4049,32 @@ mod tests {
                 } else {
                     palette.text
                 };
-                let find_path = |points: &[egui::Pos2], closed| {
+                let find_path = |points: &[egui::Pos2], closed, fill| {
                     harness.output().shapes.iter().any(|clipped| {
                         matches!(&clipped.shape, egui::Shape::Path(path)
                             if path.closed == closed
                                 && path.points == points
-                                && path.fill == Color32::TRANSPARENT
+                                && path.fill == fill
                                 && path.stroke.width == 1.5
                                 && path.stroke.color == egui::epaint::ColorMode::Solid(color))
                     })
                 };
                 assert!(
-                    find_path(&outline, true),
+                    find_path(&outline, true, Color32::TRANSPARENT),
                     "missing {shape:?} in dark={dark}"
                 );
                 for detail in shape.unit_details() {
+                    let is_final_state = shape == ShapeKind::FinalState;
                     assert!(
-                        find_path(&to_points(detail), false),
+                        find_path(
+                            &to_points(detail),
+                            is_final_state,
+                            if is_final_state {
+                                color
+                            } else {
+                                Color32::TRANSPARENT
+                            },
+                        ),
                         "missing {shape:?} detail in dark={dark}"
                     );
                 }

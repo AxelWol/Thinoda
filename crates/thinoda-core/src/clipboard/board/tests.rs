@@ -1103,6 +1103,42 @@ fn shape_rounding_board_clipboard_requires_version_twelve() {
 }
 
 #[test]
+fn final_state_board_clipboard_requires_version_seventeen() {
+    use crate::Rect;
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut shape = CanvasObject::shape(
+        ShapeKind::FinalState,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+    );
+    shape.rotation = 37.0;
+    let original = shape.clone();
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(FINAL_STATE_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..17 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-17",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(decode_board_payload(&forged).is_err(), "version {version}");
+    }
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    let restored = destination.canvas.object(pasted.objects[0]).unwrap();
+    assert_eq!(restored.kind, original.kind);
+    assert_eq!(restored.style, original.style);
+    assert_eq!(restored.rotation, original.rotation);
+}
+
+#[test]
 fn drawio_rectangle_rounding_board_clipboard_requires_version_sixteen() {
     use crate::{DrawioRectangleStencil, Rect, ShapeRounding, ShapeRoundingMode};
 

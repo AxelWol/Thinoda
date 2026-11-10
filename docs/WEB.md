@@ -120,7 +120,7 @@ directly to a fillable draw.io marker. Unsupported marker shapes, out-of-range s
 and unsupported fill values trigger a formatting warning. Supported fixed
 connector points, offsets and perimeter settings are retained on attached
 shapes and topics. Hover a rectangle, rounded rectangle, ellipse, double ellipse,
-diamond or rectangular topic to reveal connection crosses; drag from or drop
+final state, diamond or rectangular topic to reveal connection crosses; drag from or drop
 onto a cross to fix the attachment. Hold Shift while connecting to fix an
 arbitrary point, Alt to leave a free point without grid snapping, or Alt+Shift
 to attach without fixing. Enter or Space toggles a focused endpoint; Home/End
@@ -187,6 +187,14 @@ Import warns when a connected double ellipse uses a different perimeter.
 Previously saved fixed perimeter attachments on double ellipses may move
 slightly because their projection now uses the analytic ellipse rather than
 its flattened outline.
+
+Standalone UML final states are editable shapes with a filled inner ellipse
+and an unfilled outer ring. The shape picker includes them, and connections
+attach to the outer ellipse. Newly placed symbols choose black or white for
+contrast against the current background, but keep that explicit color if the
+theme changes. Import reports unsupported dynamic color links and external
+label positions; draw.io export and copying warn that appearance can differ.
+Preserve the original diagram for features that cannot round-trip.
 
 Flowchart annotation brackets import as editable open-sided rectangles with a
 formatting warning. Their original stencil identity and exact appearance are

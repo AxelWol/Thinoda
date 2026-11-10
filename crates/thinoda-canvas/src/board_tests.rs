@@ -5,7 +5,7 @@ use egui_kittest::{
     kittest::{NodeT, Queryable},
 };
 use thinoda_core::{
-    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorPort,
+    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, Color, ConnectorPort,
     ConnectorRoute, Endpoint, SceneId, ShapeKind, SheetRootMode, Workbook, ZOrder,
     board::BoardMember,
 };
@@ -1269,6 +1269,116 @@ fn armed_shape_click_on_empty_space_creates_one_undoable_shape_and_shows_a_ghost
     assert!(h.state_mut().doc.undo());
     assert_eq!(h.state().doc.workbook(), &before);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn final_state_ghost_and_creation_preserve_the_filled_inner_ellipse() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::FinalState));
+    let empty = point(&h, Vec2::new(-300.0, -200.0));
+    h.hover_at(empty);
+    h.run_steps(3);
+    let ghost_paths: Vec<Vec<Pos2>> = h
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Path(path)
+                if path.closed && path.points.len() == 49 && path.fill.a() > 0 =>
+            {
+                Some(path.points.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    click(&mut h, empty, Modifiers::NONE);
+    let object = &h.state().doc.sheet().canvas.objects[0];
+    assert!(matches!(
+        object.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::FinalState,
+            ..
+        }
+    ));
+    assert_eq!(object.rect.size, Vec2::new(30.0, 30.0));
+    assert_eq!(object.style.fill, Some(Color::BLACK));
+    let expected = thinoda_core::board::shape_geometry(ShapeKind::FinalState, object.rect, 0.0)
+        .details
+        .remove(0)
+        .into_iter()
+        .map(|point| h.state().view.xf().pos(point))
+        .collect::<Vec<_>>();
+    assert!(
+        ghost_paths.iter().any(|path| {
+            path.iter()
+                .zip(&expected)
+                .all(|(actual, expected)| actual.distance(*expected) < 0.001)
+        }),
+        "the ghost must show the filled inner ellipse at its final inset"
+    );
+    assert!(h.state_mut().doc.undo());
+    assert!(h.state().doc.sheet().canvas.objects.is_empty());
+    assert!(h.state_mut().doc.redo());
+    assert!(matches!(
+        h.state().doc.sheet().canvas.objects[0].kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::FinalState,
+            ..
+        }
+    ));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn final_state_creation_contrasts_with_the_current_board_background() {
+    for (dark, background, expected) in [
+        (false, None, Color::BLACK),
+        (true, None, Color::WHITE),
+        (true, Some(Color::WHITE), Color::BLACK),
+        (false, Some(Color::BLACK), Color::WHITE),
+    ] {
+        let mut sheet = board();
+        sheet.theme.background = background;
+        let mut h = harness(sheet);
+        h.state_mut().view.dark = dark;
+        let settings = &h.state().doc.sheet().theme;
+        let resolved =
+            thinoda_core::theme::Theme::for_settings(settings).background(settings, dark);
+        assert!(
+            expected.contrast_on(resolved) >= 4.5,
+            "{dark}, {background:?}"
+        );
+        set_tool(&mut h, BoardTool::Shape(ShapeKind::FinalState));
+        let empty = point(&h, Vec2::new(-300.0, -200.0));
+        click(&mut h, empty, Modifiers::NONE);
+        let object = &h.state().doc.sheet().canvas.objects[0];
+        assert_eq!(object.style.fill, Some(expected), "{dark}, {background:?}");
+        assert_eq!(
+            object.style.stroke,
+            Some(expected),
+            "{dark}, {background:?}"
+        );
+
+        let inserted = {
+            let state = h.state_mut();
+            state
+                .view
+                .insert_board_shape(&mut state.doc, ShapeKind::FinalState)
+                .unwrap()
+        };
+        let inserted = h.state().doc.sheet().canvas.object(inserted).unwrap();
+        assert_eq!(
+            inserted.style.fill,
+            Some(expected),
+            "{dark}, {background:?}"
+        );
+        assert_eq!(
+            inserted.style.stroke,
+            Some(expected),
+            "{dark}, {background:?}"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
 }
 
 #[test]

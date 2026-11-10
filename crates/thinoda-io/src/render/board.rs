@@ -178,7 +178,8 @@ pub(crate) fn object_prims(
                 .map(|c| faded(c, opacity));
             let width = if object.style.stroke.is_none()
                 && (visual.automatic_board_stroke.is_some()
-                    || (object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse)
+                    || (object.rectangle_sides.is_some()
+                        || matches!(*shape, ShapeKind::DoubleEllipse | ShapeKind::FinalState))
                         && object.style.fill.is_none())
             {
                 2.0
@@ -186,7 +187,24 @@ pub(crate) fn object_prims(
                 object.style.stroke_width.max(0.0)
             };
             let stroke = stroke_color.map(|c| (c, width));
-            if let Some(sides) = object.rectangle_sides {
+            if *shape == ShapeKind::FinalState {
+                for detail in details {
+                    out.push(Prim::Path {
+                        points: detail.clone(),
+                        closed: true,
+                        fill,
+                        stroke,
+                        round: false,
+                    });
+                }
+                out.push(Prim::Path {
+                    points: outline.clone(),
+                    closed: true,
+                    fill: None,
+                    stroke,
+                    round: false,
+                });
+            } else if let Some(sides) = object.rectangle_sides {
                 out.push(Prim::Path {
                     points: outline.clone(),
                     closed: true,
@@ -213,20 +231,22 @@ pub(crate) fn object_prims(
                     round: false,
                 });
             }
-            for detail in details {
-                out.push(Prim::Path {
-                    points: detail.clone(),
-                    closed: false,
-                    fill: None,
-                    stroke: if *shape == ShapeKind::DoubleEllipse
-                        || visual.automatic_board_stroke.is_some()
-                    {
-                        stroke
-                    } else {
-                        Some(stroke.unwrap_or((ink, 1.0)))
-                    },
-                    round: false,
-                });
+            if *shape != ShapeKind::FinalState {
+                for detail in details {
+                    out.push(Prim::Path {
+                        points: detail.clone(),
+                        closed: false,
+                        fill: None,
+                        stroke: if *shape == ShapeKind::DoubleEllipse
+                            || visual.automatic_board_stroke.is_some()
+                        {
+                            stroke
+                        } else {
+                            Some(stroke.unwrap_or((ink, 1.0)))
+                        },
+                        round: false,
+                    });
+                }
             }
             if !label.trim().is_empty() {
                 let rect = shape_label_rect_with_style(
