@@ -6,9 +6,9 @@ use thinoda_core::{
     TopicShape, Vec2, board::CanvasObjectKind, connector_path, layout_sheet, resources::Resource,
 };
 use thinoda_io::{
-    ExportOptions, IoError, PresentationAspectRatio, export_presentation_pdf,
+    ExportOptions, Format, IoError, PresentationAspectRatio, export_presentation_pdf,
     export_presentation_png_zip, export_presentation_pptx, fit_presentation_frame,
-    generate_presentation, render_presentation_slide_svg,
+    generate_presentation, import_bytes_with_report, render_presentation_slide_svg,
 };
 use zip::ZipArchive;
 
@@ -40,6 +40,156 @@ fn photo(sheet: &mut Sheet, id: thinoda_core::TopicId, format: image::ImageForma
     let resource = Resource::new("Original test photo", media, bytes.clone()).unwrap();
     thinoda_core::images::set_image(sheet, id, Some((resource, Vec2::new(80.0, 40.0)))).unwrap();
     bytes
+}
+
+#[test]
+fn editable_image_card_backgrounds_preserve_transparency_and_native_appearance() {
+    for dark in [false, true] {
+        for shape in [TopicShape::Ellipse, TopicShape::Underline] {
+            let mut native_background = None;
+            for color in [
+                None,
+                Some(Color::rgb(10, 20, 30)),
+                Some(Color::rgba(10, 20, 30, 128)),
+                Some(Color::rgba(10, 20, 30, 0)),
+            ] {
+                let mut sheet = Sheet::new("Image", "");
+                sheet.root_mode = SheetRootMode::Hidden;
+                let mut card = Card::new(CardKind::Image, Vec2::new(180.0, 130.0));
+                card.color = color;
+                card.rotation = 30.0;
+                let id = sheet.add_card("Caption", Vec2::ZERO, card).unwrap();
+                let topic = sheet.topic_mut(id).unwrap();
+                topic.style.shape = Some(shape);
+                topic.style.border_color = Some(Color::rgb(251, 10, 20));
+                topic.style.border_width = Some(4.0);
+                photo(&mut sheet, id, image::ImageFormat::Png);
+                sheet
+                    .add_presentation_slide(
+                        "Image",
+                        PresentationSource::Branch(id),
+                        Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+                    )
+                    .unwrap();
+                let options = ExportOptions {
+                    dark,
+                    ..Default::default()
+                };
+                let output = export_presentation_pptx(&sheet, &options).unwrap();
+                let slide = xml(&output, "ppt/slides/slide1.xml");
+                let background = element(&slide, "sp", &format!("name=\"Topic {id}\""));
+                let (interior, line) = background.split_once("<a:ln ").unwrap();
+                assert!(background.contains("rot=\"1800000\""));
+                assert!(element(&slide, "pic", "name=\"Topic photo\"").contains("rot=\"1800000\""));
+                if color.is_some_and(|color| color.a == 0) {
+                    assert!(background.contains("prst=\"rect\""), "{background}");
+                    assert!(
+                        interior.contains("<a:srgbClr val=\"0A141E\"><a:alpha val=\"0\"/>"),
+                        "{interior}"
+                    );
+                    assert!(line.contains("<a:alpha val=\"0\"/>"), "{line}");
+                    assert!(!slide.contains("name=\"Topic underline\""));
+                    let page = thinoda_core::theme::Theme::for_settings(&sheet.theme)
+                        .background(&sheet.theme, dark);
+                    let text_color = Color::highest_contrast_on(page);
+                    let text = element(&slide, "sp", "<a:t>Caption</a:t>");
+                    assert!(
+                        text.contains(&format!(
+                            "val=\"{:02X}{:02X}{:02X}\"",
+                            text_color.r, text_color.g, text_color.b
+                        )),
+                        "{text}"
+                    );
+                    let mut explicit = sheet.clone();
+                    explicit.topic_mut(id).unwrap().style.text_color =
+                        Some(Color::rgb(40, 70, 100));
+                    let explicit_output = export_presentation_pptx(&explicit, &options).unwrap();
+                    let explicit_slide = xml(&explicit_output, "ppt/slides/slide1.xml");
+                    assert!(
+                        element(&explicit_slide, "sp", "<a:t>Caption</a:t>")
+                            .contains("val=\"284664\"")
+                    );
+                } else {
+                    if let Some(expected) = &native_background {
+                        assert_eq!(background, expected);
+                    } else {
+                        native_background = Some(background.to_owned());
+                    }
+                    assert!(
+                        background.contains(if shape == TopicShape::Ellipse {
+                            "prst=\"ellipse\""
+                        } else {
+                            "prst=\"rect\""
+                        }),
+                        "{background}"
+                    );
+                    if shape == TopicShape::Ellipse {
+                        assert!(line.contains("val=\"FB0A14\""), "{line}");
+                    } else {
+                        assert!(slide.contains("name=\"Topic underline\""));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn drawio_tutorial_images_stay_borderless_in_editable_slides() {
+    let mut wb = import_bytes_with_report(
+        Format::DrawIo,
+        include_bytes!("../../../docs/draw-io-examples/board-visual-tutorial.drawio"),
+    )
+    .unwrap()
+    .workbook;
+    let sheet = wb.active_mut();
+    let images: Vec<_> = sheet
+        .content_topics()
+        .filter(|topic| {
+            topic.card.is_some_and(|card| {
+                card.kind == CardKind::Image && card.color.is_some_and(|color| color.a == 0)
+            })
+        })
+        .map(|topic| topic.id)
+        .collect();
+    assert_eq!(images.len(), 3);
+    for id in &images {
+        sheet
+            .add_presentation_slide(
+                "Image",
+                PresentationSource::Branch(*id),
+                Rect::from_min_size(Vec2::new(-2000.0, -2000.0), Vec2::new(5000.0, 5000.0)),
+            )
+            .unwrap();
+    }
+
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let output = export_presentation_pptx(sheet, &options).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(&output)).unwrap();
+        for (index, id) in images.iter().enumerate() {
+            let slide = xml(&output, &format!("ppt/slides/slide{}.xml", index + 1));
+            let background = element(&slide, "sp", &format!("name=\"Topic {id}\""));
+            let (interior, line) = background.split_once("<a:ln ").unwrap();
+            assert!(
+                interior.contains("<a:srgbClr val=\"000000\"><a:alpha val=\"0\"/>"),
+                "{interior}"
+            );
+            assert!(line.contains("<a:alpha val=\"0\"/>"), "{line}");
+            assert!(background.contains("prst=\"rect\""), "{background}");
+            element(&slide, "pic", "name=\"Topic photo\"");
+            let mut media = Vec::new();
+            archive
+                .by_name(&format!("ppt/media/slide{}-photo1.png", index + 1))
+                .unwrap()
+                .read_to_end(&mut media)
+                .unwrap();
+            image::load_from_memory(&media).unwrap();
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -2900,12 +2900,32 @@ copied child may become more visible than in the source; this is not frame or
 clipping preservation. Bounds use approximate layout, not a guarantee of
 pixel-identical text metrics across destination themes or platforms.
 
+**Shape label browser-test timing — critique.** The browser regression test
+still uses a real double-click, but no longer adds a 100 ms delay to each
+press: runner scheduling can stretch the release-to-release interval beyond
+egui's 300 ms limit. A deterministic canvas integration test separately
+exercises approximately 100 ms held presses. This stabilizes the test without
+changing application timing, and does not establish double-click accessibility
+on all physical devices.
+
+**Transparent embedded-image export (partial Phase 11) — critique.** The
+three embedded images in `board-visual-tutorial.drawio` imported as transparent
+image cards, but SVG-based exports and editable PowerPoint slides drew the
+topic's default border around them. Fully transparent image cards now use the
+borderless card background in those exporters, matching the canvas. Tests
+cover the supplied document, raster and SVG output, editable slides, rotation,
+both themes and non-black transparent colors. Existing default, opaque and
+partially transparent native image-card exports retain their previous behavior;
+their broader differences from canvas card painting remain out of scope.
+This fixes the extra borders, not font, connector or other source fidelity.
+
 **Example preview comparison.** A local render probe exported all 116 supplied
 PNG-backed pages from 60 draw.io documents. All pages rendered, but that is not
 a fidelity pass: document-level import warnings reported formatting differences
 for all 60 documents, unsupported shapes for 45, resources for 15, links for
 10 and detached connectors for six. Side-by-side inspection of
-`board-visual-tutorial.png` shows font and extra-outline differences; the first
+`board-visual-tutorial.png` shows font and connector differences; its three
+extra image outlines have since been removed as described above. The first
 `waypoint-shape.png` page contains black blocks and altered wiring instead of
 several reference symbols. `floorplan-apartment.page-2.png` also has large
 black blocks and missing architectural symbols; `arista.png` replaces the rack
@@ -2920,15 +2940,21 @@ The next visual-parity work remains open:
 
 - Implement and exercise the floor-plan and circuit stencil geometry rather
   than substituting generic filled rectangles; verify symbols and connections
-  against the corresponding reference pages.
+  against the corresponding reference pages. The supplied circuit pages use
+  `mxgraph.electrical.resistors.resistor_1`,
+  `mxgraph.electrical.miscellaneous.monocell_battery`,
+  `mxgraph.electrical.logic_gates.logic_gate`, and
+  `mxgraph.lean_mapping.physical_pull`; these remain unsupported. Their
+  `waypoint` cells are currently approximated as small ellipses, so attachment
+  and save-back fidelity still need separate verification.
 - Preserve the external SVG references used by the Arista rack equipment and
   render safely supplied, appropriately licensed resources, with explicit
   diagnostics for unresolved images. Keep the existing no-auto-fetch policy;
   any network access requires a separate, consented design.
-- Recheck label alignment, font metrics and unwanted outlines against the
-  tutorial reference, then inspect the remaining gallery pages and add
-  representative regression fixtures. Normalized pixel difference alone is
-  not an acceptance threshold.
+- Recheck label alignment, font metrics and remaining background and border
+  styling against the tutorial reference, then inspect the remaining gallery
+  pages and add representative regression fixtures. Normalized pixel
+  difference alone is not an acceptance threshold.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

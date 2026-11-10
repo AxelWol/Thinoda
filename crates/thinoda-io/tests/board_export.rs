@@ -5,7 +5,7 @@ use std::io::{Cursor, Read, Write};
 use thinoda_core::{
     CanvasConnector, CanvasObject, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
     ConnectorPort, DrawioRectangleStencil, Endpoint, InkStroke, InkTool, PresentationSource,
-    ShapeKind, ShapeRounding, Sheet, SheetRootMode, Workbook,
+    ShapeKind, ShapeRounding, Sheet, SheetRootMode, TopicShape, Workbook,
     board::{CanvasObjectKind, RootProjection},
     geometry::{Color, Rect, Vec2},
     outline::{project_to_outline, to_outline},
@@ -13,8 +13,8 @@ use thinoda_core::{
 };
 use thinoda_io::{
     ExportLoss, ExportOptions, Format, IoError, export_bytes, export_bytes_with_consent,
-    export_losses, import_bytes, outline_sheet, render_presentation_slide_svg,
-    required_native_version, uses_board_semantics,
+    export_losses, import_bytes, import_bytes_with_report, outline_sheet,
+    render_presentation_slide_svg, required_native_version, uses_board_semantics,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -2767,6 +2767,140 @@ fn storyboard_with_image() -> (Workbook, Vec<u8>) {
         .unwrap();
     wb.validate().unwrap();
     (wb, image_bytes)
+}
+
+#[test]
+fn drawio_tutorial_images_export_without_extra_outlines() {
+    let wb = import_bytes_with_report(
+        Format::DrawIo,
+        include_bytes!("../../../docs/draw-io-examples/board-visual-tutorial.drawio"),
+    )
+    .unwrap()
+    .workbook;
+    let images: Vec<_> = wb
+        .active()
+        .content_topics()
+        .filter(|topic| {
+            topic.card.is_some_and(|card| {
+                card.kind == CardKind::Image && card.color.is_some_and(|color| color.a == 0)
+            })
+        })
+        .collect();
+    assert_eq!(images.len(), 3);
+
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let svg =
+            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
+                .unwrap();
+        for topic in &images {
+            let id = topic
+                .image
+                .as_deref()
+                .unwrap()
+                .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
+                .unwrap();
+            let marker = format!("<use xlink:href=\"#image-{id}\"");
+            let occurrences: Vec<_> = svg.match_indices(&marker).map(|(index, _)| index).collect();
+            assert!(!occurrences.is_empty());
+            for image in occurrences {
+                let previous_tag = svg[..image].rfind('<').unwrap();
+                let background = &svg[previous_tag..image];
+                assert!(
+                    background.starts_with("<rect class=\"card\" "),
+                    "{background}"
+                );
+                assert!(background.contains("fill=\"#00000000\""), "{background}");
+                assert!(background.contains("stroke=\"none\""), "{background}");
+            }
+        }
+        let png = image::load_from_memory(
+            &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        assert!(
+            png.pixels()
+                .all(|pixel| !(pixel[0] > 240 && pixel[1] < 110 && pixel[2] < 110)),
+            "unexpected red image-card outlines in dark={dark}"
+        );
+        assert!(
+            export_bytes_with_consent(&wb, Format::Pdf, &options, true)
+                .unwrap()
+                .starts_with(b"%PDF")
+        );
+    }
+}
+
+#[test]
+fn transparent_image_cards_and_native_image_cards_keep_their_svg_and_png_appearance() {
+    let mut sheet = Sheet::new("Image", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "",
+            Vec2::ZERO,
+            Card::new(CardKind::Image, Vec2::new(180.0, 130.0)),
+        )
+        .unwrap();
+    let source = image::RgbImage::from_pixel(8, 8, image::Rgb([18, 196, 120]));
+    let mut encoded = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(source)
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .unwrap();
+    let resource = Resource::new("image.png", "image/png", encoded.into_inner()).unwrap();
+    thinoda_core::images::set_image(&mut sheet, id, Some((resource, Vec2::new(80.0, 80.0))))
+        .unwrap();
+    let wb = Workbook::new(sheet);
+
+    for dark in [false, true] {
+        for shape in [TopicShape::Ellipse, TopicShape::Underline] {
+            for color in [
+                None,
+                Some(Color::rgb(10, 20, 30)),
+                Some(Color::rgba(10, 20, 30, 128)),
+                Some(Color::rgba(10, 20, 30, 0)),
+            ] {
+                let mut wb = wb.clone();
+                let topic = wb.active_mut().topic_mut(id).unwrap();
+                topic.card.as_mut().unwrap().color = color;
+                topic.style.shape = Some(shape);
+                topic.style.border_color = Some(Color::rgb(251, 10, 20));
+                topic.style.border_width = Some(4.0);
+                let before = wb.clone();
+                let options = ExportOptions {
+                    dark,
+                    ..Default::default()
+                };
+                let svg = String::from_utf8(
+                    export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap(),
+                )
+                .unwrap();
+                let png = image::load_from_memory(
+                    &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+                )
+                .unwrap()
+                .to_rgb8();
+                let red_pixels = png
+                    .pixels()
+                    .filter(|pixel| pixel[0] > 240 && pixel[1] < 110 && pixel[2] < 110)
+                    .count();
+                if color.is_some_and(|color| color.a == 0) {
+                    assert!(svg.contains("fill=\"#0A141E00\" stroke=\"none\""));
+                    assert_eq!(red_pixels, 0, "dark={dark}, shape={shape:?}");
+                } else {
+                    assert!(!svg.contains("class=\"card\""));
+                    assert!(svg.contains("stroke=\"#FB0A14\""), "{svg}");
+                    assert!(red_pixels > 0, "dark={dark}, shape={shape:?}");
+                }
+                assert!(png.pixels().any(|pixel| pixel.0 == [18, 196, 120]));
+                assert_eq!(wb, before);
+            }
+        }
+    }
 }
 
 #[test]

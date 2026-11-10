@@ -840,7 +840,7 @@ fn svg_layout_with_fonts(
                 }
             ),
         };
-        if let Some(card) = card.filter(|card| card.kind != thinoda_core::board::CardKind::Image) {
+        if let Some(card) = card.filter(|card| board::export_card_background(card)) {
             let (fill, stroke) = match (card.kind, card_fill) {
                 (thinoda_core::board::CardKind::Sticky, Some(fill)) => {
                     (col(fill), col(board::card_edge(fill)))

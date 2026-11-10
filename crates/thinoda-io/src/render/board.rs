@@ -419,6 +419,11 @@ pub(crate) fn midpoint(points: &[Vec2]) -> Vec2 {
     thinoda_core::board::polyline_midpoint(points).unwrap_or(Vec2::ZERO)
 }
 
+/// Preserve existing image-card exports, except when their background is fully transparent.
+pub(crate) fn export_card_background(card: &Card) -> bool {
+    card.kind != CardKind::Image || card.color.is_some_and(|color| color.a == 0)
+}
+
 /// Match the canvas defaults for sticky and text cards in each color mode.
 pub(crate) fn card_fill(card: &Card, dark: bool) -> Option<Color> {
     match card.kind {
