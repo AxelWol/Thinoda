@@ -57,6 +57,38 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("sync-lockfile:", source)
         self.assertNotIn("git push", source)
 
+    def test_release_updates_fuzz_lock_without_bumping_the_fuzz_package(self):
+        config = json.loads((ROOT / "release-please-config.json").read_text())
+        # The TOML updater currently wraps scalar values; also accept plain names.
+        self.assertIn({
+            "type": "toml",
+            "path": "fuzz/Cargo.lock",
+            "jsonpath": "$.package[?(!@.source && (@.name.value || @.name) != 'thinoda-io-fuzz')].version",
+        }, config["packages"]["."]["extra-files"])
+
+        manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+        workspace_names = {
+            tomllib.loads((ROOT / member / "Cargo.toml").read_text())["package"]["name"]
+            for member in manifest["workspace"]["members"]
+        }
+        fuzz_manifest = tomllib.loads((ROOT / "fuzz" / "Cargo.toml").read_text())
+        fuzz_name = fuzz_manifest["package"]["name"]
+        self.assertEqual(fuzz_name, "thinoda-io-fuzz")
+        self.assertNotIn(fuzz_name, workspace_names)
+
+        lock = tomllib.loads((ROOT / "fuzz" / "Cargo.lock").read_text())
+        local_packages = [package for package in lock["package"] if not package.get("source")]
+        fuzz_packages = [package for package in local_packages if package["name"] == fuzz_name]
+        workspace_packages = [package for package in local_packages if package["name"] != fuzz_name]
+        self.assertEqual(len(fuzz_packages), 1)
+        self.assertEqual(fuzz_packages[0]["version"], fuzz_manifest["package"]["version"])
+        self.assertTrue(workspace_packages)
+        self.assertLessEqual({package["name"] for package in workspace_packages}, workspace_names)
+        self.assertEqual(
+            {package["version"] for package in workspace_packages},
+            {manifest["workspace"]["package"]["version"]},
+        )
+
     def test_native_ci_does_not_silently_repair_a_stale_lockfile(self):
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         native = job(source, "test")

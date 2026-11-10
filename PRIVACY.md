@@ -1,4 +1,4 @@
-_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-06 09:59:37 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Privacy Policy
 

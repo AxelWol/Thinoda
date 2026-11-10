@@ -29,6 +29,11 @@
           "type": "toml",
           "path": "Cargo.lock",
           "jsonpath": "$.package[?(!@.source)].version"
+        },
+        {
+          "type": "toml",
+          "path": "fuzz/Cargo.lock",
+          "jsonpath": "$.package[?(!@.source && (@.name.value || @.name) != 'thinoda-io-fuzz')].version"
         }
       ]
     }
