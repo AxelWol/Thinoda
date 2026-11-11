@@ -803,6 +803,53 @@ fn double_ellipse_uses_absolute_insets_for_outline_and_label() {
 }
 
 #[test]
+fn final_state_uses_drawio_inner_inset_and_separate_label_bounds() {
+    for (width, height, inset) in [
+        (100.0, 60.0, 4.0),
+        (30.0, 30.0, 4.0),
+        (10.0, 5.0, 1.0),
+        (1.0, 50.0, 0.2),
+    ] {
+        let frame = rect(10.0, 20.0, width, height);
+        for stroke in [1.0, 6.0] {
+            let geometry =
+                shape_geometry_with_style(ShapeKind::FinalState, frame, 0.0, None, stroke, None);
+            let bounds = points_bounds(&geometry.details[0]).unwrap();
+            let expected = rect(
+                frame.min.x + inset,
+                frame.min.y + inset,
+                width - 2.0 * inset,
+                height - 2.0 * inset,
+            );
+            assert!((bounds.min - expected.min).length() < 0.001);
+            assert!((bounds.size - expected.size).length() < 0.001);
+            assert_eq!(geometry.details[0].first(), geometry.details[0].last());
+            let rotated =
+                shape_geometry_with_style(ShapeKind::FinalState, frame, 90.0, None, stroke, None);
+            for (original, actual) in geometry.details[0].iter().zip(&rotated.details[0]) {
+                assert!(
+                    (*actual - rotate_around(*original, frame.center(), 90.0)).length() < 0.001
+                );
+            }
+            assert_eq!(
+                shape_label_rect_with_style(ShapeKind::FinalState, frame, stroke, None),
+                shape_label_rect_with_style(ShapeKind::DoubleEllipse, frame, stroke, None)
+            );
+        }
+    }
+    let collapsed = rect(0.0, 0.0, 0.0, 30.0);
+    assert!(
+        shape_geometry(ShapeKind::FinalState, collapsed, 0.0)
+            .details
+            .is_empty()
+    );
+    let object = CanvasObject::shape(ShapeKind::FinalState, rect(0.0, 0.0, 30.0, 30.0));
+    assert_eq!(object.style.fill, Some(Color::BLACK));
+    assert_eq!(object.style.stroke, Some(Color::BLACK));
+    validate_object(&object).unwrap();
+}
+
+#[test]
 fn double_ellipse_inset_is_optional_and_validated() {
     let mut object = CanvasObject::shape(ShapeKind::DoubleEllipse, rect(0.0, 0.0, 100.0, 60.0));
     assert!(
@@ -834,6 +881,7 @@ fn adjustable_rectangle_rounding_is_absolute_and_validated() {
     let rounding = ShapeRounding {
         radius: 10.0,
         stencil: DrawioRectangleStencil::Forms,
+        ..Default::default()
     };
     let outline = shape_geometry_with_rounding(ShapeKind::Rectangle, frame, 0.0, Some(rounding));
     assert!((outline.outline[0] - Vec2::new(100.0, 20.0)).length() < 0.001);
@@ -887,6 +935,60 @@ fn adjustable_rectangle_rounding_is_absolute_and_validated() {
 }
 
 #[test]
+fn drawio_standard_rounding_tracks_relative_and_absolute_arc_sizes() {
+    let frame = rect(0.0, 0.0, 600.0, 40.0);
+    let relative = ShapeRounding {
+        radius: 15.0,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::Relative,
+        rounded_perimeter: true,
+    };
+    let first = |frame, rounding| {
+        shape_geometry_with_rounding(ShapeKind::RoundedRectangle, frame, 0.0, Some(rounding))
+            .outline[0]
+    };
+    assert!((first(frame, relative) - Vec2::new(594.0, 0.0)).length() < 0.001);
+    let taller = rect(0.0, 0.0, 600.0, 80.0);
+    assert!((first(taller, relative) - Vec2::new(588.0, 0.0)).length() < 0.001);
+
+    let absolute = ShapeRounding {
+        radius: 21.5,
+        mode: ShapeRoundingMode::AbsoluteArc,
+        ..relative
+    };
+    for frame in [frame, taller] {
+        assert!((first(frame, absolute) - Vec2::new(589.25, 0.0)).length() < 0.001);
+    }
+    let wide = rect(0.0, 0.0, 100.0, 60.0);
+    let large_absolute = ShapeRounding {
+        radius: 100.0,
+        ..absolute
+    };
+    assert!((first(wide, large_absolute) - Vec2::new(70.0, 0.0)).length() < 0.001);
+    let large_relative = ShapeRounding {
+        radius: 100.0,
+        ..relative
+    };
+    assert!((first(wide, large_relative) - Vec2::new(50.0, 0.0)).length() < 0.001);
+
+    let mut object = CanvasObject::shape(ShapeKind::RoundedRectangle, frame);
+    object.rounding = Some(relative);
+    assert!(validate_object(&object).is_ok());
+    object.rounding = Some(absolute);
+    assert!(validate_object(&object).is_ok());
+    object.rounding = Some(ShapeRounding {
+        mode: ShapeRoundingMode::Stencil,
+        ..relative
+    });
+    assert!(validate_object(&object).is_err());
+    object.rounding = Some(ShapeRounding {
+        stencil: DrawioRectangleStencil::Mockup,
+        ..relative
+    });
+    assert!(validate_object(&object).is_err());
+}
+
+#[test]
 fn rectangle_sides_are_optional_and_restricted_to_square_rectangles() {
     let frame = rect(10.0, 20.0, 100.0, 60.0);
     let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
@@ -921,6 +1023,7 @@ fn rectangle_sides_are_optional_and_restricted_to_square_rectangles() {
     object.rounding = Some(ShapeRounding {
         radius: 0.0,
         stencil: DrawioRectangleStencil::Mockup,
+        ..Default::default()
     });
     assert!(validate_object(&object).is_err());
     object.rounding = None;

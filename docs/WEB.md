@@ -120,7 +120,7 @@ directly to a fillable draw.io marker. Unsupported marker shapes, out-of-range s
 and unsupported fill values trigger a formatting warning. Supported fixed
 connector points, offsets and perimeter settings are retained on attached
 shapes and topics. Hover a rectangle, rounded rectangle, ellipse, double ellipse,
-diamond or rectangular topic to reveal connection crosses; drag from or drop
+final state, diamond or rectangular topic to reveal connection crosses; drag from or drop
 onto a cross to fix the attachment. Hold Shift while connecting to fix an
 arbitrary point, Alt to leave a free point without grid snapping, or Alt+Shift
 to attach without fixing. Enter or Space toggles a focused endpoint; Home/End
@@ -187,6 +187,14 @@ Import warns when a connected double ellipse uses a different perimeter.
 Previously saved fixed perimeter attachments on double ellipses may move
 slightly because their projection now uses the analytic ellipse rather than
 its flattened outline.
+
+Standalone UML final states are editable shapes with a filled inner ellipse
+and an unfilled outer ring. The shape picker includes them, and connections
+attach to the outer ellipse. Newly placed symbols choose black or white for
+contrast against the current background, but keep that explicit color if the
+theme changes. Import reports unsupported dynamic color links and external
+label positions; draw.io export and copying warn that appearance can differ.
+Preserve the original diagram for features that cannot round-trip.
 
 Flowchart annotation brackets import as editable open-sided rectangles with a
 formatting warning. Their original stencil identity and exact appearance are
@@ -281,15 +289,28 @@ apparently successful empty migration. Settings and recovery keys are untouched.
 
 For each document it writes with `ExpectedRevision::Missing` and rereads the
 durable bytes. Equal existing bytes need no write. Different durable bytes win,
-regardless of legacy mtime; the legacy content is preserved and verified under
-`/Documents/.thinoda-legacy/<path hash>/<content hash>/<original name>`.
-The migration report lists original and preserved IDs so an app can offer both
-versions. Repeated migration reuses and verifies that same copy. Concurrent
+regardless of legacy mtime. If a durable file conflicts with a legacy directory
+or vice versa, neither is overwritten. The legacy content is preserved and
+verified under `/Documents/.thinoda-legacy/<path hash>/<content hash>/<original
+name>`. Each verified copy carries its original ID in durable metadata, so its
+entry remains discoverable even if a legacy record later changes. Repeated
+migration reuses and verifies the same copy. Concurrent
 conditional-write conflicts are re-evaluated with bounded retries; continuous
 changes fail safely. Changes to the localStorage snapshot during migration
 also fail and require retry. **No legacy key is removed, even after verification.**
 This retention supports rollback while older tabs or the old synchronous app
 can still write VFS documents. It is not continuous synchronization.
+
+When copies exist, a sticky notice points to **File > Recovered browser
+documents**, which lists every preserved version by its original path and a
+content identifier. The menu remains available if the notice is dismissed.
+Opening one creates an unsaved editable document; saving it
+chooses a separate destination and does not change the preserved source. During
+migration, a conflicting or unverifiable recovery-copy destination blocks
+startup rather than overwriting either document. Keep the legacy browser data
+until the recovered files have been checked and backed up. The notice is also
+announced through a browser live region; the editor's broader browser
+accessibility bridge remains an open issue.
 
 Wiring status:
 

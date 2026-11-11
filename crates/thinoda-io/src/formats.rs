@@ -162,9 +162,24 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "fixed connector ports require native format version 22".into(),
             ));
         }
+        if version < 23 && book.has_drawio_rectangle_rounding() {
+            return Err(IoError::Invalid(
+                "standard draw.io rectangle rounding requires native format version 23".into(),
+            ));
+        }
+        if version < 24 && book.has_final_states() {
+            return Err(IoError::Invalid(
+                "final states require native format version 24".into(),
+            ));
+        }
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_final_states() {
+            return Err(IoError::Invalid(
+                "final states require a versioned native archive".into(),
+            ));
+        }
         if book.has_fixed_connector_ports() {
             return Err(IoError::Invalid(
                 "fixed connector ports require a versioned native archive".into(),

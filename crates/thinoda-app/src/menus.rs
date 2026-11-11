@@ -118,8 +118,27 @@ impl ThinodaApp {
             submenu("New from Template…", templates),
             item("Open…", Cmd::Open),
             submenu("Open Recent", recent),
-            MenuEntry::Separator,
         ];
+        if !self.browser_migration_conflicts.is_empty() {
+            let recovered = self
+                .browser_migration_conflicts
+                .iter()
+                .map(|conflict| {
+                    let path = std::path::PathBuf::from(&conflict.preserved);
+                    let version = path
+                        .parent()
+                        .and_then(std::path::Path::file_name)
+                        .map(|name| name.to_string_lossy().chars().take(12).collect::<String>())
+                        .unwrap_or_default();
+                    MenuEntry::Command {
+                        label: format!("{} [{version}]", conflict.original),
+                        command: Cmd::OpenPath(path),
+                    }
+                })
+                .collect();
+            file.push(submenu("Recovered browser documents", recovered));
+        }
+        file.push(MenuEntry::Separator);
         file.extend(items([
             ("Save", Cmd::Save),
             ("Save As…", Cmd::SaveAs),
@@ -293,6 +312,10 @@ impl ThinodaApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{doc::OpenDoc, files::MigrationReport};
+    use egui::{Role, vec2};
+    use egui_kittest::{Harness, kittest::Queryable};
+    use thinoda_core::Workbook;
 
     #[test]
     fn main_board_menu_keeps_its_tool_commands() {
@@ -302,5 +325,145 @@ mod tests {
                 .any(|(command, _)| matches!(command, Cmd::BoardTool(_))),
             "the first-level Board menu keeps its existing tool commands"
         );
+    }
+
+    #[test]
+    fn browser_recovery_menu_retains_all_copies_after_the_notice_expires() {
+        let mut app = ThinodaApp::headless();
+        let conflicts: Vec<_> = (0..24)
+            .map(|index| crate::files::MigrationConflict {
+                original: format!("/Documents/folder-{index}/document.thinoda"),
+                preserved: format!("/Documents/.thinoda-legacy/path/{index:064x}/document.thinoda"),
+            })
+            .collect();
+        app.apply_browser_migration(MigrationReport {
+            backend: "indexeddb".into(),
+            verified: conflicts.len(),
+            conflicts: conflicts.clone(),
+        });
+        app.toasts.tick(60.0);
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains("Recovered browser documents"))
+        );
+
+        let file = app.file_menu_entries();
+        let entries = file
+            .iter()
+            .find_map(|entry| match entry {
+                MenuEntry::Submenu { label, entries } if label == "Recovered browser documents" => {
+                    Some(entries)
+                }
+                _ => None,
+            })
+            .expect("recovery submenu");
+        assert_eq!(entries.len(), conflicts.len());
+        for (entry, conflict) in entries.iter().zip(&conflicts) {
+            assert!(matches!(
+                entry,
+                MenuEntry::Command { label, command: Cmd::OpenPath(path) }
+                    if label.starts_with(&conflict.original)
+                        && path == std::path::Path::new(&conflict.preserved)
+                        && app.command_available(&Cmd::OpenPath(path.clone()))
+            ));
+        }
+    }
+
+    #[test]
+    fn browser_recovery_opens_as_an_unsaved_copy_even_after_import_confirmation() {
+        let mut app = ThinodaApp::headless();
+        let path =
+            std::path::PathBuf::from("/Documents/.thinoda-legacy/path/content/recovered.thinoda");
+        app.apply_browser_migration(MigrationReport {
+            backend: "opfs".into(),
+            verified: 1,
+            conflicts: vec![crate::files::MigrationConflict {
+                original: "/Documents/recovered.thinoda".into(),
+                preserved: path.to_string_lossy().into_owned(),
+            }],
+        });
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.path = Some(path.clone());
+        app.add_opened(
+            &path,
+            Ok((doc, vec![thinoda_io::ImportWarning::Formatting])),
+        );
+        app.resolve_import(true);
+
+        let doc = app.doc().expect("opened recovery copy");
+        assert!(doc.is_dirty());
+        assert!(doc.path.is_none());
+        assert_eq!(doc.import_source.as_deref(), Some(path.as_path()));
+        assert!(doc.ensure_export_destination(&path).is_err());
+        assert!(
+            !app.settings
+                .recent_files
+                .iter()
+                .any(|recent| recent.path == path)
+        );
+    }
+
+    #[test]
+    fn browser_recovery_menu_scrolls_to_and_opens_the_last_copy() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("recovered.thinoda");
+        OpenDoc::new(Workbook::default())
+            .save_to(&path, false)
+            .unwrap();
+        let conflicts = (0..24)
+            .map(|index| crate::files::MigrationConflict {
+                original: format!("/Documents/folder-{index}/document.thinoda"),
+                preserved: path.to_string_lossy().into_owned(),
+            })
+            .collect();
+        let mut app = ThinodaApp::headless();
+        app.apply_browser_migration(MigrationReport {
+            backend: "indexeddb".into(),
+            verified: 24,
+            conflicts,
+        });
+        let version: String = path
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .chars()
+            .take(12)
+            .collect();
+        let last = format!("/Documents/folder-23/document.thinoda [{version}]");
+        let mut harness = Harness::builder()
+            .with_size(vec2(900.0, 500.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(5);
+        harness.get_by_label("Main Menu").click();
+        harness.run_steps(3);
+        harness.get_by_role_and_label(Role::Button, "File").click();
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(Role::Button, "Recovered browser documents")
+            .click();
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(Role::Button, &last)
+            .scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_role_and_label(Role::Button, &last).click();
+        harness.run_steps(5);
+        let doc = harness.state().doc().expect("opened recovery copy");
+        assert!(doc.is_dirty());
+        assert!(doc.path.is_none());
+        assert_eq!(doc.import_source.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn browser_recovery_messages_are_localized() {
+        for key in [
+            "Recovered browser documents",
+            "Preserved browser documents are available in File > Recovered browser documents.",
+        ] {
+            assert!(crate::i18n::has_translations(key), "{key}");
+        }
     }
 }

@@ -228,7 +228,7 @@ fn fixed_connector_ports_match_drawio_rectangle_ellipse_and_rhombus_perimeters()
 }
 
 #[test]
-fn double_ellipse_fixed_ports_follow_the_same_perimeter_as_ellipses() {
+fn double_ellipse_and_final_state_fixed_ports_follow_ellipse_perimeters() {
     let positions = [
         (Vec2::new(0.0, 0.0), Vec2::ZERO),
         (Vec2::new(1.0, 1.0), Vec2::ZERO),
@@ -253,16 +253,18 @@ fn double_ellipse_fixed_ports_follow_the_same_perimeter_as_ellipses() {
                         Some((ShapeKind::Ellipse, None)),
                         port,
                     );
-                    let double = fixed_connector_port_position(
-                        bounds,
-                        rotation,
-                        Some((ShapeKind::DoubleEllipse, None)),
-                        port,
-                    );
-                    assert!(
-                        (ellipse - double).length() < 0.001,
-                        "{width}x{height}, {rotation}, {port:?}: {double:?} != {ellipse:?}"
-                    );
+                    for kind in [ShapeKind::DoubleEllipse, ShapeKind::FinalState] {
+                        let actual = fixed_connector_port_position(
+                            bounds,
+                            rotation,
+                            Some((kind, None)),
+                            port,
+                        );
+                        assert!(
+                            (ellipse - actual).length() < 0.001,
+                            "{kind:?}, {width}x{height}, {rotation}, {port:?}: {actual:?} != {ellipse:?}"
+                        );
+                    }
                 }
             }
         }
@@ -1812,6 +1814,7 @@ fn adjustable_corners_drive_scene_hits_and_connector_clipping() {
     let rounding = ShapeRounding {
         radius: 40.0,
         stencil: DrawioRectangleStencil::Misc,
+        ..Default::default()
     };
     let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect(0.0, 0.0, 100.0, 100.0));
     object.rounding = Some(rounding);
@@ -1856,6 +1859,162 @@ fn adjustable_corners_drive_scene_hits_and_connector_clipping() {
         )
         .outline
     );
+}
+
+#[test]
+fn drawio_rounded_perimeter_matches_floating_and_fixed_ports() {
+    use crate::board::{DrawioRectangleStencil, ShapeRounding, ShapeRoundingMode};
+
+    let frame = rect(20.0, 120.0, 100.0, 60.0);
+    let rounding = ShapeRounding {
+        radius: 30.0,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::Relative,
+        rounded_perimeter: true,
+    };
+    let target = EndTarget {
+        rect: frame,
+        rotation: 0.0,
+        shape: Some((ShapeKind::RoundedRectangle, Some(rounding))),
+    };
+    let toward = Vec2::new(220.0, 20.0);
+    assert!((target.clip(toward) - Vec2::new(104.4259, 120.1642)).length() < 0.001);
+    let port = ConnectorPort {
+        position: Vec2::new(1.0, 0.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    };
+    let fixed = target.with_port(Some(port)).rect.center();
+    assert!((fixed - Vec2::new(114.7279, 125.2721)).length() < 0.001);
+
+    let square_perimeter = EndTarget {
+        shape: Some((
+            ShapeKind::RoundedRectangle,
+            Some(ShapeRounding {
+                rounded_perimeter: false,
+                ..rounding
+            }),
+        )),
+        ..target
+    };
+    assert!((square_perimeter.clip(toward) - Vec2::new(104.6154, 120.0)).length() < 0.001);
+    assert_eq!(
+        square_perimeter.with_port(Some(port)).rect.center(),
+        Vec2::new(120.0, 120.0)
+    );
+
+    let rotated = EndTarget {
+        rotation: 30.0,
+        ..target
+    };
+    let rotated_toward = rotate_around(toward, frame.center(), 30.0);
+    assert!(
+        (rotated.clip(rotated_toward) - rotate_around(target.clip(toward), frame.center(), 30.0))
+            .length()
+            < 0.001
+    );
+    assert!(
+        (rotated.with_port(Some(port)).rect.center() - rotate_around(fixed, frame.center(), 30.0))
+            .length()
+            < 0.001
+    );
+    assert_eq!(
+        target
+            .with_port(Some(ConnectorPort {
+                perimeter: false,
+                ..port
+            }))
+            .rect
+            .center(),
+        Vec2::new(120.0, 120.0)
+    );
+}
+
+#[test]
+fn drawio_standard_rectangle_clips_very_thin_frames() {
+    use crate::board::{DrawioRectangleStencil, ShapeRounding, ShapeRoundingMode};
+
+    let frame = rect(0.0, 0.0, 0.000_001, 100.0);
+    for rounded_perimeter in [false, true] {
+        let target = EndTarget {
+            rect: frame,
+            rotation: 0.0,
+            shape: Some((
+                ShapeKind::RoundedRectangle,
+                Some(ShapeRounding {
+                    radius: 15.0,
+                    stencil: DrawioRectangleStencil::Standard,
+                    mode: ShapeRoundingMode::Relative,
+                    rounded_perimeter,
+                }),
+            )),
+        };
+        let endpoint = target.clip(Vec2::new(0.000_001, 51.0));
+        assert!(
+            (endpoint.x - 0.000_001).abs() < 0.000_000_01 && (endpoint.y - 51.0).abs() < 0.001,
+            "{endpoint:?}"
+        );
+        assert_eq!(target.clip(frame.center()), Vec2::new(0.000_001, 50.0));
+    }
+}
+
+#[test]
+fn drawio_rounded_perimeter_is_stable_for_wide_frames() {
+    use crate::board::{DrawioRectangleStencil, ShapeRounding, ShapeRoundingMode};
+
+    let target = EndTarget {
+        rect: rect(0.0, 0.0, 1_000_000.0, 40.0),
+        rotation: 0.0,
+        shape: Some((
+            ShapeKind::RoundedRectangle,
+            Some(ShapeRounding {
+                radius: 15.0,
+                stencil: DrawioRectangleStencil::Standard,
+                mode: ShapeRoundingMode::Relative,
+                rounded_perimeter: true,
+            }),
+        )),
+    };
+    let endpoint = target.clip(Vec2::new(1_000_000.0, 2.0));
+    assert!(
+        (f64::from(endpoint.x) - 999_998.472_185).abs() < 0.1
+            && (endpoint.y - 2.000_055).abs() < 0.001,
+        "{endpoint:?}"
+    );
+}
+
+#[test]
+fn drawio_fixed_rounded_port_handles_subpixel_corner_radii() {
+    use crate::board::{DrawioRectangleStencil, ShapeRounding, ShapeRoundingMode};
+
+    let target = EndTarget {
+        rect: rect(0.0, 0.0, 1.0e-22, 1.0e-22),
+        rotation: 0.0,
+        shape: Some((
+            ShapeKind::RoundedRectangle,
+            Some(ShapeRounding {
+                radius: 15.0,
+                stencil: DrawioRectangleStencil::Standard,
+                mode: ShapeRoundingMode::Relative,
+                rounded_perimeter: true,
+            }),
+        )),
+    };
+    let endpoint = target
+        .with_port(Some(ConnectorPort {
+            position: Vec2::new(1.0, 0.0),
+            offset: Vec2::ZERO,
+            perimeter: true,
+        }))
+        .rect
+        .center();
+    let radius = 1.5e-23;
+    let expected = Vec2::new(
+        1.0e-22 - radius + radius / 2.0_f32.sqrt(),
+        radius - radius / 2.0_f32.sqrt(),
+    );
+    assert!((endpoint.x - expected.x).abs() < 1.0e-28, "{endpoint:?}");
+    assert!((endpoint.y - expected.y).abs() < 1.0e-28, "{endpoint:?}");
 }
 
 #[test]

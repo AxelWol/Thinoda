@@ -8,8 +8,8 @@ use crate::board::{
     BoardMember, CanvasGroupId, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_OBJECTS,
     SheetRootMode,
 };
-use crate::geometry::Vec2;
-use crate::layout::Layout;
+use crate::geometry::{Rect, Vec2};
+use crate::layout::{ApproxMeasure, Layout, layout_sheet};
 use crate::model::{Sheet, Subtree, Topic, TopicId, valid_position};
 use crate::scene::{SceneGeometry, SceneId, build_scene, topic_anchor_rect};
 use crate::schedule::Weekday;
@@ -32,6 +32,8 @@ const ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-12\n";
 const RECTANGLE_SIDES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-13\n";
 const DOUBLE_ELLIPSE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-14\n";
 const FIXED_PORT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-15\n";
+const DRAWIO_ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-16\n";
+const FINAL_STATE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-17\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -50,7 +52,11 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_fixed_connector_ports() {
+        if self.fragment.has_final_states() {
+            FINAL_STATE_BOARD_PREFIX
+        } else if self.fragment.has_drawio_rectangle_rounding() {
+            DRAWIO_ROUNDING_BOARD_PREFIX
+        } else if self.fragment.has_fixed_connector_ports() {
             FIXED_PORT_BOARD_PREFIX
         } else if self.fragment.has_double_ellipses() {
             DOUBLE_ELLIPSE_BOARD_PREFIX
@@ -101,6 +107,22 @@ impl BoardClipboardPayload {
     /// Source objects after group expansion, in their original paint order.
     pub fn source_object_ids(&self) -> impl Iterator<Item = CanvasObjectId> + '_ {
         self.fragment.canvas.objects.iter().map(|object| object.id)
+    }
+
+    /// Bounds of the copied content, measured with the approximate layout.
+    ///
+    /// Calculate these from the fragment rather than its source: source-only
+    /// frames and clipping are not copied. The payload must be validated first.
+    /// Returns `None` if the fragment has no measurable scene items; a valid
+    /// clipboard payload does not necessarily have measurable bounds.
+    pub fn content_bounds(&self) -> Option<Rect> {
+        let layout = layout_sheet(&self.fragment, &ApproxMeasure, false);
+        build_scene(&self.fragment, &layout)
+            .items
+            .into_iter()
+            .filter(|item| !matches!(item.id, SceneId::Topic(id) if self.fragment.is_anchor(id)))
+            .filter_map(|item| item.visible_bounds())
+            .reduce(|a, b| a.union(&b))
     }
 
     /// Validates the current payload, including any changes to its public text.
@@ -261,9 +283,19 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(FIXED_PORT_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-15\r\n"))
-        .map(|json| (15, json))
+        .strip_prefix(FINAL_STATE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-17\r\n"))
+        .map(|json| (17, json))
+        .or_else(|| {
+            text.strip_prefix(DRAWIO_ROUNDING_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-16\r\n"))
+                .map(|json| (16, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(FIXED_PORT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-15\r\n"))
+                .map(|json| (15, json))
+        })
         .or_else(|| {
             text.strip_prefix(DOUBLE_ELLIPSE_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-14\r\n"))
@@ -372,6 +404,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     }
     if version < 15 && payload.fragment.has_fixed_connector_ports() {
         return Err("fixed connector ports require board clipboard version 15".into());
+    }
+    if version < 16 && payload.fragment.has_drawio_rectangle_rounding() {
+        return Err(
+            "standard draw.io rectangle rounding requires board clipboard version 16".into(),
+        );
+    }
+    if version < 17 && payload.fragment.has_final_states() {
+        return Err("final states require board clipboard version 17".into());
     }
     if version < 3 && payload.fragment.has_connector_waypoints() {
         return Err("connector waypoints require board clipboard version 3".into());

@@ -293,6 +293,15 @@ impl CanvasLayer {
         self.objects.iter().any(|object| object.rounding.is_some())
     }
 
+    /// Whether this layer needs standard draw.io rectangle rounding.
+    pub fn has_drawio_rectangle_rounding(&self) -> bool {
+        self.objects.iter().any(|object| {
+            object
+                .rounding
+                .is_some_and(|rounding| rounding.is_standard())
+        })
+    }
+
     /// Whether this layer needs partial-rectangle-aware persistence.
     pub fn has_rectangle_sides(&self) -> bool {
         self.objects
@@ -310,6 +319,19 @@ impl CanvasLayer {
                     ..
                 }
             ) || object.double_ellipse_margin.is_some()
+        })
+    }
+
+    /// Whether this layer needs final-state-aware persistence.
+    pub fn has_final_states(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(
+                object.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::FinalState,
+                    ..
+                }
+            )
         })
     }
 }
@@ -377,7 +399,7 @@ impl ObjectStyle {
     }
 }
 
-/// draw.io rounded-rectangle stencil identifiers with the same radius behavior.
+/// Supported draw.io rounded-rectangle identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DrawioRectangleStencil {
@@ -388,13 +410,66 @@ pub enum DrawioRectangleStencil {
     Graphics,
     Text,
     Ios,
+    Standard,
 }
 
-/// An absolute, integer corner radius and its draw.io stencil identity.
+/// The interpretation of the radius in a rounded draw.io rectangle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ShapeRoundingMode {
+    /// The absolute integer radius used by legacy mockup stencils.
+    #[default]
+    Stencil,
+    /// The percentage of the shorter side used by a standard rectangle.
+    Relative,
+    /// The diameter in drawing units used by a standard rectangle.
+    AbsoluteArc,
+}
+
+impl ShapeRoundingMode {
+    fn is_stencil(&self) -> bool {
+        *self == Self::Stencil
+    }
+}
+
+/// Rounded-rectangle parameters and their draw.io shape identity.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ShapeRounding {
+    /// A stencil radius or the standard rectangle's `arcSize`.
     pub radius: f32,
     pub stencil: DrawioRectangleStencil,
+    #[serde(default, skip_serializing_if = "ShapeRoundingMode::is_stencil")]
+    pub mode: ShapeRoundingMode,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rounded_perimeter: bool,
+}
+
+impl Default for ShapeRounding {
+    fn default() -> Self {
+        Self {
+            radius: 0.0,
+            stencil: DrawioRectangleStencil::Mockup,
+            mode: ShapeRoundingMode::Stencil,
+            rounded_perimeter: false,
+        }
+    }
+}
+
+impl ShapeRounding {
+    pub fn is_standard(self) -> bool {
+        self.stencil == DrawioRectangleStencil::Standard
+    }
+
+    /// Radius before any per-axis SVG clamping.
+    pub fn radius_for_rect(self, rect: Rect) -> f32 {
+        match self.mode {
+            ShapeRoundingMode::Stencil => self.radius,
+            ShapeRoundingMode::Relative => rect.size.x.min(rect.size.y) * self.radius / 100.0,
+            ShapeRoundingMode::AbsoluteArc => (self.radius / 2.0)
+                .min(rect.size.x / 2.0)
+                .min(rect.size.y / 2.0),
+        }
+    }
 }
 
 /// Visible outline sides of a draw.io partial rectangle, before rotation.
@@ -474,7 +549,7 @@ pub struct CanvasObject {
     pub alt_text: String,
     #[serde(default)]
     pub style: ObjectStyle,
-    /// Optional absolute corner radius for an imported draw.io rectangle.
+    /// Optional corner parameters for an imported draw.io rectangle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rounding: Option<ShapeRounding>,
     /// Optional per-side outline for an imported draw.io partial rectangle.
@@ -510,13 +585,18 @@ impl CanvasObject {
 
     /// Shape with the given label.
     pub fn shape(shape: ShapeKind, rect: Rect) -> Self {
-        Self::new(
+        let mut object = Self::new(
             CanvasObjectKind::Shape {
                 shape,
                 label: String::new(),
             },
             rect,
-        )
+        );
+        if shape == ShapeKind::FinalState {
+            object.style.fill = Some(Color::BLACK);
+            object.style.stroke = Some(Color::BLACK);
+        }
+        object
     }
 
     /// Ink stroke; the frame is the bounding box of the points.
@@ -570,6 +650,7 @@ pub enum ShapeKind {
     RoundedRectangle,
     Ellipse,
     DoubleEllipse,
+    FinalState,
     Diamond,
     Triangle,
     RightTriangle,
@@ -599,11 +680,12 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
-    pub const ALL: [ShapeKind; 30] = [
+    pub const ALL: [ShapeKind; 31] = [
         ShapeKind::Rectangle,
         ShapeKind::RoundedRectangle,
         ShapeKind::Ellipse,
         ShapeKind::DoubleEllipse,
+        ShapeKind::FinalState,
         ShapeKind::Diamond,
         ShapeKind::Triangle,
         ShapeKind::RightTriangle,
@@ -657,6 +739,7 @@ impl ShapeKind {
             ShapeKind::RoundedRectangle => "rounded-rectangle",
             ShapeKind::Ellipse => "ellipse",
             ShapeKind::DoubleEllipse => "double-ellipse",
+            ShapeKind::FinalState => "final-state",
             ShapeKind::Diamond => "diamond",
             ShapeKind::Triangle => "triangle",
             ShapeKind::RightTriangle => "right-triangle",
@@ -696,7 +779,7 @@ impl ShapeKind {
             }
             ShapeKind::RoundedRectangle => rounded_rect(0.15, 0.15),
             ShapeKind::Terminator => rounded_rect(0.5, 0.5),
-            ShapeKind::Ellipse | ShapeKind::DoubleEllipse => {
+            ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::FinalState => {
                 ellipse_arc(0.5, 0.5, 0.5, 0.5, 0.0, 360.0, 48)
             }
             ShapeKind::Diamond | ShapeKind::Decision => {
@@ -854,7 +937,7 @@ impl ShapeKind {
     pub fn unit_details(self) -> Vec<Vec<Vec2>> {
         let p = Vec2::new;
         match self {
-            ShapeKind::DoubleEllipse => {
+            ShapeKind::DoubleEllipse | ShapeKind::FinalState => {
                 let mut inner = ellipse_arc(0.5, 0.5, 0.4, 0.4, 0.0, 360.0, 48);
                 inner.push(inner[0]);
                 vec![inner]
@@ -872,7 +955,7 @@ impl ShapeKind {
     pub fn unit_label_rect(self) -> Rect {
         let (x0, y0, x1, y1) = match self {
             ShapeKind::Ellipse | ShapeKind::Cloud => (0.15, 0.15, 0.85, 0.85),
-            ShapeKind::DoubleEllipse => (0.05, 0.05, 0.95, 0.95),
+            ShapeKind::DoubleEllipse | ShapeKind::FinalState => (0.05, 0.05, 0.95, 0.95),
             ShapeKind::Diamond | ShapeKind::Decision => (0.25, 0.25, 0.75, 0.75),
             ShapeKind::Triangle => (0.25, 0.45, 0.75, 0.95),
             ShapeKind::RightTriangle => (0.05, 0.5, 0.5, 0.95),
@@ -948,7 +1031,7 @@ pub fn shape_geometry(kind: ShapeKind, rect: Rect, rotation: f32) -> ShapeGeomet
     shape_geometry_with_rounding(kind, rect, rotation, None)
 }
 
-/// Shape geometry with an optional absolute rectangle corner radius.
+/// Shape geometry with optional draw.io rectangle corner parameters.
 pub fn shape_geometry_with_rounding(
     kind: ShapeKind,
     rect: Rect,
@@ -980,15 +1063,20 @@ pub fn shape_geometry_with_style(
     };
     let outline = match rounding {
         Some(rounding) if rect.size.x > 0.0 && rect.size.y > 0.0 && rounding.radius > 0.0 => {
-            let rx = (rounding.radius / rect.size.x).min(0.5);
-            let ry = (rounding.radius / rect.size.y).min(0.5);
+            let radius = rounding.radius_for_rect(rect);
+            let rx = (radius / rect.size.x).min(0.5);
+            let ry = (radius / rect.size.y).min(0.5);
             rounded_rect(rx, ry)
         }
         Some(_) => ShapeKind::Rectangle.unit_outline(),
         None => kind.unit_outline(),
     };
-    let details = if kind == ShapeKind::DoubleEllipse {
-        let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
+    let details = if matches!(kind, ShapeKind::DoubleEllipse | ShapeKind::FinalState) {
+        let inset = if kind == ShapeKind::FinalState {
+            4.0_f32.min(rect.size.x / 5.0).min(rect.size.y / 5.0)
+        } else {
+            double_ellipse_inset(rect, stroke_width, double_ellipse_margin)
+        };
         let rx = rect.size.x / 2.0 - inset;
         let ry = rect.size.y / 2.0 - inset;
         if rx > 0.0 && ry > 0.0 {
@@ -1036,7 +1124,7 @@ pub fn shape_label_rect_with_style(
     stroke_width: f32,
     double_ellipse_margin: Option<f32>,
 ) -> Rect {
-    if kind == ShapeKind::DoubleEllipse {
+    if matches!(kind, ShapeKind::DoubleEllipse | ShapeKind::FinalState) {
         let inset = double_ellipse_inset(rect, stroke_width, double_ellipse_margin);
         return Rect::from_center_size(
             rect.center(),
@@ -1595,7 +1683,13 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             }
         ) || !rounding.radius.is_finite()
             || !(0.0..=MAX_BOARD_COORDINATE).contains(&rounding.radius)
-            || rounding.radius.fract() != 0.0)
+            || if rounding.is_standard() {
+                rounding.mode == ShapeRoundingMode::Stencil
+            } else {
+                rounding.mode != ShapeRoundingMode::Stencil
+                    || rounding.rounded_perimeter
+                    || rounding.radius.fract() != 0.0
+            })
     {
         return Err(format!("canvas object {id} has invalid shape rounding"));
     }

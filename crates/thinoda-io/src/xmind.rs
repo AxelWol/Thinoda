@@ -28,6 +28,8 @@ const ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-ROUNDING-1";
 const RECTANGLE_SIDES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RECTANGLE-SIDES-1";
 const DOUBLE_ELLIPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DOUBLE-ELLIPSE-1";
 const FIXED_PORT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FIXED-PORTS-1";
+const DRAWIO_ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-ROUNDING-1";
+const FINAL_STATE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FINAL-STATE-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -717,7 +719,17 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_fixed_connector_ports() {
+    if book.has_final_states() {
+        Ok(serde_json::to_string(&(
+            FINAL_STATE_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_drawio_rectangle_rounding() {
+        Ok(serde_json::to_string(&(
+            DRAWIO_ROUNDING_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_fixed_connector_ports() {
         Ok(serde_json::to_string(&(FIXED_PORT_SNAPSHOT_VERSION, book))?)
     } else if book.has_double_ellipses() {
         Ok(serde_json::to_string(&(
@@ -792,6 +804,8 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == RECTANGLE_SIDES_SNAPSHOT_VERSION
                 || version == DOUBLE_ELLIPSE_SNAPSHOT_VERSION
                 || version == FIXED_PORT_SNAPSHOT_VERSION
+                || version == DRAWIO_ROUNDING_SNAPSHOT_VERSION
+                || version == FINAL_STATE_SNAPSHOT_VERSION
         })
 }
 
@@ -814,12 +828,14 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
             object.get("rounding").is_some()
                 || object.get("rectangle_sides").is_some()
                 || object.get("double_ellipse_margin").is_some()
-                || object
-                    .get("kind")
-                    .and_then(|kind| kind.get("shape"))
-                    .and_then(|shape| shape.get("shape"))
-                    .and_then(Value::as_str)
-                    == Some("double-ellipse")
+                || matches!(
+                    object
+                        .get("kind")
+                        .and_then(|kind| kind.get("shape"))
+                        .and_then(|shape| shape.get("shape"))
+                        .and_then(Value::as_str),
+                    Some("double-ellipse" | "final-state")
+                )
                 || object
                     .get("kind")
                     .and_then(|kind| kind.get("connector"))
@@ -853,10 +869,33 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != RECTANGLE_SIDES_SNAPSHOT_VERSION
             && version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION
             && version != FIXED_PORT_SNAPSHOT_VERSION
+            && version != DRAWIO_ROUNDING_SNAPSHOT_VERSION
+            && version != FINAL_STATE_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != FINAL_STATE_SNAPSHOT_VERSION && workbook.has_final_states() {
+            return Err(IoError::NewerVersion(
+                "final states require a final-state-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if version == FINAL_STATE_SNAPSHOT_VERSION {
+            DRAWIO_ROUNDING_SNAPSHOT_VERSION
+        } else {
+            version.as_str()
+        };
+        if version != DRAWIO_ROUNDING_SNAPSHOT_VERSION && workbook.has_drawio_rectangle_rounding() {
+            return Err(IoError::NewerVersion(
+                "standard draw.io rectangle rounding requires a rounding-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let version = if version == DRAWIO_ROUNDING_SNAPSHOT_VERSION {
+            FIXED_PORT_SNAPSHOT_VERSION
+        } else {
+            version
+        };
         if version != FIXED_PORT_SNAPSHOT_VERSION && workbook.has_fixed_connector_ports() {
             return Err(IoError::NewerVersion(
                 "fixed connector ports require a port-aware private XMind snapshot".into(),
@@ -865,7 +904,7 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         let version = if version == FIXED_PORT_SNAPSHOT_VERSION {
             DOUBLE_ELLIPSE_SNAPSHOT_VERSION
         } else {
-            version.as_str()
+            version
         };
         if version != DOUBLE_ELLIPSE_SNAPSHOT_VERSION && workbook.has_double_ellipses() {
             return Err(IoError::NewerVersion(
@@ -991,6 +1030,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_final_states() {
+            return Err(IoError::NewerVersion(
+                "final states require a final-state-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_fixed_connector_ports() {
             return Err(IoError::NewerVersion(
                 "fixed connector ports require a port-aware private XMind snapshot".into(),
@@ -2364,6 +2408,7 @@ mod tests {
         shape.rounding = Some(ShapeRounding {
             radius: 17.0,
             stencil: DrawioRectangleStencil::Forms,
+            ..Default::default()
         });
         book.active_mut().add_canvas_object(shape).unwrap();
         let mut connector = CanvasConnector::new(
@@ -2410,6 +2455,84 @@ mod tests {
             *bytes = serde_json::to_vec(&metadata).unwrap();
             assert!(import(&make_archive(&entries)).is_err(), "{version}");
         }
+    }
+
+    #[test]
+    fn final_states_reject_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasObject, DrawioRectangleStencil, Rect, ShapeKind, ShapeRounding,
+            ShapeRoundingMode, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut rounded = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        rounded.rounding = Some(ShapeRounding {
+            radius: 17.5,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: ShapeRoundingMode::AbsoluteArc,
+            rounded_perimeter: true,
+        });
+        book.active_mut().add_canvas_object(rounded).unwrap();
+        book.active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::FinalState,
+                Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(30.0, 30.0)),
+            ))
+            .unwrap();
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(strict_private_snapshot(&snapshot));
+        assert!(snapshot_contains_versioned_fields(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        for version in [
+            WAYPOINT_SNAPSHOT_VERSION,
+            ROUNDING_SNAPSHOT_VERSION,
+            RECTANGLE_SIDES_SNAPSHOT_VERSION,
+            DOUBLE_ELLIPSE_SNAPSHOT_VERSION,
+            FIXED_PORT_SNAPSHOT_VERSION,
+            DRAWIO_ROUNDING_SNAPSHOT_VERSION,
+        ] {
+            let forged = serde_json::to_string(&(version, &book)).unwrap();
+            assert!(read_private_snapshot(&forged).is_err(), "{version}");
+        }
+        assert!(read_private_snapshot(&serde_json::to_string(&book).unwrap()).is_err());
+    }
+
+    #[test]
+    fn drawio_rounding_rejects_old_private_snapshots() {
+        use thinoda_core::{
+            CanvasObject, DrawioRectangleStencil, Rect, ShapeKind, ShapeRounding,
+            ShapeRoundingMode, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::RoundedRectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        shape.rounding = Some(ShapeRounding {
+            radius: 17.5,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: ShapeRoundingMode::AbsoluteArc,
+            rounded_perimeter: true,
+        });
+        book.active_mut().add_canvas_object(shape).unwrap();
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        for version in [
+            WAYPOINT_SNAPSHOT_VERSION,
+            ROUNDING_SNAPSHOT_VERSION,
+            RECTANGLE_SIDES_SNAPSHOT_VERSION,
+            DOUBLE_ELLIPSE_SNAPSHOT_VERSION,
+            FIXED_PORT_SNAPSHOT_VERSION,
+        ] {
+            let forged = serde_json::to_string(&(version, &book)).unwrap();
+            assert!(read_private_snapshot(&forged).is_err(), "{version}");
+        }
+        assert!(read_private_snapshot(&serde_json::to_string(&book).unwrap()).is_err());
     }
 
     #[test]
@@ -2555,6 +2678,7 @@ mod tests {
             rounded.rounding = Some(ShapeRounding {
                 radius: 15.0,
                 stencil: DrawioRectangleStencil::Forms,
+                ..Default::default()
             });
             book.active_mut().add_canvas_object(rounded).unwrap();
             let original = archive_entries(&export(&book).unwrap());

@@ -202,8 +202,9 @@ Rules (each backed by a test):
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds
   oval markers, v17 adds half-circle markers, v18 adds bar markers, v19 adds
   adjustable rectangle corners, v20 adds rectangle outline sides, v21 adds
-  double ellipses, and v22 adds fixed connector attachments. Every later field
-  or passthrough representation that a v22
+  double ellipses, v22 adds fixed connector attachments, v23 adds standard
+  draw.io rectangle rounding, and v24 adds final-state shapes. Every later field
+  or passthrough representation that a v24
   reader cannot preserve must require a higher native version, with
   `required_native_version` choosing the oldest version that can represent the
   complete workbook. Older builds must reject that version instead of silently
@@ -777,7 +778,8 @@ connections arrive in Phase 8 without changing the gestures).
   v15 covers diamond markers, v16 covers oval markers, v17 covers half-circle
   markers, v18 covers bar markers, v19 covers adjustable rectangle corners,
   v20 covers rectangle outline sides, v21 covers double ellipses, v22 covers
-  fixed connector attachments, and subsequent additions need a higher version.
+  fixed connector attachments, v23 covers standard draw.io rectangle rounding,
+  and v24 covers final-state shapes. Subsequent additions need a higher version.
   Reject forged older manifests and version the other persistence envelopes too;
   `validate.rs` checks cycles, depth, layers/ports/parents and ownership.
 - Undo accounting, `mask_canvas`, clipboard provenance envelope (3.1.1 rule 2) updated.
@@ -2832,6 +2834,351 @@ and WebKit against a production web build; the double-ellipse export journey
 explicitly confirms the existing appearance-loss dialog. Native and
 WebAssembly Clippy, formatting and a Windows build also passed. These checks do
 not establish pixel-level or assistive-technology parity.
+
+**Format-panel Stencils (partial Phases 5 and 9) — critique.** A separate
+Stencils tab offers searchable General, Basic, Flowchart and Arrows sections,
+imported draw.io XML libraries and a scratchpad for selected board content.
+Clicking inserts an undoable copy at the view center; a pointer drag drops it
+at the canvas position. The existing Shape library on the left is unchanged.
+Built-in and imported entries use the existing draw.io conversion path, with
+warnings when content may be simplified or omitted. Library preferences and
+scratchpad contents are stored separately from documents.
+
+**Ellipse picker previews — complete locally.** The built-in double-ellipse
+thumbnail uses a transparent fill and the same automatic, theme-aware stroke
+as the other built-in stencils. The left Shape library already drew transparent
+icons with a consistent stroke; regression coverage now checks both pickers
+in light and dark themes, including hover. The ordinary ellipse and circle
+have one outline. The separately named double ellipse retains its two outlines,
+which identify that distinct draw.io shape.
+
+**Rubber-duck critique.** The built-in double ellipse's source explicitly
+specifies a white fill and black stroke, so changing the source stencil would
+also change inserted diagrams. Only the built-in thumbnail's separate preview
+sheet is restyled; its insertion payload, existing diagrams, imported colored
+libraries and scratchpad entries retain their original appearance. Focused
+egui tests check the paths, stroke and insertion payload, and an isolated
+Chromium preview was inspected in both themes. Physical-device and
+screen-reader acceptance remain open.
+
+**Rubber-duck findings and remaining scope.** Damaged saved library data is
+not overwritten: saving is disabled and the user is told when changes cannot
+persist. Inputs are capped at 8 MiB and 1,000 entries per library; imported
+and scratchpad XML share a 32 MiB decoded-content limit, and each import batch
+or saved-state reload shares a 128 MiB input/expansion-work budget. Preview
+entries use an estimated 64 MiB cache budget, not a hard process-memory cap;
+one large preview can exceed that estimate. Generic and vendor stencil
+geometry, click-with-selection connection, library export, arrow-key grid
+navigation and real touch and screen-reader acceptance remain open. Targeted
+panel, canvas-drop, library-parser and persistence tests passed. A serialized
+workspace run passed 3,354 tests (16 ignored) before the final bounds and
+warning follow-up; afterwards the affected app and canvas library suites
+passed 1,474 tests (four ignored). Native Clippy for the affected crates and
+wasm Clippy including the web crate passed with warnings denied, and the
+Windows debug application built successfully. A later serialized workspace run
+passed 3,366 tests (16 ignored), but it overlapped subsequent edits and is not
+a stable final-tree run. A full workspace run against the final tree and full
+UI acceptance remain open. A manual Chromium smoke
+check covered the Stencils tab, searching, click and drag insertion, scratchpad
+and imported library persistence across reloads, and the unchanged left-side
+Shape library.
+This does not replace cross-browser, touch or screen-reader acceptance.
+
+**Stencil bounds and failure feedback — rubber-duck follow-up.** A copied
+draw.io container can be omitted while its child objects are retained. The
+source's clipped bounds then no longer describe the copied content: a
+partially clipped thumbnail could be cropped, and a fully clipped thumbnail
+could be blank and insert at an arbitrary offset. Clipboard conversion now
+measures the copied fragment's scene, excluding its hidden anchor; the same
+content bounds drive the stencil preview, click placement and drag placement.
+An entry without measurable content is marked unavailable and reports a
+warning when activated instead of inserting at a fallback offset. Tests cover
+partially and fully clipped source objects, actual click and drag placement,
+clipboard paste placement, undo, rotated cards, and the unavailable-entry
+feedback. A follow-up review found that a drag previously omitted the
+simplification warning shown by click insertion. Both paths now report it
+after a successful insertion; a canceled drag does not report an insertion.
+
+The frame itself is still omitted and reported as a conversion loss, so the
+copied child may become more visible than in the source; this is not frame or
+clipping preservation. Bounds use approximate layout, not a guarantee of
+pixel-identical text metrics across destination themes or platforms.
+
+**Shape label browser-test timing — critique.** The browser regression test
+still uses a real double-click, but no longer adds a 100 ms delay to each
+press: runner scheduling can stretch the release-to-release interval beyond
+egui's 300 ms limit. A deterministic canvas integration test separately
+exercises approximately 100 ms held presses. This stabilizes the test without
+changing application timing, and does not establish double-click accessibility
+on all physical devices.
+
+**Transparent embedded-image export (partial Phase 11) — critique.** The
+three embedded images in `board-visual-tutorial.drawio` imported as transparent
+image cards, but SVG-based exports and editable PowerPoint slides drew the
+topic's default border around them. Fully transparent image cards now use the
+borderless card background in those exporters, matching the canvas. Tests
+cover the supplied document, raster and SVG output, editable slides, rotation,
+both themes and non-black transparent colors. Existing default, opaque and
+partially transparent native image-card exports retain their previous behavior;
+their broader differences from canvas card painting remain out of scope.
+This fixes the extra borders, not font, connector or other source fidelity.
+
+**Waypoint dots and attachments (partial Phases 5 and 8) — critique.** The
+published draw.io waypoint renderer paints a filled dot whose diameter is
+`max(0, size - 2) + 2 * strokeWidth`, independent of the cell's bounds; the
+dot uses the stroke color and fill opacity without a separate outline.
+Thinoda now approximates that dot with an ellipse of the corresponding size.
+For `centerPerimeter`, floating and perimeter-constrained connector ends
+attach to its center. Absolute fixed constraints are mapped from the original
+cell bounds, including supported spacing, rotation, direction and flips.
+Tests cover the supplied circuit's four junctions, both connector ends, visual
+exports, movement and native/draw.io round trips. Oversized or invalid values
+remain bounded and are reported.
+
+This is not full waypoint support: the original waypoint identity and its
+larger interaction bounds are not retained, and save-back produces an
+ellipse. Other perimeter styles, unsupported or unrepresentable constraints,
+labels, precise device-pixel rounding and source-preserving edits still need
+work. Import now reports a formatting warning for the approximation instead of
+silently presenting it as lossless. The size calculation was checked against
+the fixture's [draw.io renderer](https://github.com/jgraph/drawio/blob/v14.6.9/src/main/webapp/js/grapheditor/Shapes.js).
+
+**Deferred-edge paint order (partial Phase 5) — critique.** Edges whose
+terminals had not yet been imported were appended after later shapes, so a
+connector could cover a waypoint that appeared above it in the source.
+Imported canvas objects now retain the source hierarchy traversal order even
+when edges need deferred resolution. Regressions cover both edge/waypoint
+orders, nested groups, interleaved bands, locked groups, hit testing, PNG
+and SVG output, and native/draw.io round trips. The supplied circuit's
+junction dots are now solid where earlier connectors meet them.
+
+This preserves order only among canvas objects within a Thinoda band. Frames,
+cards and different bands retain their separate scene layers; flattened groups
+and unsupported source structures can still differ from draw.io. The circuit
+continues to have missing stencil geometry and wiring differences. An
+independent rubber-duck review found no blocking defect in this slice. The
+I/O suite passed 576 tests (10 ignored); native and wasm Clippy passed with
+warnings denied, the Windows workspace build passed, and the serialized
+workspace suite passed 3,376 tests (16 ignored).
+
+**Standard rounded rectangles (partial Phases 3, 4, 6, 8 and 9) — critique.**
+Standard draw.io rounded rectangles now retain `arcSize`, `absoluteArcSize` and
+`roundedPerimeter`. Relative corners use `min(width, height) * arcSize / 100`;
+absolute corners use `min(width / 2, height / 2, arcSize / 2)`. The respective
+defaults are 15 and 20. Relative radii above 50% are clamped separately on
+each visual axis, as in the source renderer. The corner parameters survive
+resize, editing, copy/paste, recovery and draw.io/native round trips. The
+inspector exposes relative versus absolute radius and rounded-corner
+connections; switching modes preserves the physical radius where the target
+mode can represent it, and both options remain undoable.
+
+The rounded connector perimeter clamps to the smaller half-dimension, even
+when the visible relative corner has unequal axes. With `roundedPerimeter=0`,
+connectors use the rectangular perimeter; with it enabled, floating connectors
+intersect the circular corner on the center ray and fixed perimeter constraints
+project from the corner center. Perimeter calculations use stable intermediate
+precision for long or very thin frames. Orthogonal/curved routes and other
+unsupported perimeter, direction and malformed-value combinations are reported
+as formatting approximations rather than advertised as exact.
+
+Only documents containing the new standard-rectangle representation require
+native format v23, sheet clipboard v19, board clipboard v16, new recovery
+envelopes (including pending ink), or the new private XMind snapshot; readers
+reject forged older envelopes. Existing native rounded rectangles retain their
+old independently scaled corner axes. New draw.io exports mark that native
+identity so an unchanged export re-imports as a native shape, while external
+arc or `roundedPerimeter` edits take precedence. Previously exported files lack the
+marker and are ambiguous; draw.io itself can still render the native shape's
+corners differently.
+
+The shared outline is a sampled polygon rather than an exact SVG curve at all
+scales. Connector routing, unsupported shapes, source-preserving save-back,
+and cross-platform visual acceptance remain open. The independent rubber-duck
+review's proposed validation and inspector blockers were withdrawn after
+checking the error conditions, mode conversion and bounded input; separate
+published-editor comparisons exposed and fixed precision loss in wide and
+near-axis thin connector targets. Production-bundle browser coverage imports
+and selects a rounded rectangle, changes its radius mode and perimeter,
+exercises undo/redo, and checks native save and draw.io export.
+
+**Example preview comparison.** A local render probe exported all 116 supplied
+PNG-backed pages from 60 draw.io documents. All pages rendered, but that is not
+a fidelity pass: document-level import warnings reported formatting differences
+for all 60 documents, unsupported shapes for 45, resources for 15, links for
+10 and detached connectors for six. Side-by-side inspection of
+`board-visual-tutorial.png` shows font and connector differences; its three
+extra image outlines have since been removed as described above. The first
+`waypoint-shape.png` page contains black blocks and altered wiring instead of
+several reference symbols. Its second page substitutes logic gates with
+rectangles and wraps the output label vertically; its third page loses line
+dashes and wraps labels. Re-rendering all 116 PNG-backed pages after the
+standard rounded-rectangle change again completed without a render error. On
+the fourth waypoint page, the wide CEO and COO boxes now have small corners
+resembling the reference instead of the earlier stretched, nearly oval ends.
+Their connector paths still differ, as do text wrapping, shadows and
+typography; this spot check is not a full-page fidelity pass.
+`floorplan-apartment.page-2.png` also has large black blocks and
+missing architectural symbols; `arista.png` replaces the rack equipment images
+with generic containers. In `uml-activity-example.png`, swimlane headings and
+backgrounds, the dashed boundary, the final-state symbol and some connectors
+differ. `kanban-examples.png` loses the left-hand sticky notes and several
+colors and symbols; some labels show unresolved placeholders. `C4.png` also
+shows placeholder text instead of the reference labels, with missing person
+geometry and different line and corner styles. A side-by-side gallery was
+generated for all pages, but only these examples were inspected manually. Full
+visual and feature parity therefore remains incomplete. The probe can be rerun with
+`cargo run -p thinoda-io --example drawio_visual_probe -- docs\draw-io-examples <new-output-directory>`;
+it writes converted PNGs and a JSON report, and refuses an existing output
+directory.
+
+**Placeholder loss disclosure and critique (partial Phase 9).** draw.io's
+[placeholder documentation](https://www.drawio.com/docs/manual/advanced/placeholders/)
+and [scope rules](https://www.drawio.com/docs/manual/advanced/placeholder-scope/)
+describe opt-in label and tooltip substitution, nearest-ancestor overrides,
+page and file properties, and a special `placeholder` property whose label
+edits update the nearest matching value. The supplied C4 pages use
+`placeholders="1"` with properties such as `c4Name`; the kanban tasks inherit
+`status` from their columns, and the home-network example inherits `subnet`
+from containers. Predefined values and escaped percent signs also need
+separate handling. Thinoda currently neither resolves these labels nor
+preserves the placeholder setting or custom property data in converted
+documents.
+
+Import now specifically reports enabled `placeholders="1"` and the special
+`placeholder` property instead of silently treating them as supported. A
+disabled flag does not warn; unrecognized flag values and other custom data
+remain reported as unsupported data. File and link imports require consent,
+and file conversion protects the original source; clipboard paste shows a
+persistent specific warning and remains undoable. Tests cover both wrapper
+names, disabled and malformed flags, special-property labels, first-page paste,
+localized UI, source protection, and the three supplied examples. A Chromium
+test of the production web bundle checks the paste warning and undo. This is a
+safety disclosure, not placeholder support: a converted copy still loses the
+metadata, and other metadata representations may need additional diagnostics.
+Preserving properties, dynamic scope, edits and save-back remains open.
+
+**Rubber Duck:** An enabled flag can affect tooltips or later label edits even
+when the current label has no `%` token, so the warning does not depend on
+visible text. A disabled flag leaves literal percent text unchanged, while an
+unknown flag is reported rather than silently interpreted. Multi-page
+clipboard warnings refer to the pasted page, not an omitted page. The source
+file protection prevents this disclosure from implying safe round-tripping;
+it does not restore metadata in the converted copy.
+
+**Editable UML final states (partial Phases 3, 4, 6, 8, 9 and 11).**
+Standalone `shape=endState` cells import as editable final-state shapes rather
+than single ellipses. Their inner ellipse is inset by
+`min(4, width / 5, height / 5)`, filled and stroked before the unfilled outer
+ring is drawn. Canvas, visual exports, picker and insertion previews use the
+same two-part identity. New shapes start at 30 by 30 units with black or white
+fill and stroke chosen for contrast against the current board background;
+those explicit colors do not follow later theme changes. Changing an existing
+shape keeps its prior size and style. Eight connection crosses and supported
+fixed endpoints use the outer ellipse. Rotation, native edits and
+undo remain available. Native files use v24 only when needed; complete-sheet
+and mixed-board clipboard payloads use v20 and v17, and recovery and private
+XMind snapshots use final-state-aware envelopes. Forged older envelopes are
+rejected.
+
+The importer reports unsupported custom margins and label layout. A
+`fillColor=strokeColor` final state receives the currently resolved color, but
+the dynamic link is not preserved and triggers a formatting warning.
+Export and **Copy as draw.io** report that visible final-state appearance may
+differ. These warnings do not provide source-preserving save-back; keep the
+original file. The supplied UML diagram imports both final states and retains
+the first page's two attached incoming connectors. Side-by-side PNG inspection
+shows the first page's black final-state symbol with its outer ring, but routing,
+swimlane styling and other elements still differ. The second page's external
+left label is still placed inside its symbol; labels, fonts and other shapes
+also differ. This is not a visual-fidelity pass for either page.
+
+**Rubber-duck self-critique.** The new symbol initially used the double-ellipse
+outline in the main shape picker, making the two choices indistinguishable;
+the picker now fills the final-state inner ellipse in both themes. The
+review also exposed poor contrast from a fixed black insertion color on dark
+boards; new symbols now choose a contrasting color at creation without
+recoloring imports or existing objects. This is not adaptive theme support.
+The independent review questioned the differing label and paint insets and the
+inner stroke. The published editor's `endState` actually inherits the
+double-ellipse label bounds, uses a separate four-unit paint inset and calls
+`fillAndStroke` on the inner ellipse, so making those insets or strokes equal
+would be incorrect. Automatic and explicit colors, opacity, collapsed shapes,
+older persistence envelopes, mixed features and connector perimeter behavior
+remain covered by regressions. As with other sampled outlines, exact curves,
+adaptive colors, external labels and full draw.io rendering remain open; the
+parent phases are not complete.
+
+**Validation.** The affected library suites passed 2,338 tests with four
+ignored before the final insertion-contrast change; the complete canvas library
+suite subsequently passed 537 tests with two ignored. The board-export and
+draw.io corpus integration suites passed 78 tests with three ignored. Native
+and Wasm Clippy, the workspace build and the production web build passed.
+Against that final web build, the final-state paste, edit, copy and undo
+journey passed in Chromium, Firefox and WebKit.
+
+**PR #128 browser-gate repair.** Linux CI exposed two test assumptions rather
+than an application regression. Adding the final-state tile moved the triangle
+out of the drag journey's hard-coded grid slot; the saved archive correctly
+contained the diamond that the test actually dragged. The journey now searches
+for "Triangle" before dragging the first result and retains its canceled-drop,
+obscured-drop, labeling, geometry, undo and redo assertions. The search is
+replaced through keyboard selection because egui retains its query separately
+from the browser's text-input bridge.
+
+The final-state copy warning was visibly present in the retained CI screenshot,
+but preceding save notifications placed it above the bottom 100 pixels. Warning
+checks now inspect the bottom-center notification stack, excluding matching
+canvas and inspector colors instead of requiring a single toast position.
+Both repaired journeys passed three consecutive Chromium runs against the
+final-state production bundle. The complete 36-test clipboard browser suite
+also passed with the final notification crop, including long placeholder-loss
+notifications whose warning icon lies left of a fixed-width center crop.
+
+**Rubber-duck self-critique.** Moving the old triangle coordinate by one tile
+would fail again when the library changes; filtering by its name removes that
+ordering dependency. Merely removing the warning's position check would allow
+inspector color swatches to satisfy it, so the screenshot is restricted to the
+notification stack. Neither check is skipped or retried to hide a failure, and
+the app's rendering, shape order and notification behavior are unchanged.
+This repair does not close the parent interoperability or device-acceptance
+gates.
+
+The next visual-parity work remains open:
+
+- Extend the standard rounded-rectangle slice above to exact curves,
+  unsupported connector routes and perimeters, source-preserving save-back and
+  broader visual acceptance. A scan found 529 `rounded=1` cells with the
+  default or `rectangle` shape in 26 supplied `.drawio` documents, including
+  the fourth waypoint page; the slice does not establish parity for them all.
+- Implement and exercise the floor-plan and circuit stencil geometry rather
+  than substituting generic filled rectangles; verify symbols and connections
+  against the corresponding reference pages. The supplied circuit pages use
+  `mxgraph.electrical.resistors.resistor_1`,
+  `mxgraph.electrical.miscellaneous.monocell_battery`,
+  `mxgraph.electrical.logic_gates.logic_gate`, and
+  `mxgraph.lean_mapping.physical_pull`; these remain unsupported. Their
+  `waypoint` cells are approximated as ellipses with the size and supported
+  attachment improvements above; source identity and save-back fidelity remain
+  open.
+- Resolve supported placeholder labels from draw.io metadata without executing
+  expressions, and preserve the underlying values for editing and save-back.
+  Exercise the C4 and kanban examples; report unsupported substitutions rather
+  than presenting placeholder text as faithful output. The kanban source's
+  sticky notes become map-layer cards, while opaque background rectangles
+  default to the Above band, which paints over those cards despite their source
+  order. Preserve mixed card/object order without globally putting every card
+  in front; also address the missing colors and symbols.
+- Preserve swimlane header orientation, backgrounds and dashed boundaries, and
+  recheck external final-state labels and connector routing against both pages
+  of the UML activity example.
+- Preserve the external SVG references used by the Arista rack equipment and
+  render safely supplied, appropriately licensed resources, with explicit
+  diagnostics for unresolved images. Keep the existing no-auto-fetch policy;
+  any network access requires a separate, consented design.
+- Recheck label alignment, font metrics and remaining background and border
+  styling against the tutorial reference, then inspect the remaining gallery
+  pages and add representative regression fixtures. Normalized pixel
+  difference alone is not an acceptance threshold.
 
 ## 5. Out of scope / backlog
 - VSDX import/export, Gliffy/Lucid/Miro import, Mermaid/PlantUML generation, auto-layouts,

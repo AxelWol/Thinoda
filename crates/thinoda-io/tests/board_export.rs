@@ -5,7 +5,7 @@ use std::io::{Cursor, Read, Write};
 use thinoda_core::{
     CanvasConnector, CanvasObject, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
     ConnectorPort, DrawioRectangleStencil, Endpoint, InkStroke, InkTool, PresentationSource,
-    ShapeKind, ShapeRounding, Sheet, SheetRootMode, Workbook,
+    ShapeKind, ShapeRounding, ShapeRoundingMode, Sheet, SheetRootMode, TopicShape, Workbook,
     board::{CanvasObjectKind, RootProjection},
     geometry::{Color, Rect, Vec2},
     outline::{project_to_outline, to_outline},
@@ -13,8 +13,8 @@ use thinoda_core::{
 };
 use thinoda_io::{
     ExportLoss, ExportOptions, Format, IoError, export_bytes, export_bytes_with_consent,
-    export_losses, import_bytes, outline_sheet, render_presentation_slide_svg,
-    required_native_version, uses_board_semantics,
+    export_losses, import_bytes, import_bytes_with_report, outline_sheet,
+    render_presentation_slide_svg, required_native_version, uses_board_semantics,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -518,6 +518,7 @@ fn shape_rounding_requires_v19_and_aware_xmind_snapshots() {
     shape.rounding = Some(ShapeRounding {
         radius: 17.0,
         stencil: DrawioRectangleStencil::Containers,
+        ..Default::default()
     });
     book.active_mut().add_canvas_object(shape).unwrap();
     assert_eq!(required_native_version(&book), 19);
@@ -551,6 +552,110 @@ fn shape_rounding_requires_v19_and_aware_xmind_snapshots() {
 }
 
 #[test]
+fn final_states_require_v24_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let mut rounded = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    rounded.rounding = Some(ShapeRounding {
+        radius: 15.5,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::Relative,
+        rounded_perimeter: true,
+    });
+    book.active_mut().add_canvas_object(rounded).unwrap();
+    book.active_mut()
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::FinalState,
+            Rect::from_min_size(Vec2::new(120.0, 0.0), Vec2::new(30.0, 30.0)),
+        ))
+        .unwrap();
+    assert_eq!(required_native_version(&book), 24);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 24);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 1..24 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+        if version == 23 {
+            assert!(
+                error
+                    .to_string()
+                    .contains("final states require native format version 24")
+            );
+        }
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-FINAL-STATE-1")
+    );
+}
+
+#[test]
+fn drawio_rectangle_rounding_requires_v23_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let mut shape = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rounding = Some(ShapeRounding {
+        radius: 15.5,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::Relative,
+        rounded_perimeter: true,
+    });
+    let id = book.active_mut().add_canvas_object(shape).unwrap();
+    let mut connector =
+        CanvasConnector::new(Endpoint::Object(id), Endpoint::Point(Vec2::new(200.0, 0.0)));
+    connector.from_port = Some(ConnectorPort {
+        position: Vec2::new(1.0, 0.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    });
+    book.active_mut()
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    assert_eq!(required_native_version(&book), 23);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 23);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in 1..23 {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let forged = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        let error = import_bytes(Format::Thinoda, &forged).unwrap_err();
+        if version == 22 {
+            assert!(
+                error.to_string().contains(
+                    "standard draw.io rectangle rounding requires native format version 23"
+                )
+            );
+        }
+    }
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-DRAWIO-ROUNDING-1")
+    );
+}
+
+#[test]
 fn rectangle_sides_require_v20_and_aware_xmind_snapshots() {
     let (mut book, _) = half_circle_marker_book();
     let mut shape = CanvasObject::shape(
@@ -571,6 +676,7 @@ fn rectangle_sides_require_v20_and_aware_xmind_snapshots() {
     rounded.rounding = Some(ShapeRounding {
         radius: 17.0,
         stencil: DrawioRectangleStencil::Containers,
+        ..Default::default()
     });
     book.active_mut().add_canvas_object(rounded).unwrap();
     assert_eq!(required_native_version(&book), 20);
@@ -712,6 +818,93 @@ fn double_ellipses_require_v21_and_aware_xmind_snapshots() {
 }
 
 #[test]
+fn final_state_renders_inner_fill_and_unfilled_outer_ring_in_visual_exports() {
+    let mut sheet = Sheet::new("Final state", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::FinalState,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.fill = Some(Color::rgb(200, 30, 40));
+    shape.style.stroke = Some(Color::rgb(20, 40, 200));
+    shape.style.stroke_width = 1.0;
+    let id = sheet.add_canvas_object(shape).unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(50.0, 150.0));
+    let frame = Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(180.0, 220.0));
+    sheet
+        .add_presentation_slide("Editable", PresentationSource::Branch(root), frame)
+        .unwrap();
+    sheet
+        .add_presentation_slide("Viewport", PresentationSource::Viewport, frame)
+        .unwrap();
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let group = svg
+        .split(&format!("id=\"object-{id}\""))
+        .nth(1)
+        .unwrap()
+        .split("</g>")
+        .next()
+        .unwrap();
+    assert_eq!(group.matches("<path ").count(), 2, "{group}");
+    let mut paths = group.split("<path ").skip(1);
+    let inner = paths.next().unwrap();
+    let outer = paths.next().unwrap();
+    assert!(inner.contains("fill=\"#C81E28\""), "{inner}");
+    assert!(outer.contains("fill=\"none\""), "{outer}");
+    let image = image::load_from_memory(&export(&book, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let view = view_box(&svg);
+    let sample = |x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    assert_eq!(sample(50.0, 30.0).0, [200, 30, 40, 255]);
+    assert_eq!(sample(2.0, 30.0), sample(-5.0, 30.0));
+    assert_ne!(sample(0.0, 30.0), sample(-5.0, 30.0));
+    assert!(export(&book, Format::Pdf).starts_with(b"%PDF"));
+    let pptx = export(&book, Format::PowerPoint);
+    let slide = String::from_utf8(entry(&pptx, "ppt/slides/slide1.xml")).unwrap();
+    assert_eq!(slide.matches(&format!("Canvas object {id}")).count(), 2);
+    assert!(slide.contains("C81E28"), "{slide}");
+    assert!(!entry(&pptx, "ppt/media/slide2-viewport.png").is_empty());
+}
+
+#[test]
+fn final_state_visual_exports_apply_fill_stroke_and_object_opacity() {
+    let mut sheet = Sheet::new("Final state opacity", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::FinalState,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.style.fill = Some(Color::rgba(200, 30, 40, 128));
+    shape.style.stroke = Some(Color::rgba(20, 40, 200, 64));
+    shape.style.opacity = 0.5;
+    sheet.add_canvas_object(shape).unwrap();
+    let background =
+        thinoda_core::theme::Theme::for_settings(&sheet.theme).background(&sheet.theme, false);
+    let book = Workbook::new(sheet);
+    let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(svg.contains(&Color::rgba(200, 30, 40, 64).to_hex()));
+    assert!(svg.contains(&Color::rgba(20, 40, 200, 32).to_hex()));
+    let png = image::load_from_memory(&export(&book, Format::Png))
+        .unwrap()
+        .to_rgb8();
+    let [x, y, w, h] = view_box(&svg);
+    let center = png.get_pixel(
+        ((50.0 - x) / w * png.width() as f32) as u32,
+        ((30.0 - y) / h * png.height() as f32) as u32,
+    );
+    let expected = Color::rgba(200, 30, 40, 64).over(background);
+    for (actual, expected) in center.0.iter().zip([expected.r, expected.g, expected.b]) {
+        assert!(actual.abs_diff(expected) <= 2, "{center:?} vs {expected}");
+    }
+}
+
+#[test]
 fn double_ellipse_renders_in_svg_raster_pdf_and_powerpoint() {
     let mut sheet = Sheet::new("Double ellipse", "");
     sheet.root_mode = SheetRootMode::Hidden;
@@ -827,6 +1020,7 @@ fn shape_rounding_renders_in_svg_raster_pdf_and_powerpoint() {
     shape.rounding = Some(ShapeRounding {
         radius: 40.0,
         stencil: DrawioRectangleStencil::Mockup,
+        ..Default::default()
     });
     let id = sheet.add_canvas_object(shape).unwrap();
     let root = sheet.add_floating("Slide", Vec2::new(50.0, 150.0));
@@ -896,6 +1090,73 @@ fn shape_rounding_renders_in_svg_raster_pdf_and_powerpoint() {
     assert!(
         shape_path(&rounded_slide).matches("<a:lnTo>").count()
             > shape_path(&square_slide).matches("<a:lnTo>").count()
+    );
+}
+
+#[test]
+fn drawio_standard_rounding_renders_across_exporters() {
+    let mut sheet = Sheet::new("Rounded", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut shape = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(600.0, 40.0)),
+    );
+    shape.style.fill = Some(Color::rgb(200, 30, 40));
+    shape.style.stroke = Some(Color::TRANSPARENT);
+    shape.rounding = Some(ShapeRounding {
+        radius: 15.0,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::Relative,
+        rounded_perimeter: false,
+    });
+    let id = sheet.add_canvas_object(shape).unwrap();
+    let root = sheet.add_floating("Slide", Vec2::new(300.0, 150.0));
+    sheet
+        .add_presentation_slide(
+            "Rounded",
+            PresentationSource::Branch(root),
+            Rect::from_min_size(Vec2::new(-40.0, -40.0), Vec2::new(680.0, 220.0)),
+        )
+        .unwrap();
+    let rounded = Workbook::new(sheet);
+    let mut native = rounded.clone();
+    native.active_mut().canvas.object_mut(id).unwrap().rounding = None;
+    let rounded_svg = String::from_utf8(export(&rounded, Format::Svg)).unwrap();
+    let native_svg = String::from_utf8(export(&native, Format::Svg)).unwrap();
+    assert!(rounded_svg.contains("M 594.00,0.00"), "{rounded_svg}");
+    assert!(native_svg.contains("M 510.00,0.00"), "{native_svg}");
+    let presentation =
+        render_presentation_slide_svg(rounded.active(), 0, &ExportOptions::default()).unwrap();
+    assert!(presentation.contains("M 594.00,0.00"), "{presentation}");
+    let rounded_png = image::load_from_memory(&export(&rounded, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let native_png = image::load_from_memory(&export(&native, Format::Png))
+        .unwrap()
+        .to_rgba8();
+    let view = view_box(&rounded_svg);
+    assert_eq!(view, view_box(&native_svg));
+    let sample = |image: &image::RgbaImage, x: f32, y: f32| {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as u32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as u32;
+        *image.get_pixel(px, py)
+    };
+    assert_ne!(
+        sample(&rounded_png, 20.0, 2.0),
+        sample(&native_png, 20.0, 2.0)
+    );
+    assert_eq!(
+        sample(&rounded_png, 300.0, 20.0),
+        sample(&native_png, 300.0, 20.0)
+    );
+    let rounded_pdf = export(&rounded, Format::Pdf);
+    assert!(rounded_pdf.starts_with(b"%PDF"));
+    assert_ne!(rounded_pdf, export(&native, Format::Pdf));
+    let rounded_pptx = export(&rounded, Format::PowerPoint);
+    let native_pptx = export(&native, Format::PowerPoint);
+    assert_ne!(
+        entry(&rounded_pptx, "ppt/slides/slide1.xml"),
+        entry(&native_pptx, "ppt/slides/slide1.xml")
     );
 }
 
@@ -2767,6 +3028,140 @@ fn storyboard_with_image() -> (Workbook, Vec<u8>) {
         .unwrap();
     wb.validate().unwrap();
     (wb, image_bytes)
+}
+
+#[test]
+fn drawio_tutorial_images_export_without_extra_outlines() {
+    let wb = import_bytes_with_report(
+        Format::DrawIo,
+        include_bytes!("../../../docs/draw-io-examples/board-visual-tutorial.drawio"),
+    )
+    .unwrap()
+    .workbook;
+    let images: Vec<_> = wb
+        .active()
+        .content_topics()
+        .filter(|topic| {
+            topic.card.is_some_and(|card| {
+                card.kind == CardKind::Image && card.color.is_some_and(|color| color.a == 0)
+            })
+        })
+        .collect();
+    assert_eq!(images.len(), 3);
+
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let svg =
+            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
+                .unwrap();
+        for topic in &images {
+            let id = topic
+                .image
+                .as_deref()
+                .unwrap()
+                .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
+                .unwrap();
+            let marker = format!("<use xlink:href=\"#image-{id}\"");
+            let occurrences: Vec<_> = svg.match_indices(&marker).map(|(index, _)| index).collect();
+            assert!(!occurrences.is_empty());
+            for image in occurrences {
+                let previous_tag = svg[..image].rfind('<').unwrap();
+                let background = &svg[previous_tag..image];
+                assert!(
+                    background.starts_with("<rect class=\"card\" "),
+                    "{background}"
+                );
+                assert!(background.contains("fill=\"#00000000\""), "{background}");
+                assert!(background.contains("stroke=\"none\""), "{background}");
+            }
+        }
+        let png = image::load_from_memory(
+            &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        assert!(
+            png.pixels()
+                .all(|pixel| !(pixel[0] > 240 && pixel[1] < 110 && pixel[2] < 110)),
+            "unexpected red image-card outlines in dark={dark}"
+        );
+        assert!(
+            export_bytes_with_consent(&wb, Format::Pdf, &options, true)
+                .unwrap()
+                .starts_with(b"%PDF")
+        );
+    }
+}
+
+#[test]
+fn transparent_image_cards_and_native_image_cards_keep_their_svg_and_png_appearance() {
+    let mut sheet = Sheet::new("Image", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "",
+            Vec2::ZERO,
+            Card::new(CardKind::Image, Vec2::new(180.0, 130.0)),
+        )
+        .unwrap();
+    let source = image::RgbImage::from_pixel(8, 8, image::Rgb([18, 196, 120]));
+    let mut encoded = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(source)
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .unwrap();
+    let resource = Resource::new("image.png", "image/png", encoded.into_inner()).unwrap();
+    thinoda_core::images::set_image(&mut sheet, id, Some((resource, Vec2::new(80.0, 80.0))))
+        .unwrap();
+    let wb = Workbook::new(sheet);
+
+    for dark in [false, true] {
+        for shape in [TopicShape::Ellipse, TopicShape::Underline] {
+            for color in [
+                None,
+                Some(Color::rgb(10, 20, 30)),
+                Some(Color::rgba(10, 20, 30, 128)),
+                Some(Color::rgba(10, 20, 30, 0)),
+            ] {
+                let mut wb = wb.clone();
+                let topic = wb.active_mut().topic_mut(id).unwrap();
+                topic.card.as_mut().unwrap().color = color;
+                topic.style.shape = Some(shape);
+                topic.style.border_color = Some(Color::rgb(251, 10, 20));
+                topic.style.border_width = Some(4.0);
+                let before = wb.clone();
+                let options = ExportOptions {
+                    dark,
+                    ..Default::default()
+                };
+                let svg = String::from_utf8(
+                    export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap(),
+                )
+                .unwrap();
+                let png = image::load_from_memory(
+                    &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+                )
+                .unwrap()
+                .to_rgb8();
+                let red_pixels = png
+                    .pixels()
+                    .filter(|pixel| pixel[0] > 240 && pixel[1] < 110 && pixel[2] < 110)
+                    .count();
+                if color.is_some_and(|color| color.a == 0) {
+                    assert!(svg.contains("fill=\"#0A141E00\" stroke=\"none\""));
+                    assert_eq!(red_pixels, 0, "dark={dark}, shape={shape:?}");
+                } else {
+                    assert!(!svg.contains("class=\"card\""));
+                    assert!(svg.contains("stroke=\"#FB0A14\""), "{svg}");
+                    assert!(red_pixels > 0, "dark={dark}, shape={shape:?}");
+                }
+                assert!(png.pixels().any(|pixel| pixel.0 == [18, 196, 120]));
+                assert_eq!(wb, before);
+            }
+        }
+    }
 }
 
 #[test]

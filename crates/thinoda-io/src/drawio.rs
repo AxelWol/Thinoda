@@ -26,8 +26,8 @@ use thinoda_core::{
         ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil,
         Endpoint, GridKind, InkStroke, InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS,
         MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH,
-        ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, SheetRootMode, normalize_rotation,
-        rotate_around, valid_board_position, valid_connector_marker_size,
+        ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode, SheetRootMode,
+        normalize_rotation, rotate_around, valid_board_position, valid_connector_marker_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -252,12 +252,89 @@ fn uri_decode(text: String) -> String {
 }
 
 /// Decodes `base64(deflateRaw(encodeURIComponent(xml)))` diagram text.
-fn decode_compressed(text: &str) -> Result<String, IoError> {
+pub(crate) fn decode_compressed(text: &str) -> Result<String, IoError> {
     let cleaned: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     let data = base64::engine::general_purpose::STANDARD
         .decode(cleaned.as_bytes())
         .map_err(|_| invalid("draw.io page is neither XML nor compressed diagram data"))?;
     decode_compressed_bytes(&data)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BoundedDecodeError {
+    Invalid,
+    Limit,
+}
+
+/// Decodes a library fragment while charging both successful and failed
+/// inflations against the caller's remaining expansion budget.
+pub(crate) fn decode_compressed_bounded(
+    text: &str,
+    max_decoded: usize,
+    work_remaining: &mut usize,
+) -> Result<String, BoundedDecodeError> {
+    use miniz_oxide::inflate::{
+        TINFLStatus, decompress_to_vec_with_limit, decompress_to_vec_zlib_with_limit,
+    };
+
+    let cleaned: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(cleaned.as_bytes())
+        .map_err(|_| BoundedDecodeError::Invalid)?;
+    let max_inflated = max_decoded.saturating_mul(3);
+    let mut attempt = |zlib: bool| {
+        let limit = max_inflated.min(*work_remaining);
+        if limit == 0 {
+            return Err(BoundedDecodeError::Limit);
+        }
+        let result = if zlib {
+            decompress_to_vec_zlib_with_limit(&data, limit)
+        } else {
+            decompress_to_vec_with_limit(&data, limit)
+        };
+        match result {
+            Ok(output) => {
+                *work_remaining = work_remaining.saturating_sub(output.len());
+                Ok(output)
+            }
+            Err(error) => {
+                // miniz may retain a partially filled buffer on failure. Charging
+                // the whole buffer is conservative and bounds repeated failures.
+                *work_remaining = work_remaining.saturating_sub(error.output.len());
+                if error.status == TINFLStatus::HasMoreOutput {
+                    Err(BoundedDecodeError::Limit)
+                } else {
+                    Err(BoundedDecodeError::Invalid)
+                }
+            }
+        }
+    };
+    let zlib_header = data.len() >= 2
+        && data[0] & 0x0F == 8
+        && (u16::from(data[0]) << 8 | u16::from(data[1])) % 31 == 0;
+    let raw = if zlib_header {
+        match attempt(true) {
+            Ok(output) => output,
+            Err(first) => match attempt(false) {
+                Ok(output) => output,
+                Err(second)
+                    if first == BoundedDecodeError::Limit
+                        || second == BoundedDecodeError::Limit =>
+                {
+                    return Err(BoundedDecodeError::Limit);
+                }
+                Err(_) => return Err(BoundedDecodeError::Invalid),
+            },
+        }
+    } else {
+        attempt(false)?
+    };
+    let text = String::from_utf8(raw).map_err(|_| BoundedDecodeError::Invalid)?;
+    let decoded = uri_decode(text);
+    if decoded.len() > max_decoded {
+        return Err(BoundedDecodeError::Limit);
+    }
+    Ok(decoded)
 }
 
 fn decode_compressed_bytes(data: &[u8]) -> Result<String, IoError> {
@@ -1274,6 +1351,18 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
                     warnings.insert(ImportWarning::Other);
                     continue;
                 };
+                match element.attr("placeholders") {
+                    Some("1") => {
+                        warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                    }
+                    None | Some("0") => {}
+                    Some(_) => {
+                        warnings.insert(ImportWarning::Other);
+                    }
+                }
+                if element.attr("placeholder").is_some() {
+                    warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                }
                 if element.attrs.iter().any(|(key, _)| {
                     !matches!(
                         key.as_str(),
@@ -1427,6 +1516,64 @@ fn is_mockup_rectangle(style: &Style) -> bool {
     mockup_rectangle_stencil(style).is_some()
 }
 
+fn is_standard_rounded_rectangle(style: &Style) -> bool {
+    matches!(style.shape(), "" | "rect" | "rectangle" | "label")
+        && style.num("rounded") == Some(1.0)
+}
+
+fn native_rounded_rectangle_hint(style: &Style) -> bool {
+    style.get("thinodaShape") == Some("nativeRoundedRectangle")
+        && ["arcSize", "absoluteArcSize"]
+            .into_iter()
+            .all(|key| style.get(key).is_none_or(|value| value == "none"))
+        && style
+            .get("roundedPerimeter")
+            .is_none_or(|value| matches!(value, "none" | "0"))
+}
+
+fn standard_rectangle_rounding(style: &Style) -> (ShapeRounding, bool) {
+    let mut approximate = false;
+    let mut flag = |key| match style.get(key) {
+        None | Some("none") => false,
+        Some(_) if style.num(key) == Some(1.0) => true,
+        Some(_) if style.num(key) == Some(0.0) => false,
+        Some(_) => {
+            approximate = true;
+            false
+        }
+    };
+    let absolute = flag("absoluteArcSize");
+    let rounded_perimeter = flag("roundedPerimeter");
+    let default = if absolute { 20.0 } else { 15.0 };
+    let radius = match style.get("arcSize") {
+        None | Some("none") => default,
+        Some(_) => match style.num("arcSize") {
+            Some(value) if (0.0..=MAX_BOARD_COORDINATE).contains(&value) => value,
+            Some(value) => {
+                approximate = true;
+                value.clamp(0.0, MAX_BOARD_COORDINATE)
+            }
+            None => {
+                approximate = true;
+                0.0
+            }
+        },
+    };
+    (
+        ShapeRounding {
+            radius,
+            stencil: DrawioRectangleStencil::Standard,
+            mode: if absolute {
+                ShapeRoundingMode::AbsoluteArc
+            } else {
+                ShapeRoundingMode::Relative
+            },
+            rounded_perimeter,
+        },
+        approximate,
+    )
+}
+
 const FLOWCHART_ANNOTATION_1: &str = "mxgraph.flowchart.annotation_1";
 const FLOWCHART_PROCESS: &str = "mxgraph.flowchart.process";
 
@@ -1514,7 +1661,7 @@ fn classify(style: &Style) -> Kind {
     let symmetric = |kind| Kind::Shape(kind, 0.0, true);
     match name {
         "" | "rect" | "rectangle" | "label" => {
-            if style.flag("rounded") {
+            if style.num("rounded") == Some(1.0) {
                 symmetric(S::RoundedRectangle)
             } else if style.get("shape") == Some("rectangle")
                 && style.get("rounded") == Some("0")
@@ -1534,6 +1681,7 @@ fn classify(style: &Style) -> Kind {
         | "mxgraph.flowchart.start_2"
         | "mxgraph.flowchart.on-page_reference" => symmetric(S::Ellipse),
         "doubleEllipse" => symmetric(S::DoubleEllipse),
+        "endState" => symmetric(S::FinalState),
         FLOWCHART_ANNOTATION_1 if style.get("shape") == Some(FLOWCHART_ANNOTATION_1) => {
             Kind::Approx(S::Rectangle, 0.0, false)
         }
@@ -1542,7 +1690,7 @@ fn classify(style: &Style) -> Kind {
         "mxgraph.bootstrap.rrect" => symmetric(S::RoundedRectangle),
         "waypoint" => Kind::Waypoint,
         "folder" | "cube" | "message" | "umlFrame" => Kind::Approx(S::Rectangle, 0.0, true),
-        "endState" | "mxgraph.basic.partConcEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
+        "mxgraph.basic.partConcEllipse" => Kind::Approx(S::Ellipse, 0.0, true),
         "mxgraph.arrows2.arrow" => Kind::Approx(S::Arrow, 0.0, false),
         "rhombus" => symmetric(S::Diamond),
         "triangle" => shape(S::Triangle, 90.0),
@@ -1583,8 +1731,74 @@ fn classify(style: &Style) -> Kind {
 /// draw.io `partialRectangle` side flags, in clockwise path order.
 const PARTIAL_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 
-/// draw.io draws waypoints as fixed-size dots regardless of the cell geometry.
+/// Default draw.io waypoint size before stroke-width adjustment.
 const WAYPOINT_SIZE: f32 = 6.0;
+
+fn waypoint_diameter(style: &Style) -> f32 {
+    let size = style.num("size").unwrap_or(WAYPOINT_SIZE);
+    let width = style
+        .num("strokeWidth")
+        .filter(|width| *width >= 0.0)
+        .unwrap_or(1.0);
+    let diameter = (size - 2.0).max(0.0) + 2.0 * width;
+    if diameter.is_finite() && diameter <= MAX_BOARD_COORDINATE {
+        diameter
+    } else {
+        WAYPOINT_SIZE
+    }
+}
+
+fn waypoint_absolute_port(cell: &Cell, port: ConnectorPort) -> Option<ConnectorPort> {
+    let style = &cell.style;
+    let direction = match style.get("direction") {
+        None | Some("" | "none" | "east") => "east",
+        Some("north") => "north",
+        Some("west") => "west",
+        Some("south") => "south",
+        Some(_) => return None,
+    };
+    let anchor_direction = match style.get("anchorPointDirection") {
+        None | Some("" | "none") => true,
+        Some(_) => style.num("anchorPointDirection")? == 1.0,
+    };
+    let spacing = match style.get("perimeterSpacing") {
+        None | Some("" | "none") => 0.0,
+        Some(_) => style.num("perimeterSpacing")?,
+    };
+    let sideways = matches!(direction, "north" | "south");
+    let mut width = cell.geometry.width + 2.0 * spacing;
+    let mut height = cell.geometry.height + 2.0 * spacing;
+    if sideways && anchor_direction {
+        std::mem::swap(&mut width, &mut height);
+    }
+    let mut offset = Vec2::new(
+        (port.position.x - 0.5) * width + port.offset.x,
+        (port.position.y - 0.5) * height + port.offset.y,
+    );
+    let mut flip_h = style.num("flipH") == Some(1.0);
+    let mut flip_v = style.num("flipV") == Some(1.0);
+    if sideways {
+        std::mem::swap(&mut flip_h, &mut flip_v);
+    }
+    if flip_h {
+        offset.x = -offset.x;
+    }
+    if flip_v {
+        offset.y = -offset.y;
+    }
+    let direction_rotation = if anchor_direction {
+        direction_degrees(style)
+    } else {
+        0.0
+    };
+    let rotation = (style.rotation() + direction_rotation).rem_euclid(360.0);
+    let mapped = ConnectorPort {
+        position: Vec2::new(0.5, 0.5),
+        offset: rotate_around(offset, Vec2::ZERO, rotation),
+        perimeter: false,
+    };
+    mapped.is_valid().then_some(mapped)
+}
 
 fn direction_degrees(style: &Style) -> f32 {
     match style.get("direction") {
@@ -1692,6 +1906,7 @@ struct PageImport<'a> {
     items: HashMap<usize, Item>,
     shapes: HashMap<CanvasObjectId, ShapeKind>,
     visited: Vec<bool>,
+    paint_order: Vec<usize>,
     zones: Vec<(ZoneId, Vec<TopicId>, Vec<CanvasObjectId>)>,
     buckets: Vec<(Vec<BoardMember>, bool)>,
     locked: Vec<BoardMember>,
@@ -1852,6 +2067,7 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Other);
             return;
         }
+        self.paint_order.push(index);
         if cell.edge {
             for &child in &self.children[index] {
                 // Edge labels are child vertices; they are folded into the edge.
@@ -2033,7 +2249,21 @@ impl<'a> PageImport<'a> {
                     object.rounding = Some(ShapeRounding {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
                         stencil,
+                        ..Default::default()
                     });
+                } else if is_standard_rounded_rectangle(style)
+                    && !native_rounded_rectangle_hint(style)
+                {
+                    let (rounding, approximate) = standard_rectangle_rounding(style);
+                    object.rounding = Some(rounding);
+                    if approximate
+                        || style.constraint_perimeter != ConstraintPerimeter::Rectangle
+                        || style
+                            .get("direction")
+                            .is_some_and(|value| !matches!(value, "" | "east" | "none"))
+                    {
+                        self.warn(ImportWarning::Formatting);
+                    }
                 }
                 if style.get("shape") == Some(FLOWCHART_ANNOTATION_1) {
                     let has_area = frame.size.x > 0.0 && frame.size.y > 0.0;
@@ -2105,15 +2335,59 @@ impl<'a> PageImport<'a> {
                         self.warn(ImportWarning::Formatting);
                     }
                 }
+                if shape == ShapeKind::FinalState {
+                    let has_label = !object.label().is_empty();
+                    if style.double_ellipse_label_loss(has_label)
+                        || style
+                            .get("margin")
+                            .is_some_and(|value| !matches!(value, "" | "none"))
+                    {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    if resolved_shape_colors(
+                        style,
+                        &mut object,
+                        has_label,
+                        self.adaptive_fixed_colors,
+                        true,
+                    ) {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    if style.get("fillColor") == Some("strokeColor") {
+                        let fill = match style.get("strokeColor") {
+                            None if style.suppress_defaults => Color::TRANSPARENT,
+                            Some("none") => Color::TRANSPARENT,
+                            _ => style
+                                .color("strokeColor", "fillOpacity")
+                                .unwrap_or_else(|| {
+                                    style.color_with_opacity(Color::BLACK, "fillOpacity")
+                                }),
+                        };
+                        object.style.fill = Some(fill);
+                        // The live link between fill and stroke is not retained.
+                        self.warn(ImportWarning::Formatting);
+                    }
+                }
                 object
             }
             Kind::Waypoint => {
-                let frame =
-                    Rect::from_center_size(rect.center(), Vec2::new(WAYPOINT_SIZE, WAYPOINT_SIZE));
+                self.warn(ImportWarning::Formatting);
+                let diameter = waypoint_diameter(style);
+                let frame = Rect::from_center_size(rect.center(), Vec2::new(diameter, diameter));
                 let mut object = shape_object(ShapeKind::Ellipse, frame, 0.0, label);
-                let color = object.style.stroke.unwrap_or(Color::BLACK);
+                let color = style
+                    .color("strokeColor", "fillOpacity")
+                    .unwrap_or_else(|| {
+                        let fallback =
+                            if style.suppress_defaults && style.get("strokeColor").is_none() {
+                                Color::TRANSPARENT
+                            } else {
+                                Color::BLACK
+                            };
+                        style.color_with_opacity(fallback, "fillOpacity")
+                    });
                 object.style.fill = Some(color);
-                object.style.stroke = Some(color);
+                object.style.stroke = Some(Color::TRANSPARENT);
                 object
             }
             Kind::Anchor => {
@@ -2338,10 +2612,35 @@ impl<'a> PageImport<'a> {
         let target_cell = terminal
             .and_then(|id| self.index.get(id))
             .and_then(|index| self.cells.get(*index));
+        let waypoint = matches!(endpoint, Endpoint::Object(_))
+            && target_cell.is_some_and(|cell| classify(&cell.style) == Kind::Waypoint);
+        let waypoint_center = waypoint
+            && target_cell
+                .is_some_and(|cell| cell.style.get("perimeter") == Some("centerPerimeter"));
+        let center_port = ConnectorPort {
+            position: Vec2::new(0.5, 0.5),
+            offset: Vec2::ZERO,
+            perimeter: false,
+        };
+        if target_cell.is_some_and(|cell| {
+            is_standard_rounded_rectangle(&cell.style)
+                && cell.style.num("roundedPerimeter") == Some(1.0)
+        }) && (style
+            .get("edgeStyle")
+            .is_some_and(|value| !matches!(value, "" | "none"))
+            || style.flag("curved"))
+        {
+            self.warn(ImportWarning::Formatting);
+        }
         match style.connector_port(source) {
+            Ok(None) if waypoint_center => Some(center_port),
             Ok(None) => {
                 if matches!(endpoint, Endpoint::Object(id)
-                    if self.shapes.get(&id) == Some(&ShapeKind::DoubleEllipse))
+                    if matches!(
+                        self.shapes.get(&id),
+                        Some(ShapeKind::DoubleEllipse | ShapeKind::FinalState)
+                    )
+                        || target_cell.is_some_and(|cell| is_standard_rounded_rectangle(&cell.style)))
                     && !target_cell.is_some_and(|cell| {
                         self.connector_geometry_matches_source(cell, endpoint, true)
                     })
@@ -2349,6 +2648,19 @@ impl<'a> PageImport<'a> {
                     self.warn(ImportWarning::Formatting);
                 }
                 None
+            }
+            Ok(Some(port)) if supported_target && waypoint_center && port.perimeter => {
+                Some(center_port)
+            }
+            Ok(Some(port)) if supported_target && waypoint && !port.perimeter => {
+                if let Some(mapped) =
+                    target_cell.and_then(|cell| waypoint_absolute_port(cell, port))
+                {
+                    Some(mapped)
+                } else {
+                    self.warn(ImportWarning::Formatting);
+                    Some(port)
+                }
             }
             Ok(Some(port)) if supported_target => {
                 let compatible = target_cell.is_some_and(|cell| {
@@ -2428,7 +2740,9 @@ impl<'a> PageImport<'a> {
                     | ShapeKind::Process
                     | ShapeKind::PredefinedProcess,
                 ) => ConstraintPerimeter::Rectangle,
-                Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse) => ConstraintPerimeter::Ellipse,
+                Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::FinalState) => {
+                    ConstraintPerimeter::Ellipse
+                }
                 Some(ShapeKind::Diamond) => ConstraintPerimeter::Rhombus,
                 _ => return false,
             },
@@ -2612,6 +2926,20 @@ impl<'a> PageImport<'a> {
                 self.warn(ImportWarning::Other);
             }
         }
+        // Deferred edges must retain their place in the source cell traversal.
+        let order: HashMap<_, _> = self
+            .paint_order
+            .iter()
+            .enumerate()
+            .filter_map(|(rank, cell)| match self.items.get(cell) {
+                Some(Item::Object(id)) => Some((*id, rank)),
+                _ => None,
+            })
+            .collect();
+        self.sheet
+            .canvas
+            .objects
+            .sort_by_key(|object| order.get(&object.id).copied().unwrap_or(usize::MAX));
         self.sheet
     }
 }
@@ -2983,6 +3311,7 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
         items: HashMap::new(),
         shapes: HashMap::new(),
         visited: vec![false; cells.len()],
+        paint_order: Vec::with_capacity(cells.len()),
         zones: Vec::new(),
         buckets: Vec::new(),
         locked: Vec::new(),
@@ -3095,9 +3424,10 @@ fn shape_style(shape: ShapeKind) -> &'static str {
     use ShapeKind as S;
     match shape {
         S::Rectangle => "rounded=0;",
-        S::RoundedRectangle => "rounded=1;",
+        S::RoundedRectangle => "rounded=1;thinodaShape=nativeRoundedRectangle;",
         S::Ellipse => "ellipse;",
         S::DoubleEllipse => "shape=doubleEllipse;perimeter=ellipsePerimeter;",
+        S::FinalState => "shape=endState;perimeter=ellipsePerimeter;",
         S::Diamond => "rhombus;",
         S::Triangle => "triangle;direction=north;",
         S::RightTriangle => "shape=mxgraph.basic.orthogonal_triangle;",
@@ -3136,6 +3466,7 @@ fn rounded_stencil_name(stencil: DrawioRectangleStencil) -> &'static str {
         DrawioRectangleStencil::Graphics => "mxgraph.mockup.graphics.rrect",
         DrawioRectangleStencil::Text => "mxgraph.mockup.text.rrect",
         DrawioRectangleStencil::Ios => "mxgraph.ios.rrect",
+        DrawioRectangleStencil::Standard => "rectangle",
     }
 }
 
@@ -3179,6 +3510,7 @@ pub(crate) fn fixed_port_position_approximate(
                             | ShapeKind::PredefinedProcess
                             | ShapeKind::Ellipse
                             | ShapeKind::DoubleEllipse
+                            | ShapeKind::FinalState
                             | ShapeKind::Diamond
                     ))
         }
@@ -3602,11 +3934,20 @@ impl<'a> PageWriter<'a> {
                         u8::from(sides.left),
                     ));
                 } else if let Some(rounding) = object.rounding {
-                    style.push_str(&format!(
-                        "shape={};rSize={};",
-                        rounded_stencil_name(rounding.stencil),
-                        num(rounding.radius)
-                    ));
+                    if rounding.is_standard() {
+                        style.push_str(&format!(
+                            "shape=rectangle;rounded=1;arcSize={};absoluteArcSize={};roundedPerimeter={};",
+                            num(rounding.radius),
+                            u8::from(rounding.mode == ShapeRoundingMode::AbsoluteArc),
+                            u8::from(rounding.rounded_perimeter),
+                        ));
+                    } else {
+                        style.push_str(&format!(
+                            "shape={};rSize={};",
+                            rounded_stencil_name(rounding.stencil),
+                            num(rounding.radius)
+                        ));
+                    }
                 } else if *shape == ShapeKind::Rectangle
                     && style_ref.fill.is_some_and(|c| c.a == 0)
                     && style_ref.stroke.is_some_and(|c| c.a == 0)
@@ -3619,30 +3960,27 @@ impl<'a> PageWriter<'a> {
                     style.push_str(&format!("margin={};", num(margin)));
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
-                let fill = if object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse
-                {
+                let special_outline = object.rectangle_sides.is_some()
+                    || matches!(*shape, ShapeKind::DoubleEllipse | ShapeKind::FinalState);
+                let fill = if special_outline {
                     Some(style_ref.fill.unwrap_or(Color::TRANSPARENT))
                 } else {
                     style_ref.fill
                 };
-                let stroke = if (object.rectangle_sides.is_some()
-                    || *shape == ShapeKind::DoubleEllipse)
-                    && style_ref.stroke.is_none()
-                    && style_ref.fill.is_some()
-                {
-                    Some(Color::TRANSPARENT)
-                } else {
-                    style_ref.stroke
-                };
+                let stroke =
+                    if special_outline && style_ref.stroke.is_none() && style_ref.fill.is_some() {
+                        Some(Color::TRANSPARENT)
+                    } else {
+                        style_ref.stroke
+                    };
                 color_keys(&mut style, "fillColor", "fillOpacity", fill);
                 color_keys(&mut style, "strokeColor", "strokeOpacity", stroke);
                 color_keys(&mut style, "fontColor", "textOpacity", style_ref.text_color);
-                let width =
-                    if object.rectangle_sides.is_some() || *shape == ShapeKind::DoubleEllipse {
-                        style_ref.effective_shape_stroke_width()
-                    } else {
-                        style_ref.stroke_width
-                    };
+                let width = if special_outline {
+                    style_ref.effective_shape_stroke_width()
+                } else {
+                    style_ref.stroke_width
+                };
                 style.push_str(&format!("strokeWidth={};", num(width)));
                 common_keys(
                     &mut style,

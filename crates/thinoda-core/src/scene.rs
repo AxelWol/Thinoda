@@ -952,9 +952,21 @@ impl EndTarget {
             self.rect.min.y + self.rect.size.y * port.position.y + port.offset.y,
         );
         let point = if port.perimeter {
-            if let Some(projected) =
+            if let Some(mut projected) =
                 fixed_port_perimeter(self.rect, self.shape.map(|(kind, _)| kind), point)
             {
+                if let Some((_, Some(rounding))) = self.shape
+                    && rounding.is_standard()
+                    && rounding.rounded_perimeter
+                    && let Some((corner, radius)) =
+                        rounded_perimeter_corner(self.rect, rounding, projected)
+                {
+                    let delta = projected - corner;
+                    let length = delta.x.hypot(delta.y);
+                    if length > 0.0 {
+                        projected = corner + delta * (radius / length);
+                    }
+                }
                 rotate_around(projected, self.rect.center(), self.rotation)
             } else {
                 self.clip(rotate_around(point, self.rect.center(), self.rotation))
@@ -968,6 +980,11 @@ impl EndTarget {
     /// Point on the visible perimeter in the direction of `toward`, like draw.io's
     /// shape perimeters; boxes and rectangular shapes clip to their rotated rect.
     fn clip(self, toward: Vec2) -> Vec2 {
+        if let Some((_, Some(rounding))) = self.shape
+            && rounding.is_standard()
+        {
+            return clip_to_drawio_rounded_rect(self.rect, self.rotation, rounding, toward);
+        }
         let rectangular = |kind| {
             matches!(
                 kind,
@@ -995,6 +1012,71 @@ impl EndTarget {
             })
             .unwrap_or_else(|| clip_to_rotated_rect(self.rect, self.rotation, toward))
     }
+}
+
+fn rounded_perimeter_corner(
+    rect: Rect,
+    rounding: ShapeRounding,
+    point: Vec2,
+) -> Option<(Vec2, f32)> {
+    let radius = rounding
+        .radius_for_rect(rect)
+        .min(rect.size.x / 2.0)
+        .min(rect.size.y / 2.0);
+    if radius <= 0.0 {
+        return None;
+    }
+    let min = rect.min + Vec2::new(radius, radius);
+    let max = rect.max() - Vec2::new(radius, radius);
+    if (point.x < min.x || point.x > max.x) && (point.y < min.y || point.y > max.y) {
+        Some((
+            Vec2::new(
+                if point.x < min.x { min.x } else { max.x },
+                if point.y < min.y { min.y } else { max.y },
+            ),
+            radius,
+        ))
+    } else {
+        None
+    }
+}
+
+fn clip_to_drawio_rounded_rect(
+    rect: Rect,
+    rotation: f32,
+    rounding: ShapeRounding,
+    toward: Vec2,
+) -> Vec2 {
+    let center = rect.center();
+    let local_toward = rotate_around(toward, center, -rotation);
+    let box_point = fixed_port_perimeter(rect, None, local_toward)
+        .unwrap_or_else(|| clip_to_rotated_rect(rect, 0.0, local_toward));
+    if !rounding.rounded_perimeter {
+        return rotate_around(box_point, center, rotation);
+    }
+    let Some((corner, radius)) = rounded_perimeter_corner(rect, rounding, box_point) else {
+        return rotate_around(box_point, center, rotation);
+    };
+    let dx = f64::from(box_point.x) - f64::from(center.x);
+    let dy = f64::from(box_point.y) - f64::from(center.y);
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return rotate_around(box_point, center, rotation);
+    }
+    let (dx, dy) = (dx / length, dy / length);
+    let ox = f64::from(center.x) - f64::from(corner.x);
+    let oy = f64::from(center.y) - f64::from(corner.y);
+    // Perpendicular distance avoids cancellation in the quadratic discriminant.
+    let perpendicular = ox * dy - oy * dx;
+    let distance = -(ox * dx + oy * dy)
+        + (f64::from(radius).powi(2) - perpendicular * perpendicular)
+            .max(0.0)
+            .sqrt();
+    let intersection = Vec2::new(
+        (f64::from(center.x) + dx * distance) as f32,
+        (f64::from(center.y) + dy * distance) as f32,
+    );
+    rotate_around(intersection, center, rotation)
 }
 
 /// Resolves a fixed connector port with the same geometry used by scene routing.
@@ -1041,7 +1123,7 @@ fn fixed_port_perimeter(rect: Rect, shape: Option<ShapeKind>, point: Vec2) -> Op
                 center.y + (y * scale) as f32,
             ))
         }
-        Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse) => {
+        Some(ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::FinalState) => {
             // The published ellipse perimeter truncates center-relative distances.
             let x = delta.x.trunc();
             let y = delta.y.trunc();

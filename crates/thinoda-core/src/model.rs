@@ -800,6 +800,11 @@ impl Sheet {
         self.canvas.has_shape_rounding()
     }
 
+    /// Whether this sheet needs standard draw.io rectangle rounding.
+    pub fn has_drawio_rectangle_rounding(&self) -> bool {
+        self.canvas.has_drawio_rectangle_rounding()
+    }
+
     /// Whether the sheet needs partial-rectangle-aware persistence.
     pub fn has_rectangle_sides(&self) -> bool {
         self.canvas.has_rectangle_sides()
@@ -808,6 +813,11 @@ impl Sheet {
     /// Whether the sheet needs double-ellipse-aware persistence.
     pub fn has_double_ellipses(&self) -> bool {
         self.canvas.has_double_ellipses()
+    }
+
+    /// Whether the sheet needs final-state-aware persistence.
+    pub fn has_final_states(&self) -> bool {
+        self.canvas.has_final_states()
     }
 
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
@@ -2344,6 +2354,11 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_shape_rounding)
     }
 
+    /// Whether any sheet needs standard draw.io rectangle rounding.
+    pub fn has_drawio_rectangle_rounding(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_rectangle_rounding)
+    }
+
     /// Whether any sheet needs partial-rectangle-aware persistence.
     pub fn has_rectangle_sides(&self) -> bool {
         self.sheets.iter().any(Sheet::has_rectangle_sides)
@@ -2352,6 +2367,11 @@ impl Workbook {
     /// Whether any sheet needs double-ellipse-aware persistence.
     pub fn has_double_ellipses(&self) -> bool {
         self.sheets.iter().any(Sheet::has_double_ellipses)
+    }
+
+    /// Whether any sheet needs final-state-aware persistence.
+    pub fn has_final_states(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_final_states)
     }
 
     pub fn active(&self) -> &Sheet {

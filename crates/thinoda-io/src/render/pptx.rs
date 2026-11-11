@@ -607,7 +607,7 @@ pub(crate) fn editable_slide(
         let card = topic
             .card
             .as_ref()
-            .filter(|card| topic.parent.is_none() && card.kind != CardKind::Image);
+            .filter(|card| topic.parent.is_none() && super::board::export_card_background(card));
         let card_fill = card.and_then(|card| super::board::card_fill(card, options.dark));
         let mut stroke = s.border_color.unwrap_or(s.line_color);
         let stroke_width = if s.border_width > 0.0 {

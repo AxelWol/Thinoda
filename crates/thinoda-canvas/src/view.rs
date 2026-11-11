@@ -88,6 +88,19 @@ pub enum BoardTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShapeDrop(pub ShapeKind);
 
+/// Drag-and-drop payload of a stencil: converted board content dragged from
+/// a host's stencil library. Releasing it over unobscured board space pastes
+/// it centred on the pointer as one undoable edit labelled `label`.
+#[derive(Debug, Clone)]
+pub struct StencilDrop {
+    pub payload: std::sync::Arc<thinoda_core::clipboard::BoardClipboardPayload>,
+    /// Sheet-space bounds of the content within `payload`.
+    pub bounds: thinoda_core::Rect,
+    pub label: String,
+    /// The imported content lost or approximated draw.io details.
+    pub simplified: bool,
+}
+
 impl BoardTool {
     fn ink_mode(self) -> Option<InkMode> {
         match self {
@@ -1339,6 +1352,8 @@ pub struct CanvasOutput {
     pub selection_changed: bool,
     /// Last edit error (e.g. trying to delete the central topic).
     pub error: Option<thinoda_core::EditError>,
+    /// A simplified stencil was successfully dropped onto the canvas.
+    pub stencil_insert_simplified: bool,
     /// Structured ink errors, including any rejected input samples.
     pub ink_errors: Vec<InkControllerError>,
     /// Completed or explicitly canceled ink gestures in this frame.
@@ -1595,6 +1610,7 @@ impl MapCanvas {
             context_topic: None,
             selection_changed: false,
             error: None,
+            stencil_insert_simplified: false,
             ink_errors: Vec::new(),
             ink_outcomes: Vec::new(),
             clipboard_requests: Vec::new(),

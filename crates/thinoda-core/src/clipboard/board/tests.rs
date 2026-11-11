@@ -25,6 +25,36 @@ fn copy(sheet: &Sheet, topics: &[TopicId], objects: &[CanvasObjectId]) -> BoardC
         .unwrap()
 }
 
+#[test]
+fn copied_content_bounds_match_the_pasted_rotated_card_and_shape() {
+    let mut source = hidden_sheet("Source", "Hidden anchor");
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(100.0, 60.0));
+    card.rotation = 35.0;
+    let card = source
+        .add_card("Card", Vec2::new(400.0, 300.0), card)
+        .unwrap();
+    let object = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            rect(600.0, 350.0, 80.0, 40.0),
+        ))
+        .unwrap();
+    let payload = copy(&source, &[card], &[object]);
+    let mut pasted = hidden_sheet("Destination", "Another hidden anchor");
+    paste_board_selection(&mut pasted, &payload, Vec2::ZERO).unwrap();
+    let layout = layout_sheet(&pasted, &ApproxMeasure, false);
+    let expected = build_scene(&pasted, &layout)
+        .items
+        .iter()
+        .filter_map(|item| item.visible_bounds())
+        .reduce(|a, b| a.union(&b))
+        .unwrap();
+    let bounds = payload.content_bounds().unwrap();
+    assert_eq!(bounds, expected);
+    assert!(bounds.min.x > 300.0, "the hidden anchor is not content");
+    assert!(bounds.min.y < 270.0, "the card's rotation is included");
+}
+
 fn depth_fixture(depth: usize, summaries: bool) -> (Sheet, TopicId) {
     let mut sheet = hidden_sheet("", "");
     let root = sheet.add_floating("Root", Vec2::new(100.0, 100.0));
@@ -1026,6 +1056,7 @@ fn shape_rounding_board_clipboard_requires_version_twelve() {
     let rounding = ShapeRounding {
         radius: 15.0,
         stencil: DrawioRectangleStencil::Graphics,
+        ..Default::default()
     };
     let mut shape = CanvasObject::shape(
         ShapeKind::RoundedRectangle,
@@ -1054,6 +1085,87 @@ fn shape_rounding_board_clipboard_requires_version_twelve() {
     for version in 1..12 {
         let forged = encoded.replacen(
             "THINODA-BOARD-CLIPBOARD-12",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(decode_board_payload(&forged).is_err(), "version {version}");
+    }
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    assert_eq!(
+        destination
+            .canvas
+            .object(pasted.objects[0])
+            .unwrap()
+            .rounding,
+        Some(rounding)
+    );
+}
+
+#[test]
+fn final_state_board_clipboard_requires_version_seventeen() {
+    use crate::Rect;
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut shape = CanvasObject::shape(
+        ShapeKind::FinalState,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+    );
+    shape.rotation = 37.0;
+    let original = shape.clone();
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(FINAL_STATE_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..17 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-17",
+            &format!("THINODA-BOARD-CLIPBOARD-{version}"),
+            1,
+        );
+        assert!(decode_board_payload(&forged).is_err(), "version {version}");
+    }
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    let restored = destination.canvas.object(pasted.objects[0]).unwrap();
+    assert_eq!(restored.kind, original.kind);
+    assert_eq!(restored.style, original.style);
+    assert_eq!(restored.rotation, original.rotation);
+}
+
+#[test]
+fn drawio_rectangle_rounding_board_clipboard_requires_version_sixteen() {
+    use crate::{DrawioRectangleStencil, Rect, ShapeRounding, ShapeRoundingMode};
+
+    let mut source = Sheet::new("Source", "Root");
+    let rounding = ShapeRounding {
+        radius: 21.5,
+        stencil: DrawioRectangleStencil::Standard,
+        mode: ShapeRoundingMode::AbsoluteArc,
+        rounded_perimeter: true,
+    };
+    let mut shape = CanvasObject::shape(
+        ShapeKind::RoundedRectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+    );
+    shape.rounding = Some(rounding);
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(DRAWIO_ROUNDING_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    for version in 1..16 {
+        let forged = encoded.replacen(
+            "THINODA-BOARD-CLIPBOARD-16",
             &format!("THINODA-BOARD-CLIPBOARD-{version}"),
             1,
         );

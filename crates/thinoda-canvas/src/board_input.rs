@@ -34,6 +34,8 @@ pub(super) struct State {
     pub(super) ghost: Option<Pos2>,
     /// Shape dragged from a library and where it would drop.
     pub(super) drop_ghost: Option<(ShapeKind, Pos2)>,
+    /// Size of a dragged stencil's content and where it would drop.
+    pub(super) stencil_ghost: Option<(Vec2, Pos2)>,
     /// Unselected shape whose draw.io-style direction arrows are shown on hover.
     hover_shape: Option<CanvasObjectId>,
     /// Open quick-shape picker of a direction arrow.
@@ -441,7 +443,8 @@ impl MapView {
         let size = default_size(BoardTool::Shape(kind));
         let center = insert_spot(doc.sheet(), self, &scene, size);
         let rect = thinoda_core::Rect::from_center_size(center, size);
-        let id = doc.add_canvas_object(CanvasObject::shape(kind, rect))?;
+        let object = new_board_shape(kind, rect, doc.sheet(), self.dark);
+        let id = doc.add_canvas_object(object)?;
         select_hit(self, doc.sheet(), SceneHit::Object(id), false);
         self.reveal_board_object(id);
         Ok(id)
@@ -627,10 +630,28 @@ fn default_size(tool: BoardTool) -> Vec2 {
     match tool {
         BoardTool::Sticky => Vec2::new(180.0, 150.0),
         BoardTool::Text => Vec2::new(200.0, 80.0),
+        BoardTool::Shape(ShapeKind::FinalState) => Vec2::new(30.0, 30.0),
         BoardTool::Shape(_) => Vec2::new(160.0, 100.0),
         BoardTool::Frame => Vec2::new(360.0, 240.0),
         _ => Vec2::new(120.0, 0.0),
     }
+}
+
+fn new_board_shape(
+    kind: ShapeKind,
+    rect: thinoda_core::Rect,
+    sheet: &Sheet,
+    dark: bool,
+) -> CanvasObject {
+    let mut object = CanvasObject::shape(kind, rect);
+    if kind == ShapeKind::FinalState {
+        let background =
+            thinoda_core::theme::Theme::for_settings(&sheet.theme).background(&sheet.theme, dark);
+        let color = thinoda_core::Color::highest_contrast_on(background);
+        object.style.fill = Some(color);
+        object.style.stroke = Some(color);
+    }
+    object
 }
 
 fn endpoint_at(
@@ -715,9 +736,10 @@ fn connection_points_for_item(
                 ShapeKind::Rectangle | ShapeKind::RoundedRectangle => {
                     &RECTANGLE_CONNECTION_POINTS[..]
                 }
-                ShapeKind::Ellipse | ShapeKind::DoubleEllipse | ShapeKind::Diamond => {
-                    &PERIMETER_CONNECTION_POINTS[..]
-                }
+                ShapeKind::Ellipse
+                | ShapeKind::DoubleEllipse
+                | ShapeKind::FinalState
+                | ShapeKind::Diamond => &PERIMETER_CONNECTION_POINTS[..],
                 _ => return None,
             };
             (
@@ -943,6 +965,7 @@ mod connection_point_tests {
             (ShapeKind::RoundedRectangle, 16),
             (ShapeKind::Ellipse, 8),
             (ShapeKind::DoubleEllipse, 8),
+            (ShapeKind::FinalState, 8),
             (ShapeKind::Diamond, 8),
         ] {
             for rotation in [0.0, 37.0, 90.0] {
@@ -1389,7 +1412,8 @@ fn create(
             Ok(true)
         }
         BoardTool::Shape(kind) => {
-            let id = doc.add_canvas_object(CanvasObject::shape(kind, rect))?;
+            let object = new_board_shape(kind, rect, doc.sheet(), view.dark);
+            let id = doc.add_canvas_object(object)?;
             select_hit(view, doc.sheet(), SceneHit::Object(id), false);
             Ok(true)
         }
@@ -2568,10 +2592,13 @@ fn quick_content(
                     stroke,
                 ));
                 for detail in shape.unit_details() {
-                    ui.painter().add(egui::Shape::line(
-                        detail.into_iter().map(point).collect(),
-                        stroke,
-                    ));
+                    let points = detail.into_iter().map(point).collect();
+                    if *shape == ShapeKind::FinalState {
+                        ui.painter()
+                            .add(egui::Shape::convex_polygon(points, stroke.color, stroke));
+                    } else {
+                        ui.painter().add(egui::Shape::line(points, stroke));
+                    }
                 }
                 if hot {
                     result.preview = Some(*shape);
@@ -3704,6 +3731,34 @@ pub(super) fn interact(
         return true;
     }
     view.board_input.drop_ghost = None;
+    view.board_input.stencil_ghost = None;
+    if let Some(drop) = egui::DragAndDrop::payload::<StencilDrop>(&ctx) {
+        let point = ctx
+            .input(|input| input.pointer.latest_pos())
+            .filter(|point| {
+                ui.is_enabled()
+                    && !view.board_input.is_active()
+                    && canvas_point_unobscured(ui, response, *point)
+            });
+        if !ctx.input(|input| input.pointer.any_released()) {
+            view.board_input.stencil_ghost = point.map(|point| (drop.bounds.size, point));
+        } else if let Some(point) = point {
+            egui::DragAndDrop::clear_payload(&ctx);
+            let center = snapped(doc.sheet(), view.xf().sheet(point));
+            match view.paste_foreign_board_at(
+                doc,
+                &drop.payload,
+                Some(drop.bounds),
+                Some(center),
+                &drop.label,
+            ) {
+                Ok(inserted) => out.stencil_insert_simplified = inserted && drop.simplified,
+                Err(error) => out.error = Some(error),
+            }
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+        }
+        return true;
+    }
     if let Some(drop) = egui::DragAndDrop::payload::<ShapeDrop>(&ctx) {
         // A library shape previews where it lands and is created on release;
         // Escape cancels (egui clears the payload) and the tool is unchanged.
@@ -4961,6 +5016,24 @@ pub(super) fn paint(
         }
         _ => None,
     };
+    if let Some((size, pointer)) = view.board_input.stencil_ghost {
+        let center = snapped(sheet, xf.sheet(pointer));
+        let ghost = thinoda_core::Rect::from_center_size(center, size);
+        let corners = [
+            ghost.min,
+            Vec2::new(ghost.max().x, ghost.min.y),
+            ghost.max(),
+            Vec2::new(ghost.min.x, ghost.max().y),
+            ghost.min,
+        ]
+        .map(|point| xf.pos(point));
+        painter.extend(egui::Shape::dashed_line(
+            &corners,
+            Stroke::new(1.5, view.accent.gamma_multiply(0.6)),
+            6.0,
+            4.0,
+        ));
+    }
     if let Some((kind, pointer)) = view.board_input.drop_ghost.or(armed_ghost) {
         let center = snapped(sheet, xf.sheet(pointer));
         let ghost =
@@ -4976,10 +5049,16 @@ pub(super) fn paint(
             stroke,
         ));
         for detail in geometry.details {
-            painter.add(egui::Shape::line(
-                detail.into_iter().map(|point| xf.pos(point)).collect(),
-                stroke,
-            ));
+            let points = detail.into_iter().map(|point| xf.pos(point)).collect();
+            if kind == ShapeKind::FinalState {
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    stroke.color.gamma_multiply(0.35),
+                    stroke,
+                ));
+            } else {
+                painter.add(egui::Shape::line(points, stroke));
+            }
         }
     }
 
@@ -5026,10 +5105,16 @@ pub(super) fn paint(
             stroke,
         ));
         for detail in geometry.details {
-            painter.add(egui::Shape::line(
-                detail.into_iter().map(|point| xf.pos(point)).collect(),
-                stroke,
-            ));
+            let points = detail.into_iter().map(|point| xf.pos(point)).collect();
+            if shape == ShapeKind::FinalState {
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    stroke.color.gamma_multiply(0.35),
+                    stroke,
+                ));
+            } else {
+                painter.add(egui::Shape::line(points, stroke));
+            }
         }
     }
 

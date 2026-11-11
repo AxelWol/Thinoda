@@ -10,6 +10,48 @@ desktop work improves the measured cold path, but does not establish an iPad
 speedup. The goal is to make the app usable sooner, not merely to show a
 spinner sooner.
 
+## Reported Pages storage startup failure
+
+**Candidate fix implemented; the reported device's cause is unconfirmed.** The previous
+startup error did not distinguish failures. On the deployed build, isolated
+synthetic legacy records with both a file and a descendant path reproduce the
+same message. The old VFS allowed these paths, but the newer document store
+rejects file/directory collisions. An existing durable file can cause the
+same failure with a legacy descendant, and the reverse is also possible.
+This does not establish that the user's data has that shape. No user site data
+has been inspected, cleared or modified.
+
+The migration fix retains the existing durable entry, writes the
+colliding legacy bytes to the existing deterministic `.thinoda-legacy` conflict
+namespace, rereads and verifies the copy, and records its original path in
+durable metadata. **File > Recovered browser documents** lists all annotated
+versions even if older tabs later change or remove their legacy keys. A sticky,
+screen-reader-announced notice points to that menu. Opening a copy creates an
+unsaved document whose save chooses a separate destination. Legacy keys remain
+untouched. A collision or different content at the conflict-copy path still
+blocks startup rather than overwriting either document. Fixed, privacy-safe
+error categories distinguish malformed legacy data, blocked upgrades, quota,
+permission, and certain integrity/path conflicts without displaying browser
+error strings, filenames or contents.
+
+Standalone storage-module checks passed in isolated Chromium, Firefox and
+WebKit for legacy parent/child collisions, durable parent and child collisions,
+concurrent retries, historical versions, and occupied or corrupt conflict-copy
+destinations. Production-bundle browser checks exercise startup, recovery menu
+opening and saving, reload, failure categories and integrity-protected module
+loading. The menu also has a native interaction test for scrolling to the last
+of 24 entries.
+
+**Rubber-duck critique.** A synthetic path collision is only one possible cause
+of the reported message. The history mapping is verified before it is shown;
+its original legacy key is never removed, and an unavailable hash operation is
+not mislabeled as corruption. Browser tests select the storage module actually
+imported by the app: incremental Trunk builds can also preload stale snippet
+copies, so selecting the first network entry can test the wrong module. The
+deployed update and affected browser/device remain unverified. Keep this
+incident open until the user's startup is confirmed; do not clear site data as
+a workaround or silently accept non-durable saves.
+
 ## Scope and measurement
 
 Keep all current editing, import/export, presentation, accessibility and

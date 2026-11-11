@@ -185,6 +185,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::DrawioFoldedNotesApproximated => {
             "draw.io folded notes may be flattened or simplified"
         }
+        ImportWarning::DrawioPlaceholdersUnsupported => {
+            "draw.io placeholders are not resolved and their data is not preserved"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -555,6 +558,10 @@ const DE: &[(&str, &str)] = &[
         "Doppelte Ellipsen können in draw.io anders aussehen",
     ),
     (
+        "Final-state appearance may differ in draw.io",
+        "Endzustände können in draw.io anders aussehen",
+    ),
+    (
         "Collapsed process outlines may be omitted in draw.io",
         "Konturen von Prozessen ohne Breite oder Höhe können in draw.io fehlen",
     ),
@@ -621,6 +628,11 @@ const DE: &[(&str, &str)] = &[
     ("Ink width", "Strichbreite"),
     ("Eraser radius", "Radius des Radierers"),
     ("Corner radius", "Eckenradius"),
+    ("Relative corner radius", "Relativer Eckenradius"),
+    (
+        "Connect at rounded corners",
+        "An abgerundeten Ecken verbinden",
+    ),
     ("Outline sides", "Konturseiten"),
     ("Top outline", "Obere Kontur"),
     ("Right outline", "Rechte Kontur"),
@@ -882,6 +894,14 @@ const DE: &[(&str, &str)] = &[
     (
         "Browser storage migration conflict",
         "Konflikt bei der Browser-Speichermigration",
+    ),
+    (
+        "Recovered browser documents",
+        "Wiederhergestellte Browser-Dokumente",
+    ),
+    (
+        "Preserved browser documents are available in File > Recovered browser documents.",
+        "Gesicherte Browser-Dokumente sind unter Datei > Wiederhergestellte Browser-Dokumente verfügbar.",
     ),
     ("Downloading file:", "Datei wird heruntergeladen:"),
     ("Reload file", "Datei neu laden"),
@@ -1450,6 +1470,10 @@ const DE: &[(&str, &str)] = &[
         "Gefaltete draw.io-Notizen können abgeflacht oder vereinfacht werden",
     ),
     (
+        "draw.io placeholders are not resolved and their data is not preserved",
+        "draw.io-Platzhalter werden nicht aufgelöst und ihre Daten nicht übernommen",
+    ),
+    (
         "Other unsupported map data",
         "Weitere nicht unterstützte Map-Daten",
     ),
@@ -1518,6 +1542,7 @@ const DE: &[(&str, &str)] = &[
     ("Rectangle", "Rechteck"),
     ("Ellipse", "Ellipse"),
     ("Double ellipse", "Doppelte Ellipse"),
+    ("Final state", "Endzustand"),
     ("Automatic inner inset", "Automatischer Innenabstand"),
     ("Inner outline inset", "Innenabstand der Kontur"),
     ("Capsule", "Kapselform"),
@@ -4197,6 +4222,96 @@ const DE: &[(&str, &str)] = &[
         "Could not paste draw.io content",
         "draw.io-Inhalt konnte nicht eingefügt werden",
     ),
+    ("Stencils", "Schablonen"),
+    ("Scratchpad", "Notizblock"),
+    ("Arrows", "Pfeile"),
+    ("Library", "Bibliothek"),
+    ("Search stencils", "Schablonen durchsuchen"),
+    (
+        "Click to insert or drag onto the board",
+        "Zum Einfügen klicken oder auf das Board ziehen",
+    ),
+    (
+        "Open a board or mind map to insert stencils",
+        "Öffne ein Board oder eine Mindmap, um Schablonen einzufügen",
+    ),
+    ("Add selection", "Auswahl hinzufügen"),
+    (
+        "Add the selected board items to the scratchpad",
+        "Ausgewählte Board-Elemente zum Notizblock hinzufügen",
+    ),
+    (
+        "Select board items and add them here for reuse",
+        "Board-Elemente auswählen und hier zur Wiederverwendung hinzufügen",
+    ),
+    ("Remove library", "Bibliothek entfernen"),
+    ("More shapes…", "Weitere Formen…"),
+    ("Import library…", "Bibliothek importieren…"),
+    ("Remove from scratchpad", "Aus dem Notizblock entfernen"),
+    (
+        "The library has no usable shapes",
+        "Die Bibliothek enthält keine verwendbaren Formen",
+    ),
+    (
+        "Too many stencil libraries; remove one first",
+        "Zu viele Schablonenbibliotheken; entferne zuerst eine",
+    ),
+    ("The scratchpad is full", "Der Notizblock ist voll"),
+    (
+        "Stencil libraries exceed the size or processing limit",
+        "Schablonenbibliotheken überschreiten die Größen- oder Verarbeitungsgrenze",
+    ),
+    (
+        "Some library entries could not be used",
+        "Einige Bibliothekseinträge konnten nicht verwendet werden",
+    ),
+    (
+        "Could not load stencil libraries",
+        "Schablonenbibliotheken konnten nicht geladen werden",
+    ),
+    (
+        "Changes cannot be saved because existing stencil libraries could not be loaded",
+        "Änderungen können nicht gespeichert werden, weil vorhandene Schablonenbibliotheken nicht geladen werden konnten",
+    ),
+    (
+        "Could not save stencil libraries",
+        "Schablonenbibliotheken konnten nicht gespeichert werden",
+    ),
+    (
+        "Could not insert stencil",
+        "Schablone konnte nicht eingefügt werden",
+    ),
+    (
+        "Could not add to the scratchpad",
+        "Konnte nicht zum Notizblock hinzugefügt werden",
+    ),
+    (
+        "Select board items to add to the scratchpad",
+        "Wähle Board-Elemente aus, um sie zum Notizblock hinzuzufügen",
+    ),
+    (
+        "Could not import library",
+        "Bibliothek konnte nicht importiert werden",
+    ),
+    (
+        "Inserted; some draw.io content may have been omitted or simplified",
+        "Eingefügt; einige draw.io-Inhalte wurden eventuell ausgelassen oder vereinfacht",
+    ),
+    (
+        "Added to the scratchpad; some content may differ when inserted",
+        "Zum Notizblock hinzugefügt; einige Inhalte können beim Einfügen abweichen",
+    ),
+    (
+        "Some draw.io details are simplified",
+        "Einige draw.io-Details sind vereinfacht",
+    ),
+    ("Square", "Quadrat"),
+    ("Circle", "Kreis"),
+    ("Bidirectional arrow", "Doppelpfeil (beidseitig)"),
+    ("Database", "Datenbank"),
+    ("On-page reference", "Seitenverweis"),
+    ("Extract", "Extrahieren"),
+    ("Merge", "Zusammenführen"),
 ];
 
 #[cfg(test)]
@@ -4970,6 +5085,7 @@ mod tests {
             "draw.io page background was approximated or omitted",
             "Page background may differ in draw.io",
             "draw.io folded notes may be flattened or simplified",
+            "draw.io placeholders are not resolved and their data is not preserved",
             "Cards may show folded corners in draw.io",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",
@@ -5207,6 +5323,7 @@ mod tests {
             "Label color or opacity may differ in draw.io",
             "Rectangle colors or automatic outlines may differ in draw.io",
             "Double-ellipse appearance may differ in draw.io",
+            "Final-state appearance may differ in draw.io",
             "Collapsed process outlines may be omitted in draw.io",
             "Grid or snapping may differ in draw.io",
             "Translucent connector labels may render differently",
@@ -5343,6 +5460,7 @@ mod tests {
             include_str!("quick_styles.rs"),
             include_str!("theme_editor.rs"),
             include_str!("template_gallery.rs"),
+            include_str!("stencils.rs"),
             include_str!("structure_picker.rs"),
             include_str!("shortcut_browser.rs"),
             include_str!("keymap_editor.rs"),

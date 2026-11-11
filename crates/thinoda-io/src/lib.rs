@@ -6,6 +6,7 @@
 mod board_export;
 mod drawio;
 pub mod drawio_clipboard;
+pub mod drawio_library;
 pub mod fim;
 pub mod fonts;
 mod formats;
@@ -398,6 +399,8 @@ pub enum ImportWarning {
     DrawioBackgroundAdjusted,
     /// A draw.io folded note's appearance was approximated.
     DrawioFoldedNotesApproximated,
+    /// draw.io placeholder resolution and its metadata are not represented.
+    DrawioPlaceholdersUnsupported,
     Other,
 }
 

@@ -1375,7 +1375,16 @@ fn paint_canvas_object(
             };
             let points: Vec<_> = outline.iter().copied().map(|p| xf.pos(p)).collect();
             let triangulation = shape_fill(*shape);
-            if let Some(sides) = object.rectangle_sides {
+            if *shape == ShapeKind::FinalState {
+                for detail in details {
+                    painter.add(Shape::convex_polygon(
+                        detail.iter().copied().map(|p| xf.pos(p)).collect(),
+                        fill,
+                        stroke,
+                    ));
+                }
+                painter.add(Shape::closed_line(points, stroke));
+            } else if let Some(sides) = object.rectangle_sides {
                 painter.add(Shape::convex_polygon(points, fill, Stroke::NONE));
                 paint_rectangle_sides(painter, object, sides, xf, stroke);
             } else if triangulation.convex {
@@ -1395,11 +1404,13 @@ fn paint_canvas_object(
                     painter.add(Shape::closed_line(points, stroke));
                 }
             }
-            for detail in details {
-                painter.add(Shape::line(
-                    detail.iter().copied().map(|p| xf.pos(p)).collect(),
-                    stroke,
-                ));
+            if *shape != ShapeKind::FinalState {
+                for detail in details {
+                    painter.add(Shape::line(
+                        detail.iter().copied().map(|p| xf.pos(p)).collect(),
+                        stroke,
+                    ));
+                }
             }
             if !label.is_empty() && editing_board_object != Some(object.id) {
                 let text_rect = shape_label_rect_with_style(

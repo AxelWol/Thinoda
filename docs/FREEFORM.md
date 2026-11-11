@@ -49,8 +49,8 @@ and segment dragging are not yet available; see
 
 ### Fixed connector attachments
 
-Hover a rectangle, rounded rectangle, ellipse, double ellipse, diamond or
-rectangular topic to reveal connection crosses. Drag from a cross to start a
+Hover a rectangle, rounded rectangle, ellipse, double ellipse, final state,
+diamond or rectangular topic to reveal connection crosses. Drag from a cross to start a
 connector, or drop an endpoint, Connector-tool drag, direction arrow or outline
 drag on one to fix the attachment. The Connector tool also supports clicking a
 source and then a destination. Dropping on a body away from a cross leaves a
@@ -78,14 +78,27 @@ visible location. Import warns when a source perimeter, orientation or changed
 target geometry may alter that position. draw.io export requires consent if
 the position may differ or a fixed attachment points to a collapsed topic that
 cannot be exported; a detached endpoint remains at its visible location.
-Rectangle, ellipse, double-ellipse and diamond projections follow the tested
-draw.io subset; named ports, directional constraints, and exact perimeter and
-routing parity for every draw.io shape remain incomplete.
+Rectangle, ellipse, double-ellipse, final-state and diamond projections follow
+the tested draw.io subset; named ports, directional constraints, and exact
+perimeter and routing parity for every draw.io shape remain incomplete.
 
 Import warns when a connected double ellipse uses a different source perimeter.
 Previously saved fixed perimeter attachments on double ellipses can move
 slightly because they now use the analytic ellipse rather than its flattened
 outline; floating and non-perimeter attachments are unchanged.
+
+### UML final states
+
+The shape library includes an editable final-state symbol with a filled inner
+ellipse and an unfilled outer ring. Newly placed symbols start at 30 by 30
+units with black or white fill and stroke chosen for contrast against the
+current board background. Those explicit colors do not change with later theme
+changes. Changing an existing shape to this kind retains its colors and
+dimensions. Fixed connections use the outer ellipse.
+Native files containing final states require format v24, with corresponding
+clipboard, recovery and private XMind envelope versions. Imported dynamic
+color links and external label positions can be approximated and are reported;
+keep the original draw.io file.
 
 ### Imported rectangle corners
 
@@ -97,6 +110,17 @@ copy/paste and visual exports follow the same geometry. Same-kind quick
 clones retain the radius; changing the shape kind removes it, and undo restores
 it. Native files containing this property require format v19; legacy shapes
 and documents keep their previous behavior and format version.
+
+Standard draw.io rounded rectangles also retain their relative or absolute
+corner settings. Select one in the Format Panel to edit **Corner radius**:
+it is a percentage of the shorter side when **Relative corner radius** is
+enabled, and drawing units otherwise. Switching modes preserves the visible
+radius where representable. **Connect at rounded corners** controls whether
+supported connector endpoints use the rounded or rectangular perimeter.
+Changes are undoable. Native files containing these settings require format
+v23; earlier applications reject them rather than discard the settings.
+Elbow and curved connector routing remains approximate; see
+[DRAWIO.md](DRAWIO.md) for the current limits.
 
 ### Rectangle outline sides
 
@@ -1734,6 +1758,18 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   regression coverage. GPU-rendered light/dark previews were inspected at wide
   and compact sizes; this is not browser screen-reader or physical-touch
   acceptance. The other contextual editing slices remain open.
+
+### Format-panel stencils checkpoint
+
+- The right Format Panel has a separate Stencils tab with searchable built-in
+  sections, imported draw.io XML libraries and a persistent selection scratchpad.
+  Clicking inserts an undoable copy at the canvas center; dragging positions a
+  copy on the board. The existing left-hand Shape library is unchanged.
+- Duck check: imported content goes through the draw.io conversion path, so
+  unsupported details can be simplified rather than becoming faithful stencil
+  geometry. A damaged saved library disables saving instead of overwriting it.
+  Library export, connecting on insertion, arrow-key tile navigation and
+  physical touch and assistive-technology acceptance remain open.
 
 ### Whole-card formatting checkpoint and critique
 
