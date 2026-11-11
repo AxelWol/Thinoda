@@ -405,6 +405,9 @@ function commit(db, record, content, expected, cancelled, backup) {
                     throw failure("io", "Document path conflicts with a directory", null, "path_conflict");
                 }
                 if (content) contents.put(content);
+                if (previous?.legacyOriginal !== undefined && previous.revision === record.revision) {
+                    record.legacyOriginal = previous.legacyOriginal;
+                }
                 // `.bak` shares the previous immutable blob and is committed
                 // atomically with the replacement.
                 if (keep) documents.put({ ...keep, id: record.id + ".bak" });
@@ -630,7 +633,7 @@ function recordLegacyConflict(db, copy, original, expectedRevision) {
 async function preserveLegacy(entry, state) {
     const expectedRevision = await revision(entry.bytes);
     const copy = await conflictIdForRevision(entry.id, expectedRevision);
-    const existing = await readCurrent(state, copy);
+    const existing = await readMigrating(state, copy, entry);
     if (existing) {
         if (!equal(existing.bytes, entry.bytes)) {
             throw failure("io", "Legacy conflict copy verification failed", null, "invalid_durable");
@@ -653,13 +656,39 @@ async function preserveLegacy(entry, state) {
     return { copied: true, original: entry.id, preserved: copy };
 }
 
+async function readMigrating(state, id, legacy) {
+    try {
+        return await readCurrent(state, id);
+    } catch (error) {
+        if (error?.reason !== "invalid_durable") throw error;
+        const record = await query(state.db, id);
+        // A retained legacy copy is not necessarily the latest saved version.
+        // Repair only the exact committed bytes, never roll back to an older save.
+        if (!record || record.size !== legacy.bytes.length ||
+            record.revision !== await revision(legacy.bytes) ||
+            (id !== legacy.id && record.legacyOriginal !== undefined &&
+                record.legacyOriginal !== legacy.id)) {
+            throw error;
+        }
+        try {
+            await writeDocument(id, legacy.bytes, `match:${record.revision}`);
+        } catch (writeError) {
+            if (writeError?.code !== "conflict") throw writeError;
+            // Another tab saved first. Read its committed version, not our copy.
+        }
+        const restored = await readCurrent(state, id);
+        console.warn("Thinoda rechecked a browser document after attempting exact-copy recovery");
+        return restored;
+    }
+}
+
 async function migrateOne(entry, retries = 3) {
     if (retries === 0) {
         throw failure("io", "Durable documents kept changing during migration; retry initialization",
             null, "migration_changed");
     }
     const state = await storage();
-    const current = await readCurrent(state, entry.id);
+    const current = await readMigrating(state, entry.id, entry);
     if (current) {
         if (equal(current.bytes, entry.bytes)) return { copied: false };
         return preserveLegacy(entry, state);

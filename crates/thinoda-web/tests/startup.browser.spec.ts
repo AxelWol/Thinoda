@@ -102,7 +102,8 @@ test("storage failure is announced and reload preserves legacy data", async ({ p
     await expect(loader).toHaveAttribute("role", "alert", { timeout: 120_000 });
     await expect(loader).toHaveAttribute("aria-live", "assertive");
     await expect(loader).not.toHaveAttribute("aria-busy", "true");
-    await expect(loader).toContainText("could not verify browser document storage");
+    await expect(loader).toContainText("Document storage is not available in this browser window.");
+    await expect(loader.getByRole("heading", { name: "What would you like to do?" })).toBeVisible();
     const reload = loader.getByRole("link", { name: "Reload Thinoda" });
     await expect(reload).toBeVisible();
     expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe(value);
@@ -118,8 +119,8 @@ test("storage failure is announced and reload preserves legacy data", async ({ p
 });
 
 for (const scenario of [
-    { name: "quota", error: "QuotaExceededError", message: "storage quota was exceeded" },
-    { name: "permission", error: "SecurityError", message: "browser denied access to storage" },
+    { name: "quota", error: "QuotaExceededError", message: "run out of space" },
+    { name: "permission", error: "SecurityError", message: "not allowing Thinoda" },
 ] as const) {
     test(`a ${scenario.name} storage failure gives a private, actionable diagnosis`, async ({ page }) => {
         const key = "thinoda.vfs:/Documents/private-document.thinoda";
@@ -137,8 +138,11 @@ for (const scenario of [
         const alert = page.locator("#loading");
         await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
         await expect(alert).toContainText(scenario.message);
-        await expect(alert).not.toContainText("private");
-        await expect(alert).toContainText("did not delete legacy data");
+        await expect(alert).not.toContainText("private document contents");
+        await expect(alert).not.toContainText("private-document.thinoda");
+        await expect(alert).toContainText("has not deleted your saved data");
+        await expect(alert).toContainText(scenario.name === "quota"
+            ? "Free some space on your device" : "privacy settings");
         expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe(value);
     });
 }
@@ -181,8 +185,8 @@ test("a blocked database upgrade identifies the other tab and can be retried", a
 
     const alert = page.locator("#loading");
     await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
-    await expect(alert).toContainText("another browser tab");
-    await expect(alert).toContainText("close other Thinoda tabs");
+    await expect(alert).toContainText("Another Thinoda tab");
+    await expect(alert).toContainText("Close other Thinoda tabs");
     expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe(value);
     await page.evaluate(() => {
         const database = Reflect.get(window, "__thinoda_test_open_database") as IDBDatabase;
