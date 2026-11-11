@@ -27,6 +27,21 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.25.0](https://github.com/AxelWol/Thinoda/compare/v0.24.0...v0.25.0) (2026-11-11)
+
+
+### Features
+
+* support editable UML final states ([ea5736d](https://github.com/AxelWol/Thinoda/commit/ea5736db7b4cfe2b824405808e5655cd18ae46d7))
+
+
+### Bug Fixes
+
+* disclose unsupported draw.io placeholders ([57b9655](https://github.com/AxelWol/Thinoda/commit/57b96553c34fa654f994b6986e02ae09a8d1b666))
+* preserve browser documents and draw.io geometry ([3217341](https://github.com/AxelWol/Thinoda/commit/321734135c0bffed14b566676179a9b63e5f816a))
+* preserve browser documents and draw.io rounding ([795bffd](https://github.com/AxelWol/Thinoda/commit/795bffdc758b2051d3bf530e06524f20193ad437))
+* preserve draw.io waypoint ordering ([797d273](https://github.com/AxelWol/Thinoda/commit/797d273bc9f9f493aedc635f1af2b7c0e26507bb))
+
 ## [0.24.0](https://github.com/AxelWol/Thinoda/compare/v0.23.1...v0.24.0) (2026-11-09)
 
 
