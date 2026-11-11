@@ -29,7 +29,7 @@ fn browser_io_diagnostic(
             "the browser document database version is not supported",
         ),
         (Some("blocked"), _) => (
-            io::ErrorKind::Other,
+            io::ErrorKind::WouldBlock,
             "another browser tab is blocking the document database; close other Thinoda tabs and retry",
         ),
         (Some("invalid_legacy"), _) => (
@@ -708,7 +708,7 @@ mod tests {
             (
                 Some("blocked"),
                 None,
-                io::ErrorKind::Other,
+                io::ErrorKind::WouldBlock,
                 "another browser tab",
             ),
             (

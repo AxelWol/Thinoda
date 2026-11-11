@@ -34,6 +34,51 @@ error categories distinguish malformed legacy data, blocked upgrades, quota,
 permission, and certain integrity/path conflicts without displaying browser
 error strings, filenames or contents.
 
+### Automatic repair and understandable recovery choices (2026-11-11)
+
+The recurring verification screen now attempts a conservative repair before
+asking the user anything. If a durable document or preserved conflict copy has
+missing/corrupt bytes, its retained legacy copy must match **both the committed
+SHA-256 revision and byte length**. Only then can a conditional write restore
+that exact version. Existing `.bak` records and legacy keys are not replaced.
+A concurrent newer save wins; the legacy bytes become a separate conflict copy.
+Same-revision writes retain the recovery mapping atomically, including if the
+tab closes before migration finishes. This does not treat an older, readable
+copy as permission to roll back a newer or unverifiable saved document.
+
+Otherwise the startup screen asks **"What would you like to do?"**, with a
+plain-language explanation and the outcomes of retrying or downloading older
+browser copies. Permission, space and other-tab problems have specific steps.
+The **Download older browser copies** action exports raw legacy document keys
+to `thinoda-older-browser-copies.json`, including malformed entries, without
+deleting or modifying storage. Settings and unrelated keys are excluded. The
+screen explicitly explains that this is a recovery archive, not an openable
+Thinoda document or a complete backup of newer saves. No-copy and download
+failures have visible outcomes. The editor remains gated rather than silently
+accepting unsafe saves; closing the page also leaves stored data untouched.
+
+**Rubber-duck critique.** A release does not itself prove a storage migration
+bug, and the affected device's cause remains unconfirmed. Blindly accepting
+legacy bytes could lose a newer save; skipping verification could hide data
+loss. The repair therefore requires the exact recorded digest/length, uses
+revision compare-and-swap, rereads committed bytes, preserves existing backup
+records and never clears site data. Retaining `legacyOriginal` in the same
+commit closes a crash window in repaired conflict-copy discovery. A JSON
+download is not presented as restoring the app or exporting all documents.
+Filenames, document contents and browser exception strings are not interpolated
+into the screen; the archive itself can contain private content and is labeled
+accordingly. Static startup messages remain English, as before. Real-device
+acceptance remains open.
+
+Production-bundle verification: 33 Chromium startup/migration/offline-update
+tests pass, including missing/corrupt OPFS and IndexedDB bytes, repeated reloads,
+existing backups, conflict copies, a concurrent newer save, blocked upgrades,
+permissions/quota, malformed-entry export, no-copy feedback, keyboard download
+and narrow-viewport scrolling. Wasm Clippy, release Trunk build, formatting and
+23 storage/PWA module tests pass. Firefox and WebKit verification covers the
+supported storage backends; this Windows WebKit build lacks writable OPFS and
+uses the explicitly tested IndexedDB fallback.
+
 Standalone storage-module checks passed in isolated Chromium, Firefox and
 WebKit for legacy parent/child collisions, durable parent and child collisions,
 concurrent retries, historical versions, and occupied or corrupt conflict-copy
@@ -48,7 +93,7 @@ its original legacy key is never removed, and an unavailable hash operation is
 not mislabeled as corruption. Browser tests select the storage module actually
 imported by the app: incremental Trunk builds can also preload stale snippet
 copies, so selecting the first network entry can test the wrong module. The
-deployed update and affected browser/device remain unverified. Keep this
+affected browser/device remains unverified. Keep this
 incident open until the user's startup is confirmed; do not clear site data as
 a workaround or silently accept non-durable saves.
 

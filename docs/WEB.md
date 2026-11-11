@@ -301,6 +301,13 @@ also fail and require retry. **No legacy key is removed, even after verification
 This retention supports rollback while older tabs or the old synchronous app
 can still write VFS documents. It is not continuous synchronization.
 
+If durable bytes are missing or corrupt, migration can repair them automatically
+only when retained legacy bytes match the durable record's SHA-256 revision and
+length exactly. The write is conditional on that revision; a concurrent newer
+save wins. Existing backups and legacy keys are retained, and repaired
+same-revision conflict copies keep their original-path mapping atomically.
+An older copy is never silently substituted for a newer saved version.
+
 When copies exist, a sticky notice points to **File > Recovered browser
 documents**, which lists every preserved version by its original path and a
 content identifier. The menu remains available if the notice is dismissed.
@@ -317,8 +324,12 @@ Wiring status:
 1. Done: `thinoda-web/src/main.rs` calls
    `thinoda_web::start_after_storage_ready(|report| { thinoda_app::files::record_browser_migration(report); web_main::main() })`.
    Migration completes **before** the app creates paths, starts recovery or
-   launches the renderer. On failure the loading element shows the error and the
-   app does not start. Persistence and filesystem consent are never requested.
+   launches the renderer. On failure a plain-language screen explains retry,
+   permissions/space/other-tab steps where relevant, and downloading older
+   browser copies. The JSON recovery archive includes raw legacy document
+   entries only, not settings or newer saves; its limits and privacy warning
+   are explicit. Neither action clears stored documents. The app does not start
+   until verification succeeds. Persistence and filesystem consent are never requested.
 2. Done in `files.rs`: Open/Import/non-image drops go to durable storage under
    `/Documents` with deduplication (`name`, `name (2).ext`, …). Each candidate is
    written with `ExpectedRevision::Missing`; on conflict an identical document

@@ -48,6 +48,215 @@ async function storageModule(page: Page) {
     });
 }
 
+async function damageDocument(page: Page, id: string, missing: boolean) {
+    await page.evaluate(async ({ id, missing }) => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = indexedDB.open("thinoda.documents.v1");
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        try {
+            const record = await new Promise<{ backend: string; blob: string }>((resolve, reject) => {
+                const tx = db.transaction("documents");
+                const request = tx.objectStore("documents").get(id);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            if (record.backend === "opfs") {
+                const root = await navigator.storage.getDirectory();
+                const dir = await root.getDirectoryHandle("thinoda-documents-v1");
+                if (missing) {
+                    await dir.removeEntry(record.blob);
+                } else {
+                    const file = await dir.getFileHandle(record.blob);
+                    const writer = await file.createWritable();
+                    await writer.write("corrupted bytes");
+                    await writer.close();
+                }
+            } else {
+                await new Promise<void>((resolve, reject) => {
+                    const tx = db.transaction("contents", "readwrite");
+                    const store = tx.objectStore("contents");
+                    if (missing) store.delete(record.blob);
+                    else store.put({ blob: record.blob, bytes: new TextEncoder().encode("corrupted bytes") });
+                    tx.oncomplete = () => resolve();
+                    tx.onabort = () => reject(tx.error);
+                });
+            }
+        } finally {
+            db.close();
+        }
+    }, { id, missing });
+}
+
+for (const backend of ["opfs", "indexeddb"]) {
+    for (const missing of [true, false]) {
+        test(`an exact legacy copy automatically repairs ${missing ? "missing" : "corrupt"} ${backend} bytes`, async ({ page }) => {
+            if (backend === "indexeddb") {
+                await page.addInitScript(() => {
+                    Object.defineProperty(navigator.storage, "getDirectory", {
+                        configurable: true, value: undefined,
+                    });
+                });
+            }
+            await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+            await started(page);
+            const moduleUrl = await storageModule(page);
+            const actual = await page.evaluate(async moduleUrl => JSON.parse(
+                await (await import(moduleUrl)).initializeDocuments(),
+            ).backend as string, moduleUrl);
+            test.skip(backend === "opfs" && actual === "indexeddb",
+                "This browser lacks writable OPFS; the IndexedDB recovery cases cover its supported backend.");
+            expect(actual).toBe(backend);
+            const savedRevision = await page.evaluate(async ({ moduleUrl, childId, childKey, childValue }) => {
+                const storage = await import(moduleUrl);
+                const bytes = new TextEncoder();
+                await storage.writeDocument(childId, bytes.encode("previous backup"), "missing");
+                const result = await storage.writeDocument(childId, bytes.encode("legacy child"), "any", null, true);
+                localStorage.setItem(childKey, childValue);
+                return result.revision;
+            }, { moduleUrl, childId, childKey, childValue });
+            await damageDocument(page, childId, missing);
+            for (let reload = 0; reload < 2; reload++) {
+                await page.reload({ waitUntil: "commit", timeout: 120_000 });
+                await started(page);
+                const result = await page.evaluate(async ({ moduleUrl, childId, childKey }) => {
+                    const storage = await import(moduleUrl);
+                    const current = await storage.readDocument(childId);
+                    return {
+                        bytes: new TextDecoder().decode(current.bytes),
+                        revision: current.revision,
+                        backup: new TextDecoder().decode((await storage.readDocument(childId + ".bak")).bytes),
+                        legacy: localStorage.getItem(childKey),
+                    };
+                }, { moduleUrl: await storageModule(page), childId, childKey });
+                expect(result).toEqual({
+                    bytes: "legacy child", revision: savedRevision, backup: "previous backup", legacy: childValue,
+                });
+            }
+        });
+    }
+}
+
+test("an exact legacy copy repairs a missing preserved conflict copy", async ({ page }) => {
+    await page.addInitScript(({ parentKey, childKey, parentValue, childValue }) => {
+        localStorage.setItem(parentKey, parentValue);
+        localStorage.setItem(childKey, childValue);
+    }, { parentKey, childKey, parentValue, childValue });
+    await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+    await started(page);
+    const initial = await inspect(page, parentId, await storageModule(page));
+    await damageDocument(page, initial.preserved, true);
+    await page.reload({ waitUntil: "commit", timeout: 120_000 });
+    await started(page);
+    expect(await inspect(page, parentId, await storageModule(page))).toEqual(initial);
+});
+
+test("a concurrent newer save wins over an automatic repair", async ({ page }) => {
+    await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+    await started(page);
+    const moduleUrl = await storageModule(page);
+    await page.evaluate(async ({ moduleUrl, childId, childKey, childValue }) => {
+        const storage = await import(moduleUrl);
+        await storage.writeDocument(childId, new TextEncoder().encode("legacy child"), "missing");
+        localStorage.setItem(childKey, childValue);
+    }, { moduleUrl, childId, childKey, childValue });
+    await damageDocument(page, childId, true);
+    const result = await page.evaluate(async ({ moduleUrl, childId }) => {
+        const storage = await import(moduleUrl);
+        const locks = navigator.locks;
+        const request = locks.request.bind(locks);
+        let raced = false;
+        const original = Object.getOwnPropertyDescriptor(locks, "request");
+        Object.defineProperty(locks, "request", {
+            configurable: true,
+            value: async (...args: Parameters<typeof locks.request>) => {
+                if (!raced && args[0] === `thinoda.documents.doc:${childId}`) {
+                    raced = true;
+                    await storage.writeDocument(childId, new TextEncoder().encode("concurrent save"), "any");
+                }
+                return request(...args);
+            },
+        });
+        try {
+            const report = JSON.parse(await storage.initializeDocuments());
+            const conflict = report.conflicts.find((copy: { original: string }) => copy.original === childId);
+            return {
+                raced,
+                current: new TextDecoder().decode((await storage.readDocument(childId)).bytes),
+                preserved: new TextDecoder().decode((await storage.readDocument(conflict.preserved)).bytes),
+            };
+        } finally {
+            if (original) Object.defineProperty(locks, "request", original);
+            else Reflect.deleteProperty(locks, "request");
+        }
+    }, { moduleUrl, childId });
+    expect(result).toEqual({ raced: true, current: "concurrent save", preserved: "legacy child" });
+    await page.reload({ waitUntil: "commit", timeout: 120_000 });
+    await started(page);
+});
+
+test("an older legacy copy cannot replace a damaged newer save; recovery choices preserve both", async ({ page }) => {
+    await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+    await started(page);
+    await page.evaluate(async ({ moduleUrl, childId, childKey, childValue }) => {
+        const storage = await import(moduleUrl);
+        await storage.writeDocument(childId, new TextEncoder().encode("newer save"), "missing");
+        localStorage.setItem(childKey, childValue);
+        localStorage.setItem("thinoda.vfs:/settings", "private settings");
+    }, { moduleUrl: await storageModule(page), childId, childKey, childValue });
+    await damageDocument(page, childId, false);
+    await page.reload({ waitUntil: "commit", timeout: 120_000 });
+    const alert = page.getByRole("alert").filter({ has: page.getByRole("heading", {
+        name: "Let's protect your saved documents",
+    }) });
+    await expect(alert).toBeVisible({ timeout: 120_000 });
+    await expect(alert).toContainText("could not read or check one");
+    await expect(alert).toContainText("not newer saves");
+    await expect(alert).not.toContainText(childId);
+    const downloadButton = alert.getByRole("button", { name: "Download older browser copies" });
+    await downloadButton.focus();
+    const pending = page.waitForEvent("download");
+    await page.keyboard.press("Enter");
+    const download = await pending;
+    expect(download.suggestedFilename()).toBe("thinoda-older-browser-copies.json");
+    const archive = JSON.parse((await readFile(await download.path())).toString("utf8"));
+    expect(archive).toEqual({
+        format: "thinoda-legacy-browser-recovery", version: 1, entries: [[childKey, childValue]],
+    });
+    await expect(alert.getByRole("status")).toContainText("Recovery download requested");
+    const retained = await page.evaluate(async ({ moduleUrl, childId, childKey }) => {
+        const storage = await import(moduleUrl);
+        return {
+            revision: await storage.documentRevision(childId),
+            expected: "sha256:" + Array.from(new Uint8Array(await crypto.subtle.digest(
+                "SHA-256", new TextEncoder().encode("newer save"),
+            )), byte => byte.toString(16).padStart(2, "0")).join(""),
+            legacy: localStorage.getItem(childKey),
+        };
+    }, { moduleUrl: await storageModule(page), childId, childKey });
+    expect(retained.legacy).toBe(childValue);
+    expect(retained.revision).toBe(retained.expected);
+    const unchanged = await page.evaluate(async ({ moduleUrl, childId }) => {
+        const storage = await import(moduleUrl);
+        try { await storage.readDocument(childId); return false; }
+        catch (error) { return (error as { reason?: string }).reason === "invalid_durable"; }
+    }, { moduleUrl: await storageModule(page), childId });
+    expect(unchanged).toBe(true);
+    await page.setViewportSize({ width: 390, height: 600 });
+    await alert.getByRole("link", { name: "Reload Thinoda" }).scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.evaluate(async ({ moduleUrl, childId }) => {
+        const storage = await import(moduleUrl);
+        await storage.writeDocument(childId, new TextEncoder().encode("newer save"), "any");
+    }, { moduleUrl: await storageModule(page), childId });
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: "commit", timeout: 120_000 }),
+        alert.getByRole("link", { name: "Reload Thinoda" }).click(),
+    ]);
+    await started(page);
+});
+
 async function inspect(page: Page, retainedId: string, moduleUrl: string, original = childId) {
     return page.evaluate(async ({ retainedId, original, moduleUrl }) => {
         const storage = await import(moduleUrl);
@@ -333,7 +542,7 @@ test("corrupted recovery metadata blocks startup without changing stored data", 
     await page.reload({ waitUntil: "commit", timeout: 120_000 });
     const alert = page.locator("#loading");
     await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
-    await expect(alert).toContainText("failed verification");
+    await expect(alert).toContainText("could not read or check");
     const retained = await page.evaluate(async ({ moduleUrl, parentId, copy, parentKey, childKey }) => {
         const storage = await import(moduleUrl);
         const decode = async (id: string) =>
@@ -344,6 +553,12 @@ test("corrupted recovery metadata blocks startup without changing stored data", 
         moduleUrl: await storageModule(page), parentId, copy: initial.preserved, parentKey, childKey,
     });
     expect(retained).toEqual(["legacy parent", "legacy child", parentValue, childValue]);
+    await page.evaluate(([parentKey, childKey]) => {
+        localStorage.removeItem(parentKey);
+        localStorage.removeItem(childKey);
+    }, [parentKey, childKey]);
+    await alert.getByRole("button", { name: "Download older browser copies" }).click();
+    await expect(alert.getByRole("status")).toContainText("No older browser copies are available");
 });
 
 test("a conflicting legacy-copy namespace blocks startup without overwriting data", async ({ page }) => {
@@ -363,7 +578,7 @@ test("a conflicting legacy-copy namespace blocks startup without overwriting dat
     await page.reload({ waitUntil: "commit", timeout: 120_000 });
     const alert = page.locator("#loading");
     await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
-    await expect(alert).toContainText("file or folder");
+    await expect(alert).toContainText("cannot access your saved documents");
 
     const retained = await page.evaluate(async ({ moduleUrl, parentId, reservedId, childKey }) => {
         const storage = await import(moduleUrl);
@@ -393,7 +608,7 @@ test("an existing different conflict copy blocks startup without replacing it", 
     await page.reload({ waitUntil: "commit", timeout: 120_000 });
     const alert = page.locator("#loading");
     await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
-    await expect(alert).toContainText("failed verification");
+    await expect(alert).toContainText("could not read or check");
     const retained = await page.evaluate(async ({ moduleUrl, parentId, copyId, childKey }) => {
         const storage = await import(moduleUrl);
         const decode = async (id: string) =>
@@ -417,8 +632,9 @@ test("a malformed legacy record blocks migration without disclosing or changing 
     await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
     const alert = page.locator("#loading");
     await expect(alert).toHaveAttribute("role", "alert", { timeout: 120_000 });
-    await expect(alert).toContainText("legacy document record is invalid");
-    await expect(alert).not.toContainText("private");
+    await expect(alert).toContainText("could not read or check");
+    await expect(alert).not.toContainText(invalidValue);
+    await expect(alert).not.toContainText("private-filename.thinoda");
     expect(await page.evaluate(async ({ moduleUrl, parentId, parentKey, invalidKey }) => {
         const storage = await import(moduleUrl);
         return [
@@ -428,4 +644,10 @@ test("a malformed legacy record blocks migration without disclosing or changing 
         ];
     }, { moduleUrl: await storageModule(page), parentId, parentKey, invalidKey }))
         .toEqual([null, parentValue, invalidValue]);
+    const pending = page.waitForEvent("download");
+    await alert.getByRole("button", { name: "Download older browser copies" }).click();
+    const archive = JSON.parse((await readFile(await (await pending).path())).toString("utf8"));
+    expect(archive.entries).toEqual(
+        [[parentKey, parentValue], [invalidKey, invalidValue]].sort(([a], [b]) => a.localeCompare(b)),
+    );
 });

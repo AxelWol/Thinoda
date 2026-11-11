@@ -34,15 +34,32 @@ pub fn start_after_storage_ready(
                 // StorageError messages are fixed texts without paths/content.
                 log::error!("browser document storage initialization failed: {error}");
                 show_loading_error(|loading| {
-                    loading.set_inner_text(&format!(
-                        "Thinoda could not verify browser document storage ({error}). Thinoda \
-                         did not delete legacy data. Retry after checking storage permissions and free \
-                         space; do not clear site data to fix this error."
-                    ));
+                    use thinoda_platform::storage::StorageError;
+
+                    let kind = match &error {
+                        StorageError::Io(error) => match error.kind() {
+                            std::io::ErrorKind::InvalidData => "integrity",
+                            std::io::ErrorKind::PermissionDenied => "permission",
+                            std::io::ErrorKind::StorageFull => "quota",
+                            std::io::ErrorKind::Unsupported => "unavailable",
+                            std::io::ErrorKind::WouldBlock => "blocked",
+                            _ => "other",
+                        },
+                        StorageError::Unsupported => "unavailable",
+                        _ => "other",
+                    };
+                    render_storage_recovery(loading, kind);
                 });
             }
         }
     });
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/src/storage_recovery.js")]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = renderStorageRecovery)]
+    fn render_storage_recovery(loading: &web_sys::HtmlElement, kind: &str);
 }
 
 #[cfg(target_arch = "wasm32")]
