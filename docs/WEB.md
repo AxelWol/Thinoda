@@ -1,4 +1,4 @@
-_Last updated: 2026-11-10 16:08:06 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-11 11:17:15 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda for the web
 
