@@ -62,22 +62,22 @@ fn xml_error(error: impl std::fmt::Display) -> IoError {
 // Minimal bounded DOM
 
 #[derive(Debug, Default)]
-struct Element {
-    name: String,
-    attrs: Vec<(String, String)>,
-    children: Vec<Element>,
-    text: String,
+pub(crate) struct Element {
+    pub(crate) name: String,
+    pub(crate) attrs: Vec<(String, String)>,
+    pub(crate) children: Vec<Element>,
+    pub(crate) text: String,
 }
 
 impl Element {
-    fn attr(&self, key: &str) -> Option<&str> {
+    pub(crate) fn attr(&self, key: &str) -> Option<&str> {
         self.attrs
             .iter()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.as_str())
     }
 
-    fn child(&self, name: &str) -> Option<&Element> {
+    pub(crate) fn child(&self, name: &str) -> Option<&Element> {
         self.children.iter().find(|c| c.name == name)
     }
 }
@@ -114,7 +114,7 @@ fn attach(
 }
 
 /// Parses XML without DTDs or external entities, with depth and element limits.
-fn parse_dom(text: &str) -> Result<Element, IoError> {
+pub(crate) fn parse_dom(text: &str) -> Result<Element, IoError> {
     if text.len() > MAX_BYTES {
         return Err(invalid("draw.io document exceeds size limit"));
     }

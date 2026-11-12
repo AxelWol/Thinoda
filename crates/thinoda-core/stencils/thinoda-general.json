@@ -1,0 +1,331 @@
+{
+  "schema": "thinoda.stencil-package",
+  "schemaVersion": 1,
+  "dslVersion": 1,
+  "id": "thinoda.general",
+  "title": "General (data-defined)",
+  "revision": 1,
+  "license": "MIT",
+  "definitions": [
+    {
+      "id": "message",
+      "title": "Message",
+      "tags": ["envelope", "mail", "message", "bpmn"],
+      "frame": {"w": 100, "h": 100},
+      "defaultSize": [60, 40],
+      "background": {"op": "rect", "x": 0, "y": 0, "w": 100, "h": 100},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "path", "commands": [
+          {"op": "move", "x": 0, "y": 0},
+          {"op": "line", "x": 50, "y": 50},
+          {"op": "line", "x": 100, "y": 0}
+        ]},
+        {"op": "stroke"}
+      ],
+      "connections": [
+        {"x": 0.15, "y": 0.05},
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 0.85, "y": 0.05},
+        {"x": 0, "y": 0.3, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true},
+        {"x": 0, "y": 0.7, "perimeter": true},
+        {"x": 1, "y": 0.3, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 1, "y": 0.7, "perimeter": true},
+        {"x": 0.15, "y": 0.95},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0.85, "y": 0.95}
+      ],
+      "interchange": {"drawio": {"style": "shape=message;html=1;"}}
+    },
+    {
+      "id": "rounded-rectangle",
+      "title": "Rounded Rectangle",
+      "tags": ["rectangle", "rounded", "process"],
+      "frame": {"w": 120, "h": 60, "units": "instance"},
+      "parameters": {
+        "arcSize": {"label": "Corner size", "default": 15, "min": 1, "max": 50, "unit": "%"}
+      },
+      "background": {"op": "roundrect", "x": 0, "y": 0, "w": "w", "h": "h", "arcsize": "arcSize"},
+      "foreground": [{"op": "fillStroke"}],
+      "connections": [
+        {"x": 0.25, "y": 0, "perimeter": true},
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 0.75, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.25, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 1, "y": 0.75, "perimeter": true},
+        {"x": 0.75, "y": 1, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0.25, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.75, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true},
+        {"x": 0, "y": 0.25, "perimeter": true}
+      ],
+      "handles": [
+        {
+          "parameter": "arcSize",
+          "label": "Corner size",
+          "x": {"op": "div", "args": [{"op": "mul", "args": [{"op": "min", "args": ["w", "h"]}, "arcSize"]}, 100]},
+          "y": 0,
+          "value": {"op": "div", "args": [{"op": "mul", "args": ["px", 100]}, {"op": "max", "args": [{"op": "min", "args": ["w", "h"]}, 1]}]}
+        }
+      ],
+      "interchange": {"drawio": {"style": "rounded=1;whiteSpace=wrap;html=1;", "parameters": {"arcSize": "arcSize"}}}
+    },
+    {
+      "id": "folder",
+      "title": "Folder",
+      "tags": ["folder", "package", "tab"],
+      "frame": {"w": 120, "h": 80, "units": "instance"},
+      "parameters": {
+        "tabWidth": {"label": "Tab width", "default": 40, "min": 0, "max": 10000},
+        "tabHeight": {"label": "Tab height", "default": 14, "min": 0, "max": 10000},
+        "tabPosition": {"label": "Tab position", "kind": "choice", "default": 0, "options": ["Left", "Right"]}
+      },
+      "background": {"op": "path", "commands": [
+        {"op": "move", "x": 0, "y": {"op": "if", "args": ["tabPosition", {"op": "min", "args": ["tabHeight", "h"]}, 0]}},
+        {"op": "line",
+          "x": {"op": "if", "args": ["tabPosition", {"op": "sub", "args": ["w", {"op": "min", "args": ["tabWidth", "w"]}]}, {"op": "min", "args": ["tabWidth", "w"]}]},
+          "y": {"op": "if", "args": ["tabPosition", {"op": "min", "args": ["tabHeight", "h"]}, 0]}},
+        {"op": "line",
+          "x": {"op": "if", "args": ["tabPosition", {"op": "sub", "args": ["w", {"op": "min", "args": ["tabWidth", "w"]}]}, {"op": "min", "args": ["tabWidth", "w"]}]},
+          "y": {"op": "if", "args": ["tabPosition", 0, {"op": "min", "args": ["tabHeight", "h"]}]}},
+        {"op": "line", "x": "w", "y": {"op": "if", "args": ["tabPosition", 0, {"op": "min", "args": ["tabHeight", "h"]}]}},
+        {"op": "line", "x": "w", "y": "h"},
+        {"op": "line", "x": 0, "y": "h"},
+        {"op": "close"}
+      ]},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "if", "cond": "tabPosition",
+          "then": [
+            {"op": "path", "commands": [
+              {"op": "move", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["tabWidth", "w"]}]}, "y": {"op": "min", "args": ["tabHeight", "h"]}},
+              {"op": "line", "x": "w", "y": {"op": "min", "args": ["tabHeight", "h"]}}
+            ]}
+          ],
+          "else": [
+            {"op": "path", "commands": [
+              {"op": "move", "x": 0, "y": {"op": "min", "args": ["tabHeight", "h"]}},
+              {"op": "line", "x": {"op": "min", "args": ["tabWidth", "w"]}, "y": {"op": "min", "args": ["tabHeight", "h"]}}
+            ]}
+          ]
+        },
+        {"op": "stroke"}
+      ],
+      "label": {"x": 0, "y": {"op": "min", "args": ["tabHeight", "h"]}, "w": "w", "h": {"op": "sub", "args": ["h", {"op": "min", "args": ["tabHeight", "h"]}]}},
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "handles": [
+        {
+          "parameter": "tabWidth",
+          "label": "Tab width",
+          "x": {"op": "if", "args": ["tabPosition", {"op": "sub", "args": ["w", {"op": "min", "args": ["tabWidth", "w"]}]}, {"op": "min", "args": ["tabWidth", "w"]}]},
+          "y": 0,
+          "value": {"op": "if", "args": ["tabPosition", {"op": "sub", "args": ["w", "px"]}, "px"]}
+        },
+        {
+          "parameter": "tabHeight",
+          "label": "Tab height",
+          "x": {"op": "if", "args": ["tabPosition", "w", 0]},
+          "y": {"op": "min", "args": ["tabHeight", "h"]},
+          "value": "py"
+        }
+      ],
+      "interchange": {"drawio": {
+        "style": "shape=folder;whiteSpace=wrap;html=1;",
+        "parameters": {"tabWidth": "tabWidth", "tabHeight": "tabHeight", "tabPosition": {"style": "tabPosition", "values": ["left", "right"]}}
+      }}
+    },
+    {
+      "id": "note",
+      "title": "Note",
+      "tags": ["note", "folded corner", "comment"],
+      "frame": {"w": 80, "h": 100, "units": "instance"},
+      "parameters": {
+        "size": {"label": "Fold size", "default": 30, "min": 0, "max": 10000}
+      },
+      "background": {"op": "path", "commands": [
+        {"op": "move", "x": 0, "y": 0},
+        {"op": "line", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "y": 0},
+        {"op": "line", "x": "w", "y": {"op": "min", "args": ["size", "w", "h"]}},
+        {"op": "line", "x": "w", "y": "h"},
+        {"op": "line", "x": 0, "y": "h"},
+        {"op": "close"}
+      ]},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "path", "commands": [
+          {"op": "move", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "y": 0},
+          {"op": "line", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "y": {"op": "min", "args": ["size", "w", "h"]}},
+          {"op": "line", "x": "w", "y": {"op": "min", "args": ["size", "w", "h"]}}
+        ]},
+        {"op": "stroke"}
+      ],
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "handles": [
+        {
+          "parameter": "size",
+          "label": "Fold size",
+          "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]},
+          "y": 0,
+          "value": {"op": "sub", "args": ["w", "px"]}
+        }
+      ],
+      "interchange": {"drawio": {"style": "shape=note;whiteSpace=wrap;html=1;", "parameters": {"size": "size"}}}
+    },
+    {
+      "id": "card",
+      "title": "Card",
+      "tags": ["card", "cut corner", "punched card"],
+      "frame": {"w": 80, "h": 100, "units": "instance"},
+      "parameters": {
+        "size": {"label": "Corner size", "default": 30, "min": 0, "max": 10000}
+      },
+      "background": {"op": "path", "commands": [
+        {"op": "move", "x": {"op": "min", "args": ["size", "w", "h"]}, "y": 0},
+        {"op": "line", "x": "w", "y": 0},
+        {"op": "line", "x": "w", "y": "h"},
+        {"op": "line", "x": 0, "y": "h"},
+        {"op": "line", "x": 0, "y": {"op": "min", "args": ["size", "w", "h"]}},
+        {"op": "close"}
+      ]},
+      "foreground": [{"op": "fillStroke"}],
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "handles": [
+        {"parameter": "size", "label": "Corner size", "x": {"op": "min", "args": ["size", "w", "h"]}, "y": 0, "value": "px"}
+      ],
+      "interchange": {"drawio": {"style": "shape=card;whiteSpace=wrap;html=1;", "parameters": {"size": "size"}}}
+    },
+    {
+      "id": "cube",
+      "title": "Cube",
+      "tags": ["cube", "box", "3d"],
+      "frame": {"w": 120, "h": 80, "units": "instance"},
+      "parameters": {
+        "size": {"label": "Depth", "default": 20, "min": 0, "max": 10000}
+      },
+      "background": {"op": "path", "commands": [
+        {"op": "move", "x": 0, "y": {"op": "min", "args": ["size", "w", "h"]}},
+        {"op": "line", "x": {"op": "min", "args": ["size", "w", "h"]}, "y": 0},
+        {"op": "line", "x": "w", "y": 0},
+        {"op": "line", "x": "w", "y": {"op": "sub", "args": ["h", {"op": "min", "args": ["size", "w", "h"]}]}},
+        {"op": "line", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "y": "h"},
+        {"op": "line", "x": 0, "y": "h"},
+        {"op": "close"}
+      ]},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "path", "commands": [
+          {"op": "move", "x": 0, "y": {"op": "min", "args": ["size", "w", "h"]}},
+          {"op": "line", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "y": {"op": "min", "args": ["size", "w", "h"]}},
+          {"op": "line", "x": "w", "y": 0},
+          {"op": "move", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "y": {"op": "min", "args": ["size", "w", "h"]}},
+          {"op": "line", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "y": "h"}
+        ]},
+        {"op": "stroke"}
+      ],
+      "label": {"x": 0, "y": {"op": "min", "args": ["size", "w", "h"]}, "w": {"op": "sub", "args": ["w", {"op": "min", "args": ["size", "w", "h"]}]}, "h": {"op": "sub", "args": ["h", {"op": "min", "args": ["size", "w", "h"]}]}},
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "handles": [
+        {"parameter": "size", "label": "Depth", "x": {"op": "min", "args": ["size", "w", "h"]}, "y": 0, "value": "px"}
+      ],
+      "interchange": {"drawio": {"style": "shape=cube;whiteSpace=wrap;html=1;", "parameters": {"size": "size"}}}
+    },
+    {
+      "id": "document",
+      "title": "Document",
+      "tags": ["document", "wave", "flowchart"],
+      "frame": {"w": 120, "h": 80, "units": "instance"},
+      "parameters": {
+        "size": {"label": "Wave height", "default": 0.3, "min": 0, "max": 1}
+      },
+      "background": {"op": "path", "commands": [
+        {"op": "move", "x": 0, "y": 0},
+        {"op": "line", "x": "w", "y": 0},
+        {"op": "line", "x": "w", "y": {"op": "sub", "args": ["h", {"op": "mul", "args": ["h", "size", 0.5]}]}},
+        {"op": "quad",
+          "x1": {"op": "mul", "args": ["w", 0.75]}, "y1": {"op": "sub", "args": ["h", {"op": "mul", "args": ["h", "size", 1.4]}]},
+          "x2": {"op": "mul", "args": ["w", 0.5]}, "y2": {"op": "sub", "args": ["h", {"op": "mul", "args": ["h", "size", 0.5]}]}},
+        {"op": "quad",
+          "x1": {"op": "mul", "args": ["w", 0.25]}, "y1": {"op": "sub", "args": ["h", {"op": "mul", "args": ["h", "size", -0.4]}]},
+          "x2": 0, "y2": {"op": "sub", "args": ["h", {"op": "mul", "args": ["h", "size", 0.5]}]}},
+        {"op": "close"}
+      ]},
+      "foreground": [{"op": "fillStroke"}],
+      "label": {"x": 0, "y": 0, "w": "w", "h": {"op": "sub", "args": ["h", {"op": "mul", "args": ["h", "size", 0.5]}]}},
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "handles": [
+        {
+          "parameter": "size",
+          "label": "Wave height",
+          "x": {"op": "mul", "args": ["w", 0.5]},
+          "y": {"op": "sub", "args": ["h", {"op": "mul", "args": ["h", "size", 0.5]}]},
+          "value": {"op": "div", "args": [{"op": "mul", "args": [{"op": "sub", "args": ["h", "py"]}, 2]}, {"op": "max", "args": ["h", 1]}]}
+        }
+      ],
+      "interchange": {"drawio": {"style": "shape=document;whiteSpace=wrap;html=1;boundedLbl=1;", "parameters": {"size": "size"}}}
+    },
+    {
+      "id": "cylinder",
+      "title": "Cylinder",
+      "tags": ["cylinder", "database", "storage"],
+      "frame": {"w": 60, "h": 80, "units": "instance"},
+      "parameters": {
+        "size": {"label": "Cap height", "default": 15, "min": 0, "max": 10000}
+      },
+      "background": {"op": "path", "commands": [
+        {"op": "move", "x": 0, "y": {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}},
+        {"op": "arc", "rx": {"op": "mul", "args": ["w", 0.5]}, "ry": {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}, "largeArcFlag": 0, "sweepFlag": 1, "x": "w", "y": {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}},
+        {"op": "line", "x": "w", "y": {"op": "sub", "args": ["h", {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}]}},
+        {"op": "arc", "rx": {"op": "mul", "args": ["w", 0.5]}, "ry": {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}, "largeArcFlag": 0, "sweepFlag": 1, "x": 0, "y": {"op": "sub", "args": ["h", {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}]}},
+        {"op": "close"}
+      ]},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "path", "commands": [
+          {"op": "move", "x": 0, "y": {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}},
+          {"op": "arc", "rx": {"op": "mul", "args": ["w", 0.5]}, "ry": {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}, "largeArcFlag": 0, "sweepFlag": 0, "x": "w", "y": {"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}}
+        ]},
+        {"op": "stroke"}
+      ],
+      "label": {"x": 0, "y": {"op": "mul", "args": [{"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}, 2]}, "w": "w", "h": {"op": "max", "args": [0, {"op": "sub", "args": ["h", {"op": "mul", "args": [{"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}, 3]}]}]}},
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "handles": [
+        {"parameter": "size", "label": "Cap height", "x": {"op": "mul", "args": ["w", 0.5]}, "y": {"op": "mul", "args": [{"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}, 2]}, "value": {"op": "mul", "args": ["py", 0.5]}}
+      ],
+      "interchange": {"drawio": {"style": "shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;", "parameters": {"size": "size"}}}
+    }
+  ]
+}

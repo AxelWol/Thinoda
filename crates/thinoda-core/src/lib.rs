@@ -36,6 +36,7 @@ pub mod sankey;
 pub mod scene;
 pub mod schedule;
 pub mod search;
+pub mod stencil;
 pub mod templates;
 pub mod theme;
 pub mod todo;

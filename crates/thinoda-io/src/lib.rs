@@ -7,6 +7,7 @@ mod board_export;
 mod drawio;
 pub mod drawio_clipboard;
 pub mod drawio_library;
+pub mod drawio_stencil;
 pub mod fim;
 pub mod fonts;
 mod formats;

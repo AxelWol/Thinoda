@@ -461,7 +461,38 @@ The unfinished, hardcoded envelope prototype is shelved rather than shipped
 measurements, corpus findings and regression ideas for ST4, not a completed
 implementation. Its last full-workspace attempt failed while compiling tests
 because Windows exhausted paging-file capacity; no full-suite success is claimed.
-The new DSL and migration are proposed work, not implemented or validated.
+
+**Implementation status.**
+
+- **ST1 implemented:** `thinoda_core::stencil` parses `thinoda.stencil-package`
+  v1 JSON (`deny_unknown_fields`), validates versions, capabilities, namespaced
+  extensions, identifiers, parameters, expression arity/variables, colors,
+  include targets and cycles, then evaluates a definition into the
+  renderer-neutral `StencilRender` (painted paths with fill/stroke state,
+  texts, outline, label rect, perimeter-projected ports and handles). The
+  draw.io canvas state machine is mirrored: the background geometry is painted
+  by the first foreground paint, geometry ops replace the current path,
+  `save`/`restore` scope paint state, fixed aspect scales uniformly and centres,
+  and `strokeWidth` is `inherit` or a frame-scaled factor. Expressions are a
+  typed AST (no string evaluation); handles map pointer positions back to
+  clamped parameter values. Steps, points, depth and include nesting share
+  trusted budgets. Definitions requiring unknown capabilities load but refuse to
+  evaluate with `UnsupportedCapability`.
+- **ST4 partially implemented:** `crates/thinoda-core/stencils/thinoda-general.json`
+  defines Message (envelope with the 12 measured draw.io constraints), Rounded
+  Rectangle, Folder (left/right tab choice), Note, Card, Cube, Document and
+  Cylinder purely as data, each with parameters, handles, ports and a draw.io
+  style mapping. Rust contains no per-definition code.
+- **ST6 partially implemented:** `thinoda_io::drawio_stencil` converts
+  `<shapes>`/`<shape>` XML and compressed inline `stencil(...)` payloads into a
+  package: every drawing, style, text and path element maps to a DSL op; local
+  `include-shape` references become includes; `<image>`, external includes and
+  unknown elements become definition capabilities (`drawio.image`,
+  `drawio.include-shape`, `drawio.element.*`) with diagnostics, and the bounded
+  original XML is kept in the `drawio.source` extension.
+- **Next:** ST2 generic stencil instances in documents and ST3 rendering,
+  hit testing, handles and connectors in the editor; then the library-install
+  UX for ST6 and the ST5 legacy migration.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 

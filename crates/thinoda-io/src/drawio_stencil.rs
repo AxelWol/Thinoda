@@ -1,0 +1,581 @@
+//! Converts draw.io stencil XML (`<shapes>`/`<shape>`, or the compressed
+//! payload of an inline `shape=stencil(...)` style) into a declarative
+//! [`StencilPackage`]. The conversion is purely structural: every draw.io
+//! drawing element maps to a DSL operation, and anything the interpreter cannot
+//! draw yet is declared as a definition capability so the definition loads but
+//! refuses to render with an explicit diagnostic instead of drawing silently
+//! wrong geometry.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde_json::Value;
+use thinoda_core::stencil::{
+    Aspect, Connection, DSL_VERSION, Expr, Frame, LineCap, LineJoin, Op, PACKAGE_SCHEMA, PathCmd,
+    SCHEMA_VERSION, StencilDefinition, StencilPackage, StrokeKeyword, StrokeWidthPolicy, TextAlign,
+    TextVAlign,
+};
+
+use crate::IoError;
+use crate::drawio::{BoundedDecodeError, Element, decode_compressed_bounded, parse_dom};
+
+/// Capability declared by definitions that draw `<image>` elements.
+pub const CAP_IMAGE: &str = "drawio.image";
+/// Capability declared by definitions that include shapes from outside the file.
+pub const CAP_EXTERNAL_INCLUDE: &str = "drawio.include-shape";
+/// Extension key holding the bounded original `<shape>` XML.
+pub const SOURCE_EXTENSION: &str = "drawio.source";
+const MAX_SOURCE_BYTES: usize = 32 * 1024;
+/// Upper bound for encoded and decoded stencil library text.
+const MAX_STENCIL_BYTES: usize = 16 * 1024 * 1024;
+
+/// A converted package plus non-fatal conversion notes.
+#[derive(Debug, Clone)]
+pub struct StencilImport {
+    pub package: StencilPackage,
+    pub diagnostics: Vec<String>,
+}
+
+/// Converts draw.io stencil XML into a package with the given namespaced ID.
+pub fn import_drawio_stencils(
+    xml: &str,
+    package_id: &str,
+    title: &str,
+) -> Result<StencilImport, IoError> {
+    let trimmed = xml.trim();
+    if trimmed.len() > MAX_STENCIL_BYTES {
+        return Err(IoError::Invalid(format!(
+            "draw.io stencil library exceeds {} MiB",
+            MAX_STENCIL_BYTES / (1024 * 1024)
+        )));
+    }
+    let decoded;
+    let text = if trimmed.starts_with('<') {
+        trimmed
+    } else {
+        let mut work = MAX_STENCIL_BYTES.saturating_mul(6);
+        decoded =
+            decode_compressed_bounded(trimmed, MAX_STENCIL_BYTES, &mut work).map_err(|error| {
+                match error {
+                    BoundedDecodeError::Limit => IoError::Invalid(
+                        "compressed draw.io stencil expands beyond the size limit".into(),
+                    ),
+                    BoundedDecodeError::Invalid => IoError::Invalid(
+                        "draw.io stencil is neither XML nor compressed data".into(),
+                    ),
+                }
+            })?;
+        decoded.as_str()
+    };
+    let root = parse_dom(text)?;
+    let shapes: Vec<&Element> = match root.name.as_str() {
+        "shapes" => root.children.iter().filter(|c| c.name == "shape").collect(),
+        "shape" => vec![&root],
+        other => {
+            return Err(IoError::Invalid(format!(
+                "draw.io stencil XML must start with <shapes> or <shape>, found <{other}>"
+            )));
+        }
+    };
+    if shapes.is_empty() {
+        return Err(IoError::Invalid(
+            "draw.io stencil library has no shapes".into(),
+        ));
+    }
+
+    let mut ids = BTreeMap::new();
+    let mut used = BTreeSet::new();
+    for (index, shape) in shapes.iter().enumerate() {
+        let name = shape.attr("name").unwrap_or_default();
+        let mut id = slug(name);
+        if id.is_empty() {
+            id = format!("shape-{}", index + 1);
+        }
+        let base = id.clone();
+        let mut n = 2;
+        while !used.insert(id.clone()) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        ids.entry(name.to_string()).or_insert(id);
+    }
+
+    let mut diagnostics = Vec::new();
+    let mut definitions = Vec::with_capacity(shapes.len());
+    for (index, shape) in shapes.iter().enumerate() {
+        let name = shape.attr("name").unwrap_or_default();
+        let id = if name.is_empty() {
+            format!("shape-{}", index + 1)
+        } else {
+            ids[name].clone()
+        };
+        let mut cx = Convert {
+            ids: &ids,
+            requires: BTreeSet::new(),
+            notes: Vec::new(),
+        };
+        let definition = cx.shape(shape, id.clone(), name);
+        diagnostics.extend(cx.notes.into_iter().map(|n| format!("{id}: {n}")));
+        definitions.push(definition);
+    }
+
+    let package = StencilPackage {
+        schema: PACKAGE_SCHEMA.into(),
+        schema_version: SCHEMA_VERSION,
+        dsl_version: DSL_VERSION,
+        id: package_id.into(),
+        title: if title.is_empty() {
+            root.attr("name").unwrap_or("draw.io stencils").into()
+        } else {
+            title.into()
+        },
+        revision: 1,
+        license: None,
+        requires: Vec::new(),
+        definitions,
+        extensions: BTreeMap::new(),
+    };
+    package
+        .validate(&thinoda_core::stencil::Limits::DEFAULT)
+        .map_err(|e| IoError::Invalid(e.to_string()))?;
+    Ok(StencilImport {
+        package,
+        diagnostics,
+    })
+}
+
+/// Lowercase ASCII identifier from a draw.io stencil name.
+fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_') {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').chars().take(96).collect()
+}
+
+struct Convert<'a> {
+    ids: &'a BTreeMap<String, String>,
+    requires: BTreeSet<String>,
+    notes: Vec<String>,
+}
+
+impl Convert<'_> {
+    fn shape(&mut self, shape: &Element, id: String, name: &str) -> StencilDefinition {
+        let w = self.positive(shape, "w", 100.0);
+        let h = self.positive(shape, "h", 100.0);
+        let stroke_width = match shape.attr("strokewidth") {
+            Some("inherit") => StrokeWidthPolicy::Keyword(StrokeKeyword::Inherit),
+            Some(v) => StrokeWidthPolicy::Scale(self.parse(v, "strokewidth").max(0.0)),
+            None => StrokeWidthPolicy::Scale(1.0),
+        };
+        let frame = Frame {
+            w,
+            h,
+            aspect: if shape.attr("aspect") == Some("fixed") {
+                Aspect::Fixed
+            } else {
+                Aspect::Variable
+            },
+            units: Default::default(),
+            stroke_width,
+        };
+
+        let mut background = None;
+        if let Some(bg) = shape.child("background") {
+            for child in &bg.children {
+                match self.geometry(child) {
+                    Some(op) if background.is_none() => background = Some(op),
+                    Some(_) => self.notes.push(
+                        "background has extra geometry; only the first is the outline".into(),
+                    ),
+                    None => self.unsupported(&child.name),
+                }
+            }
+        }
+        let foreground = shape
+            .child("foreground")
+            .map(|fg| self.ops(&fg.children))
+            .unwrap_or_default();
+
+        let mut names = BTreeSet::new();
+        let connections = shape
+            .child("connections")
+            .map(|c| {
+                c.children
+                    .iter()
+                    .filter(|e| e.name == "constraint")
+                    .map(|e| {
+                        let name = e
+                            .attr("name")
+                            .filter(|n| !n.is_empty() && names.insert(n.to_string()))
+                            .map(str::to_string);
+                        Connection {
+                            x: self.num(e, "x").clamp(0.0, 1.0),
+                            y: self.num(e, "y").clamp(0.0, 1.0),
+                            dx: 0.0,
+                            dy: 0.0,
+                            perimeter: e.attr("perimeter") == Some("1"),
+                            name,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut extensions = BTreeMap::new();
+        let mut source = String::new();
+        write_xml(shape, &mut source);
+        if source.len() <= MAX_SOURCE_BYTES {
+            extensions.insert(SOURCE_EXTENSION.to_string(), Value::String(source));
+        } else {
+            self.notes
+                .push("original XML is too large to preserve for round trips".into());
+        }
+        let mut interchange = BTreeMap::new();
+        if !name.is_empty() {
+            interchange.insert(
+                "drawio".to_string(),
+                serde_json::json!({ "stencilName": name }),
+            );
+        }
+
+        StencilDefinition {
+            id,
+            title: if name.is_empty() {
+                "Untitled shape".into()
+            } else {
+                name.into()
+            },
+            tags: Vec::new(),
+            requires: std::mem::take(&mut self.requires).into_iter().collect(),
+            frame,
+            default_size: None,
+            parameters: BTreeMap::new(),
+            background,
+            foreground,
+            label: None,
+            connections,
+            handles: Vec::new(),
+            metadata: BTreeMap::new(),
+            interchange,
+            extensions,
+        }
+    }
+
+    fn geometry(&mut self, e: &Element) -> Option<Op> {
+        let n = |cx: &mut Self, key| Expr::Num(cx.num(e, key));
+        Some(match e.name.as_str() {
+            "rect" => Op::Rect {
+                x: n(self, "x"),
+                y: n(self, "y"),
+                w: n(self, "w"),
+                h: n(self, "h"),
+            },
+            "roundrect" => Op::Roundrect {
+                x: n(self, "x"),
+                y: n(self, "y"),
+                w: n(self, "w"),
+                h: n(self, "h"),
+                arcsize: e
+                    .attr("arcsize")
+                    .map(|v| Expr::Num(self.parse(v, "arcsize"))),
+            },
+            "ellipse" => Op::Ellipse {
+                x: n(self, "x"),
+                y: n(self, "y"),
+                w: n(self, "w"),
+                h: n(self, "h"),
+            },
+            "path" => Op::Path {
+                commands: self.path(e),
+            },
+            _ => return None,
+        })
+    }
+
+    fn path(&mut self, e: &Element) -> Vec<PathCmd> {
+        let mut commands = Vec::new();
+        for c in &e.children {
+            let n = |cx: &mut Self, key| Expr::Num(cx.num(c, key));
+            let command = match c.name.as_str() {
+                "move" => PathCmd::Move {
+                    x: n(self, "x"),
+                    y: n(self, "y"),
+                },
+                "line" => PathCmd::Line {
+                    x: n(self, "x"),
+                    y: n(self, "y"),
+                },
+                "quad" => PathCmd::Quad {
+                    x1: n(self, "x1"),
+                    y1: n(self, "y1"),
+                    x2: n(self, "x2"),
+                    y2: n(self, "y2"),
+                },
+                "curve" => PathCmd::Curve {
+                    x1: n(self, "x1"),
+                    y1: n(self, "y1"),
+                    x2: n(self, "x2"),
+                    y2: n(self, "y2"),
+                    x3: n(self, "x3"),
+                    y3: n(self, "y3"),
+                },
+                "arc" => PathCmd::Arc {
+                    rx: n(self, "rx"),
+                    ry: n(self, "ry"),
+                    x_axis_rotation: n(self, "x-axis-rotation"),
+                    large_arc_flag: n(self, "large-arc-flag"),
+                    sweep_flag: n(self, "sweep-flag"),
+                    x: n(self, "x"),
+                    y: n(self, "y"),
+                },
+                "close" => PathCmd::Close,
+                other => {
+                    self.unsupported(&format!("path.{other}"));
+                    continue;
+                }
+            };
+            // draw.io tolerates paths that do not start with a move.
+            if commands.is_empty() && !matches!(command, PathCmd::Move { .. }) {
+                commands.push(PathCmd::Move {
+                    x: Expr::Num(0.0),
+                    y: Expr::Num(0.0),
+                });
+                self.notes
+                    .push("path did not start with <move>; started at 0,0".into());
+            }
+            commands.push(command);
+        }
+        if commands.is_empty() {
+            commands.push(PathCmd::Move {
+                x: Expr::Num(0.0),
+                y: Expr::Num(0.0),
+            });
+        }
+        commands
+    }
+
+    fn ops(&mut self, elements: &[Element]) -> Vec<Op> {
+        let mut ops = Vec::with_capacity(elements.len());
+        for e in elements {
+            if let Some(geometry) = self.geometry(e) {
+                ops.push(geometry);
+                continue;
+            }
+            let color = |cx: &mut Self| cx.color(e);
+            let op = match e.name.as_str() {
+                "fill" => Op::Fill,
+                "stroke" => Op::Stroke,
+                "fillstroke" => Op::FillStroke,
+                "save" => Op::Save,
+                "restore" => Op::Restore,
+                "strokecolor" => Op::StrokeColor { color: color(self) },
+                "fillcolor" => Op::FillColor { color: color(self) },
+                "fontcolor" => Op::FontColor { color: color(self) },
+                "alpha" => Op::Alpha {
+                    value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
+                },
+                "fillalpha" => Op::FillAlpha {
+                    value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
+                },
+                "strokealpha" => Op::StrokeAlpha {
+                    value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
+                },
+                "strokewidth" => Op::StrokeWidth {
+                    width: Expr::Num(self.num(e, "width").max(0.0)),
+                    fixed: e.attr("fixed") == Some("1"),
+                },
+                "dashed" => Op::Dashed {
+                    on: e.attr("dashed") == Some("1"),
+                },
+                "dashpattern" => {
+                    let pattern: Vec<f64> = e
+                        .attr("pattern")
+                        .unwrap_or_default()
+                        .split_whitespace()
+                        .filter_map(|v| v.parse::<f64>().ok())
+                        .filter(|v| v.is_finite() && *v >= 0.0)
+                        .collect();
+                    if pattern.is_empty() || pattern.iter().all(|v| *v == 0.0) {
+                        self.notes.push("ignored empty dash pattern".into());
+                        continue;
+                    }
+                    Op::DashPattern { pattern }
+                }
+                "linejoin" => Op::LineJoin {
+                    join: match e.attr("join") {
+                        Some("round") => LineJoin::Round,
+                        Some("bevel") => LineJoin::Bevel,
+                        _ => LineJoin::Miter,
+                    },
+                },
+                "linecap" => Op::LineCap {
+                    cap: match e.attr("cap") {
+                        Some("round") => LineCap::Round,
+                        Some("square") => LineCap::Square,
+                        _ => LineCap::Flat,
+                    },
+                },
+                "miterlimit" => Op::MiterLimit {
+                    limit: self.num(e, "limit").max(1.0),
+                },
+                "fontsize" => Op::FontSize {
+                    size: Expr::Num(self.num(e, "size").max(1.0)),
+                },
+                "fontstyle" => Op::FontStyle {
+                    style: (self.num(e, "style") as i64).clamp(0, 255) as u8,
+                },
+                "fontfamily" => Op::FontFamily {
+                    family: e.attr("family").unwrap_or_default().into(),
+                },
+                "text" => {
+                    if e.attr("placeholders") == Some("1") {
+                        self.notes
+                            .push("text placeholders are drawn literally".into());
+                    }
+                    if e.attr("localized") == Some("1") {
+                        self.notes
+                            .push("localized text is drawn untranslated".into());
+                    }
+                    Op::Text {
+                        text: e.attr("str").unwrap_or_default().into(),
+                        x: Expr::Num(self.num(e, "x")),
+                        y: Expr::Num(self.num(e, "y")),
+                        align: match e.attr("align") {
+                            Some("center") => TextAlign::Center,
+                            Some("right") => TextAlign::Right,
+                            _ => TextAlign::Left,
+                        },
+                        valign: match e.attr("valign") {
+                            Some("middle") => TextVAlign::Middle,
+                            Some("bottom") => TextVAlign::Bottom,
+                            _ => TextVAlign::Top,
+                        },
+                        rotation: self.num(e, "rotation"),
+                        vertical: e.attr("vertical") == Some("1"),
+                    }
+                }
+                "include-shape" => {
+                    let name = e.attr("name").unwrap_or_default();
+                    match self.ids.get(name) {
+                        Some(id) => Op::Include {
+                            definition: id.clone(),
+                            x: Expr::Num(self.num(e, "x")),
+                            y: Expr::Num(self.num(e, "y")),
+                            w: Expr::Num(self.num(e, "w")),
+                            h: Expr::Num(self.num(e, "h")),
+                        },
+                        None => {
+                            self.requires.insert(CAP_EXTERNAL_INCLUDE.into());
+                            self.notes
+                                .push(format!("includes shape '{name}' from outside this library"));
+                            continue;
+                        }
+                    }
+                }
+                other => {
+                    self.unsupported(other);
+                    continue;
+                }
+            };
+            ops.push(op);
+        }
+        ops
+    }
+
+    /// Declares an element the interpreter cannot draw, so the definition
+    /// refuses to render instead of silently dropping instructions.
+    fn unsupported(&mut self, element: &str) {
+        if element == "image" {
+            self.requires.insert(CAP_IMAGE.into());
+            self.notes.push("contains an image element".into());
+        } else {
+            self.requires
+                .insert(format!("drawio.element.{}", slug(element)));
+            self.notes.push(format!("unsupported element <{element}>"));
+        }
+    }
+
+    fn color(&mut self, e: &Element) -> String {
+        let value = e.attr("color").unwrap_or("none").trim();
+        let valid_hex = value.starts_with('#') && thinoda_core::Color::from_hex(value).is_some();
+        let valid_name = !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+        if valid_hex || valid_name {
+            value.to_string()
+        } else {
+            self.notes
+                .push(format!("invalid color '{value}' replaced by none"));
+            "none".into()
+        }
+    }
+
+    fn num(&mut self, e: &Element, key: &str) -> f64 {
+        e.attr(key).map_or(0.0, |v| self.parse(v, key))
+    }
+
+    fn positive(&mut self, e: &Element, key: &str, default: f64) -> f64 {
+        match e.attr(key) {
+            Some(v) => {
+                let value = self.parse(v, key);
+                if value > 0.0 { value } else { default }
+            }
+            None => default,
+        }
+    }
+
+    fn parse(&mut self, value: &str, key: &str) -> f64 {
+        match value.trim().parse::<f64>() {
+            Ok(v) if v.is_finite() => v,
+            _ => {
+                self.notes
+                    .push(format!("invalid number '{value}' for {key}; used 0"));
+                0.0
+            }
+        }
+    }
+}
+
+fn write_xml(e: &Element, out: &mut String) {
+    out.push('<');
+    out.push_str(&e.name);
+    for (k, v) in &e.attrs {
+        out.push(' ');
+        out.push_str(k);
+        out.push_str("=\"");
+        escape(v, out);
+        out.push('"');
+    }
+    if e.children.is_empty() && e.text.is_empty() {
+        out.push_str("/>");
+        return;
+    }
+    out.push('>');
+    escape(&e.text, out);
+    for c in &e.children {
+        write_xml(c, out);
+    }
+    out.push_str("</");
+    out.push_str(&e.name);
+    out.push('>');
+}
+
+fn escape(text: &str, out: &mut String) {
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
