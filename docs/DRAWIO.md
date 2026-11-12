@@ -52,6 +52,12 @@ Anything outside a tier is reported in diagnostics as "preserved, shown approxim
 3. **Stencils**: bundle Apache-2.0 generic libraries; vendor icon sets (AWS, Azure, GCP,
    Cisco, …) via an **optional, user-triggered library download**, faithful placeholder
    until available.
+4. **Declarative objects (user clarification, 2026-11-12):** all new shape-specific
+   geometry and behavior belong in extensible JSON library documents. Implement a
+   shared, bounded interpreter, not another Rust enum variant or renderer branch
+   for each shape. This supersedes the earlier proposal to port individual
+   JavaScript shapes into Rust. Existing native shapes need a staged, non-breaking
+   migration; the JSON interpreter is not implemented yet.
 
 ## 2. Research summary
 
@@ -161,19 +167,26 @@ flowchart LR
     X --> M[drawio::mx<br/>typed mxGraph AST + StyleMap]
     M --> I[drawio::import<br/>AST → Sheet]
     E[drawio::export<br/>Sheet → AST] --> M
-    S[drawio::stencil<br/>parser + resolver] --> I
+    S[drawio adapters<br/>XML stencil / library converter] --> J
   end
+  J[versioned JSON libraries<br/>definitions / templates / resources]
   subgraph thinoda-core
     B[versioned board model<br/>+ DiagramExt passthrough]
-    G[stencil geometry<br/>path language]
+    G[bounded declarative interpreter<br/>expressions / transforms / interactions]
+    D[shared drawing IR<br/>paint / text / hit regions / ports]
   end
   I --> B
   B --> E
-  S --> G
+  J --> G
+  B --> G
+  G --> D
   subgraph thinoda-canvas / app
-    R[render + edit tools] --> B
-    UI[palettes, inspector,<br/>layers, preflight]
+    R[render + generic edit tools] --> B
+    UI[definition-driven palettes,<br/>inspector, handles, quick actions]
   end
+  D --> R
+  D --> E
+  J --> UI
 ```
 
 - New module tree `crates/thinoda-io/src/drawio/` (container, codec, mx, style, import,
@@ -193,7 +206,8 @@ Three storage levels, each with a single authoritative owner:
 
 Rules (each backed by a test):
 1. **Ownership table** per mapped style/attribute (`fillColor→style.fill`, `gradientColor→
-   style.gradient`, …) is code, not convention. A key is either first-class *or* in
+   style.gradient`, …) is versioned adapter/schema data, enforced by generic code,
+   not an informal convention. A key is either first-class *or* in
    `style_rest`, never both (validated). Editing a first-class field never touches
    `style_rest`; first-class fields that become unset are emitted as draw.io defaults.
    Keys whose meaning *depends* on an owned key (e.g. `gradientDirection` when gradient is
@@ -236,6 +250,218 @@ Rules (each backed by a test):
   dropping data. Version sheet/board clipboard, recovery and private XMind
   envelopes separately whenever an older reader could otherwise ignore new
   data; reject forged older envelopes too.
+
+#### 3.1.2 JSON stencil DSL and interpreter contract (proposed, 2026-11-12)
+
+**Boundary.** Rust implements reusable language operations, validation, rendering
+backends and undoable document commands. JSON defines the objects: geometry,
+defaults, parameter ranges, modifiers, handles, transformation policies, paints,
+text regions, metadata fields, connection constraints, markers, composition,
+import/export bindings and library entries. A new shape expressible in the
+language must require only a library change, not rebuilding Thinoda or adding
+`ShapeKind` cases. Safety limits and opcode semantics are interpreter contracts;
+an untrusted library cannot redefine them.
+
+**Source-format distinction.** A draw.io library entry can be an entire
+`mxGraphModel` fragment, group or image, not just a stencil. XML stencils describe
+geometry and connection points, but some published shapes use registered
+JavaScript renderers; the official editor notes that only XML shapes offer
+Edit Shape. Therefore library ingestion needs separate adapters:
+
+- Thinoda JSON packages: validate, resolve and compile directly.
+- draw.io XML stencils, including inline compressed stencils: translate supported
+  drawing/state instructions and constraints into the JSON DSL.
+- draw.io `mxlibrary` entries: convert diagram fragments into JSON instance
+  templates, preserving groups, connectors, labels and referenced definitions;
+  sanitize and package embedded image resources separately.
+- Registered JavaScript shapes: resolve through declarative aliases and JSON
+  definitions supplied by a compatible library. Do not execute or attempt
+  unrestricted automatic translation of third-party JavaScript.
+- Unsupported instructions, dynamic functions, missing definitions and newer
+  capabilities: retain bounded original data and show an explicit placeholder
+  and diagnostic. Successful parsing alone is not rendering or editing support.
+
+References: [official custom-shape language](https://www.drawio.com/docs/manual/shapes/shape-complex-create-edit/)
+and [official library format](https://www.drawio.com/docs/reference/format-custom-shape-library/).
+Both were rechecked alongside the published editor on 2026-11-12.
+
+Recorded editor flows and regression targets:
+
+| Interaction / locator | Observed outcome and acceptance target |
+|---|---|
+| Search textbox, `Message` palette button | Inserts an editable envelope; Thinoda must resolve a definition rather than choose a native enum variant |
+| `Style` tab | Fill, line and opacity are instance style inputs; changing them must not replace the definition |
+| `Text` tab | Font, alignment, label position and spacing are distinct from body geometry; external labels must not be forced into the shape |
+| `Anordnen` / Arrange tab, `Vertikal` / Vertical flip | The open flap reflects while the rectangular body remains rectangular; all four directions and both flip axes need matrix tests |
+| Connector-owned message in the BPMN example | The symbol remains a shape, separate from connector text; relative position, offsets and parent-edge anchoring need preservation |
+
+The official renderer supplied reference points for 16 direction/reflection
+combinations at rotation 37 degrees, all 12 message connection constraints,
+and six relative edge-child positions. The supplied BPMN file contains seven
+messages on its first page and six on its second. These observations and
+generated regression cases are retained with the shelved prototype for the
+definition-based implementation; they are not a completed acceptance claim.
+
+**Package and instance ownership.** A JSON package has a stable namespaced ID,
+schema version, DSL version, revision, required capabilities, licensing metadata,
+definitions, reusable fragments, templates and resource references. An instance
+stores its definition identity/content hash, parameter overrides, style
+overrides, label/data values, transform and parent/anchor references, not another
+copy of its drawing program. Relative edge-child placement is an instance
+relationship, not a one-time flattening into absolute coordinates. Ownership
+and definition/include dependencies must be acyclic; ordinary connector graphs
+may contain cycles. A workbook retains the deduplicated transitive definition/resource
+closure needed to open it offline. Installation or update of a library must
+not silently change existing documents. An explicit, previewed, undoable
+upgrade changes their pinned definitions. Clipboard, recovery and private XMind
+snapshots carry the same closure and reject forged older feature envelopes.
+Immutable definitions/resources are shared across undo snapshots and counted
+once in history memory accounting. Editing a handle changes instance parameters,
+not the shared definition or unrelated instances.
+
+**Language proposal.** Use a typed JSON AST rather than executable strings.
+Literals and explicit expression nodes such as
+`{"op":"mul","args":[{"var":"width"},0.5]}` support finite arithmetic,
+comparisons, conditionals and bounded geometric functions. Parameters have
+types, units, defaults and valid ranges. Dependencies are resolved before
+evaluation; cycles and non-finite results are errors. No `eval`, JavaScript,
+arbitrary function calls, file access, network access or unbounded loops.
+Schema extensions are namespaced and preserved; an unknown rendering operation
+is not silently ignored. Required capability declarations distinguish an
+unsupported program from harmless additional metadata.
+
+| Definition area | Declarative contract and generic interpreter responsibility |
+|---|---|
+| Geometry | Lines, rectangles, ellipses, quadratic/cubic curves, arcs, open/closed compound subpaths and fill rules; separate fill and stroke paths |
+| Paint | Fill/stroke/text roles, theme tokens, explicit transparent versus inherited colors, opacity, widths, dashes, joins, caps and gradients; ordered save/restore state |
+| Transform | Explicit coordinate spaces, transform order, aspect policy, rotation/reflection and nested matrices; resizing versus stroke scaling defined independently |
+| Modifiers/handles | Typed parameters, constraints, handle positions and bounded drag-to-parameter expressions; keyboard-adjustable generic controls with accessible labels |
+| Text/data | Label regions, padding, alignment, wrapping, rich-text capability, notes, links and typed metadata fields; sanitized content and reusable Thinoda inspector controls |
+| Connections | Named anchors, normalized/absolute coordinates, inset versus projected ports, perimeter paths/functions, routing constraints and marker definitions |
+| Composition/merging | References, ordered child instances, groups/containers, clipping and explicit union/intersection/difference/xor operations; geometric merging is distinct from grouping or graph merging |
+| Quick actions | Declared intents such as set parameter, insert template and connect named ports; executed only through generic, validated, undoable app commands |
+| Interchange | Data-defined shape/style aliases, property ownership, parameter mappings and export recipes; unowned source metadata remains preserved |
+| Capabilities | Explicit language/backend requirements; unsupported operations retain editable identity and source with visible limitations rather than false fidelity |
+
+Illustrative envelope definition fragment, not a released schema:
+
+```json
+{
+  "id": "thinoda.general/envelope",
+  "dslVersion": 1,
+  "parameters": {},
+  "defaults": {"size": [120, 80]},
+  "drawing": [
+    {
+      "op": "rect",
+      "id": "body",
+      "rect": [0, 0, {"var": "width"}, {"var": "height"}],
+      "paint": {"fill": {"style": "fill"}, "stroke": {"style": "stroke"}}
+    },
+    {
+      "op": "path",
+      "closed": false,
+      "commands": [
+        {"op": "move", "to": [0, 0]},
+        {"op": "line", "to": [
+          {"op": "mul", "args": [{"var": "width"}, 0.5]},
+          {"op": "mul", "args": [{"var": "height"}, 0.5]}
+        ]},
+        {"op": "line", "to": [{"var": "width"}, 0]}
+      ],
+      "paint": {"fill": "none", "stroke": {"style": "stroke"}}
+    }
+  ],
+  "hitRegion": {"path": "body"},
+  "perimeter": {"path": "body"},
+  "ports": [
+    {"at": [0.15, 0.05], "perimeter": false},
+    {"at": [0.5, 0], "perimeter": true},
+    {"at": [0.85, 0.05], "perimeter": false},
+    {"at": [0, 0.3], "perimeter": true},
+    {"at": [0, 0.5], "perimeter": true},
+    {"at": [0, 0.7], "perimeter": true},
+    {"at": [1, 0.3], "perimeter": true},
+    {"at": [1, 0.5], "perimeter": true},
+    {"at": [1, 0.7], "perimeter": true},
+    {"at": [0.15, 0.95], "perimeter": false},
+    {"at": [0.5, 1], "perimeter": true},
+    {"at": [0.85, 0.95], "perimeter": false}
+  ]
+}
+```
+
+The package supplies common style defaults and UI metadata too; omitted fields
+in this illustrative fragment are not permission to hardcode envelope behavior.
+Parameter/label/handle definitions will be exercised by more demanding folder,
+rounded-rectangle and compound-shape fixtures before freezing schema v1.
+
+**Shared execution.** Compile validated definitions once into an immutable
+program. Evaluate it against instance parameters, style, text metrics and
+transforms into a renderer-neutral drawing IR plus hit regions, bounds, label
+regions, handles and ports. Canvas, thumbnails, SVG/raster/PDF, printing and
+editable presentation export consume that result. Backends must not switch on
+shape IDs. Unsupported backend capabilities enter the existing loss preflight.
+Cache keys include definition hash and every relevant instance/style/text input;
+changing a modifier cannot leave stale geometry, hit tests or connectors.
+
+**Bounded execution.** Keep current library file, entry, expansion and retained
+data budgets as ingestion ceilings. Add cumulative JSON node/depth, expression
+instruction, reference/include depth, state/clip-stack, path segment, resource,
+text layout, boolean-operation and generated-output limits. Charge nested
+definitions and repetition to the same evaluation budget. Reject invalid
+references, dependency cycles and non-finite values before document mutation.
+Limits come from trusted engine policy, never library requests. A bounded
+unsupported definition remains distinguishable from a resource-limit failure.
+
+**Migration and acceptance order (supersedes per-shape Rust additions).**
+
+1. **ST0 - Contract:** agree package/instance ownership and typed DSL, JSON Schema,
+   capability/version rules, budgets and source adapters. Define representative
+   geometry, handles, text, connector and compound-object fixtures.
+2. **ST1 - Pure interpreter:** implement bounded parsing, validation, dependency
+   resolution, expression evaluation and drawing/interaction IR. No UI or
+   document writes during evaluation. Include malformed and budget-boundary tests.
+3. **ST2 - Generic persistence:** add one generic stencil-instance representation
+   with parent/anchor relationships and pinned workbook definition/resource
+   closure; update native, clipboard,
+   recovery and XMind gates. Keep legacy document readers and behavior intact.
+4. **ST3 - Shared consumers:** connect renderer backends, bounds/hit testing,
+   selection, modifiers, accessible handles, inspector, insertion and connectors
+   to the same evaluated definition. Add Undo/Redo and cross-renderer tests.
+5. **ST4 - Data-only first library:** implement the envelope as JSON, then
+   parameterized rounded rectangles and folders. Reuse the official-editor
+   measurements and supplied examples, including connector-owned BPMN symbols.
+   Do not add a native `Envelope` enum variant.
+6. **ST5 - Existing shapes:** migrate the 31 legacy shape kinds behind stable
+   compatibility aliases in bounded batches. Preserve defaults, document
+   appearance, ports, old files and existing UX. Remove superseded shape-specific
+   rendering code only after equivalence gates pass.
+7. **ST6 - Third-party import:** convert XML stencils and library fragments,
+   resolve dependencies and resources, and provide installation/version/diagnostic
+   UX. Unsupported procedural shapes remain explicit; no automatic code loading.
+8. **ST7 - Coverage:** expand definitions, compound geometry, modifiers, labels,
+   containers, markers and routing recipes against the supplied screenshots and
+   published editor. Publish per-capability/per-library rendered, editable and
+   source-preservation coverage, not a blanket claim of draw.io parity.
+
+**Rubber-duck critique.** Simply moving coordinate arrays to JSON would retain
+hardcoded ports, handles, labels and export mappings; all are included in the
+definition contract. Treating every library item as a shape would lose templates
+and groups, so definitions and instance templates are separate. Looking up the
+latest installed revision would change old diagrams, hence pinned workbook
+closures. A string formula language would invite script execution and ambiguous
+evaluation, hence a typed AST and shared budgets. Unknown operations cannot be
+silently skipped. Boolean merging and compound fills need real shared IR
+support, not a single filled polygon. Shape parameters cannot mutate unrelated
+document state; generic undoable commands mediate interactions.
+
+The unfinished, hardcoded envelope prototype is shelved rather than shipped
+(stash `4c94f800385fc47277ff9b46f0705510de00f451`). It provides useful source
+measurements, corpus findings and regression ideas for ST4, not a completed
+implementation. Its last full-workspace attempt failed while compiling tests
+because Windows exhausted paging-file capacity; no full-suite success is claimed.
+The new DSL and migration are proposed work, not implemented or validated.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 
@@ -818,10 +1044,14 @@ connections arrive in Phase 8 without changing the gestures).
 - Parity tests canvas vs SVG/PNG/PDF/print/presentation/thumbnails, hit-testing, bounds.
 
 ### Phase 5 — Stencil engine & generic baseline (`p5-stencils`)
-- Stencil XML path language → primitives; inline `stencil(…)`; `<constraint>` → ports.
-- Rust ports of JS-coded core shapes needed by generic libraries (process, document,
-  card, tape, cube, step, note, callout, folder, flexArrow, umlActor, lifeline, …).
-- Bundled generic libraries (compressed, lazy, size budget in CI); library index.
+- Implement the JSON DSL/interpreter and staged migration in §3.1.2 (ST0-ST7).
+- Convert XML stencil instructions, inline `stencil(…)` and constraints into JSON
+  definitions; translate library fragments into JSON templates.
+- Define JS-coded source shapes declaratively in libraries; do not port each one
+  into a Rust shape variant. Unsupported procedural content remains preserved
+  with an explicit placeholder.
+- Bundle versioned JSON generic libraries (compressed, lazy, size budget in CI);
+  library index, pinned revisions and resource/dependency closure.
 - Unknown stencil → placeholder (bounds + label + icon), data preserved.
 - Prioritize `folder` and `mxgraph.floorplan.office_chair`, which recur in the
   supplied examples: a source scan of all 88 files found 73 folders, including

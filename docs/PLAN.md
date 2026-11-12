@@ -18,6 +18,13 @@ file format), the concept (native board model + lossless round-trip contract,
 downloaded on demand) and phases 0–14. Phase 1 changes shape placement on all
 boards to draw.io behaviour and ships independently of file support.
 
+**Architecture clarification (2026-11-12):** future object support is driven by
+extensible JSON stencil definitions and a shared, bounded interpreter, not more
+hardcoded native shape variants. [DRAWIO.md §3.1.2](DRAWIO.md#312-json-stencil-dsl-and-interpreter-contract-proposed-2026-11-12)
+defines the proposed DSL, persistence, third-party adapters and ST0-ST7 migration.
+Existing shapes remain compatible while migrating. The interpreter is not yet
+implemented; the unfinished shape-specific envelope prototype has been shelved.
+
 ## Sankey family support (2026-11-11)
 
 In progress. [SANKEY.md](SANKEY.md) adds researched concepts and phases S0-S6
@@ -96,6 +103,7 @@ complete:
 | Draw.io flowchart processes | Partial | Rounded source stencils import as square editable processes with a warning; native processes export as tagged square rectangles. Exact source appearance, identity, ports and save-back remain open |
 | Draw.io unsupported shapes and styles | Partial | Rectangle fallbacks are identified in import and persistent paste warnings; unresolved named label styles report formatting loss. Source data, counts, exact geometry and lossless save-back remain open |
 | Format-panel stencil libraries | Partial | Built-in and imported libraries, search, scratchpad, click and drag insertion, and cumulative decoded-size and work limits are implemented; generic stencil rendering, library export, connect-on-insert and device acceptance remain open |
+| Declarative JSON stencil engine | Planned | Versioned JSON definitions own geometry, styles, text, modifiers/handles, transforms, ports, composition, metadata and interchange bindings; ST0-ST7 replace per-shape code additions while preserving legacy documents. XML/library adapters do not execute third-party JavaScript |
 | Connector points on every stencil shape | Complete locally | All 31 native shape kinds now expose interactive perimeter points; polygonal stencils project to their actual outline, and keyboard attachment cycling is covered. Generic stencil constraints, external-library fidelity and device acceptance remain open |
 | Sankey Parents/Children/Weights interactions | Complete locally | Explicit Add parent/Add child and relationship-specific remove actions, endpoint-qualified weight fields, and UI tests cover adding, editing from both sections, removal and Undo. A 280 px inspector-harness regression covers flow creation, editing and removal; actual app-panel and real-device acceptance remain open. Full native workspace nextest passes 3,475 tests (15 skipped; 16 slow) |
 | Sankey scale legend | Complete locally | A non-selectable canvas legend and SVG-based visual/editable-slide export legends use the shared color scale; focused canvas, SVG and PPTX tests cover enabled/disabled visibility and export bounds |
