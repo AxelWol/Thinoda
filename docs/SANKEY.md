@@ -515,5 +515,14 @@ cycles, conflicting, below-zero or locked results atomically. A Stages overview 
 columns with their nodes, and Compact stage numbers renumbers used stages
 from 0 while preserving adjacency. Core regressions cover derivation,
 conflicts, locks and compaction; a headless inspector test covers adding an
-unstaged child, compaction and Undo. Stage naming and column reordering remain
-open.
+unstaged child, compaction and Undo. Column reordering remains open.
+
+### Alluvial stage names checkpoint (2026-11-12)
+
+Each used stage can now have an optional name in the Data > Weights Stages
+overview. Blank names fall back to the stage number; topic choices show the
+custom stage name when present. Names are keyed by stage number and persist in
+the document. The new settings field defaults when loading older documents,
+and compaction remaps names together with the stages. Core regressions cover
+legacy settings loading, serialization and compaction; the inspector regression
+covers editing, compacting and Undo. Reordering stage columns remains open.

@@ -96,7 +96,13 @@ fn node_label(sheet: &Sheet, id: TopicId) -> String {
         let stage = settings
             .stages
             .get(&id)
-            .map(u32::to_string)
+            .map(|stage| {
+                settings
+                    .stage_names
+                    .get(stage)
+                    .filter(|name| !name.is_empty())
+                    .map_or_else(|| stage.to_string(), |name| name.clone())
+            })
             .unwrap_or_else(|| t("Unassigned").to_owned());
         format!("{name} · {} {stage}", t("Stage"))
     } else {
@@ -126,18 +132,39 @@ fn stage_overview(
                     .map(|topic| topic.title.clone())
                     .unwrap_or_default()
             };
-            let mut row = |ui: &mut Ui, heading: String, ids: &[TopicId]| {
+            for (stage, ids) in &summary.stages {
                 ui.horizontal_wrapped(|ui| {
-                    ui.strong(format!("{heading} ({})", ids.len()));
+                    let mut stage_name = original
+                        .sankey
+                        .as_ref()
+                        .and_then(|settings| settings.stage_names.get(stage))
+                        .cloned()
+                        .unwrap_or_default();
+                    let label = ui.label(format!("{} {stage} ({})", t("Stage"), ids.len()));
+                    let response = ui
+                        .add(
+                            egui::TextEdit::singleline(&mut stage_name)
+                                .desired_width(140.0)
+                                .hint_text(t("Stage name")),
+                        )
+                        .labelled_by(label.id)
+                        .on_hover_text(t("Name this stage; leave blank to use its number."));
+                    if response.changed()
+                        && let Some(settings) = &mut sheet.sankey
+                    {
+                        let stage_name = stage_name.trim();
+                        if stage_name.is_empty() {
+                            settings.stage_names.remove(stage);
+                        } else {
+                            settings.stage_names.insert(*stage, stage_name.to_owned());
+                        }
+                    }
                     for &id in ids {
                         if ui.small_button(name(id)).clicked() {
                             *focus_node = Some(id);
                         }
                     }
                 });
-            };
-            for (stage, ids) in &summary.stages {
-                row(ui, format!("{} {stage}", t("Stage")), ids);
             }
             if ui
                 .button(t("Compact stage numbers"))

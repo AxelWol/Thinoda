@@ -472,6 +472,25 @@ fn sankey_alluvial_new_child_gets_adjacent_stage_and_stages_compact() {
     };
     h.run_steps(3);
     assert!(h.query_by_label("Stage 40 (1)").is_some());
+    h.get_by_role_and_label(egui::Role::TextInput, "Stage 40 (1)")
+        .click();
+    h.get_by_role_and_label(egui::Role::TextInput, "Stage 40 (1)")
+        .type_text("Planning");
+    h.run_steps(3);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .sankey
+            .as_ref()
+            .unwrap()
+            .stage_names
+            .get(&40)
+            .map(String::as_str),
+        Some("Planning")
+    );
     let stage = |h: &Harness<'static, ThinodaApp>, id| {
         h.state()
             .doc()
@@ -491,6 +510,7 @@ fn sankey_alluvial_new_child_gets_adjacent_stage_and_stages_compact() {
         .unwrap()
         .click();
     h.run_steps(3);
+    assert!(h.query_by_label("Lone · Stage Planning").is_some());
     h.get_by_label("Mastery · Stage Unassigned").click();
     h.run_steps(3);
     h.get_by_role_and_label(egui::Role::Button, "Add child")
@@ -512,6 +532,34 @@ fn sankey_alluvial_new_child_gets_adjacent_stage_and_stages_compact() {
         .collect();
     assert_eq!(used, (0..used.len() as u32).collect());
     assert_eq!(stage(&h, lone), Some(used.len() as u32 - 1));
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .sankey
+            .as_ref()
+            .unwrap()
+            .stage_names
+            .get(&(used.len() as u32 - 1))
+            .map(String::as_str),
+        Some("Planning")
+    );
     assert!(h.state_mut().doc_mut().unwrap().doc.undo());
     assert_eq!(stage(&h, lone), Some(40));
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .sankey
+            .as_ref()
+            .unwrap()
+            .stage_names
+            .get(&40)
+            .map(String::as_str),
+        Some("Planning")
+    );
 }

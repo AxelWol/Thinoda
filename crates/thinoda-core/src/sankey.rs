@@ -48,6 +48,9 @@ pub struct SankeySettings {
     pub sources: BTreeMap<TopicId, u32>,
     /// Alluvial stage identity is attached to topic IDs, never display labels.
     pub stages: BTreeMap<TopicId, u32>,
+    /// Optional display names keyed by stage number.
+    #[serde(default)]
+    pub stage_names: BTreeMap<u32, String>,
 }
 
 impl Default for SankeySettings {
@@ -58,6 +61,7 @@ impl Default for SankeySettings {
             pixels_per_unit: 2.0,
             sources: BTreeMap::new(),
             stages: BTreeMap::new(),
+            stage_names: BTreeMap::new(),
         }
     }
 }
@@ -580,6 +584,13 @@ pub fn compact_stages(sheet: &mut Sheet) -> Result<bool, String> {
     let mut candidate = sheet.clone();
     if let Some(settings) = &mut candidate.sankey {
         settings.stages = stages;
+        settings.stage_names = settings
+            .stage_names
+            .iter()
+            .filter_map(|(&stage, name)| {
+                map.get(&stage).map(|&new_stage| (new_stage, name.clone()))
+            })
+            .collect();
     }
     reconcile(sheet, &mut candidate)?;
     *sheet = candidate;

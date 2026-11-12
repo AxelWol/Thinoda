@@ -428,6 +428,41 @@ fn sankey_zero_and_absent_are_distinct_and_invisible() {
 }
 
 #[test]
+fn sankey_stage_names_roundtrip_and_survive_compaction() {
+    let (mut sheet, ids) = alluvial_chain(&["A", "B", "C"], &[(0, 1), (1, 2)]);
+    let settings = sheet.sankey.as_mut().unwrap();
+    settings
+        .stages
+        .extend([(ids[0], 4), (ids[1], 5), (ids[2], 9)]);
+    settings
+        .stage_names
+        .extend([(4, "Planning".to_owned()), (5, "Delivery".to_owned())]);
+
+    let json = serde_json::to_string(&sheet).unwrap();
+    let restored: Sheet = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, sheet);
+    assert!(sankey::compact_stages(&mut sheet).unwrap());
+    let settings = sheet.sankey.as_ref().unwrap();
+    assert_eq!(
+        settings.stage_names.get(&0).map(String::as_str),
+        Some("Planning")
+    );
+    assert_eq!(
+        settings.stage_names.get(&1).map(String::as_str),
+        Some("Delivery")
+    );
+    assert_eq!(settings.stages[&ids[2]], 2);
+}
+
+#[test]
+fn sankey_settings_load_without_stage_names() {
+    let mut legacy = serde_json::to_value(sankey::SankeySettings::default()).unwrap();
+    legacy.as_object_mut().unwrap().remove("stage_names");
+    let restored: sankey::SankeySettings = serde_json::from_value(legacy).unwrap();
+    assert!(restored.stage_names.is_empty());
+}
+
+#[test]
 fn sankey_sheet_clipboard_gates_and_preserves_every_field() {
     let book = templates::instantiate("sankey-probability");
     let text = clipboard::encode_sheet(book.active()).unwrap();
