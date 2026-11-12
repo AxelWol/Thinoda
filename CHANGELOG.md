@@ -1,4 +1,4 @@
-_Last updated: 2026-11-11 07:19:48 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-11 14:42:20 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -38,6 +38,14 @@ while the version is `0.x`, breaking changes bump the minor version). See
   notes/changelog and download links (no automatic native installation).
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
+## [0.25.1](https://github.com/AxelWol/Thinoda/compare/v0.25.0...v0.25.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* recover browser documents safely at startup ([bdf57a3](https://github.com/AxelWol/Thinoda/commit/bdf57a380d8ec264337bda3111e5c79f6a45a0cf))
+* safely recover browser documents and explain startup choices ([5328ebc](https://github.com/AxelWol/Thinoda/commit/5328ebc1811120181b40c5bd50efaac16fa33bdd))
 
 ## [0.25.0](https://github.com/AxelWol/Thinoda/compare/v0.24.0...v0.25.0) (2026-11-11)
 
