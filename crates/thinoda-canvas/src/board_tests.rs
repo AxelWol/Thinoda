@@ -3518,7 +3518,7 @@ fn keyboard_cycles_double_ellipse_connection_points() {
 }
 
 #[test]
-fn keyboard_connection_point_cycle_reports_unsupported_targets() {
+fn keyboard_connection_point_cycle_supports_stencil_shapes() {
     let mut sheet = board();
     let target = sheet
         .add_canvas_object(CanvasObject::shape(
@@ -3540,14 +3540,11 @@ fn keyboard_connection_point_cycle_reports_unsupported_targets() {
     h.run_steps(2);
     h.key_press(Key::End);
     h.run_steps(2);
+    assert!(connector(&h, edge).to_port.is_some());
+    assert!(h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    assert!(h.state_mut().doc.undo());
     assert_eq!(h.state().doc.workbook(), &before);
-    assert!(!h.state().doc.can_undo());
-    assert_eq!(h.state().errors.len(), 1);
-    assert!(
-        h.state().errors[0]
-            .to_string()
-            .contains("no visible connection points")
-    );
 }
 
 #[test]

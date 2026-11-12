@@ -6,6 +6,31 @@ Status: 🟡 in progress — Milestone A (codec, import, export) landed 2026-11-
 
 ## 1. Problem & goal
 
+### Sankey interoperability
+
+Sankey sheets use native format **v25**. A draw.io export carries a versioned
+`thinodaSankey` model attribute containing mode, explicit source masses, stages,
+semantic weights and topic notes, mapped by exported cell IDs. Ordinary
+`strokeWidth` is never interpreted as a flow weight on import. The extension is
+validated on a candidate and remapped onto editable topics/connectors. The v2
+extension records endpoint, displayed-label and stroke-width baselines. Deleted,
+reconnected, rotated or visually edited cells, unknown versions and invalid
+semantic metadata fall back atomically to ordinary editable cells with an explicit
+import warning. Weights, stages, sources and extension-only notes are not restored
+in that fallback. XML structure, nesting and size limits still reject unsafe
+documents rather than invoking this fallback. Widths are never guessed as weights.
+
+Other draw.io editors may strip this extension. Their view uses approximate
+proportional strokes, not Thinoda's shared split/merge ribbon geometry. The stroke
+uses the same effective global scale as native ribbons, capped at draw.io's
+supported stroke maximum; tiny widths may also render differently externally.
+Unset links are dashed with a `—%` label; explicit zero has no visible band.
+The color scale overrides per-link colors when enabled. Its legend is inspector-only,
+not part of exported artwork; numeric labels are exported. The export preflight
+discloses these limitations. Save a `.thinoda` master for authoritative
+editable data. SVG/PNG/PDF preserve the rendered ribbons but not editable flow
+semantics; XMind's private Thinoda snapshot retains the native graph.
+
 Users want to open, edit, save, import, export and copy/paste draw.io diagrams in
 Thinoda, without leaving the app and without breaking existing documents, formats or
 exports. "Full support" is defined measurably by three tiers, tracked in a published
@@ -826,9 +851,11 @@ connections arrive in Phase 8 without changing the gestures).
   corpus file; Thinoda-native sheet → draw.io → Thinoda stable.
 
 ### Phase 8 — Connector editing UX (`p8-connectors`)
-- Remaining 3.4.1a items that need further model extensions: explicit connection
-  point handles (×), default per-kind point sets and stencil constraints,
-  orthogonal segment dragging, all route styles in the edge
+- Implemented locally (2026-11-12): visible perimeter points and keyboard
+  attachment cycling cover all 31 native shape kinds, projecting polygonal
+  stencils onto their actual outlines rather than the bounding rectangle.
+  Other Phase 8 follow-ups remain: stencil constraints, orthogonal segment
+  dragging, all route styles in the edge
   toolbar, 34-marker picker, line jumps, multiple edge labels, smart guides; direction
   arrows/quick-shape popover become port-aware; stencil perimeters; persisted
   `ConnectionStyle` editing; positioned/multiple label dragging; Delete vs Delete all.

@@ -395,6 +395,8 @@ pub enum ImportWarning {
     UnsupportedDrawioShapes,
     /// A draw.io grid size or Thinoda grid extension was adjusted or ignored.
     DrawioGridAdjusted,
+    /// Stale/edited semantic metadata was discarded; ordinary editable cells retained.
+    DrawioSankeyStale,
     /// A draw.io page background was approximated or omitted.
     DrawioBackgroundAdjusted,
     /// A draw.io folded note's appearance was approximated.

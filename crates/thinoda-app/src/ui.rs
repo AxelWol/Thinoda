@@ -6537,6 +6537,7 @@ impl ThinodaApp {
     }
 
     fn data_tab(&mut self, ui: &mut Ui) {
+        self.sankey_properties(ui);
         let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         // Object styling stays in Style; Data only edits the selected topic.
         if self.doc().is_some_and(|d| d.view.selected_object.is_some()) {

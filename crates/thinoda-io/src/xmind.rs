@@ -30,6 +30,7 @@ const DOUBLE_ELLIPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DOUBLE-ELLIPSE-1";
 const FIXED_PORT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FIXED-PORTS-1";
 const DRAWIO_ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-ROUNDING-1";
 const FINAL_STATE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FINAL-STATE-1";
+const SANKEY_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SANKEY-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -719,7 +720,9 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_final_states() {
+    if book.has_sankey() {
+        Ok(serde_json::to_string(&(SANKEY_SNAPSHOT_VERSION, book))?)
+    } else if book.has_final_states() {
         Ok(serde_json::to_string(&(
             FINAL_STATE_SNAPSHOT_VERSION,
             book,
@@ -806,6 +809,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == FIXED_PORT_SNAPSHOT_VERSION
                 || version == DRAWIO_ROUNDING_SNAPSHOT_VERSION
                 || version == FINAL_STATE_SNAPSHOT_VERSION
+                || version == SANKEY_SNAPSHOT_VERSION
         })
 }
 
@@ -817,6 +821,17 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .as_array()
         .and_then(|envelope| envelope.get(1))
         .unwrap_or(&value);
+    if workbook
+        .get("sheets")
+        .and_then(Value::as_array)
+        .is_some_and(|sheets| {
+            sheets
+                .iter()
+                .any(|sheet| sheet.get("sankey").is_some_and(|v| !v.is_null()))
+        })
+    {
+        return true;
+    }
     workbook
         .get("sheets")
         .and_then(Value::as_array)
@@ -842,6 +857,7 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                     .and_then(Value::as_object)
                     .is_some_and(|connector| {
                         connector.contains_key("start_marker")
+                            || connector.contains_key("sankey")
                             || connector.contains_key("end_marker")
                             || connector.contains_key("start_marker_size")
                             || connector.contains_key("end_marker_size")
@@ -871,10 +887,21 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != FIXED_PORT_SNAPSHOT_VERSION
             && version != DRAWIO_ROUNDING_SNAPSHOT_VERSION
             && version != FINAL_STATE_SNAPSHOT_VERSION
+            && version != SANKEY_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != SANKEY_SNAPSHOT_VERSION && workbook.has_sankey() {
+            return Err(IoError::NewerVersion(
+                "Sankey flows require a Sankey-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if version == SANKEY_SNAPSHOT_VERSION {
+            FINAL_STATE_SNAPSHOT_VERSION.to_owned()
+        } else {
+            version
+        };
         if version != FINAL_STATE_SNAPSHOT_VERSION && workbook.has_final_states() {
             return Err(IoError::NewerVersion(
                 "final states require a final-state-aware private XMind snapshot".into(),
@@ -1030,6 +1057,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_sankey() {
+            return Err(IoError::NewerVersion(
+                "Sankey flows require a Sankey-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_final_states() {
             return Err(IoError::NewerVersion(
                 "final states require a final-state-aware private XMind snapshot".into(),

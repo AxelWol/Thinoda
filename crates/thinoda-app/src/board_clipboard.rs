@@ -1475,6 +1475,40 @@ mod tests {
     }
 
     #[test]
+    fn sankey_probability_cut_paste_and_failed_duplicate_preserve_clipboard_and_undo() {
+        let mut source = OpenDoc::new(thinoda_core::templates::instantiate("sankey-probability"));
+        source.view.selection = source.doc.sheet().floating.clone();
+        let original = source.doc.workbook().clone();
+        let prepared = prepare_copy(&mut source, true).unwrap().unwrap();
+        let rich = prepared.rich.clone();
+        complete_cut(&mut source, prepared.cut.as_ref().unwrap()).unwrap();
+        assert!(source.doc.sheet().canvas.objects.is_empty());
+        assert!(paste(&mut source, prepared.text.clone(), Some(rich.clone())).unwrap());
+        let pasted = source.doc.workbook().clone();
+        let values = thinoda_core::sankey::evaluate(source.doc.sheet()).unwrap();
+        assert_eq!(values.mass.len(), 6);
+        let error = paste(&mut source, prepared.text.clone(), Some(rich.clone())).unwrap_err();
+        assert!(error.to_lowercase().contains("source") && error.contains("100"));
+        assert_eq!(source.doc.workbook(), &pasted);
+        assert!(source.view.board_clipboard().is_some());
+        assert!(source.doc.undo());
+        assert!(source.doc.sheet().canvas.objects.is_empty());
+        assert!(source.doc.undo());
+        assert_eq!(source.doc.workbook(), &original);
+        // A later failure must not undo the intentional cut automatically.
+        source.view.selection = source.doc.sheet().floating.clone();
+        let cut = prepare_copy(&mut source, true).unwrap().unwrap();
+        complete_cut(&mut source, cut.cut.as_ref().unwrap()).unwrap();
+        let after_cut = source.doc.workbook().clone();
+        let mut target = OpenDoc::new(original);
+        target.view.selection = target.doc.sheet().floating.clone();
+        assert!(paste(&mut target, cut.text.clone(), Some(cut.rich.clone())).is_err());
+        assert_eq!(source.doc.workbook(), &after_cut);
+        assert_eq!(cut.rich, rich);
+        assert!(source.doc.undo());
+    }
+
+    #[test]
     fn identical_external_text_does_not_restore_stale_board_data() {
         let mut source = board_with_shape();
         let prepared = prepare_copy(&mut source, false).unwrap().unwrap();

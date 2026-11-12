@@ -208,6 +208,15 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::DrawioDoubleEllipseAppearanceApproximated(count) => {
                     (*count, "Double-ellipse appearance may differ in draw.io")
                 }
+                ExportLoss::SankeyDrawioExtension(count) => (
+                    *count, "Sankey semantics use a Thinoda extension; other tools may strip it. Draw.io ribbon appearance is approximate."
+                ),
+                ExportLoss::SankeySemanticsDropped(count) => (
+                    *count, "Editable Sankey weights and probability semantics are not preserved"
+                ),
+                ExportLoss::SankeyInspectorLegend(count) => (
+                    *count, "The color legend appears on the canvas and in visual exports. Draw.io uses approximate strokes, capped at its supported maximum."
+                ),
                 ExportLoss::DrawioFinalStateAppearanceApproximated(count) => {
                     (*count, "Final-state appearance may differ in draw.io")
                 }

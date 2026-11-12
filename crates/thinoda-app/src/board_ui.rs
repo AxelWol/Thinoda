@@ -107,6 +107,7 @@ struct ConnectorTarget {
 
 #[derive(Clone, Copy)]
 struct ConnectorProperties {
+    semantic: bool,
     route: ConnectorRoute,
     arrow_start: bool,
     arrow_end: bool,
@@ -620,6 +621,7 @@ impl ThinodaApp {
             target,
             enabled,
             properties: ConnectorProperties {
+                semantic: connector.sankey.is_some(),
                 route: connector.route,
                 arrow_start: connector.arrow_start,
                 arrow_end: connector.arrow_end,
@@ -1662,6 +1664,10 @@ impl ThinodaApp {
                     width_field(ui, &mut edited.style.stroke_width);
                 }
                 CanvasObjectKind::Connector(connector) => {
+                    if connector.sankey.is_some() {
+                        widgets::caption(ui,t("Sankey ribbons use automatic ports and routing; waypoints and arrow markers are unavailable."));
+                    }
+                    ui.add_enabled_ui(connector.sankey.is_none(), |ui| {
                     widgets::property_field(ui, t("Connector route"), |ui| {
                         egui::ComboBox::from_id_salt(("board_connector_route", id))
                             .selected_text(t(route_name(connector.route)))
@@ -1741,8 +1747,9 @@ impl ThinodaApp {
                         connector.end_marker,
                         &mut connector.end_marker_unfilled,
                     );
+                    });
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
-                    width_field(ui, &mut connector.width);
+                    if connector.sankey.is_none() {width_field(ui, &mut connector.width);}
                 }
                 CanvasObjectKind::Ink(ink) => {
                     color_field(ui, "Stroke", &mut ink.color);
@@ -1837,9 +1844,12 @@ impl ThinodaApp {
                         )
                     });
                 }
-                widgets::property_field(ui, t("Rotation"), |ui| {
+                let weighted=sheet.canvas.objects.iter().any(|o|
+                    matches!(&o.kind,CanvasObjectKind::Connector(c) if c.sankey.is_some() && [c.from,c.to].contains(&thinoda_core::board::Endpoint::Topic(id))));
+                if weighted {widgets::caption(ui,t("Remove Sankey links before rotating this node."));}
+                ui.add_enabled_ui(!weighted,|ui| widgets::property_field(ui, t("Rotation"), |ui| {
                     ui.add(egui::DragValue::new(&mut edited.rotation).range(0.0..=359.9))
-                });
+                }));
             });
         });
         if edited != card {
@@ -1937,6 +1947,15 @@ fn connector_context_controls(
     context: &ConnectorContext,
 ) -> (Option<ConnectorChange>, Vec<egui::Id>) {
     let properties = context.properties;
+    if properties.semantic {
+        widgets::caption(
+            ui,
+            t(
+                "Sankey ribbons use automatic ports and routing; waypoints and arrow markers are unavailable.",
+            ),
+        );
+        return (None, Vec::new());
+    }
     let mut change = None;
     let mut popups = Vec::with_capacity(3);
     let route = board_tool_popup(

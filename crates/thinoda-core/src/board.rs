@@ -1255,6 +1255,9 @@ pub struct ConnectorMarker {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanvasConnector {
+    /// Explicit semantic flow; ordinary stroke widths never imply a weight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sankey: Option<crate::sankey::Flow>,
     pub from: Endpoint,
     pub to: Endpoint,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1294,6 +1297,8 @@ pub struct CanvasConnector {
 
 #[derive(Deserialize)]
 struct StoredCanvasConnector {
+    #[serde(default)]
+    sankey: Option<crate::sankey::Flow>,
     from: Endpoint,
     to: Endpoint,
     #[serde(default)]
@@ -1357,6 +1362,7 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             return Err(serde::de::Error::custom("invalid fixed connector port"));
         }
         Ok(Self {
+            sankey: stored.sankey,
             from: stored.from,
             to: stored.to,
             from_port: stored.from_port,
@@ -1393,6 +1399,7 @@ fn waypoints_are_empty(waypoints: &Arc<[Vec2]>) -> bool {
 impl CanvasConnector {
     pub fn new(from: Endpoint, to: Endpoint) -> Self {
         Self {
+            sankey: None,
             from,
             to,
             from_port: None,
@@ -1815,6 +1822,7 @@ pub fn validate_card(card: &Card) -> Result<(), String> {
 /// the canvas layer. Called by [`Sheet::validate`] (import, paste) and by every
 /// [`crate::Document`] edit.
 pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
+    crate::sankey::evaluate(sheet)?;
     let board = &sheet.board;
     if !board.grid_size.is_finite() || !(MIN_GRID_SIZE..=MAX_GRID_SIZE).contains(&board.grid_size) {
         return Err("board grid size is out of range".into());
@@ -3428,6 +3436,9 @@ impl Sheet {
     /// Returns the number of converted ends. No ends are changed if a fixed
     /// attachment cannot be represented as a valid free point.
     pub fn fix_dangling_endpoints(&mut self, before: &Sheet) -> Result<usize, String> {
+        if self.has_sankey() && self.has_dangling_endpoints() {
+            crate::sankey::reconcile(before, self)?;
+        }
         if !self.has_dangling_endpoints() {
             return Ok(0);
         }

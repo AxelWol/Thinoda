@@ -1280,6 +1280,12 @@ pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, Str
 
 pub(crate) fn import_error(path: &Path, error: thinoda_io::IoError) -> String {
     match error {
+        thinoda_io::IoError::Invalid(ref message)
+            if message.ends_with(thinoda_core::sankey::ROTATED_ENDPOINT_ERROR)
+                || message.ends_with(thinoda_core::sankey::HIDDEN_ENDPOINT_ERROR) =>
+        {
+            return crate::i18n::localize_model_error(message).into();
+        }
         thinoda_io::IoError::DrawIoHtml(thinoda_io::DrawIoHtmlError::MultipleViewers) => {
             return t(
                 "This HTML contains multiple draw.io diagrams. Export each diagram separately.",
@@ -1962,6 +1968,22 @@ mod tests {
             assert_eq!(connector.end_marker_size, end_size);
             assert_eq!(connector.start_marker_unfilled, start_unfilled);
             assert_eq!(connector.end_marker_unfilled, end_unfilled);
+        }
+    }
+
+    #[test]
+    fn sankey_native_load_errors_use_localized_endpoint_guidance() {
+        for message in [
+            thinoda_core::sankey::ROTATED_ENDPOINT_ERROR,
+            thinoda_core::sankey::HIDDEN_ENDPOINT_ERROR,
+        ] {
+            assert_eq!(
+                import_error(
+                    Path::new("diagram.thinoda"),
+                    thinoda_io::IoError::Invalid(format!("Example node: {message}"))
+                ),
+                t(message)
+            );
         }
     }
 

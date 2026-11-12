@@ -137,6 +137,27 @@ language packs, not Thinoda's override. No claim is made that Thinoda translates
 those system-owned controls. WinGet publishing remains paused.
 
 ## Features
+
+- Sankey starter diagrams cover budget/energy flows, staged alluvial categories,
+  conditional probabilities and circular recycling. Select a topic and use
+  **Data > Weights** to edit shared link weights, inspect totals and unallocated
+  mass, add/remove links, or arrange floating flow cards. Names, notes and
+  hyperlinks remain ordinary topic data. Native files retain editable semantics;
+  draw.io uses a versioned Thinoda extension with an explicit compatibility warning.
+  See [Sankey design and limits](docs/SANKEY.md).
+  Six localized starters include **Blank Sankey**, **Budget flow**, **Energy flow**,
+  **Learning stages**, **Delivery scenarios**, and **Recycling loop**, with notes
+  explaining their normalized reference basis. Unset links are dashed; zero has
+  no band. Numeric edits retain invalid drafts for correction/cancellation and
+  commit on completion. Probability mode changes reject precision loss or
+  unallocated source supply that an absolute graph cannot preserve. The Parents
+  list offers upstream conditional editing navigation. Alluvial flows are aggregate
+  transitions, not complete cohort paths.
+  Weighted nodes cannot be rotated or hidden under collapsed ancestors; remove
+  their semantic links first. Ribbons use automatic routing/ports, not connector
+  waypoints or markers. Layout is basic, without crossing minimization. The color
+  legend is inspector-only; exports retain numeric labels. Physical touch/pen,
+  high-DPI devices and external-viewer appearance still require exploratory QA.
 - **Live Pitch** presents saved slides and crops inside the app. Previous/Next
   buttons, arrows/Page Up/Page Down/Space, Home/End and First/Last buttons navigate;
   Escape or Exit Pitch closes only the player. Choose None, Fade, Slide, Push or

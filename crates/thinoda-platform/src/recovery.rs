@@ -72,6 +72,8 @@ const DRAWIO_ROUNDING_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-DRAWIO-ROUNDING
 const DRAWIO_ROUNDING_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-DRAWIO-ROUNDING-1";
 const FINAL_STATE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-FINAL-STATE-1";
 const FINAL_STATE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-FINAL-STATE-1";
+const SANKEY_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SANKEY-1";
+const SANKEY_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SANKEY-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -93,7 +95,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_final_states() {
+        tuple.serialize_element(if self.workbook.has_sankey() {
+            SANKEY_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_final_states() {
             FINAL_STATE_INK_WORKBOOK_VERSION
         } else if self.workbook.has_drawio_rectangle_rounding() {
             DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
@@ -182,7 +186,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_final_states() {
+    let version = if workbook.has_sankey() {
+        SANKEY_WORKBOOK_VERSION
+    } else if workbook.has_final_states() {
         FINAL_STATE_WORKBOOK_VERSION
     } else if workbook.has_drawio_rectangle_rounding() {
         DRAWIO_ROUNDING_WORKBOOK_VERSION
@@ -240,6 +246,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_sankey() {
+                return Err(A::Error::custom(
+                    "Sankey flows require a versioned recovery workbook",
+                ));
+            }
             if workbook.has_final_states() {
                 return Err(A::Error::custom(
                     "final states require a versioned recovery workbook",
@@ -319,6 +330,8 @@ where
                 && version != DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
                 && version != FINAL_STATE_WORKBOOK_VERSION
                 && version != FINAL_STATE_INK_WORKBOOK_VERSION
+                && version != SANKEY_WORKBOOK_VERSION
+                && version != SANKEY_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -327,6 +340,19 @@ where
             let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != SANKEY_WORKBOOK_VERSION
+                && version != SANKEY_INK_WORKBOOK_VERSION
+                && workbook.has_sankey()
+            {
+                return Err(A::Error::custom(
+                    "Sankey flows require Sankey-aware recovery",
+                ));
+            }
+            let version = match version.as_str() {
+                SANKEY_WORKBOOK_VERSION => FINAL_STATE_WORKBOOK_VERSION.to_owned(),
+                SANKEY_INK_WORKBOOK_VERSION => FINAL_STATE_INK_WORKBOOK_VERSION.to_owned(),
+                _ => version,
+            };
             if version != FINAL_STATE_WORKBOOK_VERSION
                 && version != FINAL_STATE_INK_WORKBOOK_VERSION
                 && workbook.has_final_states()
@@ -2113,6 +2139,42 @@ mod lock_tests {
                     .contains("fixed connector ports require a port-aware")
             );
             let mut unversioned = value;
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn sankey_requires_aware_recovery_with_and_without_pending_ink() {
+        let book = thinoda_core::templates::instantiate("sankey-probability");
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(serde_json::from_slice::<PreviousVersionedSnapshot>(&bytes).is_err());
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    SANKEY_INK_WORKBOOK_VERSION
+                } else {
+                    SANKEY_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                FINAL_STATE_INK_WORKBOOK_VERSION
+            } else {
+                FINAL_STATE_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
         }

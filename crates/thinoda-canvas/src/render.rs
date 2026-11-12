@@ -501,6 +501,13 @@ pub(crate) fn paint_map_scene(
         &mut ink_cache,
         ink_tessellation,
     );
+    if sheet
+        .sankey
+        .as_ref()
+        .is_some_and(|settings| settings.color_scale)
+    {
+        paint_sankey_scale_legend(painter, sheet, opts.dark);
+    }
     ctx.data_mut(|data| data.insert_temp(cache_id, ink_cache));
 
     // Selection and badges.
@@ -570,6 +577,80 @@ pub(crate) fn relationship_clip_rect(
     let (from_zone, from_rect) = topic_clip_zone(sheet, from)?;
     let (to_zone, _) = topic_clip_zone(sheet, to)?;
     (from_zone == to_zone).then_some(from_rect)
+}
+
+fn paint_sankey_scale_legend(painter: &Painter, sheet: &Sheet, dark: bool) {
+    let viewport = painter.clip_rect();
+    if viewport.width() < 140.0 {
+        return;
+    }
+    let width = (viewport.width() - 24.0).min(190.0);
+    let height = 48.0;
+    let bounds = Rect::from_min_size(
+        pos2(
+            (viewport.right() - width - 12.0).max(viewport.left() + 4.0),
+            viewport.top() + 12.0,
+        ),
+        vec2(width, height),
+    );
+    let background = sheet_background(sheet, dark);
+    let border = if dark {
+        Color32::from_gray(110)
+    } else {
+        Color32::from_gray(180)
+    };
+    painter.rect_filled(bounds, 4.0, background);
+    painter.rect(
+        bounds,
+        4.0,
+        Color32::TRANSPARENT,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
+
+    let inner = bounds.shrink2(vec2(8.0, 7.0));
+    let bar = Rect::from_min_size(inner.min, vec2(inner.width(), 9.0));
+    let steps = thinoda_core::sankey::WEIGHT_COLOR_SCALE_GRADIENT_STEPS;
+    for index in 0..steps {
+        let segment = Rect::from_min_max(
+            pos2(
+                bar.left() + bar.width() * index as f32 / steps as f32,
+                bar.top(),
+            ),
+            pos2(
+                bar.left() + bar.width() * (index + 1) as f32 / steps as f32,
+                bar.bottom(),
+            ),
+        );
+        let value =
+            (index as f64 + 0.5) / steps as f64 * thinoda_core::sankey::WEIGHT_COLOR_SCALE_MAX;
+        let color = thinoda_core::sankey::weight_color(value);
+        painter.rect_filled(segment, 0.0, color32(color));
+    }
+
+    let label_color = if dark {
+        Color32::from_gray(235)
+    } else {
+        Color32::from_gray(45)
+    };
+    for (index, mark) in thinoda_core::sankey::WEIGHT_COLOR_SCALE_MARKS
+        .into_iter()
+        .enumerate()
+    {
+        let x = bar.left() + bar.width() * index as f32 / 4.0;
+        let align = match index {
+            0 => egui::Align2::LEFT_TOP,
+            4 => egui::Align2::RIGHT_TOP,
+            _ => egui::Align2::CENTER_TOP,
+        };
+        painter.text(
+            pos2(x, bar.bottom() + 4.0),
+            align,
+            format!("{mark:.0}%"),
+            FontId::proportional(10.0),
+            label_color,
+        );
+    }
 }
 
 fn paint_grid(painter: &Painter, sheet: &Sheet, xf: Xf, dark: bool) {
@@ -1480,23 +1561,86 @@ fn paint_canvas_object(
         }
         (
             CanvasObjectKind::Connector(connector),
-            SceneGeometry::Polyline {
-                points, markers, ..
+            SceneGeometry::Ribbon {
+                outline,
+                mass,
+                color,
+                ..
             },
         ) => {
-            let color = connector
-                .color
+            let color = color
+                .map(color32)
+                .or(connector.color.map(color32))
+                .or(object.style.stroke.map(color32))
+                .unwrap_or_else(|| default_object_stroke(opts));
+            let color = opacity_color(color, object.style.opacity * 0.75);
+            // A sampled ribbon is generally concave. Triangulate, rather than
+            // passing it to egui's convex-only polygon primitive.
+            let coordinates: Vec<f64> = outline
+                .iter()
+                .flat_map(|p| [f64::from(p.x), f64::from(p.y)])
+                .collect();
+            if let Ok(indices) = earcutr::earcut(&coordinates, &[], 2) {
+                let mut mesh = egui::Mesh::default();
+                for p in outline {
+                    mesh.colored_vertex(xf.pos(*p), color);
+                }
+                mesh.indices = indices.into_iter().map(|i| i as u32).collect();
+                painter.add(Shape::mesh(mesh));
+            }
+            if let Some(anchor) = thinoda_core::sankey::ribbon_label_anchor(outline) {
+                let center = xf.pos(anchor);
+                let label = thinoda_core::sankey::flow_label(connector, *mass);
+                let background = sheet_background(sheet, opts.dark);
+                let text_color = opacity_color(
+                    object.style.text_color.map(color32).unwrap_or_else(|| {
+                        color32(Color::highest_contrast_on(core_color32(background)))
+                    }),
+                    object.style.opacity,
+                );
+                let galley =
+                    painter.layout(label, FontId::proportional(12.0 * z), text_color, 200.0 * z);
+                let rect = Rect::from_center_size(center, galley.size() + vec2(8.0, 4.0) * z);
+                painter.rect_filled(
+                    rect,
+                    4.0 * z,
+                    opacity_color(background, object.style.opacity),
+                );
+                painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
+            }
+        }
+        (
+            CanvasObjectKind::Connector(connector),
+            SceneGeometry::Polyline {
+                points,
+                markers,
+                color,
+                ..
+            },
+        ) => {
+            let color = color
+                .or(connector.color)
                 .map(color32)
                 .or(object.style.stroke.map(color32))
                 .unwrap_or_else(|| default_object_stroke(opts));
             let color = opacity_color(color, object.style.opacity);
             let label_center = polyline_midpoint(points);
             let stroke = Stroke::new((connector.width * z).max(0.5), color);
-            let line = connector_stroke_path(points, markers)
+            let line: Vec<_> = connector_stroke_path(points, markers)
                 .into_iter()
                 .map(|point| xf.pos(point))
                 .collect();
-            painter.add(Shape::line(line, stroke));
+            let unset = connector.sankey.is_some_and(|f| f.weight.is_none());
+            if unset {
+                for path in thinoda_core::sankey::dash_segments(points) {
+                    painter.add(Shape::line(
+                        path.into_iter().map(|p| xf.pos(p)).collect(),
+                        stroke,
+                    ));
+                }
+            } else {
+                painter.add(Shape::line(line, stroke));
+            }
             if points.len() >= 2 {
                 if connector.arrow_start {
                     if let Some(marker) = markers[0] {
@@ -1525,7 +1669,8 @@ fn paint_canvas_object(
                         );
                     }
                 }
-                if !connector.label.is_empty() && editing_board_object != Some(object.id) {
+                if (!connector.label.is_empty() || unset) && editing_board_object != Some(object.id)
+                {
                     let mid = xf.pos(label_center.expect("a connector path has points"));
                     let font = FontId::proportional(shape_label_font_size(z));
                     let text_color = object
@@ -1540,7 +1685,16 @@ fn paint_canvas_object(
                     } else {
                         background
                     };
-                    let galley = painter.layout_no_wrap(connector.label.clone(), font, text_color);
+                    let label = if unset {
+                        thinoda_core::sankey::flow_label(connector, 0.0)
+                    } else {
+                        connector.label.clone()
+                    };
+                    let galley = if unset {
+                        painter.layout(label, FontId::proportional(12.0 * z), text_color, 200.0 * z)
+                    } else {
+                        painter.layout_no_wrap(label, font, text_color)
+                    };
                     let rect = Rect::from_center_size(mid, galley.size() + vec2(8.0, 4.0) * z);
                     painter.rect_filled(rect, CornerRadius::same((4.0 * z) as u8), backdrop);
                     painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
@@ -2347,6 +2501,53 @@ fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sankey_scale_legend_is_painted_only_when_enabled() {
+        let mut workbook = thinoda_core::templates::instantiate("sankey-budget");
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let labels = |sheet: &Sheet| {
+            let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        sheet,
+                        &layout,
+                        Xf {
+                            origin: Pos2::ZERO,
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        workbook.active_mut().sankey.as_mut().unwrap().color_scale = true;
+        let enabled = labels(workbook.active());
+        assert!(enabled.iter().any(|label| label == "0%"));
+        assert!(enabled.iter().any(|label| label == "100%"));
+
+        workbook.active_mut().sankey.as_mut().unwrap().color_scale = false;
+        let disabled = labels(workbook.active());
+        assert!(!disabled.iter().any(|label| label == "0%"));
+        assert!(!disabled.iter().any(|label| label == "100%"));
+    }
 
     #[test]
     fn rectangle_side_mesh_has_finite_nonoverlapping_coverage_for_all_masks() {

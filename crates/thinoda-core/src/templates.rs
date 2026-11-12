@@ -3,12 +3,14 @@
 use crate::model::{Sheet, Structure, Workbook};
 
 mod boards;
+mod sankey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateCategory {
     Basic,
     /// Free-form boards: hidden central topic, frames, cards, shapes, several roots.
     Boards,
+    Sankey,
     Knowledge,
     Meeting,
     Study,
@@ -19,9 +21,10 @@ pub enum TemplateCategory {
 }
 
 impl TemplateCategory {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Basic,
         Self::Boards,
+        Self::Sankey,
         Self::Knowledge,
         Self::Meeting,
         Self::Study,
@@ -35,6 +38,7 @@ impl TemplateCategory {
         match self {
             Self::Basic => "Basic",
             Self::Boards => "Boards",
+            Self::Sankey => "Sankey diagrams",
             Self::Knowledge => "Knowledge management",
             Self::Meeting => "Meeting and planning",
             Self::Study => "Study and education",
@@ -62,6 +66,12 @@ pub const TEMPLATES: &[TemplateInfo] = &[
         name: "Mind Map",
         structure: Structure::MapClockwise,
     },
+    sankey_info("sankey-blank", "Blank Sankey"),
+    sankey_info("sankey-budget", "Budget flow"),
+    sankey_info("sankey-energy", "Energy flow"),
+    sankey_info("sankey-learning", "Learning stages"),
+    sankey_info("sankey-probability", "Delivery scenarios"),
+    sankey_info("sankey-circular", "Recycling loop"),
     TemplateInfo {
         id: "logic-chart",
         category: TemplateCategory::Basic,
@@ -294,10 +304,21 @@ const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
     }
 }
 
+const fn sankey_info(id: &'static str, name: &'static str) -> TemplateInfo {
+    TemplateInfo {
+        id,
+        name,
+        structure: Structure::MapClockwise,
+        category: TemplateCategory::Sankey,
+    }
+}
+
 /// Every translatable content string of the board templates (mind-map template
 /// content stays English).
 pub fn board_strings() -> Vec<&'static str> {
-    boards::board_strings()
+    let mut strings = boards::board_strings();
+    strings.extend(sankey::strings());
+    strings
 }
 
 /// Blank workbook: central topic plus `main_count` main topics.
@@ -322,6 +343,9 @@ pub fn instantiate_localized(id: &str, tr: &dyn Fn(&'static str) -> String) -> W
         .find(|t| t.id == id)
         .copied()
         .unwrap_or(TEMPLATES[0]);
+    if info.category == TemplateCategory::Sankey {
+        return sankey::build(info.id, &tr(info.name), tr);
+    }
     if let Some(board) = boards::find(info.id) {
         let mut wb = boards::build(board, &tr(info.name), tr);
         wb.active_mut().structure = info.structure;

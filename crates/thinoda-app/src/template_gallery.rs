@@ -308,7 +308,10 @@ mod tests {
                         })
                         .active()
                     );
-                    let board = info.category == TemplateCategory::Boards;
+                    let board = matches!(
+                        info.category,
+                        TemplateCategory::Boards | TemplateCategory::Sankey
+                    );
                     assert_eq!(is_board(sheet), board, "{}", info.id);
                     let hidden = usize::from(sheet.root_mode == SheetRootMode::Hidden);
                     assert_eq!(layout.topics.len(), sheet.topics.len() - hidden);

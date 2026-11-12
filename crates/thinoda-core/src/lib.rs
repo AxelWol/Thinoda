@@ -32,6 +32,7 @@ pub mod presentation;
 pub mod quick_styles;
 pub mod resources;
 pub mod rich_text;
+pub mod sankey;
 pub mod scene;
 pub mod schedule;
 pub mod search;

@@ -17,6 +17,18 @@ while the version is `0.x`, breaking changes bump the minor version). See
 
 ### Added
 
+- Sankey, alluvial, probability and circular-flow starter templates; exact decimal
+  shared weights, Data-tab flow editing, proportional ribbons, optional color
+  scale, atomic validation and undo/redo.
+- Six localized Sankey starters (including Blank Sankey) explain their reference
+  basis in node notes. Unset links remain visible/selectable; capped number edits
+  keep correctable drafts. Lossy probability conversions reject without mutation.
+- Stale or externally edited draw.io Sankey extensions import as ordinary editable
+  cells with an explicit warning. Shared label bounds cover hits, lasso and crops;
+  unsupported rotation/routing controls are guarded rather than silently ignored.
+- Native v25 flow persistence and version-aware clipboard/recovery/XMind support;
+  draw.io semantic extension with export-loss diagnostics.
+
 - Boards template category with Blank Canvas, Multi-root Map, Brainstorm Wall,
   Retrospective Board, Kanban Board, Business Model Canvas, Flowchart and SWOT
   Board; board content is created in the UI language (all ten catalogs).

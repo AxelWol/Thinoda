@@ -1113,7 +1113,9 @@ impl Style {
                 .is_some_and(|_| self.num(key).is_none_or(|value| value != default))
         };
         (self.get("shape").is_some() && !self.tokens.is_empty())
-            || FLAGS.iter().any(|key| self.flag(key))
+            || FLAGS
+                .iter()
+                .any(|key| self.flag(key) && !(*key == "dashed" && self.flag("thinodaSankeyEdge")))
             || self.get("fontColor") == Some("none")
             || self.color_appearance_loss("fillColor", "fillOpacity")
             || self.color_appearance_loss("strokeColor", "strokeOpacity")
@@ -1126,8 +1128,14 @@ impl Style {
                     .is_none_or(|opacity| !(0.0..=100.0).contains(&opacity))
             })
             || self.get("strokeWidth").is_some_and(|_| {
-                self.num("strokeWidth")
-                    .is_none_or(|width| !(MIN_STROKE_WIDTH..=MAX_STROKE_WIDTH).contains(&width))
+                self.num("strokeWidth").is_none_or(|width| {
+                    !(if self.flag("thinodaSankeyEdge") {
+                        0.0
+                    } else {
+                        MIN_STROKE_WIDTH
+                    }..=MAX_STROKE_WIDTH)
+                        .contains(&width)
+                })
             })
             || colored("gradientColor")
             || colored("labelBackgroundColor")
@@ -3277,7 +3285,11 @@ fn import_background(model: &Element, sheet: &mut Sheet, warnings: &mut BTreeSet
     }
 }
 
-fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning>) -> Sheet {
+fn import_page(
+    page: &Page,
+    number: usize,
+    warnings: &mut BTreeSet<ImportWarning>,
+) -> Result<Sheet, IoError> {
     let title = if page.name.trim().is_empty() {
         format!("Page-{number}")
     } else {
@@ -3319,7 +3331,10 @@ fn import_page(page: &Page, number: usize, warnings: &mut BTreeSet<ImportWarning
         adaptive_fixed_colors: !matches!(model.attr("adaptiveColors"), Some("simple" | "none")),
     };
     import.run();
-    import.finish()
+    if let Some(extension) = model.attr("thinodaSankey") {
+        import.apply_sankey(extension)?;
+    }
+    Ok(import.finish())
 }
 
 /// Imports every page of a draw.io document as a Freeform board sheet.
@@ -3336,13 +3351,13 @@ pub(crate) fn import_with_first_page_warnings(
     let (first, rest) = pages
         .split_first()
         .ok_or_else(|| invalid("draw.io document contains no pages"))?;
-    let mut workbook = Workbook::new(import_page(first, 1, &mut warnings));
+    let mut workbook = Workbook::new(import_page(first, 1, &mut warnings)?);
     let first_page_warnings = warnings.iter().copied().collect();
-    workbook.sheets.extend(
-        rest.iter()
-            .enumerate()
-            .map(|(i, page)| import_page(page, i + 2, &mut warnings)),
-    );
+    for (i, page) in rest.iter().enumerate() {
+        workbook
+            .sheets
+            .push(import_page(page, i + 2, &mut warnings)?);
+    }
     Ok((
         ImportReport {
             format: Format::DrawIo,
@@ -3355,6 +3370,234 @@ pub(crate) fn import_with_first_page_warnings(
 
 // ---------------------------------------------------------------------------------------
 // Export
+
+/// Versioned semantic extension, separate from ordinary draw.io stroke widths.
+/// Cell IDs, not generated geometry, are used to reattach the native graph.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SankeyExtension {
+    version: u32,
+    settings: thinoda_core::sankey::SankeySettings,
+    nodes: std::collections::BTreeMap<TopicId, Option<thinoda_core::notes::NoteContent>>,
+    links: std::collections::BTreeMap<CanvasObjectId, SankeyLinkExtension>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SankeyLinkExtension {
+    flow: thinoda_core::sankey::Flow,
+    /// Invisible zero flows must not stay hidden after their weight is edited.
+    opacity: f32,
+    from: TopicId,
+    to: TopicId,
+    /// Baseline of the visual approximation: detect edits made in other tools.
+    width: f32,
+    label: String,
+    display_label: String,
+}
+
+impl SankeyExtension {
+    fn from_sheet(sheet: &Sheet) -> Result<Self, IoError> {
+        let values = thinoda_core::sankey::evaluate(sheet).map_err(IoError::Invalid)?;
+        let layout = layout_sheet(sheet, &ApproxMeasure, false);
+        let exported = exported_topics(sheet, &layout);
+        if values.nodes.iter().any(|id| !exported.contains(id)) {
+            return Err(invalid(
+                "Expand all Sankey endpoint topics before exporting to draw.io.",
+            ));
+        }
+        Ok(Self {
+            version: 2,
+            settings: sheet.sankey.clone().unwrap_or_default(),
+            nodes: sheet
+                .topics
+                .iter()
+                .filter(|(id, _)| values.nodes.contains(id))
+                .map(|(id, topic)| (*id, topic.notes.clone()))
+                .collect(),
+            links: sheet
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|o| match &o.kind {
+                    CanvasObjectKind::Connector(c) => c.sankey.map(|flow| {
+                        (
+                            o.id,
+                            SankeyLinkExtension {
+                                flow,
+                                opacity: o.style.opacity,
+                                from: match c.from {
+                                    Endpoint::Topic(id) => id,
+                                    _ => sheet.root,
+                                },
+                                to: match c.to {
+                                    Endpoint::Topic(id) => id,
+                                    _ => sheet.root,
+                                },
+                                width: exported_flow_width(sheet, &layout, &values, o.id, c),
+                                label: c.label.clone(),
+                                display_label: thinoda_core::sankey::flow_label(
+                                    c,
+                                    values.mass.get(&o.id).copied().unwrap_or(0.0),
+                                ),
+                            },
+                        )
+                    }),
+                    _ => None,
+                })
+                .collect(),
+        })
+    }
+}
+
+impl PageImport<'_> {
+    fn apply_sankey(&mut self, json: &str) -> Result<(), IoError> {
+        if json.len() > MAX_BYTES {
+            return Err(invalid("Sankey extension exceeds import size limit"));
+        }
+        let sheet = self.sheet.clone();
+        let items = self.items.clone();
+        if self.apply_sankey_candidate(json).is_err() {
+            self.sheet = sheet;
+            self.items = items;
+            self.warn(ImportWarning::DrawioSankeyStale);
+        }
+        Ok(())
+    }
+
+    fn apply_sankey_candidate(&mut self, json: &str) -> Result<(), IoError> {
+        let extension: SankeyExtension = serde_json::from_str(json)?;
+        if extension.version != 2 {
+            return Err(IoError::NewerVersion(format!(
+                "draw.io Sankey extension {}",
+                extension.version
+            )));
+        }
+        let mut topics = HashMap::new();
+        let mut objects = HashMap::new();
+        for (old, notes) in extension.nodes {
+            let key = format!("t{}", old.0);
+            let index = *self.index.get(key.as_str()).ok_or_else(|| {
+                invalid("Sankey node cell was removed; native extension is stale")
+            })?;
+            if self.cells[index].style.rotation() != 0.0 {
+                return Err(invalid(
+                    "Sankey node was rotated; retain ordinary rotated cells",
+                ));
+            }
+            let topic = match self.items.get(&index) {
+                Some(Item::Card(id)) => *id,
+                Some(Item::Object(id)) => {
+                    let id = *id;
+                    let o = self
+                        .sheet
+                        .canvas
+                        .object(id)
+                        .ok_or_else(|| invalid("Missing Sankey node"))?
+                        .clone();
+                    let CanvasObjectKind::Shape { label, .. } = &o.kind else {
+                        return Err(invalid("Sankey node must be a topic-compatible vertex"));
+                    };
+                    let topic = self
+                        .sheet
+                        .add_card(
+                            label,
+                            o.rect.center(),
+                            Card::new(CardKind::Text, o.rect.size),
+                        )
+                        .map_err(IoError::Invalid)?;
+                    self.sheet.canvas.objects.retain(|o| o.id != id);
+                    self.items.insert(index, Item::Card(topic));
+                    objects.insert(id, topic);
+                    topic
+                }
+                _ => return Err(invalid("Sankey node is not an editable vertex")),
+            };
+            if let Some(t) = self.sheet.topics.get_mut(&topic) {
+                t.notes = notes;
+            }
+            topics.insert(old, topic);
+        }
+        for o in &mut self.sheet.canvas.objects {
+            if let CanvasObjectKind::Connector(c) = &mut o.kind {
+                for end in [&mut c.from, &mut c.to] {
+                    if let Endpoint::Object(id) = end
+                        && let Some(topic) = objects.get(id)
+                    {
+                        *end = Endpoint::Topic(*topic);
+                    }
+                }
+            }
+        }
+        for (old, link) in extension.links {
+            let key = format!("o{}", old.0);
+            let index = *self.index.get(key.as_str()).ok_or_else(|| {
+                invalid("Sankey link cell was removed; native extension is stale")
+            })?;
+            let Some(Item::Object(id)) = self.items.get(&index) else {
+                return Err(invalid("Sankey link cell is not an edge"));
+            };
+            let Some(o) = self.sheet.canvas.object_mut(*id) else {
+                return Err(invalid("Missing Sankey edge"));
+            };
+            let CanvasObjectKind::Connector(c) = &mut o.kind else {
+                return Err(invalid("Sankey link must remain an edge"));
+            };
+            let from = topics
+                .get(&link.from)
+                .ok_or_else(|| invalid("Missing Sankey source"))?;
+            let to = topics
+                .get(&link.to)
+                .ok_or_else(|| invalid("Missing Sankey target"))?;
+            let cell = &self.cells[index];
+            let expected: f32 = num(link.width)
+                .parse()
+                .map_err(|_| invalid("Invalid Sankey stroke baseline"))?;
+            if c.from != Endpoint::Topic(*from)
+                || c.to != Endpoint::Topic(*to)
+                || !link.width.is_finite()
+                || cell
+                    .style
+                    .num("strokeWidth")
+                    .is_none_or(|width| (width - expected).abs() > 0.00001)
+                || c.label != link.display_label
+                || !cell.edge
+            {
+                return Err(invalid("Sankey edge was reconnected or visually edited"));
+            }
+            c.sankey = Some(link.flow);
+            c.label = link.label;
+            o.style.opacity = link.opacity;
+        }
+        let remap = |map: std::collections::BTreeMap<TopicId,u32>| -> Result<std::collections::BTreeMap<TopicId,u32>,IoError> {
+            map.into_iter().map(|(id,value)|
+                topics.get(&id).copied().map(|new| (new,value)).ok_or_else(|| invalid("Missing Sankey settings node"))
+            ).collect()
+        };
+        let mut settings = extension.settings;
+        settings.sources = remap(settings.sources)?;
+        settings.stages = remap(settings.stages)?;
+        self.sheet.sankey = Some(settings);
+        self.sheet.validate().map_err(IoError::Invalid)?;
+        Ok(())
+    }
+}
+
+fn exported_flow_width(
+    sheet: &Sheet,
+    layout: &thinoda_core::Layout,
+    values: &thinoda_core::sankey::FlowValues,
+    id: CanvasObjectId,
+    c: &CanvasConnector,
+) -> f32 {
+    if c.sankey.is_some_and(|f| f.weight.is_some()) {
+        (values.mass.get(&id).copied().unwrap_or(0.0) as f32
+            * thinoda_core::sankey::effective_scale(sheet, layout, values))
+        .min(MAX_STROKE_WIDTH)
+    } else {
+        c.width
+    }
+}
 
 /// XML attribute text; characters invalid in XML 1.0 are dropped.
 fn esc(text: &str) -> String {
@@ -3572,6 +3815,7 @@ pub(crate) fn card_image<'a>(
 
 struct PageWriter<'a> {
     sheet: &'a Sheet,
+    flows: thinoda_core::sankey::FlowValues,
     out: String,
     layout: thinoda_core::Layout,
     topics: HashSet<TopicId>,
@@ -3585,7 +3829,8 @@ struct PageWriter<'a> {
 }
 
 impl<'a> PageWriter<'a> {
-    fn new(sheet: &'a Sheet) -> Self {
+    fn new(sheet: &'a Sheet) -> Result<Self, IoError> {
+        let flows = thinoda_core::sankey::evaluate(sheet).map_err(IoError::Invalid)?;
         let layout = layout_sheet(sheet, &ApproxMeasure, false);
         let topics = exported_topics(sheet, &layout);
         let edge_targets = crate::board_export::connector_attachment_counts(sheet);
@@ -3640,6 +3885,7 @@ impl<'a> PageWriter<'a> {
             object_zone: HashMap::new(),
             root_zone: HashMap::new(),
             connector_midpoints,
+            flows,
             detached_fixed_points,
             groups: HashMap::new(),
             written_groups: HashSet::new(),
@@ -3667,7 +3913,7 @@ impl<'a> PageWriter<'a> {
             };
             writer.groups.insert(group.id, (parent, bounds));
         }
-        writer
+        Ok(writer)
     }
 
     fn card_rect(&self, id: TopicId) -> Option<Rect> {
@@ -4066,19 +4312,50 @@ impl<'a> PageWriter<'a> {
                     &mut style,
                     "strokeColor",
                     "strokeOpacity",
-                    connector.color.or(object.style.stroke),
+                    if connector.sankey.is_some()
+                        && self.sheet.sankey.as_ref().is_some_and(|s| s.color_scale)
+                    {
+                        Some(thinoda_core::sankey::weight_color(
+                            self.flows.mass.get(&id).copied().unwrap_or(0.0),
+                        ))
+                    } else {
+                        connector.color.or(object.style.stroke)
+                    },
                 );
                 color_keys(
                     &mut style,
                     "fontColor",
                     "textOpacity",
-                    object.style.text_color,
+                    object
+                        .style
+                        .text_color
+                        .or_else(|| connector.sankey.is_some().then_some(Color::BLACK)),
                 );
-                if !connector.label.is_empty() {
-                    style.push_str(&format!("fontSize={};", num(CANVAS_LABEL_FONT_SIZE)));
+                if !connector.label.is_empty() || connector.sankey.is_some() {
+                    style.push_str(&format!(
+                        "fontSize={};",
+                        num(if connector.sankey.is_some() {
+                            12.0
+                        } else {
+                            CANVAS_LABEL_FONT_SIZE
+                        })
+                    ));
                 }
-                style.push_str(&format!("strokeWidth={};", num(connector.width)));
+                if connector.sankey.is_some() {
+                    style.push_str("thinodaSankeyEdge=1;");
+                }
+                let width =
+                    exported_flow_width(self.sheet, &self.layout, &self.flows, id, connector);
+                style.push_str(&format!("strokeWidth={};", num(width)));
+                if connector.sankey.is_some_and(|f| f.weight.is_none()) {
+                    style.push_str("dashed=1;");
+                }
                 common_keys(&mut style, &object.style, 0.0, object.locked, object.band);
+                if connector.sankey.is_some_and(|f| f.weight.is_some())
+                    && self.flows.mass.get(&id).is_some_and(|v| *v == 0.0)
+                {
+                    style.push_str("opacity=0;");
+                }
                 let mut ends = [self.terminal(connector.from), self.terminal(connector.to)];
                 for (side, port) in [connector.from_port, connector.to_port]
                     .into_iter()
@@ -4115,7 +4392,14 @@ impl<'a> PageWriter<'a> {
                 }
                 self.edge(
                     &cell_id,
-                    &connector.label,
+                    &if connector.sankey.is_some() {
+                        thinoda_core::sankey::flow_label(
+                            connector,
+                            self.flows.mass.get(&id).copied().unwrap_or(0.0),
+                        )
+                    } else {
+                        connector.label.clone()
+                    },
                     &style,
                     &parent,
                     origin,
@@ -4411,10 +4695,10 @@ impl<'a> PageWriter<'a> {
 
 /// Writes all sheets as uncompressed draw.io pages.
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
-    Ok(export_sheets(&book.sheets).into_bytes())
+    Ok(export_sheets(&book.sheets)?.into_bytes())
 }
 
-fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> String {
+fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<String, IoError> {
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
     for (index, sheet) in sheets.into_iter().enumerate() {
         let (grid, thinoda_grid) = match sheet.board.grid {
@@ -4423,6 +4707,15 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> String {
             GridKind::Lines => (1, "lines"),
         };
         let thinoda_snap = u8::from(sheet.board.snap);
+        let sankey = if sheet.has_sankey() {
+            let extension = SankeyExtension::from_sheet(sheet)?;
+            format!(
+                " thinodaSankey=\"{}\"",
+                esc(&serde_json::to_string(&extension)?)
+            )
+        } else {
+            String::new()
+        };
         let background = sheet
             .theme
             .background
@@ -4432,16 +4725,16 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> String {
             })
             .unwrap_or_default();
         out.push_str(&format!(
-            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\"{background} guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
+            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\"{background}{sankey} guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
             index + 1,
             esc(&sheet.title),
             num(sheet.board.grid_size),
         ));
-        out.push_str(&PageWriter::new(sheet).write());
+        out.push_str(&PageWriter::new(sheet)?.write());
         out.push_str("</root>\n</mxGraphModel>\n</diagram>\n");
     }
     out.push_str("</mxfile>\n");
-    out
+    Ok(out)
 }
 
 fn valid_rendered_svg(svg: &str) -> bool {
@@ -4500,7 +4793,7 @@ pub(crate) fn embed_svg(mut svg: String, sheet: &Sheet) -> Result<Vec<u8>, IoErr
     if !valid_rendered_svg(&svg) {
         return Err(invalid("rendered SVG is not a valid SVG document"));
     }
-    let xml = export_sheets(std::iter::once(sheet));
+    let xml = export_sheets(std::iter::once(sheet))?;
     let escaped_len = xml.chars().try_fold(0usize, |length, character| {
         let size = match character {
             '&' => 5,
@@ -4568,7 +4861,7 @@ pub(crate) fn embed_png(mut png: Vec<u8>, sheet: &Sheet) -> Result<Vec<u8>, IoEr
     }
     let insertion = rendered_png_insertion(&png)
         .ok_or_else(|| invalid("rendered PNG has no valid image and end chunk"))?;
-    let xml = export_sheets(std::iter::once(sheet));
+    let xml = export_sheets(std::iter::once(sheet))?;
     let text_len = crate::drawio_clipboard::encoded_uri_component_len(&xml)
         .and_then(|length| length.checked_add(b"mxfile\0".len()))
         .ok_or_else(|| invalid("editable draw.io image exceeds size limit"))?;

@@ -65,14 +65,18 @@ impl MapView {
     ) -> EditResult<bool> {
         self.invalidate_clipboard();
         payload.validate().map_err(EditError::Invalid)?;
-        if self.has_title_changes() {
-            self.try_commit_edit(doc)?;
-        }
-        self.try_commit_board_label(doc)?;
-        self.prune_selection(doc.sheet());
-        let pasted = paste_board(doc, self, &payload, "Paste board items")?;
+        let result = (|| {
+            if self.has_title_changes() {
+                self.try_commit_edit(doc)?;
+            }
+            self.try_commit_board_label(doc)?;
+            self.prune_selection(doc.sheet());
+            paste_board(doc, self, &payload, "Paste board items")
+        })();
+        // This is the newly validated rich clipboard, never a stale fallback.
+        // A cap/placement rejection must not make a confirmed cut unrecoverable.
         self.set_board_clipboard(Some(payload));
-        Ok(pasted)
+        result
     }
 
     /// Pastes board content converted from another application, centred in
@@ -239,7 +243,7 @@ fn uses_board_clipboard(sheet: &Sheet, view: &MapView) -> bool {
             .selection
             .iter()
             .any(|id| sheet.board_member_for_topic(*id).is_some())
-        || (!sheet.root_mode.is_central()
+        || ((!sheet.root_mode.is_central() || sheet.has_sankey())
             && view
                 .selection
                 .iter()
