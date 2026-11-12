@@ -892,3 +892,140 @@ fn sankey_probability_layout_orders_by_overall_flow_mass() {
         "layout should use derived overall mass rather than conditional percentages"
     );
 }
+
+fn alluvial_chain(
+    titles: &[&str],
+    links: &[(usize, usize)],
+) -> (Sheet, Vec<thinoda_core::TopicId>) {
+    let mut sheet = Sheet::new("Stages", "Root");
+    sheet.sankey = Some(sankey::SankeySettings {
+        mode: SankeyMode::Alluvial,
+        ..Default::default()
+    });
+    let ids: Vec<_> = titles
+        .iter()
+        .enumerate()
+        .map(|(i, title)| {
+            sheet
+                .add_card(
+                    title,
+                    Vec2::new(420.0 * i as f32, 0.0),
+                    Card::new(CardKind::Text, Vec2::new(155.0, 100.0)),
+                )
+                .unwrap()
+        })
+        .collect();
+    for &(from, to) in links {
+        let mut c = CanvasConnector::new(Endpoint::Topic(ids[from]), Endpoint::Topic(ids[to]));
+        c.sankey = Some(sankey::Flow {
+            weight: Some(10_000),
+        });
+        sheet.add_canvas_object(CanvasObject::connector(c)).unwrap();
+    }
+    (sheet, ids)
+}
+
+#[test]
+fn sankey_assign_missing_stages_derives_from_neighbours_and_seeds_new_components() {
+    let (mut sheet, ids) = alluvial_chain(
+        &["A", "B", "C", "D", "X", "Y"],
+        &[(0, 1), (1, 2), (2, 3), (4, 5)],
+    );
+    sheet.sankey.as_mut().unwrap().stages.insert(ids[1], 4);
+    let summary = sankey::stage_summary(&sheet);
+    assert_eq!(summary.stages, vec![(4, vec![ids[1]])]);
+    assert_eq!(summary.unassigned.len(), 5);
+
+    assert_eq!(sankey::assign_missing_stages(&mut sheet).unwrap(), 5);
+    let stages = &sheet.sankey.as_ref().unwrap().stages;
+    let got: Vec<_> = ids.iter().map(|id| stages[id]).collect();
+    assert_eq!(got, vec![3, 4, 5, 6, 0, 1]);
+    sankey::evaluate(&sheet).unwrap();
+    assert_eq!(sankey::assign_missing_stages(&mut sheet).unwrap(), 0);
+}
+
+#[test]
+fn sankey_assign_missing_stages_rejects_conflicts_and_locks_atomically() {
+    let (mut sheet, ids) = alluvial_chain(&["A", "B", "C"], &[(0, 2), (1, 2)]);
+    let stages = &mut sheet.sankey.as_mut().unwrap().stages;
+    stages.insert(ids[0], 0);
+    stages.insert(ids[1], 2);
+    let before = sheet.clone();
+    assert!(
+        sankey::assign_missing_stages(&mut sheet)
+            .unwrap_err()
+            .contains("adjacent")
+    );
+    assert_eq!(sheet, before);
+
+    let (mut sheet, ids) = alluvial_chain(&["A", "B"], &[(0, 1)]);
+    sheet.sankey.as_mut().unwrap().stages.insert(ids[0], 0);
+    sheet
+        .set_board_members_locked(&[BoardMember::Card(ids[1])], true)
+        .unwrap();
+    let before = sheet.clone();
+    assert!(
+        sankey::assign_missing_stages(&mut sheet)
+            .unwrap_err()
+            .contains("Unlock")
+    );
+    assert_eq!(sheet, before);
+
+    let (mut standard, _) = alluvial_chain(&["A", "B"], &[(0, 1)]);
+    standard.sankey.as_mut().unwrap().mode = SankeyMode::Standard;
+    assert!(sankey::assign_missing_stages(&mut standard).is_err());
+}
+
+#[test]
+fn sankey_compact_stages_closes_gaps_and_keeps_adjacency() {
+    let (mut sheet, ids) = alluvial_chain(&["A", "B", "Lone"], &[(0, 1)]);
+    let stages = &mut sheet.sankey.as_mut().unwrap().stages;
+    stages.extend([(ids[0], 2), (ids[1], 3), (ids[2], 7)]);
+    sankey::evaluate(&sheet).unwrap();
+    assert!(sankey::compact_stages(&mut sheet).unwrap());
+    let stages = &sheet.sankey.as_ref().unwrap().stages;
+    assert_eq!(
+        ids.iter().map(|id| stages[id]).collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    sankey::evaluate(&sheet).unwrap();
+    assert!(!sankey::compact_stages(&mut sheet).unwrap());
+}
+
+#[test]
+fn sankey_assign_missing_stages_is_order_independent_and_always_validates() {
+    // A→C, B→D, D→C under both topic-ID orderings of the two roots.
+    for (a, b) in [(0, 1), (1, 0)] {
+        let mut links = vec![(a, 2), (b, 3), (3, 2)];
+        links.sort();
+        let (mut sheet, ids) = alluvial_chain(&["R0", "R1", "C", "D"], &links);
+        assert_eq!(sankey::assign_missing_stages(&mut sheet).unwrap(), 4);
+        let stages = &sheet.sankey.as_ref().unwrap().stages;
+        assert_eq!(
+            [ids[a], ids[b], ids[3], ids[2]].map(|id| stages[&id]),
+            [1, 0, 1, 2]
+        );
+    }
+
+    let (mut cycle, _) = alluvial_chain(&["A", "B"], &[(0, 1), (1, 0)]);
+    let before = cycle.clone();
+    assert!(sankey::assign_missing_stages(&mut cycle).is_err());
+    assert_eq!(cycle, before);
+
+    let (mut skipped, ids) = alluvial_chain(&["A", "B"], &[(0, 1)]);
+    let stages = &mut skipped.sankey.as_mut().unwrap().stages;
+    stages.extend([(ids[0], 0), (ids[1], 2)]);
+    assert!(
+        sankey::assign_missing_stages(&mut skipped)
+            .unwrap_err()
+            .contains("adjacent")
+    );
+
+    let (mut below_zero, ids) = alluvial_chain(&["A", "B"], &[(0, 1)]);
+    below_zero.sankey.as_mut().unwrap().stages.insert(ids[1], 0);
+    assert!(
+        sankey::assign_missing_stages(&mut below_zero)
+            .unwrap_err()
+            .contains("before 0")
+    );
+}

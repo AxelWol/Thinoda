@@ -441,3 +441,77 @@ fn sankey_inspector_color_toggle_is_undoable() {
             .color_scale
     );
 }
+
+#[test]
+fn sankey_alluvial_new_child_gets_adjacent_stage_and_stages_compact() {
+    let mut h = harness("sankey-learning", 1);
+    let (selected, fresh, lone) = {
+        let doc = h.state_mut().doc_mut().unwrap();
+        let selected = doc.view.primary().unwrap();
+        let mut ids = (None, None);
+        doc.doc
+            .edit_sheet("cards", |sheet| {
+                let card = || {
+                    thinoda_core::board::Card::new(
+                        thinoda_core::board::CardKind::Text,
+                        thinoda_core::Vec2::new(155.0, 100.0),
+                    )
+                };
+                let fresh = sheet
+                    .add_card("Mastery", thinoda_core::Vec2::new(0.0, 900.0), card())
+                    .unwrap();
+                let lone = sheet
+                    .add_card("Lone", thinoda_core::Vec2::new(0.0, 1200.0), card())
+                    .unwrap();
+                sheet.sankey.as_mut().unwrap().stages.insert(lone, 40);
+                ids = (Some(fresh), Some(lone));
+                Ok(())
+            })
+            .unwrap();
+        (selected, ids.0.unwrap(), ids.1.unwrap())
+    };
+    h.run_steps(3);
+    assert!(h.query_by_label("Stage 40 (1)").is_some());
+    let stage = |h: &Harness<'static, ThinodaApp>, id| {
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .sankey
+            .as_ref()
+            .unwrap()
+            .stages
+            .get(&id)
+            .copied()
+    };
+    let parent_stage = stage(&h, selected).unwrap();
+    h.get_all_by_role_and_label(egui::Role::ComboBox, "Choose topic")
+        .last()
+        .unwrap()
+        .click();
+    h.run_steps(3);
+    h.get_by_label("Mastery · Stage Unassigned").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::Role::Button, "Add child")
+        .click();
+    h.run_steps(3);
+    assert_eq!(stage(&h, fresh), Some(parent_stage + 1));
+
+    h.get_by_role_and_label(egui::Role::Button, "Compact stage numbers")
+        .click();
+    h.run_steps(3);
+    let sheet = h.state().doc().unwrap().doc.sheet();
+    let used: std::collections::BTreeSet<_> = sheet
+        .sankey
+        .as_ref()
+        .unwrap()
+        .stages
+        .values()
+        .copied()
+        .collect();
+    assert_eq!(used, (0..used.len() as u32).collect());
+    assert_eq!(stage(&h, lone), Some(used.len() as u32 - 1));
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(stage(&h, lone), Some(40));
+}

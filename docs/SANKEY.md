@@ -355,9 +355,13 @@ Initial implementation critique and open acceptance:
   50 with one 100% branch. Conversion is an atomic dropdown action with Undo,
   not a preview/confirmation. Review must resolve the potential undisclosed
   loss before declaring the conversion contract complete.
-- Alluvial stage assignment uses per-node Assigned/Stage controls, not a
-  stage-management interface. Adjacent-stage links are enforced; full cohort
-  tracing and automatic intermediate-stage insertion are not implemented.
+- Alluvial stages are edited per node (Assigned/Stage) and summarised in a
+  Data-tab Stages overview listing each stage column's nodes (click to
+  select) with an undoable Compact stage numbers action. Adding a parent or
+  child, or promoting a connector, gives an unstaged endpoint the adjacent
+  stage automatically. Adjacent-stage links are enforced; stage names,
+  reordering whole columns, full cohort tracing and automatic
+  intermediate-stage insertion are not implemented.
 - Quantitative coloring now has a non-selectable legend on the map canvas and
   in SVG-based visual exports and editable presentation slides. The scale
   overrides individual link colors while enabled; palette/stops customization
@@ -486,3 +490,18 @@ pair is reordered without reversing already aligned source or middle nodes.
 This is a local heuristic, not a global crossing optimum: rank-skipping links
 are excluded, and routing/rotation, dense-diagram and real-device acceptance
 remain open.
+
+### Alluvial stage management checkpoint (2026-11-12)
+
+Every document edit validates adjacent-stage links, so committed alluvial
+diagrams never hold unstaged flow endpoints. The gap was therefore the add
+path: linking to an unstaged topic was rejected. Adding a parent/child or
+promoting a connector now derives the missing stage from its neighbour (child
+= parent + 1, parent = child − 1, solving each connected component as a whole
+so topic order never matters; unanchored components start at 0) and rejects
+cycles, conflicting, below-zero or locked results atomically. A Stages overview lists
+columns with their nodes, and Compact stage numbers renumbers used stages
+from 0 while preserving adjacency. Core regressions cover derivation,
+conflicts, locks and compaction; a headless inspector test covers adding an
+unstaged child, compaction and Undo. Stage naming and column reordering remain
+open.

@@ -104,6 +104,65 @@ fn node_label(sheet: &Sheet, id: TopicId) -> String {
     }
 }
 
+/// Alluvial stage columns with whole-diagram stage actions. Per-node stage
+/// numbers remain editable below; these actions only fill or renumber.
+fn stage_overview(
+    ui: &mut Ui,
+    original: &Sheet,
+    sheet: &mut Sheet,
+    error: &mut Option<String>,
+    focus_node: &mut Option<TopicId>,
+) {
+    egui::CollapsingHeader::new(t("Stages"))
+        .default_open(true)
+        .show(ui, |ui| {
+            let summary = sankey::stage_summary(original);
+            if summary.stages.is_empty() {
+                ui.small(t("No stages assigned yet."));
+            }
+            let name = |id: TopicId| {
+                original
+                    .topic(id)
+                    .map(|topic| topic.title.clone())
+                    .unwrap_or_default()
+            };
+            let mut row = |ui: &mut Ui, heading: String, ids: &[TopicId]| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(format!("{heading} ({})", ids.len()));
+                    for &id in ids {
+                        if ui.small_button(name(id)).clicked() {
+                            *focus_node = Some(id);
+                        }
+                    }
+                });
+            };
+            for (stage, ids) in &summary.stages {
+                row(ui, format!("{} {stage}", t("Stage")), ids);
+            }
+            if ui
+                .button(t("Compact stage numbers"))
+                .on_hover_text(t("Number stages consecutively from 0 without gaps."))
+                .clicked()
+                && let Err(e) = sankey::compact_stages(sheet)
+            {
+                *error = Some(e);
+            }
+        });
+}
+
+/// New alluvial links may reach unstaged topics; give them the adjacent stage.
+fn stage_new_alluvial_link(sheet: &mut Sheet, error: &mut Option<String>) {
+    if error.is_none()
+        && sheet
+            .sankey
+            .as_ref()
+            .is_some_and(|s| s.mode == SankeyMode::Alluvial)
+        && let Err(e) = sankey::assign_missing_stages(sheet)
+    {
+        *error = Some(e);
+    }
+}
+
 impl ThinodaApp {
     pub(crate) fn sankey_properties(&mut self, ui: &mut Ui) {
         let Some(doc) = self.doc() else { return };
@@ -198,6 +257,9 @@ impl ThinodaApp {
                         }
                     }
                 });
+                if sheet.sankey.as_ref().is_some_and(|s| s.mode == SankeyMode::Alluvial) {
+                    stage_overview(ui, &original, &mut sheet, &mut error, &mut focus_node);
+                }
                 let Some(settings) = &mut sheet.sankey else { return };
                 ui.checkbox(&mut settings.color_scale, t("Weight color scale"));
                 ui.small(t("The color scale overrides link colors. The legend appears on the canvas and in visual exports."));
@@ -380,6 +442,7 @@ impl ThinodaApp {
                                 if let Err(e) = sheet.add_canvas_object(object) {
                                     error = Some(e);
                                 }
+                                stage_new_alluvial_link(&mut sheet, &mut error);
                             }
                         }
                     }
@@ -428,6 +491,9 @@ impl ThinodaApp {
                             matches!(&o.kind,CanvasObjectKind::Connector(c) if c.sankey.is_some() && c.to==Endpoint::Topic(from)))
                         && let Some(s)=&mut sheet.sankey {
                         s.sources.entry(from).or_insert(0);
+                    }
+                    if promoted {
+                        stage_new_alluvial_link(&mut sheet, &mut error);
                     }
                 } else {
                     ui.label(t("Select a topic to edit its data."));

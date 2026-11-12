@@ -441,6 +441,151 @@ pub fn convert_mode(sheet: &mut Sheet, mode: SankeyMode) -> Result<(), String> {
     Ok(())
 }
 
+/// Alluvial stage columns in ascending order and flow nodes without a stage.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StageSummary {
+    pub stages: Vec<(u32, Vec<TopicId>)>,
+    pub unassigned: Vec<TopicId>,
+}
+
+fn flow_links(sheet: &Sheet) -> Vec<(TopicId, TopicId)> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|o| match &o.kind {
+            CanvasObjectKind::Connector(c) if c.sankey.is_some() => endpoints(c).ok(),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn stage_summary(sheet: &Sheet) -> StageSummary {
+    let Some(settings) = &sheet.sankey else {
+        return StageSummary::default();
+    };
+    let mut columns = BTreeMap::<u32, Vec<TopicId>>::new();
+    for (&id, &stage) in &settings.stages {
+        columns.entry(stage).or_default().push(id);
+    }
+    let unassigned: BTreeSet<_> = flow_links(sheet)
+        .into_iter()
+        .flat_map(|(a, b)| [a, b])
+        .filter(|id| !settings.stages.contains_key(id))
+        .collect();
+    StageSummary {
+        stages: columns.into_iter().collect(),
+        unassigned: unassigned.into_iter().collect(),
+    }
+}
+
+fn commit_stages(sheet: &mut Sheet, stages: BTreeMap<TopicId, u32>) -> Result<(), String> {
+    let mut candidate = sheet.clone();
+    if let Some(settings) = &mut candidate.sankey {
+        settings.stages = stages;
+    }
+    reconcile(sheet, &mut candidate)?;
+    evaluate(&candidate)?;
+    *sheet = candidate;
+    Ok(())
+}
+
+/// Derive stages for unassigned flow nodes from linked neighbours: a child is
+/// one stage after its parent and a parent one stage before its child. Each
+/// connected component is solved as a whole, so the result does not depend on
+/// topic order; components without any stage start at 0. Existing stages
+/// never change, and the whole edit is rejected if the result is not valid.
+pub fn assign_missing_stages(sheet: &mut Sheet) -> Result<usize, String> {
+    let Some(settings) = &sheet.sankey else {
+        return Err("Enable Sankey flows first.".into());
+    };
+    if settings.mode != SankeyMode::Alluvial {
+        return Err("Stages require alluvial mode; convert explicitly.".into());
+    }
+    let mut neighbours = BTreeMap::<TopicId, Vec<(TopicId, i64)>>::new();
+    for (from, to) in flow_links(sheet) {
+        neighbours.entry(from).or_default().push((to, 1));
+        neighbours.entry(to).or_default().push((from, -1));
+    }
+    let mut stages = settings.stages.clone();
+    let mut visited = BTreeSet::new();
+    let mut added = 0;
+    for &start in neighbours.keys() {
+        if stages.contains_key(&start) || !visited.insert(start) {
+            continue;
+        }
+        // Relative offsets within the component; a conflict means no
+        // adjacent-stage placement exists (including directed cycles).
+        let mut offset = BTreeMap::from([(start, 0_i64)]);
+        let mut queue = VecDeque::from([start]);
+        while let Some(id) = queue.pop_front() {
+            for &(other, step) in &neighbours[&id] {
+                let want = offset[&id] + step;
+                match offset.get(&other) {
+                    Some(&have) if have != want => {
+                        return Err(format!(
+                            "{} cannot be placed on a stage adjacent to all its links. Adjust stages or remove a link.",
+                            node_name(sheet, other)
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        offset.insert(other, want);
+                        visited.insert(other);
+                        queue.push_back(other);
+                    }
+                }
+            }
+        }
+        let anchor = offset
+            .iter()
+            .find_map(|(id, rel)| stages.get(id).map(|&s| i64::from(s) - rel))
+            .unwrap_or_else(|| -offset.values().copied().min().unwrap_or(0));
+        for (id, rel) in offset {
+            if stages.contains_key(&id) {
+                continue;
+            }
+            let stage = u32::try_from(anchor + rel).map_err(|_| {
+                format!(
+                    "{} would need a stage before 0. Raise the stages of the linked nodes first.",
+                    node_name(sheet, id)
+                )
+            })?;
+            stages.insert(id, stage);
+            added += 1;
+        }
+    }
+    if added == 0 {
+        evaluate(sheet)?;
+        return Ok(0);
+    }
+    commit_stages(sheet, stages)?;
+    Ok(added)
+}
+/// Renumber used stages consecutively from 0. Adjacent stages stay adjacent.
+pub fn compact_stages(sheet: &mut Sheet) -> Result<bool, String> {
+    let Some(settings) = &sheet.sankey else {
+        return Ok(false);
+    };
+    let used: BTreeSet<u32> = settings.stages.values().copied().collect();
+    let map: BTreeMap<u32, u32> = used.into_iter().zip(0..).collect();
+    if map.iter().all(|(a, b)| a == b) {
+        return Ok(false);
+    }
+    let stages = settings
+        .stages
+        .iter()
+        .map(|(&id, stage)| (id, map[stage]))
+        .collect();
+    let mut candidate = sheet.clone();
+    if let Some(settings) = &mut candidate.sankey {
+        settings.stages = stages;
+    }
+    reconcile(sheet, &mut candidate)?;
+    *sheet = candidate;
+    Ok(true)
+}
+
 pub fn weight_color(value: f64) -> Color {
     let v = (value / WEIGHT_COLOR_SCALE_MAX).clamp(0.0, 1.0) as f32;
     Color::rgb(
