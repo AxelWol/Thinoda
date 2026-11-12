@@ -839,6 +839,88 @@ fn sankey_auto_arrange_reduces_adjacent_layer_crossings() {
 }
 
 #[test]
+fn sankey_auto_arrange_uses_rank_skipping_links_for_crossings() {
+    let mut sheet = Sheet::new("Skip flow", "Root");
+    sheet.sankey = Some(Default::default());
+    let add_node = |sheet: &mut Sheet, title, x, y| {
+        sheet
+            .add_card(
+                title,
+                Vec2::new(x, y),
+                Card::new(CardKind::Text, Vec2::new(155.0, 100.0)),
+            )
+            .unwrap()
+    };
+    let top = add_node(&mut sheet, "Top source", 0.0, 0.0);
+    let bottom = add_node(&mut sheet, "Bottom source", 0.0, 250.0);
+    let middle = add_node(&mut sheet, "Middle", 420.0, 0.0);
+    let skipped_target = add_node(&mut sheet, "Skipped target", 840.0, 0.0);
+    let other_target = add_node(&mut sheet, "Other target", 840.0, 250.0);
+
+    // Both targets tie on the middle node; only the rank-skipping link from
+    // the bottom source can tell the layout that its target belongs below.
+    for (from, to) in [
+        (top, middle),
+        (bottom, middle),
+        (middle, skipped_target),
+        (middle, other_target),
+        (bottom, skipped_target),
+    ] {
+        let mut connector = CanvasConnector::new(Endpoint::Topic(from), Endpoint::Topic(to));
+        connector.sankey = Some(sankey::Flow {
+            weight: Some(30_000),
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+    }
+
+    sankey::arrange(&mut sheet).unwrap();
+    let position = |id| sheet.topic(id).unwrap().position.unwrap();
+    assert_eq!(position(skipped_target).x, 840.0, "the link skips a rank");
+    assert!(position(top).y < position(bottom).y);
+    assert!(
+        position(other_target).y < position(skipped_target).y,
+        "the skipped link's target should move below to avoid crossing"
+    );
+}
+
+#[test]
+fn sankey_auto_arrange_bounds_waypoints_for_many_long_links() {
+    let mut sheet = Sheet::new("Long flow", "Root");
+    sheet.sankey = Some(Default::default());
+    let chain: Vec<_> = (0..600)
+        .map(|index| {
+            sheet
+                .add_card(
+                    "Step",
+                    Vec2::new(index as f32 * 420.0, 0.0),
+                    Card::new(CardKind::Text, Vec2::new(155.0, 100.0)),
+                )
+                .unwrap()
+        })
+        .collect();
+    let link = |sheet: &mut Sheet, from, to| {
+        let mut connector = CanvasConnector::new(Endpoint::Topic(from), Endpoint::Topic(to));
+        connector.sankey = Some(sankey::Flow { weight: None });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+    };
+    for pair in chain.windows(2) {
+        link(&mut sheet, pair[0], pair[1]);
+    }
+    // Each shortcut spans ~600 ranks; unbounded waypoints would total 360,000.
+    for _ in 0..600 {
+        link(&mut sheet, chain[0], chain[599]);
+    }
+
+    sankey::arrange(&mut sheet).unwrap();
+    let last = sheet.topic(chain[599]).unwrap().position.unwrap();
+    assert_eq!(last.x, 599.0 * 420.0);
+}
+
+#[test]
 fn sankey_probability_layout_orders_by_overall_flow_mass() {
     let mut sheet = Sheet::new("Probability ordering", "Root");
     sheet.sankey = Some(thinoda_core::sankey::SankeySettings {

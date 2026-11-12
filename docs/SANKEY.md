@@ -487,9 +487,21 @@ stable; barycenters use overall flow mass (including derived overall
 probability), unset links contribute equally, and explicit zero-mass links do
 not affect order. A six-node split/merge regression confirms a crossed target
 pair is reordered without reversing already aligned source or middle nodes.
-This is a local heuristic, not a global crossing optimum: rank-skipping links
-are excluded, and routing/rotation, dense-diagram and real-device acceptance
-remain open.
+This is a local heuristic, not a global crossing optimum; routing/rotation,
+dense-diagram and real-device acceptance remain open.
+
+### Rank-skipping layout checkpoint (2026-11-12)
+
+Forward links that skip ranks now take part in the sweeps through virtual
+waypoints in each intermediate layer, initially ordered by the y position
+interpolated between the link's endpoints. Waypoints influence ordering only;
+they take no vertical space in the final placement. Backward and same-rank
+(circular feedback) links stay excluded. Links out of root sources, which have
+no stored rank, were previously dropped from the sweeps by mistake; they now
+use rank 0 like placement does. To keep cost bounded, at most 20,000 waypoints
+are created and one position map is updated per reordered layer; longer links
+beyond the budget fall back to exclusion. Regressions cover a tie only the
+skipped link can break and a 600-node chain with 600 long shortcuts.
 
 ### Alluvial stage management checkpoint (2026-11-12)
 

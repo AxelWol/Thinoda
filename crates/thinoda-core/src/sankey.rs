@@ -595,24 +595,34 @@ pub fn weight_color(value: f64) -> Color {
     )
 }
 
+/// A layer slot: a flow node, or a virtual waypoint on a rank-skipping link
+/// (identified by the link's index and its rank) so long links take part in
+/// crossing reduction without occupying vertical space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LayerSlot {
+    Node(TopicId),
+    Waypoint(usize, u32),
+}
+
+/// Upper bound on virtual waypoints so long links cannot inflate layout cost;
+/// links beyond the budget are left out of crossing reduction.
+const MAX_LAYOUT_WAYPOINTS: usize = 20_000;
+
 fn reorder_layer(
-    layers: &mut BTreeMap<u32, Vec<TopicId>>,
+    layers: &mut BTreeMap<u32, Vec<LayerSlot>>,
+    positions: &mut BTreeMap<LayerSlot, usize>,
     rank: u32,
-    neighbors: &BTreeMap<TopicId, Vec<(TopicId, f64)>>,
+    neighbors: &BTreeMap<LayerSlot, Vec<(LayerSlot, f64)>>,
 ) {
-    let positions: BTreeMap<_, _> = layers
-        .values()
-        .flat_map(|nodes| nodes.iter().enumerate().map(|(index, id)| (*id, index)))
-        .collect();
-    let Some(nodes) = layers.get_mut(&rank) else {
+    let Some(slots) = layers.get_mut(&rank) else {
         return;
     };
-    let mut order: Vec<_> = nodes
+    let mut order: Vec<_> = slots
         .iter()
         .enumerate()
-        .map(|(old_index, id)| {
+        .map(|(old_index, slot)| {
             let (weighted_position, weight) = neighbors
-                .get(id)
+                .get(slot)
                 .into_iter()
                 .flatten()
                 .filter_map(|(neighbor, edge_weight)| {
@@ -628,12 +638,15 @@ fn reorder_layer(
             } else {
                 old_index as f64
             };
-            (*id, barycenter, old_index)
+            (*slot, barycenter, old_index)
         })
         .collect();
     order.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.2.cmp(&b.2)));
-    nodes.clear();
-    nodes.extend(order.into_iter().map(|(id, _, _)| id));
+    slots.clear();
+    slots.extend(order.into_iter().map(|(slot, _, _)| slot));
+    for (index, slot) in slots.iter().enumerate() {
+        positions.insert(*slot, index);
+    }
 }
 
 /// Arrange standalone flow cards without changing mind-map ownership.
@@ -693,28 +706,26 @@ pub fn arrange(sheet: &mut Sheet) -> Result<(), String> {
             }
         }
     }
-    let mut layers = BTreeMap::<u32, Vec<TopicId>>::new();
+    let topic_y = |id: TopicId| {
+        sheet
+            .topic(id)
+            .and_then(|topic| topic.position)
+            .map_or(0.0, |position| position.y)
+    };
+    // Initial vertical order per layer: existing y, waypoints interpolated
+    // between their link's endpoints.
+    let mut layer_y = BTreeMap::<u32, Vec<(f32, LayerSlot)>>::new();
     for &id in &values.nodes {
-        layers
+        layer_y
             .entry(ranks.get(&id).copied().unwrap_or(0))
             .or_default()
-            .push(id);
-    }
-    for nodes in layers.values_mut() {
-        nodes.sort_by(|a, b| {
-            let y = |id| {
-                sheet
-                    .topic(id)
-                    .and_then(|topic| topic.position)
-                    .map_or(0.0, |position| position.y)
-            };
-            y(*a).total_cmp(&y(*b)).then(a.cmp(b))
-        });
+            .push((topic_y(id), LayerSlot::Node(id)));
     }
 
-    let mut predecessors = BTreeMap::<TopicId, Vec<(TopicId, f64)>>::new();
-    let mut successors = BTreeMap::<TopicId, Vec<(TopicId, f64)>>::new();
-    for object in &sheet.canvas.objects {
+    let mut predecessors = BTreeMap::<LayerSlot, Vec<(LayerSlot, f64)>>::new();
+    let mut successors = BTreeMap::<LayerSlot, Vec<(LayerSlot, f64)>>::new();
+    let mut waypoint_budget = MAX_LAYOUT_WAYPOINTS;
+    for (index, object) in sheet.canvas.objects.iter().enumerate() {
         let CanvasObjectKind::Connector(connector) = &object.kind else {
             continue;
         };
@@ -724,7 +735,10 @@ pub fn arrange(sheet: &mut Sheet) -> Result<(), String> {
         let Ok((from, to)) = endpoints(connector) else {
             continue;
         };
-        if ranks.get(&from).and_then(|rank| rank.checked_add(1)) != ranks.get(&to).copied() {
+        let rank_of = |id| ranks.get(&id).copied().unwrap_or(0);
+        let (from_rank, to_rank) = (rank_of(from), rank_of(to));
+        // Backward and same-rank (feedback) links are routed outside columns.
+        if to_rank <= from_rank {
             continue;
         }
         let weight = if flow.weight.is_some() {
@@ -735,24 +749,63 @@ pub fn arrange(sheet: &mut Sheet) -> Result<(), String> {
         if weight == 0.0 {
             continue;
         }
-        predecessors.entry(to).or_default().push((from, weight));
-        successors.entry(from).or_default().push((to, weight));
+        let waypoints = (to_rank - from_rank - 1) as usize;
+        if waypoints > waypoint_budget {
+            continue;
+        }
+        waypoint_budget -= waypoints;
+        let (from_y, to_y) = (topic_y(from), topic_y(to));
+        let span = (to_rank - from_rank) as f32;
+        let mut previous = LayerSlot::Node(from);
+        for rank in from_rank + 1..=to_rank {
+            let slot = if rank == to_rank {
+                LayerSlot::Node(to)
+            } else {
+                let waypoint = LayerSlot::Waypoint(index, rank);
+                let t = (rank - from_rank) as f32 / span;
+                layer_y
+                    .entry(rank)
+                    .or_default()
+                    .push((from_y + (to_y - from_y) * t, waypoint));
+                waypoint
+            };
+            predecessors
+                .entry(slot)
+                .or_default()
+                .push((previous, weight));
+            successors.entry(previous).or_default().push((slot, weight));
+            previous = slot;
+        }
     }
+    let mut layers: BTreeMap<u32, Vec<LayerSlot>> = layer_y
+        .into_iter()
+        .map(|(rank, mut slots)| {
+            slots.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            (rank, slots.into_iter().map(|(_, slot)| slot).collect())
+        })
+        .collect();
+    let mut positions: BTreeMap<_, _> = layers
+        .values()
+        .flat_map(|slots| slots.iter().enumerate().map(|(index, slot)| (*slot, index)))
+        .collect();
     let layer_ranks: Vec<_> = layers.keys().copied().collect();
     for _ in 0..4 {
         for &rank in &layer_ranks {
-            reorder_layer(&mut layers, rank, &predecessors);
+            reorder_layer(&mut layers, &mut positions, rank, &predecessors);
         }
         for &rank in layer_ranks.iter().rev() {
-            reorder_layer(&mut layers, rank, &successors);
+            reorder_layer(&mut layers, &mut positions, rank, &successors);
         }
     }
 
     let scale = settings.pixels_per_unit;
     let mut column_y = BTreeMap::<u32, f32>::new();
     let mut placements = Vec::new();
-    for (&rank, nodes) in &layers {
-        for &id in nodes {
+    for (&rank, slots) in &layers {
+        for &slot in slots {
+            let LayerSlot::Node(id) = slot else {
+                continue;
+            };
             let mass = values
                 .incoming
                 .get(&id)
