@@ -5472,13 +5472,8 @@ fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
 
 fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
     let rect = match &object.kind {
-        CanvasObjectKind::Shape { shape, .. } => {
-            let label_rect = thinoda_core::board::shape_label_rect_with_style(
-                *shape,
-                object.rect,
-                object.style.effective_shape_stroke_width(),
-                object.double_ellipse_margin,
-            );
+        CanvasObjectKind::Shape { .. } => {
+            let label_rect = thinoda_core::board::object_label_rect(object)?;
             thinoda_core::Rect::from_center_size(
                 rotate_around(label_rect.center(), object.rect.center(), object.rotation),
                 label_rect.size,

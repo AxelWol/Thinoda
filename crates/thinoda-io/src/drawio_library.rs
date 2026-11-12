@@ -712,18 +712,68 @@ fn builtin(id: &str, title: &str, specs: &[Spec], edges: &[(&str, &str)]) -> Ste
     }
 }
 
+/// One built-in library per data-defined stencil package. Entries carry the
+/// definition's native draw.io style plus the Thinoda stencil reference, so
+/// they insert through the ordinary draw.io pipeline and stay editable in
+/// draw.io as its closest native shape.
+fn stencil_package_libraries() -> impl Iterator<Item = StencilLibrary> {
+    thinoda_core::stencil::builtin_packages()
+        .iter()
+        .map(|package| {
+            let entries = package
+                .definitions
+                .iter()
+                .filter_map(|definition| {
+                    let stencil = thinoda_core::stencil_object::StencilRef::new(
+                        package.id.clone(),
+                        definition.id.clone(),
+                    );
+                    let native = crate::drawio_stencil::native_style(&stencil)?;
+                    let style = format!(
+                        "{native}{}",
+                        crate::drawio_stencil::reference_style(&stencil)
+                    );
+                    let [width, height] = definition
+                        .default_size
+                        .unwrap_or([definition.frame.w, definition.frame.h]);
+                    let (width, height) = (width as f32, height as f32);
+                    Some(StencilEntry {
+                        title: definition.title.clone(),
+                        xml: model(&[Cell::Vertex {
+                            value: "",
+                            style: &style,
+                            width,
+                            height,
+                        }]),
+                        width,
+                        height,
+                    })
+                })
+                .collect();
+            StencilLibrary {
+                id: package.id.clone(),
+                title: package.title.clone(),
+                entries,
+            }
+        })
+        .filter(|library| !library.entries.is_empty())
+}
+
 /// Thinoda's built-in libraries, modelled on draw.io's General, Basic,
-/// Flowchart and Arrows sections. Every entry maps to a native board item.
+/// Flowchart and Arrows sections, followed by the data-defined stencil
+/// packages. Every entry maps to a native board item.
 /// Titles are English and meant to be localized by the host.
 pub fn builtin_libraries() -> &'static [StencilLibrary] {
     static LIBRARIES: OnceLock<Vec<StencilLibrary>> = OnceLock::new();
     LIBRARIES.get_or_init(|| {
-        vec![
+        let mut libraries = vec![
             builtin(BUILTIN_IDS[0], "General", GENERAL, GENERAL_EDGES),
             builtin(BUILTIN_IDS[1], "Basic", BASIC, &[]),
             builtin(BUILTIN_IDS[2], "Flowchart", FLOWCHART, &[]),
             builtin(BUILTIN_IDS[3], "Arrows", ARROWS, &[]),
-        ]
+        ];
+        libraries.extend(stencil_package_libraries());
+        libraries
     })
 }
 

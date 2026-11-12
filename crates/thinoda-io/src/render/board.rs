@@ -7,7 +7,7 @@ use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
         CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath, ShapeKind,
-        rectangle_side_paths, rotate_around, shape_label_rect_with_style,
+        rectangle_side_paths, rotate_around,
     },
     scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_path},
 };
@@ -168,6 +168,75 @@ pub(crate) fn object_prims(
     };
     let automatic_stroke = visual.automatic_board_stroke.unwrap_or(ink);
     let mut out = Vec::new();
+    if let Some(render) = thinoda_core::stencil_object::render(object) {
+        let under = object.style.fill.map_or(background, |f| f.over(background));
+        let font = object
+            .style
+            .text_color
+            .unwrap_or_else(|| Color::highest_contrast_on(under));
+        let slots = thinoda_core::stencil_object::slots(object, automatic_stroke, font);
+        let (paths, texts) = thinoda_core::stencil_object::primitives(object, &render, &slots);
+        for path in paths {
+            let stroke = path.stroke.map(|s| (s.color, s.width));
+            for (points, closed) in path.subpaths {
+                out.push(Prim::Path {
+                    points,
+                    closed,
+                    fill: if closed { path.fill } else { None },
+                    stroke,
+                    round: false,
+                });
+            }
+        }
+        for text in texts {
+            let lines: Vec<String> = text.text.split('\n').map(str::to_owned).collect();
+            let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+            let size = Vec2::new(
+                longest as f32 * text.size * 0.6,
+                lines.len() as f32 * text.size * 1.2,
+            );
+            let min = Vec2::new(
+                text.at.x
+                    - match text.align {
+                        thinoda_core::stencil::TextAlign::Left => 0.0,
+                        thinoda_core::stencil::TextAlign::Center => size.x / 2.0,
+                        thinoda_core::stencil::TextAlign::Right => size.x,
+                    },
+                text.at.y
+                    - match text.valign {
+                        thinoda_core::stencil::TextVAlign::Top => 0.0,
+                        thinoda_core::stencil::TextVAlign::Middle => size.y / 2.0,
+                        thinoda_core::stencil::TextVAlign::Bottom => size.y,
+                    },
+            );
+            out.push(Prim::Text {
+                rect: Rect::from_min_size(min, size),
+                pivot: text.at,
+                rotation: text.rotation,
+                lines,
+                size: text.size,
+                color: text.color,
+                backdrop: None,
+                group_backdrop: None,
+            });
+        }
+        if let CanvasObjectKind::Shape { label, .. } = &object.kind
+            && !label.trim().is_empty()
+        {
+            let rect = thinoda_core::stencil_object::label_rect(object, &render);
+            out.push(Prim::Text {
+                rect,
+                pivot: object.rect.center(),
+                rotation: object.rotation,
+                lines: wrap(label, rect.size.x, LABEL_SIZE),
+                size: LABEL_SIZE,
+                color: faded(font, opacity),
+                backdrop: None,
+                group_backdrop: None,
+            });
+        }
+        return out;
+    }
     match (&object.kind, &item.geometry) {
         (CanvasObjectKind::Shape { shape, label }, SceneGeometry::Polygon { outline, details }) => {
             let fill = object.style.fill.map(|c| faded(c, opacity));
@@ -249,12 +318,7 @@ pub(crate) fn object_prims(
                 }
             }
             if !label.trim().is_empty() {
-                let rect = shape_label_rect_with_style(
-                    *shape,
-                    object.rect,
-                    object.style.effective_shape_stroke_width(),
-                    object.double_ellipse_margin,
-                );
+                let rect = thinoda_core::board::object_label_rect(object).unwrap_or(object.rect);
                 let under = object.style.fill.map_or(background, |f| f.over(background));
                 out.push(Prim::Text {
                     rect,

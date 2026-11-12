@@ -198,10 +198,11 @@ impl ShapeChange {
         match self {
             Self::Shape(kind) => {
                 if let CanvasObjectKind::Shape { shape, .. } = &mut object.kind {
-                    if *shape != kind {
+                    if *shape != kind || object.stencil.is_some() {
                         object.rounding = None;
                         object.rectangle_sides = None;
                         object.double_ellipse_margin = None;
+                        object.stencil = None;
                     }
                     *shape = kind;
                 }
@@ -1533,21 +1534,44 @@ impl ThinodaApp {
             match &mut edited.kind {
                 CanvasObjectKind::Shape { shape, .. } => {
                     let previous_shape = *shape;
+                    let selected = edited.stencil.as_ref().map_or_else(
+                        || t(shape_name(previous_shape)).to_owned(),
+                        |stencil| {
+                            stencil.resolve().map_or_else(
+                                || stencil.definition.clone(),
+                                |(_, definition)| {
+                                    crate::stencils::builtin_title(&definition.title)
+                                },
+                            )
+                        },
+                    );
+                    let had_stencil = edited.stencil.is_some();
+                    let mut picked = false;
                     widgets::property_field(ui, t("Shape"), |ui| {
                         egui::ComboBox::from_id_salt(("board_object_shape", id))
-                            .selected_text(t(shape_name(*shape)))
+                            .selected_text(selected)
                             .show_ui(ui, |ui| {
                                 for kind in ShapeKind::ALL {
-                                    ui.selectable_value(shape, kind, t(shape_name(kind)));
+                                    let current = !had_stencil && *shape == kind;
+                                    if ui
+                                        .selectable_label(current, t(shape_name(kind)))
+                                        .clicked()
+                                    {
+                                        *shape = kind;
+                                        picked = true;
+                                    }
                                 }
                             })
                             .response
                     });
-                    if *shape != previous_shape {
+                    if *shape != previous_shape || picked && had_stencil {
                         edited.rounding = None;
                         edited.rectangle_sides = None;
                         edited.double_ellipse_margin = None;
+                        // Choosing a built-in shape replaces the parametric stencil.
+                        edited.stencil = None;
                     }
+                    let stencil = edited.stencil.is_some();
                     if let Some(rounding) = &mut edited.rounding {
                         let standard = rounding.is_standard();
                         if standard {
@@ -1613,7 +1637,7 @@ impl ThinodaApp {
                             );
                         }
                     }
-                    if *shape == ShapeKind::Rectangle && edited.rounding.is_none() {
+                    if !stencil && *shape == ShapeKind::Rectangle && edited.rounding.is_none() {
                         let mut sides = edited.rectangle_sides.unwrap_or_default();
                         ui.label(t("Outline sides"));
                         let changed = ui
@@ -1635,7 +1659,7 @@ impl ThinodaApp {
                         }
                         widgets::caption(ui, t("Sides rotate with the shape."));
                     }
-                    if *shape == ShapeKind::DoubleEllipse {
+                    if !stencil && *shape == ShapeKind::DoubleEllipse {
                         let mut automatic = edited.double_ellipse_margin.is_none();
                         if ui
                             .checkbox(&mut automatic, t("Automatic inner inset"))
@@ -1770,6 +1794,7 @@ impl ThinodaApp {
                         current.rounding = edited.rounding;
                         current.rectangle_sides = edited.rectangle_sides;
                         current.double_ellipse_margin = edited.double_ellipse_margin;
+                        current.stencil = edited.stencil;
                         match (&mut current.kind, edited.kind) {
                             (
                                 CanvasObjectKind::Shape { shape, .. },
@@ -6888,6 +6913,70 @@ mod tests {
             );
         }
         assert_eq!(current(harness.state()).rectangle_sides, Some(partial));
+    }
+
+    #[test]
+    fn stencil_inspector_hides_outline_options_and_converts_to_built_in_shapes() {
+        let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+        let definition = package.definition("folder").unwrap();
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .add_canvas_object(thinoda_core::stencil_object::new_object(
+                package,
+                definition,
+                Vec2::new(100.0, 100.0),
+            ))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            harness.get_by_label("Shape").value().as_deref(),
+            Some("Folder")
+        );
+        assert!(harness.query_by_label("Top outline").is_none());
+
+        // Picking the fallback kind itself still converts the stencil.
+        harness.get_by_label("Shape").click();
+        harness.run_steps(3);
+        harness
+            .get_all_by_label("Rectangle")
+            .last()
+            .unwrap()
+            .click();
+        harness.run_steps(3);
+        let converted = current(harness.state());
+        assert!(converted.stencil.is_none());
+        assert!(matches!(
+            converted.kind,
+            CanvasObjectKind::Shape {
+                shape: ShapeKind::Rectangle,
+                ..
+            }
+        ));
+        assert!(harness.query_by_label("Top outline").is_some());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert!(current(harness.state()).stencil.is_some());
     }
 
     #[test]

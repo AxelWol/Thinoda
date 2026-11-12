@@ -826,29 +826,20 @@ fn shape_label_visible_bounds(
     item: &thinoda_core::SceneItem,
     zoom: f32,
 ) -> Option<thinoda_core::Rect> {
-    let CanvasObjectKind::Shape { shape, label } = &object.kind else {
+    let CanvasObjectKind::Shape { label, .. } = &object.kind else {
         return None;
     };
     if label.is_empty() {
         return None;
     }
+    let label_rect = thinoda_core::board::object_label_rect(object)?;
     // Labels can extend beyond their outline; keep a generous text bound for culling.
     let (longest, line_count) = label.split('\n').fold((0, 0), |(longest, lines), line| {
         (longest.max(line.len()), lines + 1)
     });
     let font_size = shape_label_font_size(zoom) / zoom.max(f32::EPSILON);
     let size = Vec2::new(longest as f32, line_count as f32) * (font_size * 2.0);
-    let center = rotate_around(
-        shape_label_rect_with_style(
-            *shape,
-            object.rect,
-            object.style.effective_shape_stroke_width(),
-            object.double_ellipse_margin,
-        )
-        .center(),
-        object.rect.center(),
-        object.rotation,
-    );
+    let center = rotate_around(label_rect.center(), object.rect.center(), object.rotation);
     let mut bounds = rotated_bounds(
         thinoda_core::Rect::from_center_size(center, size),
         object.rotation,
@@ -1415,6 +1406,129 @@ fn paint_rectangle_sides(
     }
 }
 
+/// Paints a data-defined stencil: each closed subpath is filled independently
+/// (draw.io stencils draw overlapping parts as separate pieces), then stroked.
+fn paint_stencil_object(
+    painter: &Painter,
+    sheet: &Sheet,
+    object: &CanvasObject,
+    render: &thinoda_core::stencil::StencilRender,
+    xf: Xf,
+    opts: &PaintOptions<'_>,
+    editing_board_object: Option<CanvasObjectId>,
+) {
+    let z = xf.zoom;
+    let core_color = |c: Color32| thinoda_core::Color {
+        r: c.r(),
+        g: c.g(),
+        b: c.b(),
+        a: c.a(),
+    };
+    let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
+    let slots = thinoda_core::stencil_object::slots(
+        object,
+        core_color(default_object_stroke(opts)),
+        core_color(text_color),
+    );
+    let (paths, texts) = thinoda_core::stencil_object::primitives(object, render, &slots);
+    for path in &paths {
+        if let Some(fill) = path.fill.map(color32) {
+            for (points, closed) in &path.subpaths {
+                if !closed || points.len() < 3 {
+                    continue;
+                }
+                let coordinates: Vec<f64> = points
+                    .iter()
+                    .flat_map(|p| {
+                        let p = xf.pos(*p);
+                        [f64::from(p.x), f64::from(p.y)]
+                    })
+                    .collect();
+                let Ok(triangles) = earcutr::earcut(&coordinates, &[], 2) else {
+                    continue;
+                };
+                let mut mesh = egui::Mesh::default();
+                for point in points {
+                    mesh.colored_vertex(xf.pos(*point), fill);
+                }
+                for &[a, b, c] in triangles.as_chunks::<3>().0 {
+                    if let (Ok(a), Ok(b), Ok(c)) =
+                        (u32::try_from(a), u32::try_from(b), u32::try_from(c))
+                    {
+                        mesh.add_triangle(a, b, c);
+                    }
+                }
+                painter.add(Shape::mesh(mesh));
+            }
+        }
+        let Some(stroke) = &path.stroke else {
+            continue;
+        };
+        let egui_stroke = Stroke::new((stroke.width * z).max(0.5), color32(stroke.color));
+        for (points, closed) in &path.subpaths {
+            let mut screen: Vec<_> = points.iter().map(|p| xf.pos(*p)).collect();
+            match &stroke.dash {
+                Some(dash) if dash.len() >= 2 => {
+                    if *closed && let Some(first) = screen.first().copied() {
+                        screen.push(first);
+                    }
+                    painter.extend(Shape::dashed_line(
+                        &screen,
+                        egui_stroke,
+                        (dash[0] * z).max(1.0),
+                        (dash[1] * z).max(1.0),
+                    ));
+                }
+                _ if *closed => {
+                    painter.add(Shape::closed_line(screen, egui_stroke));
+                }
+                _ => {
+                    painter.add(Shape::line(screen, egui_stroke));
+                }
+            }
+        }
+    }
+    for text in &texts {
+        let font = FontId::proportional((text.size * z).max(1.0));
+        let color = color32(text.color);
+        let galley = painter.layout_no_wrap(text.text.clone(), font, color);
+        let size = galley.size();
+        let offset = egui::vec2(
+            match text.align {
+                thinoda_core::stencil::TextAlign::Left => 0.0,
+                thinoda_core::stencil::TextAlign::Center => size.x / 2.0,
+                thinoda_core::stencil::TextAlign::Right => size.x,
+            },
+            match text.valign {
+                thinoda_core::stencil::TextVAlign::Top => 0.0,
+                thinoda_core::stencil::TextVAlign::Middle => size.y / 2.0,
+                thinoda_core::stencil::TextVAlign::Bottom => size.y,
+            },
+        );
+        let angle = text.rotation.to_radians();
+        let origin = xf.pos(text.at) - egui::emath::Rot2::from_angle(angle) * offset;
+        painter.add(egui::epaint::TextShape::new(origin, galley, color).with_angle(angle));
+    }
+    let CanvasObjectKind::Shape { label, .. } = &object.kind else {
+        return;
+    };
+    if label.is_empty() || editing_board_object == Some(object.id) {
+        return;
+    }
+    let text_rect = thinoda_core::stencil_object::label_rect(object, render);
+    let text_color = opacity_color(text_color, object.style.opacity);
+    let font = FontId::proportional(shape_label_font_size(z));
+    let galley = painter.layout_no_wrap(label.clone(), font, text_color);
+    let center = xf.pos(rotate_around(
+        text_rect.center(),
+        object.rect.center(),
+        object.rotation,
+    ));
+    let angle = object.rotation.to_radians();
+    let origin = center - egui::emath::Rot2::from_angle(angle) * (galley.size() / 2.0);
+    painter.add(egui::epaint::TextShape::new(origin, galley, text_color).with_angle(angle));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_canvas_object(
     painter: &Painter,
@@ -1428,6 +1542,18 @@ fn paint_canvas_object(
     ink_tessellation: InkTessellationConfig,
 ) {
     let z = xf.zoom;
+    if let Some(render) = thinoda_core::stencil_object::render(object) {
+        paint_stencil_object(
+            painter,
+            sheet,
+            object,
+            &render,
+            xf,
+            opts,
+            editing_board_object,
+        );
+        return;
+    }
     match (&object.kind, &item.geometry) {
         (CanvasObjectKind::Shape { shape, label }, SceneGeometry::Polygon { outline, details }) => {
             let fill = object

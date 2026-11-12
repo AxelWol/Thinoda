@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "dslVersion": 1,
   "id": "thinoda.general",
-  "title": "General (data-defined)",
+  "title": "Parametric shapes",
   "revision": 1,
   "license": "MIT",
   "definitions": [
@@ -41,7 +41,7 @@
     },
     {
       "id": "rounded-rectangle",
-      "title": "Rounded Rectangle",
+      "title": "Rounded rectangle",
       "tags": ["rectangle", "rounded", "process"],
       "frame": {"w": 120, "h": 60, "units": "instance"},
       "parameters": {

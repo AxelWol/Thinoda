@@ -4354,6 +4354,9 @@ const DE: &[(&str, &str)] = &[
     ("On-page reference", "Seitenverweis"),
     ("Extract", "Extrahieren"),
     ("Merge", "Zusammenführen"),
+    ("Parametric shapes", "Parametrische Formen"),
+    ("Message", "Nachricht"),
+    ("Cube", "Würfel"),
 ];
 
 #[cfg(test)]

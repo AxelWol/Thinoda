@@ -38,12 +38,15 @@ const FIXED_PORT_SHEET_PREFIX: &str = "THINODA-SHEET-18\n";
 const DRAWIO_ROUNDING_SHEET_PREFIX: &str = "THINODA-SHEET-19\n";
 const FINAL_STATE_SHEET_PREFIX: &str = "THINODA-SHEET-20\n";
 const SANKEY_SHEET_PREFIX: &str = "THINODA-SHEET-21\n";
+const STENCIL_SHEET_PREFIX: &str = "THINODA-SHEET-22\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_sankey() {
+    let prefix = if sheet.has_stencils() {
+        STENCIL_SHEET_PREFIX
+    } else if sheet.has_sankey() {
         SANKEY_SHEET_PREFIX
     } else if sheet.has_final_states() {
         FINAL_STATE_SHEET_PREFIX
@@ -104,9 +107,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(SANKEY_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-21\r\n"))
-        .map(|json| (21, json))
+        .strip_prefix(STENCIL_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-22\r\n"))
+        .map(|json| (22, json))
+        .or_else(|| {
+            text.strip_prefix(SANKEY_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-21\r\n"))
+                .map(|json| (21, json))
+        })
         .or_else(|| {
             text.strip_prefix(FINAL_STATE_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-20\r\n"))
@@ -249,6 +257,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         return Err(
             "standard draw.io rectangle rounding requires sheet clipboard version 19".into(),
         );
+    }
+    if version < 22 && sheet.has_stencils() {
+        return Err("stencil shapes require sheet clipboard version 22".into());
     }
     if version < 21 && sheet.has_sankey() {
         return Err("Sankey flows require a Sankey-aware clipboard version".into());

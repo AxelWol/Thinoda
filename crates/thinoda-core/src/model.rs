@@ -827,6 +827,10 @@ impl Sheet {
         self.canvas.has_final_states()
     }
 
+    pub fn has_stencils(&self) -> bool {
+        self.canvas.has_stencils()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2384,6 +2388,10 @@ impl Workbook {
     /// Whether any sheet needs final-state-aware persistence.
     pub fn has_final_states(&self) -> bool {
         self.sheets.iter().any(Sheet::has_final_states)
+    }
+
+    pub fn has_stencils(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_stencils)
     }
 
     pub fn active(&self) -> &Sheet {

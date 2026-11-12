@@ -490,9 +490,33 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
   unknown elements become definition capabilities (`drawio.image`,
   `drawio.include-shape`, `drawio.element.*`) with diagnostics, and the bounded
   original XML is kept in the `drawio.source` extension.
-- **Next:** ST2 generic stencil instances in documents and ST3 rendering,
-  hit testing, handles and connectors in the editor; then the library-install
-  UX for ST6 and the ST5 legacy migration.
+- **ST2 partially implemented:** `CanvasObject.stencil` holds an optional
+  `StencilRef` (package, definition, explicit parameter overrides), validated
+  at every load, paste and recovery boundary; native format v26, stencil-aware
+  clipboard payloads and XMind snapshots gate older readers. An unknown package
+  keeps its reference and draws the legacy shape as fallback. Pinned workbook
+  definition closures are still open.
+- **ST3 partially implemented:** `stencil_object` evaluates instances for the
+  scene (bounds, hit regions, perimeter), the egui canvas renderer (earcut
+  fills, dashed/closed strokes, aligned stencil texts), the SVG/PDF/PNG export
+  renderer and label editing rects. draw.io export writes the definition's
+  native style plus `thinodaStencilPackage`/`thinodaStencilDefinition`/
+  `thinodaStencilParam.*`; bound draw.io parameters (for example `size`) are
+  written from the resolved values and win on re-import, so edits made in
+  draw.io survive. A resolvable reference bypasses legacy shape classification
+  and its approximation warnings. The Stencils pane lists each data package as
+  a built-in section ("Parametric shapes") whose entries insert as stencil
+  objects through the ordinary draw.io pipeline. On import, draw.io `direction`
+  turns the stencil frame (quarter turns swap its sides); `flipH`/`flipV` are
+  reported as a formatting approximation. An unknown package keeps the
+  classified native fallback shape and geometry (even for styles that would
+  otherwise become cards or text), so references survive repeated round trips.
+  The inspector shows the stencil title in the Shape field; picking any
+  built-in shape converts the object (undoably) and hides outline options a
+  stencil cannot carry.
+- **Next:** undoable handle/parameter editing and an inspector section for
+  stencil parameters, connector ports from definitions, pinned closures; then
+  the library-install UX for ST6 and the ST5 legacy migration.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 

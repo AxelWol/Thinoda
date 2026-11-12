@@ -811,6 +811,21 @@ impl Style {
         self.map.get(key).map(String::as_str)
     }
 
+    /// A Thinoda stencil reference stored in the style, if any.
+    fn stencil(&self) -> Option<thinoda_core::stencil_object::StencilRef> {
+        self.get(crate::drawio_stencil::STYLE_PACKAGE_KEY)?;
+        crate::drawio_stencil::reference_from_style(
+            self.map.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        )
+    }
+
+    /// Whether the style references a stencil this build can draw; its native
+    /// draw.io shape is then only a fallback for draw.io itself.
+    fn draws_stencil(&self) -> bool {
+        self.stencil()
+            .is_some_and(|stencil| stencil.resolve().is_some())
+    }
+
     fn flag(&self, key: &str) -> bool {
         self.get(key) == Some("1")
     }
@@ -1627,6 +1642,21 @@ fn classify(style: &Style) -> Kind {
     if style.has("group") {
         return Kind::Group;
     }
+    match style.stencil() {
+        Some(stencil) if stencil.resolve().is_some() => {
+            Kind::Shape(ShapeKind::Rectangle, 0.0, true)
+        }
+        // An uninstalled stencil is still a shape instance: keep its native
+        // fallback when that is a shape, so the reference survives re-export.
+        Some(_) => match classify_native(style) {
+            kind @ (Kind::Shape(..) | Kind::Approx(..)) => kind,
+            _ => Kind::Shape(ShapeKind::Rectangle, 0.0, true),
+        },
+        None => classify_native(style),
+    }
+}
+
+fn classify_native(style: &Style) -> Kind {
     if let Some(kind) = style.get("thinodaCard") {
         return Kind::Card(match kind {
             "text" => CardKind::Text,
@@ -2112,7 +2142,7 @@ impl<'a> PageImport<'a> {
         if cell.style.formatting_loss(false, card_text_alignment) {
             self.warn(ImportWarning::Formatting);
         }
-        if matches!(cell.style.shape(), "note" | "note2") {
+        if matches!(cell.style.shape(), "note" | "note2") && !cell.style.draws_stencil() {
             self.warn(ImportWarning::DrawioFoldedNotesApproximated);
         }
         match kind {
@@ -2237,6 +2267,23 @@ impl<'a> PageImport<'a> {
             object
         };
         let object = match kind {
+            Kind::Shape(..) if style.draws_stencil() => {
+                // Stencils are drawn in their own frame; draw.io's `direction`
+                // turns that frame like a rotation with swapped sides.
+                let direction = direction_degrees(style).rem_euclid(360.0);
+                let frame = if direction % 180.0 == 90.0 {
+                    Rect::from_center_size(rect.center(), Vec2::new(rect.size.y, rect.size.x))
+                } else {
+                    rect
+                };
+                if style.flag("flipH") || style.flag("flipV") {
+                    self.warn(ImportWarning::Formatting);
+                }
+                let rotation = direction + style.rotation();
+                let mut object = shape_object(ShapeKind::Rectangle, frame, rotation, label);
+                object.stencil = style.stencil();
+                object
+            }
             Kind::Shape(shape, base, symmetric) | Kind::Approx(shape, base, symmetric) => {
                 if matches!(kind, Kind::Approx(..)) {
                     self.warn(ImportWarning::Formatting);
@@ -2375,6 +2422,15 @@ impl<'a> PageImport<'a> {
                         // The live link between fill and stroke is not retained.
                         self.warn(ImportWarning::Formatting);
                     }
+                }
+                if let Some(stencil) = style.stencil() {
+                    // An uninstalled stencil keeps its reference; the classified
+                    // legacy shape (with its normalized frame) is its fallback,
+                    // without shape-specific options a stencil may not carry.
+                    object.rounding = None;
+                    object.rectangle_sides = None;
+                    object.double_ellipse_margin = None;
+                    object.stencil = Some(stencil);
                 }
                 object
             }
@@ -4171,7 +4227,13 @@ impl<'a> PageWriter<'a> {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();
                 let style_ref = &object.style;
-                if let Some(sides) = object.rectangle_sides {
+                let stencil_native = object
+                    .stencil
+                    .as_ref()
+                    .and_then(crate::drawio_stencil::native_style);
+                if let Some(native) = &stencil_native {
+                    style.push_str(native);
+                } else if let Some(sides) = object.rectangle_sides {
                     style.push_str(&format!(
                         "shape=partialRectangle;top={};right={};bottom={};left={};",
                         u8::from(sides.top),
@@ -4204,6 +4266,9 @@ impl<'a> PageWriter<'a> {
                 }
                 if let Some(margin) = object.double_ellipse_margin {
                     style.push_str(&format!("margin={};", num(margin)));
+                }
+                if let Some(stencil) = &object.stencil {
+                    style.push_str(&crate::drawio_stencil::reference_style(stencil));
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
                 let special_outline = object.rectangle_sides.is_some()

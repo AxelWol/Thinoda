@@ -49,6 +49,16 @@ fn valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
+/// Section preferences may also name data-defined stencil packages, whose ids
+/// are dotted (`thinoda.general`).
+fn valid_section_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_ID_BYTES
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+}
+
 struct SizeLimit {
     written: usize,
     exceeded: bool,
@@ -81,7 +91,7 @@ pub fn validate(state: &StencilState) -> std::result::Result<(), String> {
         .hidden_builtin
         .iter()
         .chain(&state.collapsed)
-        .all(|id| valid_id(id))
+        .all(|id| valid_section_id(id))
     {
         return Err("Stencil section IDs must be valid.".into());
     }
@@ -159,8 +169,8 @@ mod tests {
         let paths = paths(dir.path());
         assert_eq!(load(&paths).unwrap(), StencilState::default());
         let state = StencilState {
-            hidden_builtin: vec!["arrows".into()],
-            collapsed: vec!["basic".into()],
+            hidden_builtin: vec!["arrows".into(), "thinoda.general".into()],
+            collapsed: vec!["basic".into(), "thinoda.general".into()],
             libraries: vec![library("scratchpad"), library("lib-1")],
         };
         save(&paths, &state).unwrap();

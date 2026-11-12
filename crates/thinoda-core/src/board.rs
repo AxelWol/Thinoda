@@ -334,6 +334,10 @@ impl CanvasLayer {
             )
         })
     }
+
+    pub fn has_stencils(&self) -> bool {
+        self.objects.iter().any(|object| object.stencil.is_some())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -558,6 +562,9 @@ pub struct CanvasObject {
     /// Explicit inset of a double ellipse's inner outline; `None` uses the automatic inset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_ellipse_margin: Option<f32>,
+    /// Data-defined drawing of a shape; `kind`'s shape is the legacy fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stencil: Option<crate::stencil_object::StencilRef>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -580,6 +587,7 @@ impl CanvasObject {
             rounding: None,
             rectangle_sides: None,
             double_ellipse_margin: None,
+            stencil: None,
         }
     }
 
@@ -1115,6 +1123,40 @@ pub fn double_ellipse_inset(rect: Rect, stroke_width: f32, margin: Option<f32>) 
 /// Unrotated text area of a shape inside `rect`.
 pub fn shape_label_rect(kind: ShapeKind, rect: Rect) -> Rect {
     shape_label_rect_with_style(kind, rect, 2.0, None)
+}
+
+/// Geometry of a shape object, drawn by its stencil when that resolves.
+pub fn object_shape_geometry(object: &CanvasObject) -> Option<ShapeGeometry> {
+    let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
+        return None;
+    };
+    if let Some(render) = crate::stencil_object::render(object) {
+        return Some(crate::stencil_object::geometry(object, &render));
+    }
+    Some(shape_geometry_with_style(
+        *shape,
+        object.rect,
+        object.rotation,
+        object.rounding,
+        object.style.effective_shape_stroke_width(),
+        object.double_ellipse_margin,
+    ))
+}
+
+/// Unrotated label area of a shape object, from its stencil when that resolves.
+pub fn object_label_rect(object: &CanvasObject) -> Option<Rect> {
+    let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
+        return None;
+    };
+    if let Some(render) = crate::stencil_object::render(object) {
+        return Some(crate::stencil_object::label_rect(object, &render));
+    }
+    Some(shape_label_rect_with_style(
+        *shape,
+        object.rect,
+        object.style.effective_shape_stroke_width(),
+        object.double_ellipse_margin,
+    ))
 }
 
 /// Unrotated text area with the current double-ellipse inset.
@@ -1726,6 +1768,18 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
         return Err(format!(
             "canvas object {id} has invalid double-ellipse inset"
         ));
+    }
+    if let Some(stencil) = &object.stencil {
+        if !matches!(object.kind, CanvasObjectKind::Shape { .. })
+            || object.rounding.is_some()
+            || object.rectangle_sides.is_some()
+            || object.double_ellipse_margin.is_some()
+        {
+            return Err(format!("canvas object {id} has an invalid stencil"));
+        }
+        stencil
+            .validate()
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
     }
     match &object.kind {
         CanvasObjectKind::Shape { label, .. } => valid_text(label, "shape label")?,

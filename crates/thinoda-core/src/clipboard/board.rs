@@ -35,6 +35,7 @@ const FIXED_PORT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-15\n";
 const DRAWIO_ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-16\n";
 const FINAL_STATE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-17\n";
 const SANKEY_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-18\n";
+const STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-19\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -53,7 +54,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_sankey() {
+        if self.fragment.has_stencils() {
+            STENCIL_BOARD_PREFIX
+        } else if self.fragment.has_sankey() {
             SANKEY_BOARD_PREFIX
         } else if self.fragment.has_final_states() {
             FINAL_STATE_BOARD_PREFIX
@@ -286,9 +289,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(SANKEY_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-18\r\n"))
-        .map(|json| (18, json))
+        .strip_prefix(STENCIL_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-19\r\n"))
+        .map(|json| (19, json))
+        .or_else(|| {
+            text.strip_prefix(SANKEY_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-18\r\n"))
+                .map(|json| (18, json))
+        })
         .or_else(|| {
             text.strip_prefix(FINAL_STATE_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-17\r\n"))
@@ -417,6 +425,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err(
             "standard draw.io rectangle rounding requires board clipboard version 16".into(),
         );
+    }
+    if version < 19 && payload.fragment.has_stencils() {
+        return Err("stencil shapes require board clipboard version 19".into());
     }
     if version < 18 && payload.fragment.has_sankey() {
         return Err("Sankey flows require a Sankey-aware board clipboard".into());

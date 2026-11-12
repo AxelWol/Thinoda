@@ -167,6 +167,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "standard draw.io rectangle rounding requires native format version 23".into(),
             ));
         }
+        if version < 26 && book.has_stencils() {
+            return Err(IoError::Invalid(
+                "stencil shapes require native format version 26".into(),
+            ));
+        }
         if version < 25 && book.has_sankey() {
             return Err(IoError::Invalid(
                 "Sankey flows require native format version 25".into(),
@@ -180,6 +185,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_stencils() {
+            return Err(IoError::Invalid(
+                "stencil shapes require native format version 26".into(),
+            ));
+        }
         if book.has_sankey() {
             return Err(IoError::Invalid(
                 "Sankey flows require native format version 25".into(),

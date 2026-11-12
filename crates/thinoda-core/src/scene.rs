@@ -652,15 +652,8 @@ fn object_item(
         Band::Above => SceneBand::AboveMap,
     };
     let geometry = match &object.kind {
-        CanvasObjectKind::Shape { shape, .. } => {
-            let g = crate::board::shape_geometry_with_style(
-                *shape,
-                object.rect,
-                object.rotation,
-                object.rounding,
-                object.style.effective_shape_stroke_width(),
-                object.double_ellipse_margin,
-            );
+        CanvasObjectKind::Shape { .. } => {
+            let g = crate::board::object_shape_geometry(object)?;
             SceneGeometry::Polygon {
                 outline: g.outline,
                 details: g.details,

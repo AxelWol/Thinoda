@@ -14,6 +14,7 @@ use thinoda_core::stencil::{
     SCHEMA_VERSION, StencilDefinition, StencilPackage, StrokeKeyword, StrokeWidthPolicy, TextAlign,
     TextVAlign,
 };
+use thinoda_core::stencil_object::StencilRef;
 
 use crate::IoError;
 use crate::drawio::{BoundedDecodeError, Element, decode_compressed_bounded, parse_dom};
@@ -575,6 +576,127 @@ fn escape(text: &str, out: &mut String) {
             _ => out.push(c),
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Stencil references in diagram cell styles
+
+/// Style keys that carry a Thinoda stencil reference through draw.io. draw.io
+/// ignores them and draws the definition's `interchange.drawio.style`.
+pub(crate) const STYLE_PACKAGE_KEY: &str = "thinodaStencilPackage";
+pub(crate) const STYLE_DEFINITION_KEY: &str = "thinodaStencilDefinition";
+pub(crate) const STYLE_PARAMETER_PREFIX: &str = "thinodaStencilParam.";
+
+fn drawio_binding(definition: &StencilDefinition) -> Option<&serde_json::Map<String, Value>> {
+    definition.interchange.get("drawio")?.as_object()
+}
+
+/// The definition's native draw.io style, when it declares one.
+pub(crate) fn native_style(stencil: &StencilRef) -> Option<String> {
+    let (_, definition) = stencil.resolve()?;
+    let style = drawio_binding(definition)?.get("style")?.as_str()?;
+    let mut out = style.to_owned();
+    if !out.is_empty() && !out.ends_with(';') {
+        out.push(';');
+    }
+    Some(out)
+}
+
+/// draw.io keys for bound parameters plus the lossless reference keys.
+pub(crate) fn reference_style(stencil: &StencilRef) -> String {
+    let mut out = String::new();
+    if let Some((_, definition)) = stencil.resolve()
+        && let Some(bindings) = drawio_binding(definition)
+            .and_then(|binding| binding.get("parameters"))
+            .and_then(Value::as_object)
+    {
+        let values = definition.resolve_parameters(&stencil.parameters);
+        for (name, binding) in bindings {
+            let Some(&value) = values.get(name) else {
+                continue;
+            };
+            match binding {
+                Value::String(key) => out.push_str(&format!("{key}={value};")),
+                Value::Object(choice) => {
+                    let key = choice.get("style").and_then(Value::as_str);
+                    let option = choice
+                        .get("values")
+                        .and_then(Value::as_array)
+                        .and_then(|options| options.get(value.max(0.0) as usize))
+                        .and_then(Value::as_str);
+                    if let (Some(key), Some(option)) = (key, option) {
+                        out.push_str(&format!("{key}={option};"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out.push_str(&format!(
+        "{STYLE_PACKAGE_KEY}={};{STYLE_DEFINITION_KEY}={};",
+        stencil.package, stencil.definition
+    ));
+    for (name, value) in &stencil.parameters {
+        out.push_str(&format!("{STYLE_PARAMETER_PREFIX}{name}={value};"));
+    }
+    out
+}
+
+/// Reads a stencil reference from cell style entries. A draw.io-edited bound
+/// parameter wins over the stored override, so edits made in draw.io survive.
+pub(crate) fn reference_from_style<'a>(
+    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<StencilRef> {
+    let entries: BTreeMap<&str, &str> = entries.into_iter().collect();
+    let mut stencil = StencilRef::new(
+        *entries.get(STYLE_PACKAGE_KEY)?,
+        *entries.get(STYLE_DEFINITION_KEY)?,
+    );
+    for (key, value) in &entries {
+        if let Some(name) = key.strip_prefix(STYLE_PARAMETER_PREFIX)
+            && let Ok(value) = value.parse::<f64>()
+            && value.is_finite()
+        {
+            stencil.parameters.insert(name.to_owned(), value);
+        }
+    }
+    if let Some((_, definition)) = stencil.resolve()
+        && let Some(bindings) = drawio_binding(definition)
+            .and_then(|binding| binding.get("parameters"))
+            .and_then(Value::as_object)
+    {
+        for (name, binding) in bindings {
+            let Some(parameter) = definition.parameters.get(name) else {
+                continue;
+            };
+            let value = match binding {
+                Value::String(key) => entries
+                    .get(key.as_str())
+                    .and_then(|value| value.parse::<f64>().ok()),
+                Value::Object(choice) => choice
+                    .get("style")
+                    .and_then(Value::as_str)
+                    .and_then(|key| entries.get(key))
+                    .and_then(|selected| {
+                        choice
+                            .get("values")
+                            .and_then(Value::as_array)?
+                            .iter()
+                            .position(|option| option.as_str() == Some(selected))
+                            .map(|index| index as f64)
+                    }),
+                _ => None,
+            };
+            let Some(value) = value.filter(|value| value.is_finite()) else {
+                continue;
+            };
+            let value = parameter.clamp(value);
+            if stencil.parameters.contains_key(name) || value != parameter.default {
+                stencil.parameters.insert(name.clone(), value);
+            }
+        }
+    }
+    stencil.validate().ok().map(|()| stencil)
 }
 
 #[cfg(test)]
