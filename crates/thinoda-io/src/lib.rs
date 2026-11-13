@@ -7,6 +7,7 @@ mod board_export;
 mod drawio;
 pub mod drawio_clipboard;
 pub mod drawio_library;
+pub mod drawio_stencil;
 pub mod fim;
 pub mod fonts;
 mod formats;
@@ -395,6 +396,8 @@ pub enum ImportWarning {
     UnsupportedDrawioShapes,
     /// A draw.io grid size or Thinoda grid extension was adjusted or ignored.
     DrawioGridAdjusted,
+    /// Stale/edited semantic metadata was discarded; ordinary editable cells retained.
+    DrawioSankeyStale,
     /// A draw.io page background was approximated or omitted.
     DrawioBackgroundAdjusted,
     /// A draw.io folded note's appearance was approximated.

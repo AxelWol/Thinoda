@@ -419,6 +419,13 @@ pub fn connector_stroke_path(
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneGeometry {
+    /// Derived semantic flow, shared by canvas, export, bounds and hit testing.
+    Ribbon {
+        outline: Vec<Vec2>,
+        mass: f64,
+        color: Option<crate::Color>,
+        label_bounds: Rect,
+    },
     /// Unrotated rect turned by `rotation` degrees around its centre.
     Rect { rect: Rect, rotation: f32 },
     /// Absolute (already rotated) shape outline and detail strokes.
@@ -437,7 +444,10 @@ pub enum SceneGeometry {
     Polyline {
         points: Vec<Vec2>,
         width: f32,
+        /// Shared color-scale override for an unassigned semantic placeholder.
+        color: Option<crate::Color>,
         markers: [Option<ConnectorMarkerGeometry>; 2],
+        label_bounds: Option<Rect>,
     },
 }
 
@@ -446,6 +456,15 @@ impl SceneGeometry {
         match self {
             SceneGeometry::Rect { rect, rotation } => {
                 rotated_rect_contains(rect.expand(tolerance), *rotation, p)
+            }
+            SceneGeometry::Ribbon {
+                outline,
+                label_bounds,
+                ..
+            } => {
+                label_bounds.expand(tolerance).contains(p)
+                    || point_in_polygon(p, outline)
+                    || distance_to_outline(p, outline) <= tolerance
             }
             SceneGeometry::Polygon { outline, .. } => {
                 point_in_polygon(p, outline) || distance_to_outline(p, outline) <= tolerance
@@ -463,6 +482,8 @@ impl SceneGeometry {
                 points,
                 width,
                 markers,
+                label_bounds,
+                ..
             } => {
                 let radius = width / 2.0 + tolerance;
                 let stroke_hit = if markers.iter().any(Option::is_some) {
@@ -470,7 +491,8 @@ impl SceneGeometry {
                 } else {
                     distance_to_polyline(p, points) <= radius
                 };
-                stroke_hit
+                label_bounds.is_some_and(|r| r.expand(tolerance).contains(p))
+                    || stroke_hit
                     || markers.iter().flatten().any(|marker| {
                         if let Some((center, marker_radius)) = marker.circle() {
                             let distance = (p - center).length();
@@ -536,11 +558,15 @@ pub struct Scene {
     pub items: Vec<SceneItem>,
 }
 
-/// Builds the paint-order scene of `sheet` from its layout.
+/// Builds the paint-order scene of a validated `sheet` from its layout.
+/// Load/import/recovery/paste boundaries must validate first: unsupported Sankey
+/// endpoints are rejected there, never repaired or normalized by this renderer.
 pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
     let mut items =
         Vec::with_capacity(sheet.zones.len() + layout.order.len() + sheet.canvas.objects.len());
     let mut connectors = ConnectorResolver::new(sheet, layout);
+    let flow_values = crate::sankey::evaluate(sheet).unwrap_or_default();
+    let ribbons = crate::sankey::ribbons_with_values(sheet, layout, &flow_values);
     for zone in &sheet.zones {
         items.push(SceneItem {
             id: SceneId::Zone(zone.id),
@@ -556,7 +582,37 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
         for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
             if let Some(item) = object_item(sheet, object, &mut connectors) {
-                items.push(item);
+                if let Some(outline) = ribbons.get(&object.id) {
+                    if let Some(bounds) = crate::board::points_bounds(outline) {
+                        let c = match &object.kind {
+                            CanvasObjectKind::Connector(c) => c,
+                            _ => continue,
+                        };
+                        let mass = flow_values.mass.get(&object.id).copied().unwrap_or(0.0);
+                        let anchor =
+                            crate::sankey::ribbon_label_anchor(outline).unwrap_or(bounds.center());
+                        let label_bounds = crate::sankey::label_bounds(
+                            anchor,
+                            &crate::sankey::flow_label(c, mass),
+                        );
+                        items.push(SceneItem {
+                            bounds: bounds.union(&label_bounds),
+                            geometry: SceneGeometry::Ribbon {
+                                outline: outline.clone(),
+                                mass,
+                                label_bounds,
+                                color: sheet.sankey.as_ref().filter(|s| s.color_scale).map(|_| {
+                                    crate::sankey::weight_color(
+                                        flow_values.mass.get(&object.id).copied().unwrap_or(0.0),
+                                    )
+                                }),
+                            },
+                            ..item
+                        });
+                    }
+                } else {
+                    items.push(item);
+                }
             }
         }
     };
@@ -596,15 +652,8 @@ fn object_item(
         Band::Above => SceneBand::AboveMap,
     };
     let geometry = match &object.kind {
-        CanvasObjectKind::Shape { shape, .. } => {
-            let g = crate::board::shape_geometry_with_style(
-                *shape,
-                object.rect,
-                object.rotation,
-                object.rounding,
-                object.style.effective_shape_stroke_width(),
-                object.double_ellipse_margin,
-            );
+        CanvasObjectKind::Shape { .. } => {
+            let g = crate::board::object_shape_geometry(object)?;
             SceneGeometry::Polygon {
                 outline: g.outline,
                 details: g.details,
@@ -622,6 +671,14 @@ fn object_item(
                 return None;
             }
             SceneGeometry::Polyline {
+                color: (c.sankey.is_some() && sheet.sankey.as_ref().is_some_and(|s| s.color_scale))
+                    .then(|| crate::sankey::weight_color(0.0)),
+                label_bounds: c.sankey.filter(|f| f.weight.is_none()).map(|_| {
+                    crate::sankey::label_bounds(
+                        crate::board::polyline_midpoint(&points).unwrap_or_default(),
+                        &crate::sankey::flow_label(c, 0.0),
+                    )
+                }),
                 markers: [
                     c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
                         connector_marker_geometry(
@@ -733,6 +790,11 @@ pub fn object_clip_at(sheet: &Sheet, object: CanvasObjectId, center: Vec2) -> Op
 fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
     match geometry {
         SceneGeometry::Rect { rect, rotation } => Some(rotated_bounds(*rect, *rotation)),
+        SceneGeometry::Ribbon {
+            outline,
+            label_bounds,
+            ..
+        } => crate::board::points_bounds(outline).map(|r| r.union(label_bounds)),
         SceneGeometry::Polygon { outline, details } => {
             let mut r = points_bounds(outline)?;
             for d in details {
@@ -757,8 +819,13 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
             points,
             width,
             markers,
+            label_bounds,
+            ..
         } => {
             let mut bounds = points_bounds(points)?.expand(width / 2.0);
+            if let Some(label_bounds) = label_bounds {
+                bounds = bounds.union(label_bounds);
+            }
             for marker in markers.iter().flatten() {
                 let marker_bounds = if let Some((center, radius)) = marker.circle() {
                     (radius > 0.0).then(|| {
@@ -783,12 +850,25 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
 
 /// Painted bounds of a canvas object (`None` for an unresolvable connector).
 pub fn object_bounds(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> Option<Rect> {
+    if matches!(&object.kind,CanvasObjectKind::Connector(c) if c.sankey.is_some()) {
+        return build_scene(sheet, layout)
+            .item(SceneId::Object(object.id))
+            .and_then(SceneItem::visible_bounds);
+    }
     object_item(sheet, object, &mut ConnectorResolver::new(sheet, layout))
         .and_then(|item| item.visible_bounds())
 }
 
 /// Visible bounds of the whole canvas layer, resolving shared connector dependencies once.
 pub fn canvas_bounds(sheet: &Sheet, layout: &Layout) -> Option<Rect> {
+    if sheet.has_sankey() {
+        return build_scene(sheet, layout)
+            .items
+            .iter()
+            .filter(|item| matches!(item.id, SceneId::Object(_)))
+            .filter_map(SceneItem::visible_bounds)
+            .reduce(|a, b| a.union(&b));
+    }
     let mut connectors = ConnectorResolver::new(sheet, layout);
     sheet
         .canvas
@@ -1161,8 +1241,51 @@ fn fixed_port_perimeter(rect: Rect, shape: Option<ShapeKind>, point: Vec2) -> Op
                 center + delta * (1.0 / distance)
             })
         }
-        _ => None,
+        Some(shape) => shape_outline_perimeter(rect, shape, point),
     }
+}
+
+fn shape_outline_perimeter(rect: Rect, shape: ShapeKind, point: Vec2) -> Option<Vec2> {
+    let center = rect.center();
+    let direction = point - center;
+    if !direction.x.is_finite()
+        || !direction.y.is_finite()
+        || direction == Vec2::ZERO
+        || rect.size.x <= 0.0
+        || rect.size.y <= 0.0
+    {
+        return None;
+    }
+
+    let outline = shape.unit_outline();
+    if outline.len() < 3 {
+        return None;
+    }
+
+    let mut nearest = None;
+    let mut nearest_t = f64::INFINITY;
+    for (index, start) in outline.iter().copied().enumerate() {
+        let end = outline[(index + 1) % outline.len()];
+        let a = rect.min + Vec2::new(start.x * rect.size.x, start.y * rect.size.y);
+        let b = rect.min + Vec2::new(end.x * rect.size.x, end.y * rect.size.y);
+        let edge = b - a;
+        let offset = a - center;
+        let cross =
+            f64::from(direction.x) * f64::from(edge.y) - f64::from(direction.y) * f64::from(edge.x);
+        if cross.abs() <= f64::EPSILON {
+            continue;
+        }
+        let t = (f64::from(offset.x) * f64::from(edge.y) - f64::from(offset.y) * f64::from(edge.x))
+            / cross;
+        let u = (f64::from(offset.x) * f64::from(direction.y)
+            - f64::from(offset.y) * f64::from(direction.x))
+            / cross;
+        if t >= 0.0 && (0.0..=1.0).contains(&u) && t < nearest_t {
+            nearest_t = t;
+            nearest = Some(center + direction * t as f32);
+        }
+    }
+    nearest
 }
 
 /// Area centroid of a closed polygon; the vertex mean for degenerate outlines.

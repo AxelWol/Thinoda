@@ -824,6 +824,86 @@ pub(crate) fn editable_slide(
     {
         draw.board_object(item, object, page, options.dark, visual);
     }
+    if sheet
+        .sankey
+        .as_ref()
+        .is_some_and(|settings| settings.color_scale)
+        && let Some(bounds) = super::sankey_scale_legend_in_frame(resolved.frame)
+    {
+        let border = if options.dark {
+            Color::rgb(0x75, 0x7B, 0x86)
+        } else {
+            Color::rgb(0xB0, 0xB7, 0xC2)
+        };
+        let foreground = Color::highest_contrast_on(page);
+        let scale = bounds.size.x / 180.0;
+        let bar = Rect::from_min_size(
+            bounds.min + Vec2::new(8.0, 8.0) * scale,
+            Vec2::new(bounds.size.x - 16.0 * scale, 8.0 * scale),
+        );
+        let id = draw.id();
+        draw.shape(
+            id,
+            "Sankey weight color scale legend",
+            bounds,
+            "rect",
+            Some(page),
+            border,
+            1.0,
+            false,
+        );
+        let steps = thinoda_core::sankey::WEIGHT_COLOR_SCALE_GRADIENT_STEPS;
+        for index in 0..steps {
+            let rect = Rect::from_min_size(
+                Vec2::new(
+                    bar.min.x + bar.size.x * index as f32 / steps as f32,
+                    bar.min.y,
+                ),
+                Vec2::new(bar.size.x / steps as f32, bar.size.y),
+            );
+            let value =
+                (index as f64 + 0.5) / steps as f64 * thinoda_core::sankey::WEIGHT_COLOR_SCALE_MAX;
+            let id = draw.id();
+            draw.shape(
+                id,
+                "Sankey weight color scale segment",
+                rect,
+                "rect",
+                Some(thinoda_core::sankey::weight_color(value)),
+                Color::TRANSPARENT,
+                0.0,
+                false,
+            );
+        }
+        for (index, mark) in thinoda_core::sankey::WEIGHT_COLOR_SCALE_MARKS
+            .into_iter()
+            .enumerate()
+        {
+            let x = bar.min.x + bar.size.x * index as f32 / 4.0;
+            let label_width = 28.0 * scale;
+            let label_x = match index {
+                0 => x,
+                4 => x - label_width,
+                _ => x - label_width / 2.0,
+            };
+            draw.text(
+                "Sankey weight color scale tick",
+                Rect::from_min_size(
+                    Vec2::new(label_x, bounds.min.y + 27.0 * scale),
+                    Vec2::new(label_width, 13.0 * scale),
+                ),
+                &format!("{mark:.0}%"),
+                10.0 * scale,
+                "Segoe UI",
+                foreground,
+                false,
+                false,
+                false,
+                false,
+                TextAlign::Center,
+            );
+        }
+    }
     if let Some(appendix) = crate::render::equation_appendix(sheet, layout)? {
         let start_y = resolved.frame.max().y - appendix.height;
         draw.text(
@@ -924,6 +1004,54 @@ mod tests {
     use super::*;
     use image::ImageEncoder;
     use thinoda_core::{PresentationSource, resolve_presentation_slide, resources::Resource};
+
+    #[test]
+    fn editable_sankey_slide_includes_scale_legend_when_enabled() {
+        let mut sheet = thinoda_core::templates::instantiate("sankey-budget")
+            .active()
+            .clone();
+        sheet.sankey.as_mut().unwrap().color_scale = false;
+        sheet
+            .add_presentation_slide(
+                "Budget flow",
+                PresentationSource::Viewport,
+                Rect::from_min_size(Vec2::new(-200.0, -150.0), Vec2::new(900.0, 600.0)),
+            )
+            .unwrap();
+        let layout = super::super::presentation_layout(&sheet, false).unwrap();
+        let resolved =
+            resolve_presentation_slide(&sheet, &sheet.presentation.slides[0], &layout).unwrap();
+        let render = |sheet: &Sheet| {
+            editable_slide(
+                sheet,
+                sheet,
+                &resolved,
+                &ExportOptions::default(),
+                1,
+                (9_144_000, 6_858_000),
+                thinoda_core::resources::MAX_WORKBOOK_RESOURCE_BYTES,
+                VisualExportContext::default(),
+            )
+            .unwrap()
+        };
+        assert!(
+            !render(&sheet)
+                .shapes
+                .contains("Sankey weight color scale legend"),
+            "disabled color scale must not add a legend"
+        );
+
+        sheet.sankey.as_mut().unwrap().color_scale = true;
+        let slide = render(&sheet);
+        assert!(
+            slide
+                .shapes
+                .contains("name=\"Sankey weight color scale legend\"")
+        );
+        for mark in thinoda_core::sankey::WEIGHT_COLOR_SCALE_MARKS {
+            assert!(slide.shapes.contains(&format!(">{mark:.0}%</a:t>")));
+        }
+    }
 
     #[test]
     fn editable_slide_bounds_normalized_media_and_deduplicates_shared_photos() {

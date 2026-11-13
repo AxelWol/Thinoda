@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 24;
+pub const NATIVE_FORMAT_VERSION: u64 = 26;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -24,10 +24,15 @@ pub const NATIVE_FORMAT_VERSION: u64 = 24;
 /// 15 diamond connector markers, 16 oval connector markers, 17 half-circle markers,
 /// 18 bar connector markers, 19 adjustable rectangle corners, and
 /// 20 partial rectangle outline sides, 21 double ellipses, 22 fixed connector ports,
-/// 23 standard draw.io rectangle rounding, and 24 final-state shapes.
+/// 23 standard draw.io rectangle rounding, 24 final-state shapes, 25 Sankey flows,
+/// and 26 data-defined stencil shapes.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_final_states() {
+    if book.has_stencils() {
+        26
+    } else if book.has_sankey() {
+        25
+    } else if book.has_final_states() {
         24
     } else if book.has_drawio_rectangle_rounding() {
         23
@@ -183,6 +188,11 @@ fn selected_sheet(book: &Workbook, opts: &ExportOptions) -> Option<usize> {
 /// One itemised loss of an export, for an export preflight.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExportLoss {
+    /// Semantics survive only in Thinoda's versioned draw.io extension.
+    SankeyDrawioExtension(usize),
+    SankeyInspectorLegend(usize),
+    /// Export has no editable flow/probability semantics.
+    SankeySemanticsDropped(usize),
     /// Drawn shapes are not written.
     ShapesDropped(usize),
     /// Ink strokes are not written.
@@ -195,7 +205,10 @@ pub enum ExportLoss {
     /// count is a subset of [`ExportLoss::FloatingTopicsDropped`].
     CardsDropped(usize),
     /// The hidden central topic of sheet `sheet` is replaced by a root named `title`.
-    SynthesizedRoot { sheet: usize, title: String },
+    SynthesizedRoot {
+        sheet: usize,
+        title: String,
+    },
     /// Presentation slides showing a free viewport are not written.
     ViewportSlidesDropped(usize),
     /// Card rotation is not written.
@@ -288,6 +301,19 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
             out.push(loss(count));
         }
     };
+    if format != Format::XMind {
+        push(
+            ExportLoss::SankeyInspectorLegend,
+            sheets
+                .iter()
+                .filter(|(_, s)| s.sankey.as_ref().is_some_and(|s| s.color_scale))
+                .count(),
+        );
+        push(
+            ExportLoss::SankeySemanticsDropped,
+            sheets.iter().filter(|(_, s)| s.has_sankey()).count(),
+        );
+    }
     if matches!(
         format,
         Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
@@ -440,6 +466,7 @@ fn connector_label_compositing_differs(object: &CanvasObject) -> bool {
 /// draw.io writes every sheet as a page. Board content round-trips; the mind-map
 /// structure is drawn but not editable as a map.
 fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportLoss> {
+    let mut sankey = 0;
     let mut flattened = 0;
     let mut details = 0;
     let mut slides = 0;
@@ -457,12 +484,16 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut background_appearance = 0;
     let mut card_appearance = 0;
     for sheet in sheets {
+        sankey += usize::from(sheet.has_sankey());
+        let flow_nodes = thinoda_core::sankey::evaluate(sheet)
+            .unwrap_or_default()
+            .nodes;
         for (id, topic) in &sheet.topics {
             if topic.card.is_none() && !sheet.is_anchor(*id) {
                 flattened += 1;
             }
             details += usize::from(
-                topic.notes.is_some()
+                (topic.notes.is_some() && !flow_nodes.contains(id))
                     || !topic.labels.is_empty()
                     || !topic.markers.is_empty()
                     || topic.todo.is_some(),
@@ -624,6 +655,11 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     }
     let mut out = Vec::new();
     for (loss, count) in [
+        (
+            ExportLoss::SankeyDrawioExtension as fn(usize) -> ExportLoss,
+            sankey,
+        ),
+        (ExportLoss::SankeyInspectorLegend, sankey),
         (
             ExportLoss::MapElementsFlattened as fn(usize) -> ExportLoss,
             flattened,

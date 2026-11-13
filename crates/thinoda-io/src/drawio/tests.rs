@@ -8518,3 +8518,127 @@ fn export_reports_flattened_map_content() {
         "two board connectors and one branch"
     );
 }
+
+#[test]
+fn stencil_objects_round_trip_through_native_drawio_styles() {
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    let mut sheet = Sheet::new("Stencils", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut expected = Vec::new();
+    for (index, definition) in package.definitions.iter().enumerate() {
+        let mut object = thinoda_core::stencil_object::new_object(
+            package,
+            definition,
+            Vec2::new(120.0 + 160.0 * index as f32, 100.0),
+        );
+        object.rotation = 30.0;
+        if let Some((name, parameter)) = definition.parameters.iter().next() {
+            let value = parameter.clamp(parameter.default + 1.0);
+            object
+                .stencil
+                .as_mut()
+                .unwrap()
+                .parameters
+                .insert(name.clone(), value);
+        }
+        expected.push((object.rect, object.stencil.clone().unwrap()));
+        sheet.add_canvas_object(object).unwrap();
+    }
+    let xml = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(
+        xml.contains("shape=cube;"),
+        "draw.io draws the native shape"
+    );
+    assert!(xml.contains("thinodaStencilDefinition=cube;"));
+    let imported = clean(&xml);
+    let actual: Vec<_> = shapes(&imported)
+        .into_iter()
+        .map(|object| {
+            assert_eq!(object.rotation, 30.0);
+            assert!(object.rounding.is_none());
+            (object.rect, object.stencil.clone().unwrap())
+        })
+        .collect();
+    assert_eq!(actual, expected);
+
+    // A parameter edited in draw.io wins over the stored Thinoda override.
+    let edited = xml.replacen(
+        "shape=cube;whiteSpace=wrap;html=1;size=21;",
+        "shape=cube;whiteSpace=wrap;html=1;size=35;",
+        1,
+    );
+    assert_ne!(edited, xml);
+    let cube = clean(&edited)
+        .canvas
+        .objects
+        .iter()
+        .find_map(|object| object.stencil.clone().filter(|s| s.definition == "cube"))
+        .unwrap();
+    assert_eq!(cube.parameters.get("size"), Some(&35.0));
+
+    // Unknown packages keep the reference and fall back to the legacy shape.
+    let report = load(&page(
+        r#"<mxCell id="2" value="x" style="shape=cube;thinodaStencilPackage=vendor.pkg;thinodaStencilDefinition=gear;thinodaStencilParam.teeth=12;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="60" as="geometry"/></mxCell>"#,
+    ));
+    let unknown = report.workbook.sheets.into_iter().next().unwrap();
+    let object = shapes(&unknown)[0];
+    let stencil = object.stencil.as_ref().unwrap();
+    assert_eq!(
+        (stencil.package.as_str(), stencil.definition.as_str()),
+        ("vendor.pkg", "gear")
+    );
+    assert_eq!(stencil.parameters.get("teeth"), Some(&12.0));
+    assert!(thinoda_core::stencil_object::render(object).is_none());
+}
+
+#[test]
+fn stencil_import_keeps_orientation_and_unknown_fallback_shapes() {
+    let cell = |style: &str| {
+        format!(
+            r#"<mxCell id="2" value="x" style="{style}" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="60" as="geometry"/></mxCell>"#
+        )
+    };
+    // draw.io turns `direction=south` frames by a quarter turn with swapped sides.
+    let folder = clean(&page(&cell(
+        "shape=folder;direction=south;thinodaStencilPackage=thinoda.general;thinodaStencilDefinition=folder;",
+    )));
+    let object = shapes(&folder)[0];
+    assert_eq!(object.rotation, 90.0);
+    assert_eq!(
+        object.rect,
+        Rect::from_center_size(Vec2::new(50.0, 40.0), Vec2::new(60.0, 80.0))
+    );
+    assert!(thinoda_core::stencil_object::render(object).is_some());
+
+    // A note-styled unknown stencil stays a shape so its reference survives.
+    let note = load(&page(&cell(
+        "shape=note;thinodaStencilPackage=vendor.pkg;thinodaStencilDefinition=memo;",
+    )));
+    let sheet = note.workbook.sheets.into_iter().next().unwrap();
+    assert_eq!(
+        shapes(&sheet)[0].stencil.as_ref().unwrap().definition,
+        "memo"
+    );
+
+    // An unknown stencil keeps its classified fallback through a round trip.
+    let triangle = load(&page(&cell(
+        "triangle;direction=north;thinodaStencilPackage=vendor.pkg;thinodaStencilDefinition=arrowhead;",
+    )));
+    let sheet = triangle.workbook.sheets.into_iter().next().unwrap();
+    let before = shapes(&sheet)[0].clone();
+    assert!(matches!(
+        before.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Triangle,
+            ..
+        }
+    ));
+    let xml = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    let again = load(&xml).workbook.sheets.into_iter().next().unwrap();
+    let after = shapes(&again)[0];
+    assert_eq!(
+        (&after.kind, after.rect, after.rotation),
+        (&before.kind, before.rect, before.rotation)
+    );
+    assert_eq!(after.stencil, before.stencil);
+}

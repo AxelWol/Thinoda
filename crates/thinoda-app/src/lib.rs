@@ -44,6 +44,7 @@ mod printing;
 mod quick_styles;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 mod ribbon;
+mod sankey_ui;
 mod save_all;
 mod sheet_clipboard;
 mod shortcut_browser;

@@ -179,6 +179,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
             "Unsupported shapes or styles in the draw.io source may appear as rectangles"
         }
         ImportWarning::DrawioGridAdjusted => "draw.io grid settings were adjusted",
+        ImportWarning::DrawioSankeyStale => {
+            "draw.io Sankey metadata was stale or edited; imported ordinary editable cells without weights. Widths remain visual approximations."
+        }
         ImportWarning::DrawioBackgroundAdjusted => {
             "draw.io page background was approximated or omitted"
         }
@@ -198,6 +201,12 @@ pub(crate) fn localize_model_error(error: &str) -> &str {
 
 fn localize_model_error_in(language: Lang, error: &str) -> &str {
     match error {
+        _ if error.ends_with(thinoda_core::sankey::ROTATED_ENDPOINT_ERROR) => {
+            t_in(language, thinoda_core::sankey::ROTATED_ENDPOINT_ERROR)
+        }
+        _ if error.ends_with(thinoda_core::sankey::HIDDEN_ENDPOINT_ERROR) => {
+            t_in(language, thinoda_core::sankey::HIDDEN_ENDPOINT_ERROR)
+        }
         thinoda_core::rich_text::FORMATTED_CARD_REQUIRED => t_in(
             language,
             "Formatted card text must remain on a floating sticky note or text card.",
@@ -376,13 +385,46 @@ fn additional() -> &'static HashMap<&'static str, [&'static str; 7]> {
                 fields[0]
             );
         }
+        for row in sankey_rows() {
+            assert!(
+                map.insert(row[0], std::array::from_fn(|i| row[i + 2]))
+                    .is_none(),
+                "Duplicate Sankey translation: {}",
+                row[0]
+            );
+        }
         map
     })
 }
 
+fn sankey_rows() -> impl Iterator<Item = [&'static str; 9]> {
+    include_str!("sankey-locales.txt")
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let fields: Vec<_> = line.split('|').collect();
+            assert_eq!(fields.len(), 9, "Invalid Sankey translation row");
+            assert!(
+                fields.iter().all(|v| !v.trim().is_empty()),
+                "Empty Sankey translation"
+            );
+            std::array::from_fn(|i| fields[i])
+        })
+}
+
 fn german() -> &'static HashMap<&'static str, &'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    MAP.get_or_init(|| DE.iter().copied().collect())
+    MAP.get_or_init(|| {
+        let mut map: HashMap<_, _> = DE.iter().copied().collect();
+        for row in sankey_rows() {
+            assert!(
+                map.insert(row[0], row[1]).is_none(),
+                "Duplicate German Sankey key: {}",
+                row[0]
+            );
+        }
+        map
+    })
 }
 
 /// English → German.
@@ -4312,6 +4354,9 @@ const DE: &[(&str, &str)] = &[
     ("On-page reference", "Seitenverweis"),
     ("Extract", "Extrahieren"),
     ("Merge", "Zusammenführen"),
+    ("Parametric shapes", "Parametrische Formen"),
+    ("Message", "Nachricht"),
+    ("Cube", "Würfel"),
 ];
 
 #[cfg(test)]
@@ -4329,6 +4374,23 @@ mod tests {
         Lang::Pl,
         Lang::PtBr,
     ];
+
+    #[test]
+    fn sankey_endpoint_load_errors_are_localized_in_every_language() {
+        for language in Lang::ALL {
+            for message in [
+                thinoda_core::sankey::ROTATED_ENDPOINT_ERROR,
+                thinoda_core::sankey::HIDDEN_ENDPOINT_ERROR,
+            ] {
+                let error = format!("Example node: {message}");
+                let localized = localize_model_error_in(language, &error);
+                assert_eq!(localized, t_in(language, message));
+                if language != Lang::En {
+                    assert_ne!(localized, message, "{language:?}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn formatted_card_errors_are_localized_without_changing_other_errors() {
@@ -5443,6 +5505,7 @@ mod tests {
             include_str!("ui.rs"),
             include_str!("app.rs"),
             include_str!("board_ui.rs"),
+            include_str!("sankey_ui.rs"),
             include_str!("ai.rs"),
             include_str!("ai/review.rs"),
             include_str!("ai/chat.rs"),

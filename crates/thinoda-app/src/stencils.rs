@@ -601,6 +601,12 @@ pub(crate) const BUILTIN_TITLES: &[&str] = &[
     "Line",
     "Arrow",
     "Bidirectional arrow",
+    "Parametric shapes",
+    "Message",
+    "Folder",
+    "Note",
+    "Card",
+    "Cube",
     "Star",
     "Pentagon",
     "Octagon",
@@ -626,7 +632,7 @@ fn builtin_key(title: &str) -> Option<&'static str> {
     BUILTIN_TITLES.iter().copied().find(|key| *key == title)
 }
 
-fn builtin_title(title: &str) -> String {
+pub(crate) fn builtin_title(title: &str) -> String {
     builtin_key(title).map_or_else(|| title.to_owned(), |key| t(key).to_owned())
 }
 

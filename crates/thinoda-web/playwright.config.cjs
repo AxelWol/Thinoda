@@ -23,6 +23,7 @@ module.exports = defineConfig({
         "language.browser.spec.ts",
         "partial-rectangle.browser.spec.ts",
         "recovery-legacy-lock.browser.spec.ts",
+        "sankey.browser.spec.ts",
         "startup.browser.spec.ts",
         "startup-service-worker.browser.spec.ts",
     ],

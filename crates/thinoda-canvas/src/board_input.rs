@@ -740,7 +740,7 @@ fn connection_points_for_item(
                 | ShapeKind::DoubleEllipse
                 | ShapeKind::FinalState
                 | ShapeKind::Diamond => &PERIMETER_CONNECTION_POINTS[..],
-                _ => return None,
+                _ => &RECTANGLE_CONNECTION_POINTS[..],
             };
             (
                 Endpoint::Object(id),
@@ -948,6 +948,24 @@ mod connection_point_tests {
     use super::*;
     use thinoda_core::{ApproxMeasure, layout_sheet, scene::build_scene};
 
+    fn on_shape_outline(kind: ShapeKind, rect: thinoda_core::Rect, point: Vec2) -> bool {
+        let outline = kind.unit_outline();
+        outline.iter().enumerate().any(|(index, start)| {
+            let end = outline[(index + 1) % outline.len()];
+            let start = rect.min + Vec2::new(start.x * rect.size.x, start.y * rect.size.y);
+            let end = rect.min + Vec2::new(end.x * rect.size.x, end.y * rect.size.y);
+            let edge = end - start;
+            let length_squared = edge.x * edge.x + edge.y * edge.y;
+            if length_squared <= f32::EPSILON {
+                return false;
+            }
+            let offset = point - start;
+            let projection =
+                ((offset.x * edge.x + offset.y * edge.y) / length_squared).clamp(0.0, 1.0);
+            (point - (start + edge * projection)).length() < 0.01
+        })
+    }
+
     fn setup(kind: ShapeKind, rect: thinoda_core::Rect, rotation: f32) -> (Sheet, CanvasObjectId) {
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = SheetRootMode::Hidden;
@@ -960,14 +978,14 @@ mod connection_point_tests {
     #[test]
     fn verified_connection_points_share_routing_geometry_at_any_rotation() {
         let rect = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(200.0, 100.0));
-        for (kind, count) in [
-            (ShapeKind::Rectangle, 16),
-            (ShapeKind::RoundedRectangle, 16),
-            (ShapeKind::Ellipse, 8),
-            (ShapeKind::DoubleEllipse, 8),
-            (ShapeKind::FinalState, 8),
-            (ShapeKind::Diamond, 8),
-        ] {
+        for kind in ShapeKind::ALL {
+            let count = match kind {
+                ShapeKind::Ellipse
+                | ShapeKind::DoubleEllipse
+                | ShapeKind::FinalState
+                | ShapeKind::Diamond => 8,
+                _ => 16,
+            };
             for rotation in [0.0, 37.0, 90.0] {
                 let (sheet, id) = setup(kind, rect, rotation);
                 let layout = layout_sheet(&sheet, &ApproxMeasure, false);
@@ -976,6 +994,23 @@ mod connection_point_tests {
                     connection_points_at(&sheet, &layout, &scene, Vec2::ZERO, 1.0, None).unwrap();
                 assert_eq!(points.item, SceneId::Object(id));
                 assert_eq!(points.points.len(), count, "{kind:?}, {rotation}");
+                if !matches!(
+                    kind,
+                    ShapeKind::Rectangle
+                        | ShapeKind::RoundedRectangle
+                        | ShapeKind::Ellipse
+                        | ShapeKind::DoubleEllipse
+                        | ShapeKind::FinalState
+                        | ShapeKind::Diamond
+                ) {
+                    for point in &points.points {
+                        let point = rotate_around(point.position, rect.center(), -rotation);
+                        assert!(
+                            on_shape_outline(kind, rect, point),
+                            "{kind:?}, {rotation}: {point:?} is not on its outline"
+                        );
+                    }
+                }
                 for point in points.points {
                     let port = point.attachment.port.unwrap();
                     assert!(port.perimeter);
@@ -1140,13 +1175,6 @@ mod connection_point_tests {
         assert!(
             connection_point_at(&clipped, &layout, &scene, Vec2::new(160.0, 0.0), 1.0, None)
                 .is_none()
-        );
-
-        let (unsupported, _) = setup(ShapeKind::Triangle, rect, 0.0);
-        let layout = layout_sheet(&unsupported, &ApproxMeasure, false);
-        let scene = build_scene(&unsupported, &layout);
-        assert!(
-            connection_points_at(&unsupported, &layout, &scene, Vec2::ZERO, 1.0, None).is_none()
         );
     }
 }
@@ -5444,13 +5472,8 @@ fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
 
 fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
     let rect = match &object.kind {
-        CanvasObjectKind::Shape { shape, .. } => {
-            let label_rect = thinoda_core::board::shape_label_rect_with_style(
-                *shape,
-                object.rect,
-                object.style.effective_shape_stroke_width(),
-                object.double_ellipse_margin,
-            );
+        CanvasObjectKind::Shape { .. } => {
+            let label_rect = thinoda_core::board::object_label_rect(object)?;
             thinoda_core::Rect::from_center_size(
                 rotate_around(label_rect.center(), object.rect.center(), object.rotation),
                 label_rect.size,

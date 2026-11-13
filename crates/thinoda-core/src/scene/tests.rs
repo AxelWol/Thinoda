@@ -297,6 +297,7 @@ fn connector_marker_geometry_and_hit_testing_follow_both_ends() {
         points,
         width,
         markers,
+        ..
     } = &item.geometry
     else {
         panic!("expected connector");
@@ -2249,6 +2250,8 @@ fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
             points: path,
             width: connector.width,
             markers: [None, None],
+            label_bounds: None,
+            color: None,
         }
     );
 

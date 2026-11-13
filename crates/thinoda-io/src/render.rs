@@ -496,11 +496,20 @@ fn svg_layout_with_fonts(
             .flatten()
     };
     // Canvas objects and rotated cards extend the export; the grid never does.
-    let content = match board::extra_bounds(s, &scene) {
+    let mut content = match board::extra_bounds(s, &scene) {
         Some(extra) if layout.order.is_empty() && !has_clipped_frames => extra,
         Some(extra) => layout.bounds.union(&extra),
         None => layout.bounds,
     };
+    let external_scale_legend = (frame.is_none()
+        && !has_clipped_frames
+        && s.sankey
+            .as_ref()
+            .is_some_and(|settings| settings.color_scale))
+    .then(|| sankey_scale_legend_external(content));
+    if let Some(legend) = external_scale_legend {
+        content = content.union(&legend);
+    }
     let base_frame = frame.unwrap_or_else(|| content.expand(pad));
     let appendix = equation_appendix(s, layout)?;
     let mut b = if frame.is_none() {
@@ -989,6 +998,16 @@ fn svg_layout_with_fonts(
             b = corrected;
         }
     }
+    let scale_legend = external_scale_legend.or_else(|| {
+        s.sankey
+            .as_ref()
+            .is_some_and(|settings| settings.color_scale)
+            .then(|| sankey_scale_legend_in_frame(b))
+            .flatten()
+    });
+    if let Some(bounds) = scale_legend {
+        out.push_str(&sankey_scale_legend_svg(bounds, bg, o.dark));
+    }
     if let Some(appendix) = &appendix {
         let start_y = b.max().y - appendix.height;
         out.push_str("<g class=\"notes-equations\">");
@@ -1050,6 +1069,85 @@ fn svg_layout_with_fonts(
     }
     out.push_str("</svg>");
     Ok(out)
+}
+
+const SANKEY_SCALE_LEGEND_SIZE: Vec2 = Vec2::new(180.0, 48.0);
+
+fn sankey_scale_legend_external(content: Rect) -> Rect {
+    Rect::from_min_size(
+        Vec2::new(content.max().x + 16.0, content.min.y),
+        SANKEY_SCALE_LEGEND_SIZE,
+    )
+}
+
+pub(crate) fn sankey_scale_legend_in_frame(frame: Rect) -> Option<Rect> {
+    let size = SANKEY_SCALE_LEGEND_SIZE;
+    let scale = ((frame.size.x - 16.0) / size.x)
+        .min((frame.size.y - 16.0) / size.y)
+        .min(1.0);
+    if scale < 0.55 {
+        return None;
+    }
+    let size = size * scale;
+    Some(Rect::from_min_size(
+        Vec2::new(frame.max().x - size.x - 8.0, frame.min.y + 8.0),
+        size,
+    ))
+}
+
+fn sankey_scale_legend_svg(bounds: Rect, background: Color, dark: bool) -> String {
+    let scale = bounds.size.x / SANKEY_SCALE_LEGEND_SIZE.x;
+    let bar = Rect::from_min_size(
+        bounds.min + Vec2::new(8.0, 8.0) * scale,
+        Vec2::new(bounds.size.x - 16.0 * scale, 8.0 * scale),
+    );
+    let foreground = Color::highest_contrast_on(background);
+    let border = if dark {
+        Color::rgb(0x75, 0x7B, 0x86)
+    } else {
+        Color::rgb(0xB0, 0xB7, 0xC2)
+    };
+    let mut out = format!(
+        "<g id=\"sankey-weight-scale-legend\"><rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"4\" fill=\"{}\" stroke=\"{}\"/>",
+        bounds.min.x,
+        bounds.min.y,
+        bounds.size.x,
+        bounds.size.y,
+        col(background),
+        col(border)
+    );
+    let steps = thinoda_core::sankey::WEIGHT_COLOR_SCALE_GRADIENT_STEPS;
+    for index in 0..steps {
+        let x = bar.min.x + bar.size.x * index as f32 / steps as f32;
+        let value =
+            (index as f64 + 0.5) / steps as f64 * thinoda_core::sankey::WEIGHT_COLOR_SCALE_MAX;
+        out.push_str(&format!(
+            "<rect x=\"{x:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\"/>",
+            bar.min.y,
+            bar.size.x / steps as f32 + 0.1,
+            bar.size.y,
+            col(thinoda_core::sankey::weight_color(value))
+        ));
+    }
+    for (index, mark) in thinoda_core::sankey::WEIGHT_COLOR_SCALE_MARKS
+        .into_iter()
+        .enumerate()
+    {
+        let x = bar.min.x + bar.size.x * index as f32 / 4.0;
+        let (anchor, x) = match index {
+            0 => ("start", x),
+            4 => ("end", x),
+            _ => ("middle", x),
+        };
+        out.push_str(&format!(
+            "<text x=\"{x:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" font-family=\"sans-serif\" font-size=\"{:.2}\" fill=\"{}\">{mark:.0}%</text>",
+            bounds.min.y + 36.0 * scale,
+            10.0 * scale,
+            col(foreground)
+        ));
+    }
+    out.push_str("</g>");
+    out
 }
 
 /// Bounds actual SVG paint not already constrained by a frame. The root SVG uses

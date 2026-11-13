@@ -552,6 +552,53 @@ fn shape_rounding_requires_v19_and_aware_xmind_snapshots() {
 }
 
 #[test]
+fn stencils_require_v26_and_aware_xmind_snapshots() {
+    let (mut book, _) = half_circle_marker_book();
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    book.active_mut()
+        .add_canvas_object(thinoda_core::stencil_object::new_object(
+            package,
+            package.definition("cube").unwrap(),
+            Vec2::new(300.0, 200.0),
+        ))
+        .unwrap();
+    assert_eq!(required_native_version(&book), 26);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 26);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let manifest = r#"{"format":"thinoda","version":25,"resources":[]}"#;
+    let forged = zip_with(&[
+        ("manifest.json", manifest.as_bytes()),
+        ("content.json", &content),
+    ]);
+    assert!(
+        import_bytes(Format::Thinoda, &forged)
+            .unwrap_err()
+            .to_string()
+            .contains("stencil shapes require native format version 26")
+    );
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-STENCIL-1")
+    );
+    let mut fallback = book.clone();
+    for object in &mut fallback.active_mut().canvas.objects {
+        object.stencil = None;
+    }
+    let stencil_svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    let fallback_svg = String::from_utf8(export(&fallback, Format::Svg)).unwrap();
+    assert!(
+        stencil_svg.matches("<path").count() > fallback_svg.matches("<path").count(),
+        "a cube stencil paints its face edges as extra paths"
+    );
+}
+
+#[test]
 fn final_states_require_v24_and_aware_xmind_snapshots() {
     let (mut book, _) = half_circle_marker_book();
     let mut rounded = CanvasObject::shape(

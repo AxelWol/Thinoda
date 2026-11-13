@@ -34,6 +34,8 @@ const DOUBLE_ELLIPSE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-14\n";
 const FIXED_PORT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-15\n";
 const DRAWIO_ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-16\n";
 const FINAL_STATE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-17\n";
+const SANKEY_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-18\n";
+const STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-19\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -52,7 +54,11 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_final_states() {
+        if self.fragment.has_stencils() {
+            STENCIL_BOARD_PREFIX
+        } else if self.fragment.has_sankey() {
+            SANKEY_BOARD_PREFIX
+        } else if self.fragment.has_final_states() {
             FINAL_STATE_BOARD_PREFIX
         } else if self.fragment.has_drawio_rectangle_rounding() {
             DRAWIO_ROUNDING_BOARD_PREFIX
@@ -283,9 +289,19 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(FINAL_STATE_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-17\r\n"))
-        .map(|json| (17, json))
+        .strip_prefix(STENCIL_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-19\r\n"))
+        .map(|json| (19, json))
+        .or_else(|| {
+            text.strip_prefix(SANKEY_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-18\r\n"))
+                .map(|json| (18, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(FINAL_STATE_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-17\r\n"))
+                .map(|json| (17, json))
+        })
         .or_else(|| {
             text.strip_prefix(DRAWIO_ROUNDING_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-16\r\n"))
@@ -409,6 +425,12 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err(
             "standard draw.io rectangle rounding requires board clipboard version 16".into(),
         );
+    }
+    if version < 19 && payload.fragment.has_stencils() {
+        return Err("stencil shapes require board clipboard version 19".into());
+    }
+    if version < 18 && payload.fragment.has_sankey() {
+        return Err("Sankey flows require a Sankey-aware board clipboard".into());
     }
     if version < 17 && payload.fragment.has_final_states() {
         return Err("final states require board clipboard version 17".into());
@@ -610,6 +632,19 @@ pub fn prepare_board_selection<'a>(
         }
     }
 
+    // Flow links travel with their endpoints, independent of tree ownership.
+    for object in &sheet.canvas.objects {
+        if let CanvasObjectKind::Connector(c) = &object.kind
+            && c.sankey.is_some()
+            && let Ok((from, to)) = crate::sankey::endpoints(c)
+        {
+            if owned.contains(&from) && owned.contains(&to) {
+                objects.insert(object.id);
+            } else if objects.contains(&object.id) {
+                return Err("Select both endpoint topics when copying a Sankey link.".into());
+            }
+        }
+    }
     Ok(Some(PreparedBoardSelection {
         sheet,
         roots,
@@ -651,6 +686,38 @@ fn copy_prepared_board_selection(
         .topics
         .insert(fragment.root, Topic::new(fragment.root, ""));
     fragment.root_mode = SheetRootMode::Hidden;
+    fragment.sankey = sheet.sankey.clone();
+    if let Some(settings) = &mut fragment.sankey {
+        settings.sources.retain(|id, _| owned.contains(id));
+        settings.stages.retain(|id, _| owned.contains(id));
+        if settings.mode == crate::sankey::SankeyMode::Probability {
+            let values = crate::sankey::evaluate(sheet)?;
+            let mut incoming = HashSet::new();
+            let mut outgoing = HashSet::new();
+            for o in sheet
+                .canvas
+                .objects
+                .iter()
+                .filter(|o| objects.contains(&o.id))
+            {
+                if let CanvasObjectKind::Connector(c) = &o.kind
+                    && c.sankey.is_some()
+                    && let Ok((a, b)) = crate::sankey::endpoints(c)
+                {
+                    incoming.insert(b);
+                    outgoing.insert(a);
+                }
+            }
+            for id in outgoing.difference(&incoming) {
+                if !settings.sources.contains_key(id) {
+                    let mass = values.incoming.get(id).copied().unwrap_or(0.0);
+                    settings
+                        .sources
+                        .insert(*id, crate::sankey::from_percent(mass)?);
+                }
+            }
+        }
+    }
     for &id in &owned {
         fragment
             .topics
@@ -1144,6 +1211,31 @@ pub fn paste_board_selection(
             .copied()
             .ok_or_else(|| format!("board clipboard topic {id} is not included"))
     };
+    if let Some(source_settings) = &source.sankey {
+        let mut settings = source_settings.clone();
+        settings.sources = settings
+            .sources
+            .into_iter()
+            .map(|(id, value)| map_topic(id).map(|id| (id, value)))
+            .collect::<Result<_, _>>()?;
+        settings.stages = settings
+            .stages
+            .into_iter()
+            .map(|(id, value)| map_topic(id).map(|id| (id, value)))
+            .collect::<Result<_, _>>()?;
+        if let Some(target) = &mut candidate.sankey {
+            if target.mode != settings.mode {
+                return Err(
+                    "Cannot paste flows into a different Sankey mode; convert explicitly first."
+                        .into(),
+                );
+            }
+            target.sources.extend(settings.sources);
+            target.stages.extend(settings.stages);
+        } else {
+            candidate.sankey = Some(settings);
+        }
+    }
     let map_object = |id: CanvasObjectId| {
         object_map
             .get(&id)

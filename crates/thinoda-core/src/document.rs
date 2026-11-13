@@ -453,6 +453,12 @@ impl Document {
         let before = self.workbook.sheets[index].clone();
         match f(&mut self.workbook.sheets[index]) {
             Ok(v) => {
+                if let Err(error) =
+                    crate::sankey::reconcile(&before, &mut self.workbook.sheets[index])
+                {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
                 if let Err(error) = crate::fim::reconcile(&before, &mut self.workbook.sheets[index])
                 {
                     self.workbook.sheets[index] = before;
@@ -552,6 +558,27 @@ impl Document {
                     return Err(EditError::Invalid(error));
                 }
                 for (index, sheet) in self.workbook.sheets.iter_mut().enumerate() {
+                    // IDs are sheet-scoped: moving, copying or deleting a
+                    // complete sheet must not compare its graph with whatever
+                    // unrelated sheet previously occupied this array index.
+                    let flow_edit =
+                        sheet.has_sankey() || sheets.get(index).is_some_and(Sheet::has_sankey);
+                    let unchanged_graph = flow_edit
+                        && sheets.iter().any(|old| {
+                            old.root == sheet.root
+                                && old.sankey == sheet.sankey
+                                && old.canvas == sheet.canvas
+                                && old.topics == sheet.topics
+                        });
+                    if flow_edit
+                        && !unchanged_graph
+                        && let Some(old) = sheets.get(index)
+                        && let Err(error) = crate::sankey::reconcile(old, sheet)
+                    {
+                        self.workbook.sheets = sheets;
+                        self.workbook.active_sheet = active;
+                        return Err(EditError::Invalid(error));
+                    }
                     if let Some(old) = sheets.get(index)
                         && let Err(error) = sheet.fix_dangling_endpoints(old)
                     {

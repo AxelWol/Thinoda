@@ -334,6 +334,10 @@ impl CanvasLayer {
             )
         })
     }
+
+    pub fn has_stencils(&self) -> bool {
+        self.objects.iter().any(|object| object.stencil.is_some())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -558,6 +562,9 @@ pub struct CanvasObject {
     /// Explicit inset of a double ellipse's inner outline; `None` uses the automatic inset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_ellipse_margin: Option<f32>,
+    /// Data-defined drawing of a shape; `kind`'s shape is the legacy fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stencil: Option<crate::stencil_object::StencilRef>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -580,6 +587,7 @@ impl CanvasObject {
             rounding: None,
             rectangle_sides: None,
             double_ellipse_margin: None,
+            stencil: None,
         }
     }
 
@@ -1117,6 +1125,40 @@ pub fn shape_label_rect(kind: ShapeKind, rect: Rect) -> Rect {
     shape_label_rect_with_style(kind, rect, 2.0, None)
 }
 
+/// Geometry of a shape object, drawn by its stencil when that resolves.
+pub fn object_shape_geometry(object: &CanvasObject) -> Option<ShapeGeometry> {
+    let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
+        return None;
+    };
+    if let Some(render) = crate::stencil_object::render(object) {
+        return Some(crate::stencil_object::geometry(object, &render));
+    }
+    Some(shape_geometry_with_style(
+        *shape,
+        object.rect,
+        object.rotation,
+        object.rounding,
+        object.style.effective_shape_stroke_width(),
+        object.double_ellipse_margin,
+    ))
+}
+
+/// Unrotated label area of a shape object, from its stencil when that resolves.
+pub fn object_label_rect(object: &CanvasObject) -> Option<Rect> {
+    let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
+        return None;
+    };
+    if let Some(render) = crate::stencil_object::render(object) {
+        return Some(crate::stencil_object::label_rect(object, &render));
+    }
+    Some(shape_label_rect_with_style(
+        *shape,
+        object.rect,
+        object.style.effective_shape_stroke_width(),
+        object.double_ellipse_margin,
+    ))
+}
+
 /// Unrotated text area with the current double-ellipse inset.
 pub fn shape_label_rect_with_style(
     kind: ShapeKind,
@@ -1255,6 +1297,9 @@ pub struct ConnectorMarker {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanvasConnector {
+    /// Explicit semantic flow; ordinary stroke widths never imply a weight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sankey: Option<crate::sankey::Flow>,
     pub from: Endpoint,
     pub to: Endpoint,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1294,6 +1339,8 @@ pub struct CanvasConnector {
 
 #[derive(Deserialize)]
 struct StoredCanvasConnector {
+    #[serde(default)]
+    sankey: Option<crate::sankey::Flow>,
     from: Endpoint,
     to: Endpoint,
     #[serde(default)]
@@ -1357,6 +1404,7 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             return Err(serde::de::Error::custom("invalid fixed connector port"));
         }
         Ok(Self {
+            sankey: stored.sankey,
             from: stored.from,
             to: stored.to,
             from_port: stored.from_port,
@@ -1393,6 +1441,7 @@ fn waypoints_are_empty(waypoints: &Arc<[Vec2]>) -> bool {
 impl CanvasConnector {
     pub fn new(from: Endpoint, to: Endpoint) -> Self {
         Self {
+            sankey: None,
             from,
             to,
             from_port: None,
@@ -1720,6 +1769,18 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             "canvas object {id} has invalid double-ellipse inset"
         ));
     }
+    if let Some(stencil) = &object.stencil {
+        if !matches!(object.kind, CanvasObjectKind::Shape { .. })
+            || object.rounding.is_some()
+            || object.rectangle_sides.is_some()
+            || object.double_ellipse_margin.is_some()
+        {
+            return Err(format!("canvas object {id} has an invalid stencil"));
+        }
+        stencil
+            .validate()
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+    }
     match &object.kind {
         CanvasObjectKind::Shape { label, .. } => valid_text(label, "shape label")?,
         CanvasObjectKind::Ink(ink) => {
@@ -1815,6 +1876,7 @@ pub fn validate_card(card: &Card) -> Result<(), String> {
 /// the canvas layer. Called by [`Sheet::validate`] (import, paste) and by every
 /// [`crate::Document`] edit.
 pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
+    crate::sankey::evaluate(sheet)?;
     let board = &sheet.board;
     if !board.grid_size.is_finite() || !(MIN_GRID_SIZE..=MAX_GRID_SIZE).contains(&board.grid_size) {
         return Err("board grid size is out of range".into());
@@ -3428,6 +3490,9 @@ impl Sheet {
     /// Returns the number of converted ends. No ends are changed if a fixed
     /// attachment cannot be represented as a valid free point.
     pub fn fix_dangling_endpoints(&mut self, before: &Sheet) -> Result<usize, String> {
+        if self.has_sankey() && self.has_dangling_endpoints() {
+            crate::sankey::reconcile(before, self)?;
+        }
         if !self.has_dangling_endpoints() {
             return Ok(0);
         }

@@ -2013,3 +2013,6 @@ Database|Base de datos|Base de données|Database|Database|Banco de dados|Databas
 On-page reference|Referencia en página|Renvoi dans la page|Henvisning på siden|Verwijzing op pagina|Referência na página|Riferimento nella pagina|Odnośnik na stronie
 Extract|Extraer|Extraction|Udtræk|Extraheren|Extrair|Estrai|Wyodrębnij
 Merge|Combinar|Fusion|Flet|Samenvoegen|Mesclar|Unisci|Scal
+Parametric shapes|Formas paramétricas|Formes paramétriques|Parametriske figurer|Parametrische vormen|Formas paramétricas|Forme parametriche|Kształty parametryczne
+Message|Mensaje|Message|Besked|Bericht|Mensagem|Messaggio|Wiadomość
+Cube|Cubo|Cube|Terning|Kubus|Cubo|Cubo|Sześcian

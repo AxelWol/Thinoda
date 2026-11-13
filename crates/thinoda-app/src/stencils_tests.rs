@@ -100,6 +100,7 @@ fn the_scratchpad_comes_first_followed_by_built_in_sections_and_imports() {
             "basic",
             "flowchart",
             "arrows",
+            "thinoda.general",
             "lib-1"
         ]
     );
@@ -802,7 +803,11 @@ fn the_stencils_tab_inserts_a_search_result_as_one_undoable_edit() {
     assert!(h.query_by_label("Process").is_none());
     let before = object_count(h.state());
 
-    h.get_by_role_and_label(Role::Button, "Cylinder").click();
+    // Like draw.io, a title may appear in several sections; General comes first.
+    h.get_all_by_role_and_label(Role::Button, "Cylinder")
+        .next()
+        .unwrap()
+        .click();
     h.run_steps(4);
     let app = h.state();
     assert_eq!(object_count(app), before + 1);
@@ -879,4 +884,28 @@ fn adding_without_a_selection_warns_and_keeps_the_scratchpad_empty() {
     app.doc_mut().unwrap().view.board_selection.clear();
     assert!(!app.add_selection_to_scratchpad());
     assert_eq!(app.stencils.scratchpad_len(), 0);
+}
+
+#[test]
+fn parametric_shape_entries_insert_as_rendered_stencil_objects() {
+    let library = drawio_library::builtin_libraries()
+        .iter()
+        .find(|library| library.id == "thinoda.general")
+        .expect("data-defined package section");
+    assert_eq!(
+        library.entries.len(),
+        thinoda_core::stencil::builtin_packages()[0]
+            .definitions
+            .len()
+    );
+    for entry in &library.entries {
+        let prepared = prepare(entry, false, true).unwrap();
+        assert!(!prepared.simplified, "{}", entry.title);
+        let [object] = prepared.sheet.canvas.objects.as_slice() else {
+            panic!("{}: one object expected", entry.title);
+        };
+        let stencil = object.stencil.as_ref().expect("stencil reference");
+        assert_eq!(stencil.package, "thinoda.general");
+        assert!(thinoda_core::stencil_object::render(object).is_some());
+    }
 }

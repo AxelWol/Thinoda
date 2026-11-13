@@ -667,6 +667,8 @@ impl Subtree {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sheet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sankey: Option<crate::sankey::SankeySettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fim: Option<crate::fim::FimDocument>,
     pub title: String,
     pub root: TopicId,
@@ -711,12 +713,17 @@ pub struct Sheet {
 }
 
 impl Sheet {
+    pub fn has_sankey(&self) -> bool {
+        crate::sankey::has_sankey(self)
+    }
+
     /// Creates a sheet containing only a central topic.
     pub fn new(title: impl Into<String>, root_title: impl Into<String>) -> Self {
         let root = TopicId(1);
         let mut topics = BTreeMap::new();
         topics.insert(root, Topic::new(root, root_title));
         Self {
+            sankey: None,
             fim: None,
             title: title.into(),
             root,
@@ -818,6 +825,10 @@ impl Sheet {
     /// Whether the sheet needs final-state-aware persistence.
     pub fn has_final_states(&self) -> bool {
         self.canvas.has_final_states()
+    }
+
+    pub fn has_stencils(&self) -> bool {
+        self.canvas.has_stencils()
     }
 
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
@@ -2369,9 +2380,18 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_double_ellipses)
     }
 
+    /// Whether any sheet needs Sankey-aware persistence.
+    pub fn has_sankey(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_sankey)
+    }
+
     /// Whether any sheet needs final-state-aware persistence.
     pub fn has_final_states(&self) -> bool {
         self.sheets.iter().any(Sheet::has_final_states)
+    }
+
+    pub fn has_stencils(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_stencils)
     }
 
     pub fn active(&self) -> &Sheet {
