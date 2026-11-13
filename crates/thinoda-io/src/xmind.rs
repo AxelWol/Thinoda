@@ -32,6 +32,8 @@ const DRAWIO_ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-ROUNDING-1"
 const FINAL_STATE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FINAL-STATE-1";
 const SANKEY_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SANKEY-1";
 const STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-1";
+const PINNED_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-2";
+const CLOSED_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-3";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -721,7 +723,17 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_stencils() {
+    if book.has_stencil_definition_closures() {
+        Ok(serde_json::to_string(&(
+            CLOSED_STENCIL_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_stencil_definition_hashes() {
+        Ok(serde_json::to_string(&(
+            PINNED_STENCIL_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_stencils() {
         Ok(serde_json::to_string(&(STENCIL_SNAPSHOT_VERSION, book))?)
     } else if book.has_sankey() {
         Ok(serde_json::to_string(&(SANKEY_SNAPSHOT_VERSION, book))?)
@@ -814,6 +826,8 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == FINAL_STATE_SNAPSHOT_VERSION
                 || version == SANKEY_SNAPSHOT_VERSION
                 || version == STENCIL_SNAPSHOT_VERSION
+                || version == PINNED_STENCIL_SNAPSHOT_VERSION
+                || version == CLOSED_STENCIL_SNAPSHOT_VERSION
         })
 }
 
@@ -894,16 +908,40 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != FINAL_STATE_SNAPSHOT_VERSION
             && version != SANKEY_SNAPSHOT_VERSION
             && version != STENCIL_SNAPSHOT_VERSION
+            && version != PINNED_STENCIL_SNAPSHOT_VERSION
+            && version != CLOSED_STENCIL_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
-        let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
-        if version != STENCIL_SNAPSHOT_VERSION && workbook.has_stencils() {
+        let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != PINNED_STENCIL_SNAPSHOT_VERSION
+            && version != CLOSED_STENCIL_SNAPSHOT_VERSION
+            && workbook.has_stencil_definition_hashes()
+        {
+            return Err(IoError::NewerVersion(
+                "pinned stencil definitions require a pinned-stencil-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        if version != CLOSED_STENCIL_SNAPSHOT_VERSION && workbook.has_stencil_definition_closures()
+        {
+            return Err(IoError::NewerVersion(
+                "stencil definition closures require a closure-aware private XMind snapshot".into(),
+            ));
+        }
+        if version != STENCIL_SNAPSHOT_VERSION
+            && version != PINNED_STENCIL_SNAPSHOT_VERSION
+            && version != CLOSED_STENCIL_SNAPSHOT_VERSION
+            && workbook.has_stencils()
+        {
             return Err(IoError::NewerVersion(
                 "stencil shapes require a stencil-aware private XMind snapshot".into(),
             ));
         }
-        let version = if version == STENCIL_SNAPSHOT_VERSION {
+        let version = if version == STENCIL_SNAPSHOT_VERSION
+            || version == PINNED_STENCIL_SNAPSHOT_VERSION
+            || version == CLOSED_STENCIL_SNAPSHOT_VERSION
+        {
             SANKEY_SNAPSHOT_VERSION.to_owned()
         } else {
             version
@@ -1070,6 +1108,9 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
                 "shape rounding requires a rounding-aware private XMind snapshot".into(),
             ));
         }
+        workbook
+            .hydrate_stencil_packages()
+            .map_err(IoError::Invalid)?;
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
@@ -2054,6 +2095,63 @@ mod tests {
         child_topic.image = Some(reference);
         child_topic.image_below = false;
         (Workbook::new(sheet), bytes)
+    }
+
+    #[test]
+    fn stencil_definition_closures_and_hashes_use_distinct_xmind_snapshots() {
+        let mut package = thinoda_core::stencil_object::find_package("thinoda.general")
+            .unwrap()
+            .clone();
+        package.id = "vendor.xmind-offline".into();
+        let definition = package.definition("folder").unwrap();
+        let mut sheet = Sheet::new("Stencil", "Root");
+        sheet
+            .add_canvas_object(thinoda_core::stencil_object::new_object(
+                &package,
+                definition,
+                Vec2::ZERO,
+            ))
+            .unwrap();
+        let book = Workbook::new(sheet);
+
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.starts_with(&format!("[\"{CLOSED_STENCIL_SNAPSHOT_VERSION}\"")));
+        assert!(strict_private_snapshot(&snapshot));
+        let restored = read_private_snapshot(&snapshot).unwrap();
+        assert_eq!(restored, book);
+        assert!(
+            thinoda_core::stencil_object::render(&restored.sheets[0].canvas.objects[0]).is_some(),
+            "the private XMind closure should render without an installed library"
+        );
+
+        let legacy = serde_json::to_string(&(STENCIL_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(
+            read_private_snapshot(&legacy)
+                .unwrap_err()
+                .to_string()
+                .contains("pinned stencil definitions")
+        );
+
+        let mut hash_only = book.clone();
+        hash_only.sheets[0].canvas.objects[0]
+            .stencil
+            .as_mut()
+            .unwrap()
+            .package_resource = None;
+        hash_only.sheets[0].resources = Default::default();
+        let pinned = private_snapshot(&hash_only).unwrap();
+        assert!(pinned.starts_with(&format!("[\"{PINNED_STENCIL_SNAPSHOT_VERSION}\"")));
+        assert_eq!(read_private_snapshot(&pinned).unwrap(), hash_only);
+
+        let mut hashless = hash_only;
+        hashless.sheets[0].canvas.objects[0]
+            .stencil
+            .as_mut()
+            .unwrap()
+            .definition_hash = None;
+        let legacy = private_snapshot(&hashless).unwrap();
+        assert!(legacy.starts_with(&format!("[\"{STENCIL_SNAPSHOT_VERSION}\"")));
+        assert_eq!(read_private_snapshot(&legacy).unwrap(), hashless);
     }
 
     fn archive_entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {

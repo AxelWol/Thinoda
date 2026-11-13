@@ -126,6 +126,113 @@ fn hydrates_multiple_resources_and_shared_bytes_with_per_sheet_metadata() {
 }
 
 #[test]
+fn stencil_definition_hashes_select_native_v27_and_reject_v26_archives() {
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let mut sheet = Sheet::new("Stencil", "Root");
+    sheet
+        .add_canvas_object(thinoda_core::stencil_object::new_object(
+            package,
+            definition,
+            thinoda_core::Vec2::ZERO,
+        ))
+        .unwrap();
+    sheet.canvas.objects[0]
+        .stencil
+        .as_mut()
+        .unwrap()
+        .package_resource = None;
+    sheet.resources = Default::default();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 27);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 26,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let legacy = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&legacy).unwrap_err();
+    assert!(error.to_string().contains("pinned stencil definitions"));
+}
+
+#[test]
+fn stencil_without_definition_hash_remains_native_v26_compatible() {
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let mut object =
+        thinoda_core::stencil_object::new_object(package, definition, thinoda_core::Vec2::ZERO);
+    object.stencil.as_mut().unwrap().definition_hash = None;
+    let mut sheet = Sheet::new("Stencil", "Root");
+    sheet.add_canvas_object(object).unwrap();
+    sheet.canvas.objects[0]
+        .stencil
+        .as_mut()
+        .unwrap()
+        .package_resource = None;
+    sheet.resources = Default::default();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 26);
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+}
+
+#[test]
+fn stencil_definition_closures_select_native_v28_and_restore_packages_offline() {
+    let mut package = thinoda_core::stencil_object::find_package("thinoda.general")
+        .unwrap()
+        .clone();
+    package.id = "vendor.offline".into();
+    let definition = package.definition("folder").unwrap();
+    let object =
+        thinoda_core::stencil_object::new_object(&package, definition, thinoda_core::Vec2::ZERO);
+    let mut sheet = Sheet::new("Offline stencil", "Root");
+    sheet.add_canvas_object(object).unwrap();
+    let book = Workbook::new(sheet);
+    assert!(book.has_stencil_definition_closures());
+    assert_eq!(crate::required_native_version(&book), 28);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    let restored = crate::formats::native_import(&bytes).unwrap();
+    assert_eq!(restored, book);
+    assert!(
+        thinoda_core::stencil_object::render(&restored.sheets[0].canvas.objects[0]).is_some(),
+        "the embedded package should render without an installed library"
+    );
+
+    let mut forged = book;
+    forged.sheets[0].canvas.objects[0]
+        .stencil
+        .as_mut()
+        .unwrap()
+        .definition_hash = None;
+    forged.sheets[0].resources = Default::default();
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 27,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&forged).unwrap();
+    let legacy = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&legacy).unwrap_err();
+    assert!(error.to_string().contains("definition closures"));
+}
+
+#[test]
 fn rejects_tampering_invalid_metadata_and_missing_or_unlisted_blobs_atomically() {
     let mut book = empty_book(1);
     let first = entry(0, "first.bin", b"first resource");

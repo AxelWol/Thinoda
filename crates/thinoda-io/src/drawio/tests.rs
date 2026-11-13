@@ -3563,7 +3563,144 @@ fn recognized_approximations_do_not_claim_to_be_unknown_shapes() {
         r#"<mxCell id="folder" value="Folder" style="shape=folder;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
     );
     let report = load(&xml);
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert!(
+        report.warnings.is_empty(),
+        "a mapped stencil is exact: {:?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn plain_drawio_shapes_resolve_through_the_stencil_import_map() {
+    let cell = |id: &str, style: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="{style}" vertex="1" parent="1"><mxGeometry x="10" y="10" width="100" height="80" as="geometry"/></mxCell>"#
+        )
+    };
+    let cells = [
+        cell("folder", "shape=folder;"),
+        cell("left", "shape=folder;tabPosition=left;tabWidth=110;"),
+        cell("tape", "shape=tape;"),
+        cell("storage", "shape=dataStorage;"),
+        cell("fixed", "shape=dataStorage;fixedSize=1;"),
+        cell("arrow", "shape=mxgraph.arrows2.arrow;dy=0.6;dx=30;notch=0;"),
+    ]
+    .concat();
+    let sheet = clean(&page(&cells));
+    let objects = shapes(&sheet);
+    let label_of = |object: &CanvasObject| match &object.kind {
+        CanvasObjectKind::Shape { label, .. } => label.clone(),
+        _ => String::new(),
+    };
+    let stencil = |label: &str| {
+        objects
+            .iter()
+            .find(|object| label_of(object) == label)
+            .and_then(|object| object.stencil.clone())
+    };
+    let param = |label: &str, key: &str| stencil(label).unwrap().parameters.get(key).copied();
+
+    let folder = stencil("folder").unwrap();
+    assert_eq!(
+        (folder.package.as_str(), folder.definition.as_str()),
+        ("thinoda.general", "folder")
+    );
+    // draw.io's class defaults apply to keys absent from the style.
+    assert_eq!(param("folder", "tabWidth"), Some(60.0));
+    assert_eq!(param("folder", "tabHeight"), Some(20.0));
+    assert_eq!(param("folder", "tabPosition"), Some(1.0));
+    assert_eq!(param("left", "tabPosition").unwrap_or(0.0), 0.0);
+    assert_eq!(param("left", "tabWidth"), Some(110.0));
+
+    let tape = stencil("tape").unwrap();
+    assert_eq!(
+        (tape.package.as_str(), tape.definition.as_str()),
+        ("thinoda.drawio", "tape")
+    );
+    assert_eq!(param("storage", "size").unwrap_or(0.1), 0.1);
+    assert_eq!(param("fixed", "size"), Some(20.0));
+    assert_eq!(param("arrow", "dx"), Some(30.0));
+    for object in &objects {
+        if object.stencil.is_some() {
+            assert!(thinoda_core::stencil_object::render(object).is_some());
+        }
+    }
+
+    let xml = String::from_utf8(export(&Workbook::new(sheet.clone())).unwrap()).unwrap();
+    assert!(xml.contains("shape=tape;"));
+    assert_eq!(
+        shapes(&clean(&xml))
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>(),
+        objects
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inline_drawio_stencils_import_render_and_round_trip() {
+    use base64::Engine as _;
+    let encode = |stencil: &str| {
+        let deflated = miniz_oxide::deflate::compress_to_vec(
+            crate::drawio_clipboard::encode_uri_component(stencil).as_bytes(),
+            6,
+        );
+        base64::engine::general_purpose::STANDARD.encode(deflated)
+    };
+    let payload = encode(
+        r#"<shape name="Gem" aspect="variable" w="40" h="40" strokewidth="inherit"><background><path><move x="20" y="0"/><line x="40" y="20"/><line x="20" y="40"/><line x="0" y="20"/><close/></path></background><foreground><fillstroke/></foreground></shape>"#,
+    );
+    let other = encode(
+        r#"<shape name="Bar" aspect="variable" w="40" h="20" strokewidth="inherit"><background><rect x="0" y="0" w="40" h="20"/></background><foreground><fillstroke/></foreground></shape>"#,
+    );
+    let xml = page(&format!(
+        r#"<mxCell id="2" value="gem" style="shape=stencil({payload});whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="80" as="geometry"/></mxCell><mxCell id="3" style="shape=stencil({other});" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell><mxCell id="4" style="shape=stencil({payload});" vertex="1" parent="1"><mxGeometry x="300" y="10" width="40" height="40" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&xml);
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = report.workbook.sheets.into_iter().next().unwrap();
+    let object = shapes(&sheet)[0].clone();
+    let reference = object.stencil.clone().unwrap();
+    assert_eq!(reference.package, "drawio.inline");
+    let render = thinoda_core::stencil_object::render(&object).unwrap();
+    assert!(render.contains(Vec2::new(40.0, 40.0)));
+    assert!(!render.contains(Vec2::new(2.0, 2.0)));
+    // Every inline stencil on a page shares one bundled package resource.
+    let stencils: Vec<_> = shapes(&sheet)
+        .into_iter()
+        .map(|shape| shape.stencil.clone().unwrap())
+        .collect();
+    assert_eq!(stencils.len(), 3);
+    assert_ne!(stencils[0].definition, stencils[1].definition);
+    assert_eq!(stencils[0].definition, stencils[2].definition);
+    assert!(reference.package_resource.is_some());
+    assert!(
+        stencils
+            .iter()
+            .all(|stencil| stencil.package_resource == reference.package_resource)
+    );
+    assert_eq!(sheet.resources.entries.len(), 1);
+
+    let book = Workbook::new(sheet.clone());
+    export_bytes(&book, Format::Svg, &ExportOptions::default()).unwrap();
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+
+    let exported = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(exported.contains("shape=stencil("));
+    let again = clean(&exported);
+    let reopened = shapes(&again)[0];
+    assert_eq!(reopened.stencil.as_ref(), Some(&reference));
+    assert!(thinoda_core::stencil_object::render(reopened).is_some());
 }
 
 #[test]
@@ -7471,9 +7608,26 @@ fn built_in_shape_aliases_map_to_their_thinoda_equivalents() {
             ("me".into(), S::Rectangle),
             ("uf".into(), S::Rectangle),
             ("es".into(), S::FinalState),
-            ("pc".into(), S::Ellipse),
-            ("ar".into(), S::Arrow),
+            ("pc".into(), S::Rectangle),
+            ("ar".into(), S::Rectangle),
             ("ps".into(), S::Rectangle),
+        ]
+    );
+    let stencils: Vec<_> = shapes(sheet)
+        .iter()
+        .map(|object| object.stencil.as_ref().map(|s| s.definition.as_str()))
+        .collect();
+    assert_eq!(
+        stencils,
+        [
+            Some("folder"),
+            Some("cube"),
+            Some("message"),
+            Some("uml-frame"),
+            None,
+            Some("part-concentric-ellipse"),
+            Some("arrow"),
+            None,
         ]
     );
     let partial = shapes(sheet).last().copied().unwrap();
@@ -8541,8 +8695,9 @@ fn stencil_objects_round_trip_through_native_drawio_styles() {
                 .parameters
                 .insert(name.clone(), value);
         }
-        expected.push((object.rect, object.stencil.clone().unwrap()));
         sheet.add_canvas_object(object).unwrap();
+        let inserted = sheet.canvas.objects.last().unwrap();
+        expected.push((inserted.rect, inserted.stencil.clone().unwrap()));
     }
     let xml = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
     assert!(

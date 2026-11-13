@@ -1007,11 +1007,12 @@ fn topic_anchor(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<(TopicId,
 
 /// What a connector end attaches to: a (rotated) box and, for shapes, the outline
 /// the end lands on.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct EndTarget {
     rect: Rect,
     rotation: f32,
     shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    custom_outline: Option<Vec<Vec2>>,
 }
 
 impl EndTarget {
@@ -1020,6 +1021,7 @@ impl EndTarget {
             rect,
             rotation,
             shape: None,
+            custom_outline: None,
         }
     }
 
@@ -1059,7 +1061,22 @@ impl EndTarget {
 
     /// Point on the visible perimeter in the direction of `toward`, like draw.io's
     /// shape perimeters; boxes and rectangular shapes clip to their rotated rect.
-    fn clip(self, toward: Vec2) -> Vec2 {
+    fn clip(&self, toward: Vec2) -> Vec2 {
+        if let Some(outline) = self.custom_outline.as_deref()
+            && outline.len() >= 3
+        {
+            let center = self.rect.center();
+            let origin = if point_in_polygon(center, outline)
+                && distance_to_outline(center, outline) > 0.5
+            {
+                center
+            } else {
+                polygon_centroid(outline)
+            };
+            if let Some(point) = clip_to_polygon(outline, origin, toward) {
+                return point;
+            }
+        }
         if let Some((_, Some(rounding))) = self.shape
             && rounding.is_standard()
         {
@@ -1170,6 +1187,7 @@ pub fn fixed_connector_port_position(
         rect,
         rotation,
         shape,
+        custom_outline: None,
     }
     .with_port(Some(port))
     .rect
@@ -1542,6 +1560,8 @@ impl<'a> ConnectorResolver<'a> {
                             }
                             _ => None,
                         },
+                        custom_outline: crate::stencil_object::render(object)
+                            .map(|render| crate::stencil_object::geometry(object, &render).outline),
                     })
                 }
             }

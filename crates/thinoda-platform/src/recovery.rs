@@ -76,6 +76,10 @@ const SANKEY_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SANKEY-1";
 const SANKEY_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SANKEY-1";
 const STENCIL_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-STENCIL-1";
 const STENCIL_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-STENCIL-1";
+const PINNED_STENCIL_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-STENCIL-2";
+const PINNED_STENCIL_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-STENCIL-2";
+const CLOSED_STENCIL_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-STENCIL-3";
+const CLOSED_STENCIL_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-STENCIL-3";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -97,7 +101,11 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_stencils() {
+        tuple.serialize_element(if self.workbook.has_stencil_definition_closures() {
+            CLOSED_STENCIL_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_stencil_definition_hashes() {
+            PINNED_STENCIL_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_stencils() {
             STENCIL_INK_WORKBOOK_VERSION
         } else if self.workbook.has_sankey() {
             SANKEY_INK_WORKBOOK_VERSION
@@ -190,7 +198,11 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_stencils() {
+    let version = if workbook.has_stencil_definition_closures() {
+        CLOSED_STENCIL_WORKBOOK_VERSION
+    } else if workbook.has_stencil_definition_hashes() {
+        PINNED_STENCIL_WORKBOOK_VERSION
+    } else if workbook.has_stencils() {
         STENCIL_WORKBOOK_VERSION
     } else if workbook.has_sankey() {
         SANKEY_WORKBOOK_VERSION
@@ -345,25 +357,56 @@ where
                 && version != SANKEY_INK_WORKBOOK_VERSION
                 && version != STENCIL_WORKBOOK_VERSION
                 && version != STENCIL_INK_WORKBOOK_VERSION
+                && version != PINNED_STENCIL_WORKBOOK_VERSION
+                && version != PINNED_STENCIL_INK_WORKBOOK_VERSION
+                && version != CLOSED_STENCIL_WORKBOOK_VERSION
+                && version != CLOSED_STENCIL_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
                 )));
             }
-            let workbook: Workbook = seq
+            let has_pending_ink = version.contains("-INK-");
+            let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
             if version != STENCIL_WORKBOOK_VERSION
                 && version != STENCIL_INK_WORKBOOK_VERSION
+                && version != PINNED_STENCIL_WORKBOOK_VERSION
+                && version != PINNED_STENCIL_INK_WORKBOOK_VERSION
+                && version != CLOSED_STENCIL_WORKBOOK_VERSION
+                && version != CLOSED_STENCIL_INK_WORKBOOK_VERSION
                 && workbook.has_stencils()
             {
                 return Err(A::Error::custom(
                     "stencil shapes require stencil-aware recovery",
                 ));
             }
+            if version != PINNED_STENCIL_WORKBOOK_VERSION
+                && version != PINNED_STENCIL_INK_WORKBOOK_VERSION
+                && version != CLOSED_STENCIL_WORKBOOK_VERSION
+                && version != CLOSED_STENCIL_INK_WORKBOOK_VERSION
+                && workbook.has_stencil_definition_hashes()
+            {
+                return Err(A::Error::custom(
+                    "pinned stencil definitions require pinned-stencil-aware recovery",
+                ));
+            }
+            if version != CLOSED_STENCIL_WORKBOOK_VERSION
+                && version != CLOSED_STENCIL_INK_WORKBOOK_VERSION
+                && workbook.has_stencil_definition_closures()
+            {
+                return Err(A::Error::custom(
+                    "stencil definition closures require closure-aware recovery",
+                ));
+            }
             let version = match version.as_str() {
-                STENCIL_WORKBOOK_VERSION => SANKEY_WORKBOOK_VERSION.to_owned(),
-                STENCIL_INK_WORKBOOK_VERSION => SANKEY_INK_WORKBOOK_VERSION.to_owned(),
+                STENCIL_WORKBOOK_VERSION
+                | PINNED_STENCIL_WORKBOOK_VERSION
+                | CLOSED_STENCIL_WORKBOOK_VERSION => SANKEY_WORKBOOK_VERSION.to_owned(),
+                STENCIL_INK_WORKBOOK_VERSION
+                | PINNED_STENCIL_INK_WORKBOOK_VERSION
+                | CLOSED_STENCIL_INK_WORKBOOK_VERSION => SANKEY_INK_WORKBOOK_VERSION.to_owned(),
                 _ => version,
             };
             if version != SANKEY_WORKBOOK_VERSION
@@ -594,17 +637,7 @@ where
                     "connector waypoints require a waypoint-aware recovery workbook",
                 ));
             }
-            let pending_ink = if version == INK_WORKBOOK_VERSION
-                || version == MARKER_INK_WORKBOOK_VERSION
-                || version == EXTENDED_MARKER_INK_WORKBOOK_VERSION
-                || version == SIZED_MARKER_INK_WORKBOOK_VERSION
-                || version == FILLED_MARKER_INK_WORKBOOK_VERSION
-                || version == DIAMOND_MARKER_INK_WORKBOOK_VERSION
-                || version == OVAL_MARKER_INK_WORKBOOK_VERSION
-                || version == HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
-                || version == BAR_MARKER_INK_WORKBOOK_VERSION
-                || version == ROUNDING_INK_WORKBOOK_VERSION
-            {
+            let pending_ink = if has_pending_ink {
                 let pending_ink: String = seq
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing pending ink"))?;
@@ -618,6 +651,9 @@ where
             if seq.next_element::<IgnoredAny>()?.is_some() {
                 return Err(A::Error::custom("unexpected recovery workbook data"));
             }
+            workbook
+                .hydrate_stencil_packages()
+                .map_err(A::Error::custom)?;
             Ok(SnapshotWorkbook {
                 workbook,
                 pending_ink,
@@ -2207,16 +2243,15 @@ mod lock_tests {
     }
 
     #[test]
-    fn stencils_require_aware_recovery_with_and_without_pending_ink() {
+    fn stencil_closures_require_aware_recovery_and_restore_offline_with_pending_ink() {
         use thinoda_core::stencil_object::{find_package, new_object};
+        let mut package = find_package("thinoda.general").unwrap().clone();
+        package.id = "vendor.recovery-offline".into();
+        let definition = package.definition("message").unwrap();
         let mut book = Workbook::default();
-        let package = find_package("thinoda.general").unwrap();
-        let object = new_object(
-            package,
-            package.definition("message").unwrap(),
-            thinoda_core::Vec2::new(10.0, 10.0),
-        );
+        let object = new_object(&package, definition, thinoda_core::Vec2::new(10.0, 10.0));
         book.active_mut().add_canvas_object(object).unwrap();
+        assert!(book.has_stencil_definition_closures());
         for ink in [None, Some("pending ink")] {
             let bytes = match ink {
                 Some(ink) => {
@@ -2227,21 +2262,34 @@ mod lock_tests {
             };
             let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            assert!(
+                thinoda_core::stencil_object::render(
+                    &snapshot.workbook.sheets[0].canvas.objects[0]
+                )
+                .is_some(),
+                "recovery should restore package definitions without the installed library"
+            );
             let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(
                 older["workbook"][0],
                 if ink.is_some() {
-                    STENCIL_INK_WORKBOOK_VERSION
+                    CLOSED_STENCIL_INK_WORKBOOK_VERSION
                 } else {
-                    STENCIL_WORKBOOK_VERSION
+                    CLOSED_STENCIL_WORKBOOK_VERSION
                 }
             );
             older["workbook"][0] = serde_json::json!(if ink.is_some() {
-                SANKEY_INK_WORKBOOK_VERSION
+                PINNED_STENCIL_INK_WORKBOOK_VERSION
             } else {
-                SANKEY_WORKBOOK_VERSION
+                PINNED_STENCIL_WORKBOOK_VERSION
             });
-            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            assert!(
+                serde_json::from_value::<Snapshot>(older)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("stencil definition closures")
+            );
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());

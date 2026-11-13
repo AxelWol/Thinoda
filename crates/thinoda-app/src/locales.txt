@@ -1990,6 +1990,8 @@ Select board items and add them here for reuse|Selecciona elementos del tablero 
 Remove library|Quitar biblioteca|Supprimer la bibliothèque|Fjern bibliotek|Bibliotheek verwijderen|Remover biblioteca|Rimuovi libreria|Usuń bibliotekę
 More shapes…|Más formas…|Plus de formes…|Flere figurer…|Meer vormen…|Mais formas…|Altre forme…|Więcej kształtów…
 Import library…|Importar biblioteca…|Importer une bibliothèque…|Importér bibliotek…|Bibliotheek importeren…|Importar biblioteca…|Importa libreria…|Importuj bibliotekę…
+A stencil package with this ID is already installed|Ya hay un paquete de plantillas instalado con este ID|Un paquet de gabarits avec cet identifiant est déjà installé|En skabelonpakke med dette ID er allerede installeret|Er is al een stencilpakket met deze ID geïnstalleerd|Já existe um pacote de formas instalado com este ID|È già installato un pacchetto di stencil con questo ID|Pakiet szablonów o tym identyfikatorze jest już zainstalowany
+Removing a library does not change existing objects|Eliminar una biblioteca no cambia los objetos existentes|Supprimer une bibliothèque ne modifie pas les objets existants|Fjernelse af et bibliotek ændrer ikke eksisterende objekter|Het verwijderen van een bibliotheek verandert bestaande objecten niet|Remover uma biblioteca não altera os objetos existentes|La rimozione di una libreria non modifica gli oggetti esistenti|Usunięcie biblioteki nie zmienia istniejących obiektów
 Remove from scratchpad|Quitar del bloc de notas|Retirer du bloc-notes|Fjern fra kladdeblokken|Verwijderen uit kladblok|Remover do rascunho|Rimuovi dal blocco appunti|Usuń z brudnopisu
 The library has no usable shapes|La biblioteca no contiene formas utilizables|La bibliothèque ne contient aucune forme utilisable|Biblioteket indeholder ingen brugbare figurer|De bibliotheek bevat geen bruikbare vormen|A biblioteca não tem formas utilizáveis|La libreria non contiene forme utilizzabili|Biblioteka nie zawiera użytecznych kształtów
 Too many stencil libraries; remove one first|Demasiadas bibliotecas de plantillas; quita una primero|Trop de bibliothèques de gabarits ; supprimez-en une d'abord|For mange skabelonbiblioteker; fjern et først|Te veel stencilbibliotheken; verwijder er eerst een|Demasiadas bibliotecas de formas; remova uma primeiro|Troppe librerie di stencil; rimuovine prima una|Za dużo bibliotek szablonów; najpierw usuń jedną
@@ -2016,3 +2018,37 @@ Merge|Combinar|Fusion|Flet|Samenvoegen|Mesclar|Unisci|Scal
 Parametric shapes|Formas paramétricas|Formes paramétriques|Parametriske figurer|Parametrische vormen|Formas paramétricas|Forme parametriche|Kształty parametryczne
 Message|Mensaje|Message|Besked|Bericht|Mensagem|Messaggio|Wiadomość
 Cube|Cubo|Cube|Terning|Kubus|Cubo|Cubo|Sześcian
+draw.io shapes|Formas de draw.io|Formes draw.io|draw.io-figurer|draw.io-vormen|Formas do draw.io|Forme draw.io|Kształty draw.io
+Tape|Cinta perforada|Bande perforée|Hulstrimmel|Ponsband|Fita perfurada|Nastro perforato|Taśma perforowana
+Data storage|Almacenamiento de datos|Stockage de données|Datalager|Gegevensopslag|Armazenamento de dados|Archiviazione dati|Magazyn danych
+Internal storage|Almacenamiento interno|Stockage interne|Internt lager|Interne opslag|Armazenamento interno|Memoria interna|Pamięć wewnętrzna
+Corner|Esquina|Coin|Hjørne|Hoek|Canto|Angolo|Narożnik
+Tee|Forma de T|Forme en T|T-form|T-vorm|Forma em T|Forma a T|Kształt T
+Or gate|Puerta OR|Porte OU|ELLER-gate|OF-poort|Porta OU|Porta OR|Bramka OR
+Xor gate|Puerta XOR|Porte OU exclusif|XOR-gate|XOR-poort|Porta XOR|Porta XOR|Bramka XOR
+Loop limit|Límite de bucle|Limite de boucle|Løkkegrænse|Lusgrens|Limite de ciclo|Limite del ciclo|Granica pętli
+Display|Pantalla|Affichage|Skærm|Weergave|Ecrã|Visualizzazione|Wyświetlacz
+Curly bracket|Llave|Accolade|Krøllet parentes|Accolade|Chaveta|Parentesi graffa|Nawias klamrowy
+Sequential data|Datos secuenciales|Données séquentielles|Sekventielle data|Sequentiële gegevens|Dados sequenciais|Dati sequenziali|Dane sekwencyjne
+Or|O|Ou|Eller|Of|Ou|Oppure|Lub
+Summing junction|Punto de suma|Jonction de sommation|Summationspunkt|Sommatiepunt|Junção de soma|Nodo sommatore|Węzeł sumujący
+Data store|Almacén de datos|Magasin de données|Datalagring|Gegevensarchief|Repositório de dados|Archivio dati|Składnica danych
+Dimension|Cota|Cote|Mål|Maatlijn|Cota|Quota|Wymiar
+Switch|Interruptor|Interrupteur|Kontakt|Schakelaar|Interruptor|Interruttore|Przełącznik
+Actor|Actor|Acteur|Aktør|Actor|Ator|Attore|Aktor
+Module|Módulo|Module|Modul|Module|Módulo|Modulo|Moduł
+Component|Componente|Composant|Komponent|Component|Componente|Componente|Komponent
+Provided interface|Interfaz proporcionada|Interface fournie|Leveret grænseflade|Aangeboden interface|Interface fornecida|Interfaccia fornita|Interfejs udostępniany
+Required interface|Interfaz requerida|Interface requise|Krævet grænseflade|Vereiste interface|Interface requerida|Interfaccia richiesta|Interfejs wymagany
+Isometric square|Cuadrado isométrico|Carré isométrique|Isometrisk kvadrat|Isometrisch vierkant|Quadrado isométrico|Quadrato isometrico|Kwadrat izometryczny
+U-turn arrow|Flecha de cambio de sentido|Flèche demi-tour|U-vendingspil|U-bochtpijl|Seta de inversão de marcha|Freccia di inversione|Strzałka zawracania
+Partial concentric ellipse|Elipse concéntrica parcial|Ellipse concentrique partielle|Delvis koncentrisk ellipse|Gedeeltelijke concentrische ellips|Elipse concêntrica parcial|Ellisse concentrica parziale|Częściowa elipsa koncentryczna
+Arc|Arco|Arc|Bue|Boog|Arco|Arco|Łuk
+Ribbon banner|Cinta de banner|Bannière ruban|Båndbanner|Lintbanner|Faixa de fita|Banner a nastro|Baner wstęgowy
+Shaded cube|Cubo sombreado|Cube ombré|Skyggelagt terning|Gearceerde kubus|Cubo sombreado|Cubo ombreggiato|Cieniowany sześcian
+Pyramid step|Escalón de pirámide|Marche de pyramide|Pyramidetrin|Piramidetrede|Degrau de pirâmide|Gradino della piramide|Stopień piramidy
+Shaded cylinder|Cilindro sombreado|Cylindre ombré|Skyggelagt cylinder|Gearceerde cilinder|Cilindro sombreado|Cilindro ombreggiato|Cieniowany walec
+Stencil parameters|Parámetros de stencil|Paramètres de stencil|Stencilparametre|Stencilparameters|Parâmetros do stencil|Parametri stencil|Parametry szablonu
+Reset|Restablecer|Réinitialiser|Nulstil|Opnieuw instellen|Repor|Ripristina|Resetuj
+Reset to the stencil default|Restablecer el valor predeterminado del stencil|Rétablir la valeur par défaut du stencil|Nulstil til standarden|Standaard van stencil herstellen|Repor predefinição do stencil|Ripristina il valore predefinito dello stencil|Przywróć ustawienia domyślne szablonu
+Drag to adjust; use arrow keys to nudge, Shift for larger steps.|Arrastra para ajustar o usa las flechas; Mayús para pasos mayores.|Faites glisser ou utilisez les flèches ; Maj pour des pas plus grands.|Træk eller brug piletasterne; Skift giver større trin.|Sleep of gebruik de pijltjestoetsen; Shift voor grotere stappen.|Arraste ou use as setas; Shift para passos maiores.|Trascina o usa le frecce; Maiusc per incrementi maggiori.|Przeciągnij lub użyj strzałek; Shift zwiększa krok.

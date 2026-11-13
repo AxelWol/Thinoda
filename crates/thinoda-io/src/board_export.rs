@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 26;
+pub const NATIVE_FORMAT_VERSION: u64 = 28;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -25,10 +25,15 @@ pub const NATIVE_FORMAT_VERSION: u64 = 26;
 /// 18 bar connector markers, 19 adjustable rectangle corners, and
 /// 20 partial rectangle outline sides, 21 double ellipses, 22 fixed connector ports,
 /// 23 standard draw.io rectangle rounding, 24 final-state shapes, 25 Sankey flows,
-/// and 26 data-defined stencil shapes.
+/// 26 data-defined stencil shapes, 27 stencil definition content hashes, and
+/// 28 embedded stencil definition closures.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_stencils() {
+    if book.has_stencil_definition_closures() {
+        28
+    } else if book.has_stencil_definition_hashes() {
+        27
+    } else if book.has_stencils() {
         26
     } else if book.has_sankey() {
         25

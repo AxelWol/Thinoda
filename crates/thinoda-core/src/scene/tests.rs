@@ -1877,6 +1877,7 @@ fn drawio_rounded_perimeter_matches_floating_and_fixed_ports() {
         rect: frame,
         rotation: 0.0,
         shape: Some((ShapeKind::RoundedRectangle, Some(rounding))),
+        custom_outline: None,
     };
     let toward = Vec2::new(220.0, 20.0);
     assert!((target.clip(toward) - Vec2::new(104.4259, 120.1642)).length() < 0.001);
@@ -1885,7 +1886,7 @@ fn drawio_rounded_perimeter_matches_floating_and_fixed_ports() {
         offset: Vec2::ZERO,
         perimeter: true,
     };
-    let fixed = target.with_port(Some(port)).rect.center();
+    let fixed = target.clone().with_port(Some(port)).rect.center();
     assert!((fixed - Vec2::new(114.7279, 125.2721)).length() < 0.001);
 
     let square_perimeter = EndTarget {
@@ -1896,7 +1897,7 @@ fn drawio_rounded_perimeter_matches_floating_and_fixed_ports() {
                 ..rounding
             }),
         )),
-        ..target
+        ..target.clone()
     };
     assert!((square_perimeter.clip(toward) - Vec2::new(104.6154, 120.0)).length() < 0.001);
     assert_eq!(
@@ -1906,7 +1907,7 @@ fn drawio_rounded_perimeter_matches_floating_and_fixed_ports() {
 
     let rotated = EndTarget {
         rotation: 30.0,
-        ..target
+        ..target.clone()
     };
     let rotated_toward = rotate_around(toward, frame.center(), 30.0);
     assert!(
@@ -1949,6 +1950,7 @@ fn drawio_standard_rectangle_clips_very_thin_frames() {
                     rounded_perimeter,
                 }),
             )),
+            custom_outline: None,
         };
         let endpoint = target.clip(Vec2::new(0.000_001, 51.0));
         assert!(
@@ -1975,6 +1977,7 @@ fn drawio_rounded_perimeter_is_stable_for_wide_frames() {
                 rounded_perimeter: true,
             }),
         )),
+        custom_outline: None,
     };
     let endpoint = target.clip(Vec2::new(1_000_000.0, 2.0));
     assert!(
@@ -2000,6 +2003,7 @@ fn drawio_fixed_rounded_port_handles_subpixel_corner_radii() {
                 rounded_perimeter: true,
             }),
         )),
+        custom_outline: None,
     };
     let endpoint = target
         .with_port(Some(ConnectorPort {
@@ -2072,6 +2076,44 @@ fn double_ellipse_scene_uses_effective_width_and_outer_perimeter() {
             None,
         )
         .details
+    );
+}
+
+#[test]
+fn stencil_connector_routes_clip_to_the_definition_outline() {
+    let package = crate::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let mut object = crate::stencil_object::new_object(package, definition, Vec2::new(0.0, 0.0));
+    object.rect = rect(0.0, 0.0, 120.0, 80.0);
+    let mut sheet = Sheet::new("Stencil", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let source = sheet.add_canvas_object(object.clone()).unwrap();
+
+    let geometry = crate::board::object_shape_geometry(&object).unwrap();
+    let center = object.rect.center();
+    let candidates = [
+        Vec2::new(-100.0, -100.0),
+        Vec2::new(220.0, -100.0),
+        Vec2::new(-100.0, 100.0),
+        Vec2::new(220.0, 100.0),
+    ];
+    let (target, expected) = candidates
+        .into_iter()
+        .find_map(|target| {
+            let expected = clip_to_polygon(&geometry.outline, center, target)?;
+            let fallback = clip_to_rotated_rect(object.rect, 0.0, target);
+            ((expected - fallback).length() > 1.0).then_some((target, expected))
+        })
+        .expect("folder outline differs from its rectangular fallback");
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let path = connector_path(
+        &sheet,
+        &layout,
+        &CanvasConnector::new(Endpoint::Object(source), Endpoint::Point(target)),
+    );
+    assert!(
+        (path[0] - expected).length() < 0.01,
+        "{path:?} {expected:?}"
     );
 }
 

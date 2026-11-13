@@ -291,6 +291,12 @@ enum GestureKind {
         original: Vec2,
         point: Vec2,
     },
+    StencilHandle {
+        id: CanvasObjectId,
+        index: usize,
+        point: Vec2,
+        preview: Option<Box<CanvasObject>>,
+    },
     Arrow {
         source: CanvasObjectId,
         dir: ArrowDir,
@@ -773,16 +779,47 @@ fn connection_points_for_item(
     if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
         return None;
     }
-    let points = positions
-        .iter()
-        .filter_map(|&(x, y)| {
-            let port = ConnectorPort {
-                position: Vec2::new(x, y),
-                offset: Vec2::ZERO,
-                perimeter: true,
-            };
-            let position =
-                thinoda_core::scene::fixed_connector_port_position(rect, rotation, shape, port);
+    let candidates = object
+        .and_then(|object| {
+            thinoda_core::stencil_object::render(object).map(|render| {
+                thinoda_core::stencil_object::ports(object, &render)
+                    .into_iter()
+                    .map(|position| {
+                        let local = rotate_around(position, rect.center(), -rotation);
+                        let port = ConnectorPort {
+                            position: Vec2::new(
+                                (local.x - rect.min.x) / rect.size.x,
+                                (local.y - rect.min.y) / rect.size.y,
+                            ),
+                            offset: Vec2::ZERO,
+                            // Stencil ports have already been projected onto their actual
+                            // definition outline and must not be reprojected to the fallback.
+                            perimeter: false,
+                        };
+                        (port, position)
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap_or_else(|| {
+            positions
+                .iter()
+                .map(|&(x, y)| {
+                    let port = ConnectorPort {
+                        position: Vec2::new(x, y),
+                        offset: Vec2::ZERO,
+                        perimeter: true,
+                    };
+                    let position = thinoda_core::scene::fixed_connector_port_position(
+                        rect, rotation, shape, port,
+                    );
+                    (port, position)
+                })
+                .collect()
+        });
+    let points = candidates
+        .into_iter()
+        .filter_map(|(port, position)| {
             if item.clip.is_some_and(|clip| !clip.contains(position)) {
                 return None;
             }
@@ -973,6 +1010,36 @@ mod connection_point_tests {
         object.rotation = rotation;
         let id = sheet.add_canvas_object(object).unwrap();
         (sheet, id)
+    }
+
+    #[test]
+    fn stencil_definition_ports_are_used_as_visible_connector_points() {
+        let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+        let definition = package.definition("message").unwrap();
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object =
+            thinoda_core::stencil_object::new_object(package, definition, Vec2::new(100.0, 100.0));
+        object.rotation = 37.0;
+        let id = sheet.add_canvas_object(object.clone()).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let index = scene
+            .items
+            .iter()
+            .position(|item| item.id == SceneId::Object(id))
+            .unwrap();
+        let points =
+            connection_points_for_item(&sheet, &layout, &scene, index, Some(&object), None, None)
+                .unwrap();
+        let render = thinoda_core::stencil_object::render(&object).unwrap();
+        let expected = thinoda_core::stencil_object::ports(&object, &render);
+        assert_eq!(points.points.len(), definition.connections.len());
+        assert_eq!(points.points.len(), expected.len());
+        for (point, expected) in points.points.iter().zip(expected) {
+            assert!((point.position - expected).length() < 0.01);
+            assert!(!point.attachment.port.unwrap().perimeter);
+        }
     }
 
     #[test]
@@ -1667,6 +1734,7 @@ enum ControlKind {
     To,
     Waypoint(usize),
     InsertWaypoint(usize, usize),
+    StencilHandle(usize),
     Arrow(ArrowDir),
 }
 
@@ -1694,6 +1762,7 @@ fn control_kind_id(item: SceneId, kind: ControlKind, hover: bool) -> Id {
         ControlKind::Arrow(dir) => (4, dir as usize, 0),
         ControlKind::Waypoint(index) => (5, index, 0),
         ControlKind::InsertWaypoint(index, segment) => (6, index, segment),
+        ControlKind::StencilHandle(index) => (7, index, 0),
     };
     // Hover arrows never share an Id with the selection's, so focus cannot
     // silently move onto a non-focusable hover control.
@@ -1986,6 +2055,34 @@ fn selection_controls(
     })
     .collect();
     if let SceneId::Object(id) = item {
+        if let Some(object) = sheet.canvas.object(id)
+            && let Some(render) = thinoda_core::stencil_object::render(object)
+        {
+            for (index, handle) in render.handles.iter().enumerate() {
+                let point = match view
+                    .board_input
+                    .gesture
+                    .as_ref()
+                    .map(|gesture| &gesture.kind)
+                {
+                    Some(GestureKind::StencilHandle {
+                        id: active_id,
+                        index: active_index,
+                        point,
+                        ..
+                    }) if *active_id == id && *active_index == index => *point,
+                    _ => render.to_sheet(handle.at, object.rect, object.rotation),
+                };
+                list.push(Control {
+                    item,
+                    kind: ControlKind::StencilHandle(index),
+                    point,
+                    rect: object.rect,
+                    rotation: object.rotation,
+                    hover: false,
+                });
+            }
+        }
         list.extend(arrow_controls(view, sheet, scene, id, false));
     }
     list
@@ -2001,6 +2098,7 @@ fn control_label(view: &MapView, kind: ControlKind) -> String {
         ControlKind::InsertWaypoint(_, segment) => {
             format!("{} {}", view.board_labels.insert_waypoint, segment + 1)
         }
+        ControlKind::StencilHandle(index) => format!("Stencil handle {}", index + 1),
         ControlKind::Arrow(dir) => match dir {
             ArrowDir::Up => view.board_labels.connect_up.clone(),
             ArrowDir::Right => view.board_labels.connect_right.clone(),
@@ -3171,6 +3269,15 @@ fn keyboard_control(
             }
             result
         }
+        ControlKind::StencilHandle(index) => {
+            let SceneId::Object(id) = control.item else {
+                return;
+            };
+            if !prepare_edit(doc, view, out) {
+                return;
+            }
+            update_stencil_handle(doc, id, index, control.point + delta)
+        }
         ControlKind::Arrow(_) => return,
     };
     if let Err(error) = result {
@@ -3209,6 +3316,20 @@ fn interact_controls(
         };
         let response = ui.interact(rect, control_id(control), sense);
         let mut label = control_label(view, control.kind);
+        if let (ControlKind::StencilHandle(index), SceneId::Object(id)) =
+            (control.kind, control.item)
+            && let Some(handle_label) = doc
+                .sheet()
+                .canvas
+                .object(id)
+                .and_then(|object| object.stencil.as_ref())
+                .and_then(|stencil| stencil.resolve())
+                .and_then(|(_, definition)| definition.handles.get(index))
+                .map(|handle| handle.label.as_str())
+                .filter(|label| !label.is_empty())
+        {
+            label = handle_label.to_owned();
+        }
         if matches!(control.kind, ControlKind::From | ControlKind::To)
             && let SceneId::Object(id) = control.item
             && connector_end(doc.sheet(), id, control.kind == ControlKind::From)
@@ -3221,6 +3342,7 @@ fn interact_controls(
             ControlKind::From | ControlKind::To => Some(&view.board_labels.connector_end_hint),
             ControlKind::Waypoint(_) => Some(&view.board_labels.waypoint_hint),
             ControlKind::InsertWaypoint(_, _) => Some(&view.board_labels.insert_waypoint_hint),
+            ControlKind::StencilHandle(_) => Some(&view.board_labels.stencil_handle_hint),
             _ => None,
         };
         if let Some(hint) = hint {
@@ -3308,6 +3430,17 @@ fn interact_controls(
                         insert: matches!(control.kind, ControlKind::InsertWaypoint(_, _)),
                         original: control.point,
                         point: control.point,
+                    }
+                }
+                ControlKind::StencilHandle(index) => {
+                    let SceneId::Object(id) = control.item else {
+                        continue;
+                    };
+                    GestureKind::StencilHandle {
+                        id,
+                        index,
+                        point: control.point,
+                        preview: None,
                     }
                 }
                 ControlKind::Arrow(dir) => {
@@ -3401,6 +3534,40 @@ fn interact_controls(
         view.board_input.arrow_hover = None;
     }
     blocked
+}
+
+fn update_stencil_handle(
+    doc: &mut Document,
+    id: CanvasObjectId,
+    index: usize,
+    point: Vec2,
+) -> Result<bool, EditError> {
+    let object = doc
+        .sheet()
+        .canvas
+        .object(id)
+        .cloned()
+        .ok_or_else(|| EditError::Invalid("stencil object not found".into()))?;
+    let updated = thinoda_core::stencil_object::with_handle_drag(&object, index, point)
+        .map_err(EditError::Invalid)?;
+    if updated == object {
+        return Ok(false);
+    }
+    let stencil = updated.stencil;
+    doc.update_canvas_object("Adjust stencil", id, |object| object.stencil = stencil)
+        .map(|()| true)
+}
+
+pub(crate) fn stencil_handle_preview(view: &MapView) -> Option<Box<CanvasObject>> {
+    let gesture = view.board_input.gesture.as_ref()?;
+    let GestureKind::StencilHandle {
+        preview: Some(object),
+        ..
+    } = &gesture.kind
+    else {
+        return None;
+    };
+    Some(object.clone())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3497,6 +3664,30 @@ fn update_gesture(
                 original, point, ..
             } => {
                 *point = snapped(doc.sheet(), *original + current - drag.origin);
+            }
+            GestureKind::StencilHandle {
+                id,
+                index,
+                point,
+                preview,
+            } => {
+                *point = current;
+                let result = doc
+                    .sheet()
+                    .canvas
+                    .object(*id)
+                    .ok_or_else(|| EditError::Invalid("stencil object not found".into()))
+                    .and_then(|object| {
+                        thinoda_core::stencil_object::with_handle_drag(object, *index, current)
+                            .map_err(EditError::Invalid)
+                    });
+                match result {
+                    Ok(updated) => *preview = Some(Box::new(updated)),
+                    Err(error) => {
+                        drag.canceled = true;
+                        out.error = Some(error);
+                    }
+                }
             }
         }
     }
@@ -3661,6 +3852,9 @@ fn update_gesture(
                     };
                     edit_waypoint(doc, id, edit)
                 }
+                GestureKind::StencilHandle {
+                    id, index, point, ..
+                } => update_stencil_handle(doc, id, index, point),
                 GestureKind::Arrow {
                     source,
                     dir,
@@ -5317,6 +5511,7 @@ pub(super) fn paint(
                 }
             }
         }
+        GestureKind::StencilHandle { .. } => {}
         GestureKind::Arrow {
             source,
             anchor,

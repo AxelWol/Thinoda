@@ -1,9 +1,10 @@
 //! Format panel "Stencils" tab: draw.io-style shape libraries.
 //!
 //! Built-in libraries mirror draw.io's General, Basic, Flowchart and Arrows
-//! sections; users can import draw.io `<mxlibrary>` files and collect board
-//! content in a scratchpad. Every entry is draw.io XML that inserts through
-//! the validated draw.io paste path, so stencils and clipboard behave alike.
+//! sections; users can import draw.io `<mxlibrary>` files or versioned JSON
+//! packages and collect board content in a scratchpad. Templates use the draw.io
+//! decoder; package definitions use the shared interpreter. Both insert through
+//! validated board clipboard payloads and retain the same click/drag behavior.
 
 use std::{
     collections::HashMap,
@@ -17,9 +18,10 @@ use thinoda_core::{
     CanvasObjectKind, Layout, ShapeKind, Sheet, SheetRootMode, Vec2,
     clipboard::{BoardClipboardPayload, paste_board_selection},
     layout::{ApproxMeasure, layout_sheet},
+    stencil::{StencilDefinition, StencilPackage},
 };
 use thinoda_io::drawio_library::{self, StencilEntry, StencilLibrary};
-use thinoda_platform::stencils::{SavedLibrary, StencilState};
+use thinoda_platform::stencils::{SavedLibrary, SavedPackage, StencilState};
 use thinoda_ui::widgets;
 
 use crate::{
@@ -78,6 +80,46 @@ fn prepare(entry: &StencilEntry, dark: bool, builtin: bool) -> Option<Prepared> 
         sheet,
         layout,
         simplified: !pasted.warnings.is_empty() || !pasted.losses.is_empty(),
+    })
+}
+
+fn prepare_definition(
+    package: &StencilPackage,
+    definition: &StencilDefinition,
+    dark: bool,
+) -> Result<Prepared, String> {
+    let parameters = definition.resolve_parameters(&Default::default());
+    let [width, height] = definition.default_size();
+    package
+        .evaluate(
+            &definition.id,
+            &thinoda_core::stencil::Instance {
+                width,
+                height,
+                stroke_width: 1.0,
+                parameters: &parameters,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let mut sheet = Sheet::new("Stencil", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let object = thinoda_core::stencil_object::new_object(package, definition, Vec2::ZERO);
+    let id = sheet
+        .add_canvas_object(object)
+        .map_err(|error| error.to_string())?;
+    let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
+    let payload = thinoda_core::clipboard::copy_board_selection(&sheet, &layout, &[], &[id])
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| t("The library has no usable shapes").to_owned())?;
+    let bounds = payload
+        .content_bounds()
+        .ok_or_else(|| t("The library has no usable shapes").to_owned())?;
+    Ok(Prepared {
+        payload: Arc::new(payload),
+        bounds,
+        sheet,
+        layout,
+        simplified: false,
     })
 }
 
@@ -159,6 +201,7 @@ type CacheKey = (String, usize);
 struct CachedPrepared {
     value: Option<Arc<Prepared>>,
     estimated_bytes: usize,
+    failure: Option<String>,
 }
 
 /// Libraries, preferences and decoded entries of the Stencils tab.
@@ -170,6 +213,7 @@ pub(crate) struct StencilPanel {
     pub(crate) state: StencilState,
     /// Parsed `state.libraries`, in the same order.
     imported: Vec<Arc<StencilLibrary>>,
+    packages: Vec<(String, Arc<StencilPackage>)>,
     cache: HashMap<CacheKey, CachedPrepared>,
     cache_bytes: usize,
     cache_dark: bool,
@@ -181,13 +225,79 @@ struct Section {
     id: String,
     title: String,
     builtin: bool,
-    library: Arc<StencilLibrary>,
+    content: SectionContent,
+}
+
+enum SectionContent {
+    Drawio(Arc<StencilLibrary>),
+    Package(Arc<StencilPackage>),
+}
+
+#[derive(Clone, Copy)]
+enum SectionEntry<'a> {
+    Drawio(&'a StencilEntry),
+    Definition(&'a StencilDefinition),
+}
+
+impl<'a> SectionEntry<'a> {
+    fn title(self) -> &'a str {
+        match self {
+            Self::Drawio(entry) => &entry.title,
+            Self::Definition(definition) => &definition.title,
+        }
+    }
+
+    fn matches_query(self, query: &str) -> bool {
+        self.title().to_lowercase().contains(query)
+            || matches!(self, Self::Definition(definition) if definition.tags.iter().any(|tag| tag.to_lowercase().contains(query)))
+    }
+}
+
+impl Section {
+    fn entries(&self) -> Vec<(usize, SectionEntry<'_>)> {
+        match &self.content {
+            SectionContent::Drawio(library) => library
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| (index, SectionEntry::Drawio(entry)))
+                .collect(),
+            SectionContent::Package(package) => package
+                .definitions
+                .iter()
+                .enumerate()
+                .map(|(index, definition)| (index, SectionEntry::Definition(definition)))
+                .collect(),
+        }
+    }
+
+    #[cfg(test)]
+    fn library(&self) -> &Arc<StencilLibrary> {
+        match &self.content {
+            SectionContent::Drawio(library) => library,
+            SectionContent::Package(_) => panic!("expected a draw.io template library"),
+        }
+    }
 }
 
 enum TileAction {
     Insert(Arc<Prepared>),
     Remove(usize),
-    Unavailable,
+    Unavailable(String),
+}
+
+fn parse_package(text: &str) -> Result<StencilPackage, String> {
+    let package = StencilPackage::from_json(text).map_err(|error| error.to_string())?;
+    if package.definitions.is_empty() {
+        return Err(t("The library has no usable shapes").into());
+    }
+    if thinoda_core::stencil_object::find_package(&package.id).is_some() {
+        return Err(t("A stencil package with this ID is already installed").into());
+    }
+    for definition in &package.definitions {
+        thinoda_core::stencil_object::StencilRef::new(&package.id, &definition.id).validate()?;
+    }
+    Ok(package)
 }
 
 impl StencilPanel {
@@ -269,8 +379,33 @@ impl StencilPanel {
             }
         });
         self.imported = imported;
+        let mut packages: Vec<(String, Arc<StencilPackage>)> = Vec::new();
+        self.state.packages.retain(|saved| {
+            let result = parse_package(&saved.json).and_then(|package| {
+                if packages
+                    .iter()
+                    .any(|(_, installed)| installed.id == package.id)
+                {
+                    Err(t("A stencil package with this ID is already installed").to_owned())
+                } else {
+                    Ok(package)
+                }
+            });
+            match result {
+                Ok(package) => {
+                    packages.push((saved.id.clone(), Arc::new(package)));
+                    true
+                }
+                Err(error) => {
+                    messages.push(format!("{}: {error}", saved.id));
+                    failed = true;
+                    false
+                }
+            }
+        });
+        self.packages = packages;
         if !self.imported.iter().any(|lib| lib.id == SCRATCHPAD_ID) {
-            if self.state.libraries.len() >= thinoda_platform::stencils::MAX_LIBRARIES {
+            if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
                 messages.push(t("Too many stencil libraries; remove one first").to_owned());
                 failed = true;
             }
@@ -316,7 +451,7 @@ impl StencilPanel {
                 library.title.clone()
             },
             builtin: false,
-            library: Arc::clone(library),
+            content: SectionContent::Drawio(Arc::clone(library)),
         });
         let builtin = builtin_libraries()
             .iter()
@@ -325,8 +460,18 @@ impl StencilPanel {
                 id: library.id.clone(),
                 title: builtin_title(&library.title),
                 builtin: true,
-                library: Arc::clone(library),
+                content: SectionContent::Drawio(Arc::clone(library)),
             });
+        let packages = self.packages.iter().map(|(id, package)| Section {
+            id: id.clone(),
+            title: if package.title.trim().is_empty() {
+                package.id.clone()
+            } else {
+                package.title.clone()
+            },
+            builtin: false,
+            content: SectionContent::Package(Arc::clone(package)),
+        });
         // Like draw.io: the scratchpad first, then the shape sections, then imports.
         let (scratchpad, others): (Vec<_>, Vec<_>) =
             imported.partition(|section| section.id == SCRATCHPAD_ID);
@@ -334,6 +479,7 @@ impl StencilPanel {
             .into_iter()
             .chain(builtin)
             .chain(others)
+            .chain(packages)
             .collect()
     }
 
@@ -341,7 +487,7 @@ impl StencilPanel {
         &mut self,
         section: &Section,
         index: usize,
-        entry: &StencilEntry,
+        entry: SectionEntry<'_>,
         dark: bool,
         budget: &mut usize,
     ) -> Option<Option<Arc<Prepared>>> {
@@ -357,16 +503,34 @@ impl StencilPanel {
             return None;
         }
         *budget -= 1;
-        let prepared = prepare(entry, dark, section.builtin).map(Arc::new);
+        let result = match (&section.content, entry) {
+            (SectionContent::Drawio(_), SectionEntry::Drawio(entry)) => {
+                prepare(entry, dark, section.builtin)
+                    .ok_or_else(|| t("Some library entries could not be used").to_owned())
+            }
+            (SectionContent::Package(package), SectionEntry::Definition(definition)) => {
+                prepare_definition(package, definition, dark)
+            }
+            _ => Err(t("Some library entries could not be used").to_owned()),
+        };
+        let failure = result.as_ref().err().cloned();
+        let prepared = result.ok().map(Arc::new);
+        let source_bytes = match entry {
+            SectionEntry::Drawio(entry) => entry.xml.len(),
+            SectionEntry::Definition(_) => 0,
+        };
         let estimated_bytes = prepared.as_ref().map_or(256, |prepared| {
-            prepared_cache_bytes(prepared).saturating_add(entry.xml.len())
+            prepared_cache_bytes(prepared).saturating_add(source_bytes)
         });
         self.remember(
-            key,
+            key.clone(),
             prepared.clone(),
             estimated_bytes,
             CACHE_ESTIMATED_BYTES,
         );
+        if let Some(cached) = self.cache.get_mut(&key) {
+            cached.failure = failure;
+        }
         Some(prepared)
     }
 
@@ -391,6 +555,7 @@ impl StencilPanel {
             CachedPrepared {
                 value,
                 estimated_bytes,
+                failure: None,
             },
         );
     }
@@ -420,7 +585,10 @@ impl StencilPanel {
         text: &str,
         work_remaining: &mut usize,
     ) -> Result<(String, usize), String> {
-        if self.state.libraries.len() >= thinoda_platform::stencils::MAX_LIBRARIES {
+        if text.trim_start().starts_with('{') {
+            return self.import_package(text);
+        }
+        if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
             return Err(t("Too many stencil libraries; remove one first").into());
         }
         let available = drawio_library::MAX_DECODED_BYTES.saturating_sub(self.retained_bytes());
@@ -430,10 +598,7 @@ impl StencilPanel {
         if parsed.library.entries.is_empty() {
             return Err(t("The library has no usable shapes").into());
         }
-        let id = (1..=thinoda_platform::stencils::MAX_LIBRARIES)
-            .map(|n| format!("lib-{n}"))
-            .find(|id| self.state.libraries.iter().all(|saved| &saved.id != id))
-            .ok_or_else(|| t("Too many stencil libraries; remove one first"))?;
+        let id = self.next_library_id()?;
         let mut library = parsed.library;
         library.id = id.clone();
         let title = library
@@ -461,11 +626,62 @@ impl StencilPanel {
         Ok((id, parsed.skipped))
     }
 
+    fn library_count(&self) -> usize {
+        self.state.libraries.len() + self.state.packages.len()
+    }
+
+    fn next_library_id(&self) -> Result<String, String> {
+        (1..=thinoda_platform::stencils::MAX_LIBRARIES)
+            .map(|n| format!("lib-{n}"))
+            .find(|id| {
+                self.state.libraries.iter().all(|saved| &saved.id != id)
+                    && self.state.packages.iter().all(|saved| &saved.id != id)
+            })
+            .ok_or_else(|| t("Too many stencil libraries; remove one first").to_owned())
+    }
+
+    fn import_package(&mut self, text: &str) -> Result<(String, usize), String> {
+        if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
+            return Err(t("Too many stencil libraries; remove one first").into());
+        }
+        let package = parse_package(text)?;
+        if self
+            .packages
+            .iter()
+            .any(|(_, installed)| installed.id == package.id)
+        {
+            return Err(t("A stencil package with this ID is already installed").into());
+        }
+        let id = self.next_library_id()?;
+        let unavailable = package
+            .definitions
+            .iter()
+            .filter(|definition| !definition.missing_capabilities().is_empty())
+            .count();
+        self.state.packages.push(SavedPackage {
+            id: id.clone(),
+            json: text.to_owned(),
+        });
+        if let Err(error) = thinoda_platform::stencils::validate(&self.state) {
+            self.state.packages.pop();
+            return Err(saved_state_error(error));
+        }
+        self.packages.push((id.clone(), Arc::new(package)));
+        Ok((id, unavailable))
+    }
+
     fn retained_bytes(&self) -> usize {
         self.imported
             .iter()
             .map(|library| library_decoded_bytes(library))
-            .sum()
+            .sum::<usize>()
+            .saturating_add(
+                self.state
+                    .packages
+                    .iter()
+                    .map(|saved| saved.json.len())
+                    .sum::<usize>(),
+            )
     }
 
     pub(crate) fn remove_library(&mut self, id: &str) {
@@ -474,6 +690,8 @@ impl StencilPanel {
         }
         self.state.libraries.retain(|saved| saved.id != id);
         self.imported.retain(|library| library.id != id);
+        self.state.packages.retain(|package| package.id != id);
+        self.packages.retain(|(package_id, _)| package_id != id);
         self.state.collapsed.retain(|collapsed| collapsed != id);
         self.invalidate(id);
     }
@@ -625,6 +843,37 @@ pub(crate) const BUILTIN_TITLES: &[&str] = &[
     "Extract",
     "Merge",
     "Double arrow",
+    "draw.io shapes",
+    "Tape",
+    "Data storage",
+    "Internal storage",
+    "Corner",
+    "Tee",
+    "Or gate",
+    "Xor gate",
+    "Loop limit",
+    "Display",
+    "Curly bracket",
+    "Sequential data",
+    "Or",
+    "Summing junction",
+    "Data store",
+    "Dimension",
+    "Switch",
+    "Actor",
+    "Frame",
+    "Module",
+    "Component",
+    "Provided interface",
+    "Required interface",
+    "Isometric square",
+    "U-turn arrow",
+    "Partial concentric ellipse",
+    "Arc",
+    "Ribbon banner",
+    "Shaded cube",
+    "Pyramid step",
+    "Shaded cylinder",
 ];
 
 /// Catalog key of a built-in title.
@@ -637,13 +886,14 @@ pub(crate) fn builtin_title(title: &str) -> String {
 }
 
 /// Localizes built-in entry titles; imported titles are shown as written.
-fn entry_title(section: &Section, entry: &StencilEntry) -> String {
-    if entry.title.is_empty() {
+fn entry_title(section: &Section, entry: SectionEntry<'_>) -> String {
+    let title = entry.title();
+    if title.is_empty() {
         t("Untitled").to_owned()
     } else if section.builtin {
-        builtin_title(&entry.title)
+        builtin_title(title)
     } else {
-        entry.title.clone()
+        title.to_owned()
     }
 }
 
@@ -752,15 +1002,14 @@ impl ThinodaApp {
                                         ));
                                     add_selection |= response.clicked()
                                         && widgets::touch_activation_allowed(ui.ctx());
-                                    if section.library.entries.is_empty() {
+                                    if section.entries().is_empty() {
                                         widgets::caption(
                                             ui,
                                             t("Select board items and add them here for reuse"),
                                         );
                                     }
                                 }
-                                let entries: Vec<_> =
-                                    section.library.entries.iter().enumerate().collect();
+                                let entries = section.entries();
                                 let (picked, waiting) =
                                     self.stencil_grid(ui, section, &entries, dark, &mut budget);
                                 action = action.take().or(picked);
@@ -784,17 +1033,28 @@ impl ThinodaApp {
                             }
                         });
                     }
+                    if let SectionContent::Package(package) = &section.content {
+                        header.header_response.on_hover_ui(|ui| {
+                            ui.label(format!("{} · v{}", package.id, package.revision));
+                            if let Some(license) = &package.license {
+                                ui.label(license);
+                            }
+                            widgets::caption(
+                                ui,
+                                t("Removing a library does not change existing objects"),
+                            );
+                        });
+                    }
                 }
             } else {
                 let mut found = false;
                 for section in &sections {
                     let entries: Vec<_> = section
-                        .library
-                        .entries
-                        .iter()
-                        .enumerate()
+                        .entries()
+                        .into_iter()
                         .filter(|(_, entry)| {
-                            entry_title(section, entry).to_lowercase().contains(&query)
+                            entry_title(section, *entry).to_lowercase().contains(&query)
+                                || entry.matches_query(&query)
                                 || section.title.to_lowercase().contains(&query)
                         })
                         .collect();
@@ -856,9 +1116,8 @@ impl ThinodaApp {
                 self.stencils.remove_scratchpad_entry(index);
                 changed = true;
             }
-            Some((_, TileAction::Unavailable)) => {
-                self.toasts
-                    .warning(t("Some library entries could not be used"));
+            Some((_, TileAction::Unavailable(error))) => {
+                self.toasts.warning(error);
             }
             None => {}
         }
@@ -876,7 +1135,7 @@ impl ThinodaApp {
         &mut self,
         ui: &mut Ui,
         section: &Section,
-        entries: &[(usize, &StencilEntry)],
+        entries: &[(usize, SectionEntry<'_>)],
         dark: bool,
         budget: &mut usize,
     ) -> (Option<(usize, TileAction)>, bool) {
@@ -906,6 +1165,13 @@ impl ThinodaApp {
                 } else {
                     None
                 };
+                let failure = failed.then(|| {
+                    self.stencils
+                        .cache
+                        .get(&(section.id.clone(), index))
+                        .and_then(|cached| cached.failure.clone())
+                        .unwrap_or_else(|| t("Some library entries could not be used").to_owned())
+                });
                 if let Some(picked) = stencil_tile(
                     ui,
                     rect,
@@ -913,7 +1179,7 @@ impl ThinodaApp {
                     index,
                     &title,
                     prepared.as_ref(),
-                    failed,
+                    failure.as_deref(),
                     dark,
                     section.id == SCRATCHPAD_ID,
                 ) {
@@ -1018,7 +1284,7 @@ impl ThinodaApp {
         if let Some(paths) = crate::files::pick_files(
             crate::files::Purpose::StencilLibrary,
             Some(t("Import library…")),
-            &[("draw.io library", &["xml"])],
+            &[(t("Stencils"), &["xml", "json"])],
             None,
             true,
         ) {
@@ -1026,7 +1292,7 @@ impl ThinodaApp {
         }
     }
 
-    /// Imports picked draw.io library files.
+    /// Imports picked draw.io template libraries or declarative JSON packages.
     pub(crate) fn import_stencil_libraries(&mut self, paths: &[PathBuf]) {
         self.ensure_stencils_loaded();
         let mut changed = false;
@@ -1041,8 +1307,16 @@ impl ThinodaApp {
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
                     .and_then(|text| {
-                        self.stencils
-                            .import_with_work(&name, &text, &mut work_remaining)
+                        if path
+                            .extension()
+                            .and_then(|extension| extension.to_str())
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+                        {
+                            self.stencils.import_package(&text)
+                        } else {
+                            self.stencils
+                                .import_with_work(&name, &text, &mut work_remaining)
+                        }
                     });
             match result {
                 Ok((_, skipped)) => {
@@ -1077,7 +1351,7 @@ fn stencil_tile(
     index: usize,
     title: &str,
     prepared: Option<&Arc<Prepared>>,
-    failed: bool,
+    failure: Option<&str>,
     dark: bool,
     removable: bool,
 ) -> Option<TileAction> {
@@ -1115,7 +1389,7 @@ fn stencil_tile(
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    if failed { "×" } else { "…" },
+                    if failure.is_some() { "×" } else { "…" },
                     egui::FontId::proportional(14.0),
                     palette.text_muted,
                 );
@@ -1132,8 +1406,8 @@ fn stencil_tile(
     }
     let response = response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(title).strong());
-        if failed {
-            widgets::caption(ui, t("Some library entries could not be used"));
+        if let Some(error) = failure {
+            widgets::caption(ui, error);
         }
         if let Some(prepared) = prepared {
             let (preview, _) = ui.allocate_exact_size(vec2(160.0, 120.0), egui::Sense::hover());
@@ -1175,8 +1449,10 @@ fn stencil_tile(
                 || input.consume_key(egui::Modifiers::NONE, egui::Key::Space)
         });
     let activated = ui.is_enabled() && ((touch_allowed && response.clicked()) || keyboard);
-    if failed && activated {
-        return Some(TileAction::Unavailable);
+    if let Some(error) = failure
+        && activated
+    {
+        return Some(TileAction::Unavailable(error.to_owned()));
     }
     let prepared = prepared?;
     if ui.is_enabled() && response.drag_started() {

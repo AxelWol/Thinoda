@@ -831,6 +831,37 @@ impl Sheet {
         self.canvas.has_stencils()
     }
 
+    /// Whether any stencil instance pins a specific definition revision.
+    pub fn has_stencil_definition_hashes(&self) -> bool {
+        self.canvas.objects.iter().any(|object| {
+            object
+                .stencil
+                .as_ref()
+                .is_some_and(|stencil| stencil.definition_hash.is_some())
+        })
+    }
+
+    /// Whether a stencil instance carries an embedded definition closure.
+    pub fn has_stencil_definition_closures(&self) -> bool {
+        self.canvas.objects.iter().any(|object| {
+            object
+                .stencil
+                .as_ref()
+                .is_some_and(|stencil| stencil.package_resource.is_some())
+        })
+    }
+
+    /// Resolves embedded stencil package closures after loading persisted data.
+    pub fn hydrate_stencil_packages(&mut self) -> Result<(), String> {
+        let resources = &self.resources;
+        for object in &mut self.canvas.objects {
+            if let Some(stencil) = &mut object.stencil {
+                stencil.hydrate_package(resources)?;
+            }
+        }
+        Ok(())
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -1301,6 +1332,15 @@ impl Sheet {
                 && reference.starts_with(crate::resources::RESOURCE_PREFIX)
             {
                 self.resources.get(reference)?;
+            }
+        }
+        for object in &self.canvas.objects {
+            if let Some(stencil) = &object.stencil {
+                stencil.validate()?;
+                if stencil.package_resource.is_some() {
+                    let mut stencil = stencil.clone();
+                    stencil.hydrate_package(&self.resources)?;
+                }
             }
         }
         Ok(())
@@ -2394,6 +2434,26 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_stencils)
     }
 
+    /// Whether any stencil instance pins a specific definition revision.
+    pub fn has_stencil_definition_hashes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_stencil_definition_hashes)
+    }
+
+    /// Whether any stencil instance carries an embedded definition closure.
+    pub fn has_stencil_definition_closures(&self) -> bool {
+        self.sheets
+            .iter()
+            .any(Sheet::has_stencil_definition_closures)
+    }
+
+    /// Resolves embedded stencil package closures after loading persisted data.
+    pub fn hydrate_stencil_packages(&mut self) -> Result<(), String> {
+        for sheet in &mut self.sheets {
+            sheet.hydrate_stencil_packages()?;
+        }
+        Ok(())
+    }
+
     pub fn active(&self) -> &Sheet {
         &self.sheets[self.active_sheet.min(self.sheets.len() - 1)]
     }
@@ -2599,9 +2659,22 @@ mod tests {
         }
         shape.alt_text = "SECRET alt".into();
         sheet.add_canvas_object(shape).unwrap();
+        let mut package = crate::stencil_object::find_package("thinoda.general")
+            .unwrap()
+            .clone();
+        package.id = "SECRET.package".into();
+        package.title = "SECRET library".into();
+        let stencil = crate::stencil_object::new_object(
+            &package,
+            package.definition("message").unwrap(),
+            Vec2::new(100.0, 100.0),
+        );
+        sheet.add_canvas_object(stencil).unwrap();
         let masked = Workbook::new(sheet).masked_copy();
         masked.validate().unwrap();
         assert!(!serde_json::to_string(&masked).unwrap().contains("SECRET"));
+        assert!(masked.active().resources.is_empty());
+        assert!(!masked.has_stencils());
         assert!(masked.active().root_topic().title.is_empty());
         assert_eq!(masked.active().zones[0].name, "Frame 1");
         assert_eq!(masked.active().presentation.slides[0].title, "Slide 1");

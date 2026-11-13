@@ -57,7 +57,8 @@ Anything outside a tier is reported in diagnostics as "preserved, shown approxim
    shared, bounded interpreter, not another Rust enum variant or renderer branch
    for each shape. This supersedes the earlier proposal to port individual
    JavaScript shapes into Rust. Existing native shapes need a staged, non-breaking
-   migration; the JSON interpreter is not implemented yet.
+   migration; the shared interpreter is implemented for the current DSL subset,
+   while full language and library coverage remain roadmap work.
 
 ## 2. Research summary
 
@@ -422,10 +423,12 @@ unsupported definition remains distinguishable from a resource-limit failure.
 2. **ST1 - Pure interpreter:** implement bounded parsing, validation, dependency
    resolution, expression evaluation and drawing/interaction IR. No UI or
    document writes during evaluation. Include malformed and budget-boundary tests.
-3. **ST2 - Generic persistence:** add one generic stencil-instance representation
-   with parent/anchor relationships and pinned workbook definition/resource
-   closure; update native, clipboard,
-   recovery and XMind gates. Keep legacy document readers and behavior intact.
+3. **ST2 - Generic persistence (partially delivered):** add one generic
+   stencil-instance representation with parent/anchor relationships and pinned
+   definition/resource closure; update native, clipboard, recovery and XMind
+   gates. Per-sheet closure persistence and those format gates are implemented;
+   workbook-global deduplication remains open. Keep legacy document readers and
+   behavior intact.
 4. **ST3 - Shared consumers:** connect renderer backends, bounds/hit testing,
    selection, modifiers, accessible handles, inspector, insertion and connectors
    to the same evaluated definition. Add Undo/Redo and cross-renderer tests.
@@ -490,12 +493,37 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
   unknown elements become definition capabilities (`drawio.image`,
   `drawio.include-shape`, `drawio.element.*`) with diagnostics, and the bounded
   original XML is kept in the `drawio.source` extension.
+  The existing Stencils panel's import picker also accepts versioned JSON
+  packages. Installed packages retain their original JSON in `stencils.json`,
+  display searchable/collapsible sections, preview through the shared
+  interpreter, and support click, keyboard and drag insertion with Undo/Redo.
+  Package tags participate in search; section tooltips show package ID, revision
+  and license. Unsupported definitions retain their capability diagnostics and
+  cannot insert a misleading fallback. Duplicate package IDs (including built-in
+  IDs) are rejected atomically; removing a package leaves existing pinned objects
+  unchanged. XML template libraries and JSON packages share installation-count
+  and serialized-size limits; damaged saved packages prevent overwriting the
+  existing library file.
 - **ST2 partially implemented:** `CanvasObject.stencil` holds an optional
   `StencilRef` (package, definition, explicit parameter overrides), validated
-  at every load, paste and recovery boundary; native format v26, stencil-aware
-  clipboard payloads and XMind snapshots gate older readers. An unknown package
-  keeps its reference and draws the legacy shape as fallback. Pinned workbook
-  definition closures are still open.
+  at every load, paste and recovery boundary; new references pin a definition
+  SHA-256 and use native format v27, while legacy hashless stencil references
+  remain supported at v26. A mismatched installed definition refuses to render
+  as a different revision. When a stencil is inserted, its validated
+  transitive same-package `include` closure is embedded as an
+  `application/json` resource in that sheet's `ResourceStore`; hydration
+  verifies package identity, definition hash and resource digest before the
+  closure can render. This supports offline restore through native v28,
+  clipboard v21, recovery envelope v3 and private XMind stencil snapshot v3;
+  hash-only references retain their v27/v20/recovery-v2/XMind-v2 gates, and
+  hashless references retain v26/v19/recovery-v1/XMind-v1 compatibility. These
+  are separate per-sheet resource stores rather than a workbook-global stencil
+  closure map, so cross-sheet storage deduplication remains open. Missing or
+  mismatched embedded closures fail closed rather than resolving to a different
+  installed revision.
+  Masked copies remove stencil references along with embedded resources: stencil
+  programs and metadata can contain private text, so the legacy fallback is used
+  rather than leaking source data or leaving broken resource references.
 - **ST3 partially implemented:** `stencil_object` evaluates instances for the
   scene (bounds, hit regions, perimeter), the egui canvas renderer (earcut
   fills, dashed/closed strokes, aligned stencil texts), the SVG/PDF/PNG export
@@ -513,10 +541,57 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
   otherwise become cards or text), so references survive repeated round trips.
   The inspector shows the stencil title in the Shape field; picking any
   built-in shape converts the object (undoably) and hides outline options a
-  stencil cannot carry.
-- **Next:** undoable handle/parameter editing and an inspector section for
-  stencil parameters, connector ports from definitions, pinned closures; then
-  the library-install UX for ST6 and the ST5 legacy migration.
+  stencil cannot carry. Its typed parameter inspector supports reset-to-default;
+  selected stencil handles expose their definition labels, drag with live shape
+  preview, and adjust by keyboard arrows (Shift uses larger steps). Each drag
+  commits as one undoable edit on release. Definition connections supply visible
+  connector points, and automatic endpoints clip to the stencil outline.
+- **ST4 import resolver partially implemented:** plain draw.io style names are
+  resolved through data, not code. Each definition's `interchange.drawio.import`
+  map binds style keys to parameters (with absent values for draw.io's own
+  defaults and `fixedSize` variants). The built-in `thinoda.drawio` package
+  ("draw.io shapes") defines 32 draw.io shapes in JSON: tape, data storage,
+  internal storage, corner, tee, or/xor gates, loop limit, display, manual
+  input, curly bracket, sequential data, or/summing junctions, data store,
+  dimension, switch, UML actor/frame/module/component/lollipop/required
+  interface, isometric square, the arrows2 arrow and U-turn, the basic partial
+  concentric ellipse and arc, and the infographic ribbon, shaded cube, pyramid
+  step and cylinder. `thinoda.general` now maps folder, cube and message.
+  Inline `shape=stencil(<deflate-base64 XML>)` cells are converted by the
+  existing stencil-XML adapter into the `drawio.inline` package. Their
+  definition IDs are content-addressed (`stencil-<SHA-256 prefix>`), and export
+  writes the original payload back unchanged. All inline stencils on a page
+  share one bundled JSON resource, so stencil-heavy files such as
+  `infographic-rockpool.drawio` (556 distinct inline stencils) stay within the
+  128-resource-per-sheet limit. Installed built-in definitions are pinned by
+  hash alone and embed no closure, because the shipped revision is immutable.
+  Existing built-in definitions must therefore never be edited in place. Visual
+  export skips referenced stencil JSON resources rather than decoding them as
+  images. JSON floats now parse exactly (`serde_json/float_roundtrip`), so
+  definition hashes and parameter values survive the native round trip.
+  Not covered: `flipH`/`flipV`, label positions bound to stencil text, BPMN
+  task/event markers, sequence lifelines, tables, mockups, gradients and the
+  remaining mxgraph libraries. These keep their classified fallback and
+  disclosure.
+- **Next:** connect draw.io stencil-XML conversion to the installation picker,
+  add explicit revision-update previews for ST6 and implement ST5 legacy
+  migration. Extend the data-driven import map to further mxgraph libraries.
+  Revisit workbook-global closure deduplication before adding larger
+  third-party stencil libraries.
+
+**Local-library verification (2026-11-13).** The published editor (32.7.2) was
+inspected live: More Shapes separates catalog selection and preview from
+Apply/Cancel, while File > Open Library exposes local-device libraries separately.
+Thinoda reuses its existing local-import action rather than pretending JSON
+installation is the complete draw.io catalog manager. The supplied
+`bpmn-2-example.png` was inspected for its message symbols; the live message
+shape at 60 x 40 emits the outer rectangle and flap path `(0,0) -> (30,20) ->
+(60,0)`, with twelve measured connection constraints. A JSON-installed message
+is checked against those coordinates and perimeter flags after keyboard
+insertion; drag insertion and Undo/Redo are covered too. All definitions in the
+test package are restored offline after removing/reinstalling the library.
+These checks do not claim support for every BPMN container, procedural shape,
+external image, library resource dependency or draw.io object variation.
 
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 
