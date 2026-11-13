@@ -1,4 +1,9 @@
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use thinoda_core::board::BoardMember;
+use thinoda_core::document::{DocumentEditContext, DocumentEditValidator};
 use thinoda_core::{
     ApproxMeasure, CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, Card, CardKind,
     Document, EditError, Endpoint, Rect, ShapeKind, Sheet, Vec2, Workbook, clipboard, layout_sheet,
@@ -30,6 +35,426 @@ fn nested() -> (Sheet, [CanvasObjectId; 5]) {
     }
     sheet.validate().unwrap();
     (sheet, ids.try_into().unwrap())
+}
+
+#[derive(Debug, Default)]
+struct SceneGuard {
+    accept: AtomicBool,
+    calls: AtomicUsize,
+    sheet: Mutex<Option<(usize, Sheet)>>,
+    book: Mutex<Option<Workbook>>,
+}
+
+impl DocumentEditValidator for SceneGuard {
+    fn validate(&self, context: DocumentEditContext<'_>) -> thinoda_core::EditResult<()> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        match context {
+            DocumentEditContext::Sheet { index, after, .. } => {
+                after.validate().map_err(EditError::Invalid)?;
+                *self.sheet.lock().unwrap() = Some((index, after.clone()));
+            }
+            DocumentEditContext::Workbook { after, .. } => {
+                after.validate().map_err(EditError::Invalid)?;
+                *self.book.lock().unwrap() = Some(after.clone());
+            }
+        }
+        if self.accept.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(EditError::Invalid(
+                "Scene policy rejected the proposal".into(),
+            ))
+        }
+    }
+}
+
+#[test]
+fn document_scene_guard_cannot_be_bypassed_by_generic_sheet_commands() {
+    type Edit = fn(&mut Document, [CanvasObjectId; 5]) -> thinoda_core::EditResult<()>;
+    let edits: &[(&str, Edit)] = &[
+        ("move", |doc, ids| {
+            doc.move_canvas_objects(&[ids[0]], Vec2::new(20.0, 30.0))
+        }),
+        ("delete", |doc, ids| doc.remove_canvas_objects(&[ids[0]])),
+        ("reparent", |doc, ids| {
+            doc.edit_sheet("Reparent", |sheet| {
+                sheet
+                    .reparent_canvas_objects(&[ids[3]], None)
+                    .map_err(EditError::Invalid)
+            })
+        }),
+        ("resize", |doc, ids| {
+            let rect = doc.sheet().canvas.object(ids[0]).unwrap().rect;
+            doc.resize_canvas_object(
+                ids[0],
+                Rect::from_min_size(rect.min, rect.size + Vec2::new(20.0, 0.0)),
+            )
+        }),
+        ("paint order", |doc, ids| {
+            doc.reorder_canvas_objects(&[ids[0]], thinoda_core::ZOrder::Front)
+        }),
+        ("style", |doc, ids| {
+            doc.update_canvas_object("Description", ids[0], |object| {
+                object.alt_text = "Changed".into();
+            })
+        }),
+        ("ungroup", |doc, ids| {
+            let group = doc.sheet().canvas.object(ids[4]).unwrap().group.unwrap();
+            doc.ungroup_canvas_objects(group)
+        }),
+        ("paste", |doc, ids| {
+            let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
+            let payload = clipboard::copy_board_selection(doc.sheet(), &layout, &[], &[ids[1]])
+                .map_err(EditError::Invalid)?
+                .ok_or(EditError::Empty)?;
+            doc.edit_sheet("Paste", |sheet| {
+                clipboard::paste_board_selection(sheet, &payload, Vec2::new(300.0, 300.0))
+                    .map(|_| ())
+                    .map_err(EditError::Invalid)
+            })
+        }),
+        ("add", |doc, _| {
+            doc.add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(60.0, 40.0)),
+            ))
+            .map(|_| ())
+        }),
+    ];
+    let (mut sheet, ids) = nested();
+    let extra = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(400.0, 0.0), Vec2::new(60.0, 40.0)),
+        ))
+        .unwrap();
+    sheet.group_canvas_objects(&[ids[4], extra]).unwrap();
+    for (name, edit) in edits {
+        let mut doc = Document::new(Workbook::new(sheet.clone()));
+        doc.edit_sheet("Earlier edit", |sheet| {
+            sheet.set_title(sheet.root, "Future")
+        })
+        .unwrap();
+        assert!(doc.undo());
+        let guard = Arc::new(SceneGuard::default());
+        doc.set_edit_validator(Some(guard.clone()));
+        let before = doc.workbook().clone();
+        let state = doc.state_id();
+        let history = doc.history_bytes();
+        let error = edit(&mut doc, ids).unwrap_err();
+        assert!(
+            error.to_string().contains("Scene policy rejected"),
+            "{name}: {error}"
+        );
+        assert_eq!(guard.calls.load(Ordering::SeqCst), 1, "{name}");
+        assert_eq!(doc.workbook(), &before, "{name}");
+        assert_eq!(doc.state_id(), state, "{name}");
+        assert_eq!(doc.history_bytes(), history, "{name}");
+        assert!(!doc.is_dirty(), "{name}");
+        assert!(!doc.can_undo(), "{name}");
+        assert!(doc.can_redo(), "{name}");
+        assert_eq!(doc.redo_label(), Some("Earlier edit"));
+    }
+}
+
+#[test]
+fn document_binding_stub_rejects_inherited_scope_changes_through_unbound_commands() {
+    use thinoda_core::scene_hierarchy::SceneHierarchy;
+    #[derive(Debug)]
+    struct ScopeGuard {
+        task: CanvasObjectId,
+        scopes: [CanvasObjectId; 2],
+    }
+    impl ScopeGuard {
+        fn scope(&self, sheet: &Sheet) -> Option<CanvasObjectId> {
+            let tree = SceneHierarchy::from_canvas(&sheet.canvas).unwrap();
+            let mut cursor = Some(self.task);
+            while let Some(current) = cursor {
+                if self.scopes.contains(&current) {
+                    return Some(current);
+                }
+                cursor = tree.parent(current).unwrap();
+            }
+            None
+        }
+    }
+    impl DocumentEditValidator for ScopeGuard {
+        fn validate(&self, context: DocumentEditContext<'_>) -> thinoda_core::EditResult<()> {
+            let (before, after) = match context {
+                DocumentEditContext::Sheet { before, after, .. } => (before, after),
+                DocumentEditContext::Workbook { before, after, .. } => {
+                    (&before.sheets[0], &after.sheets[0])
+                }
+            };
+            if self.scope(before) != self.scope(after) {
+                Err(EditError::Invalid(
+                    "Scope change requires confirmation".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let (mut sheet, [pool, lane, _, task, other]) = nested();
+    sheet.set_canvas_container(other, true).unwrap();
+    let mut doc = Document::new(Workbook::new(sheet));
+    doc.set_edit_validator(Some(Arc::new(ScopeGuard {
+        task,
+        scopes: [pool, other],
+    })));
+    let before = doc.workbook().clone();
+    assert!(
+        doc.edit_sheet("Reparent", |sheet| {
+            sheet
+                .reparent_canvas_objects(&[lane], Some(other))
+                .map_err(EditError::Invalid)
+        })
+        .unwrap_err()
+        .to_string()
+        .contains("confirmation")
+    );
+    assert_eq!(doc.workbook(), &before);
+    assert!(
+        doc.edit_book("Bulk reparent", |book| {
+            book.sheets[0]
+                .reparent_canvas_objects(&[lane], Some(other))
+                .map_err(EditError::Invalid)
+        })
+        .is_err()
+    );
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.can_undo());
+    doc.move_canvas_objects(&[lane], Vec2::new(10.0, 20.0))
+        .unwrap();
+    assert_eq!(doc.sheet().canvas.scene, before.sheets[0].canvas.scene);
+    assert!(doc.undo());
+    assert_eq!(doc.workbook(), &before);
+}
+
+#[test]
+fn document_scene_guard_does_not_observe_structurally_invalid_candidates() {
+    let (sheet, [pool, lane, ..]) = nested();
+    let mut doc = Document::new(Workbook::new(sheet));
+    let guard = Arc::new(SceneGuard::default());
+    doc.set_edit_validator(Some(guard.clone()));
+    let before = doc.workbook().clone();
+    let error = doc
+        .edit_sheet("Invalid ancestry", |sheet| {
+            sheet.canvas.scene.parents.insert(pool, lane);
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("cycle"));
+    assert_eq!(guard.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.can_undo());
+}
+
+#[test]
+fn document_scene_guard_sees_reconciled_owners_and_detached_endpoints_before_rejection() {
+    let (mut sheet, [_, _, sublane, task, external]) = nested();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(task),
+            Endpoint::Object(sublane),
+        )))
+        .unwrap();
+    let dependent = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(edge),
+            Endpoint::Object(task),
+        )))
+        .unwrap();
+    assert_eq!(sheet.canvas.scene.parents[&edge], sublane);
+    let mut doc = Document::new(Workbook::new(sheet));
+    let guard = Arc::new(SceneGuard::default());
+    doc.set_edit_validator(Some(guard.clone()));
+    let before = doc.workbook().clone();
+    assert!(
+        doc.update_canvas_object("Reconnect", edge, |object| {
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                panic!("connector")
+            };
+            connector.from = Endpoint::Object(external);
+        })
+        .is_err()
+    );
+    {
+        let observed = guard.sheet.lock().unwrap();
+        let (index, candidate) = observed.as_ref().unwrap();
+        assert_eq!(*index, 0);
+        assert!(!candidate.canvas.scene.parents.contains_key(&edge));
+        assert!(!candidate.canvas.scene.parents.contains_key(&dependent));
+    }
+    assert_eq!(doc.workbook(), &before);
+    assert!(doc.remove_canvas_objects(&[task]).is_err());
+    {
+        let observed = guard.sheet.lock().unwrap();
+        let candidate = &observed.as_ref().unwrap().1;
+        assert!(candidate.canvas.object(task).is_none());
+        let CanvasObjectKind::Connector(connector) = &candidate.canvas.object(edge).unwrap().kind
+        else {
+            panic!("connector")
+        };
+        assert!(matches!(connector.from, Endpoint::Point(_)));
+    }
+    assert_eq!(guard.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.can_undo());
+}
+
+#[test]
+fn document_scene_guard_rejects_complete_workbook_edits_and_reload_without_losing_metadata_or_redo()
+{
+    type Edit = fn(&mut Document) -> thinoda_core::EditResult<()>;
+    let edits: &[(&str, Edit)] = &[
+        ("duplicate", |doc| doc.duplicate_sheet(0).map(|_| ())),
+        ("delete", |doc| doc.remove_sheet(0)),
+        ("move", |doc| doc.move_sheet(0, 1)),
+        ("merge", |doc| {
+            doc.merge_sheets(vec![Sheet::new("Merged", "Root")])
+                .map(|_| ())
+        }),
+        ("metadata", |doc| {
+            doc.edit_book("Metadata", |book| {
+                book.metadata.creator = "Changed".into();
+                book.active_sheet = 0;
+                Ok(())
+            })
+        }),
+        ("reload", |doc| {
+            let mut book = doc.workbook().clone();
+            book.metadata.creator = "Reloaded".into();
+            book.sheets.remove(0);
+            book.active_sheet = 0;
+            doc.reload(book)
+        }),
+    ];
+    for (name, edit) in edits {
+        let (sheet, _) = nested();
+        let mut book = Workbook::new(sheet);
+        book.sheets.push(Sheet::new("Other", "Root"));
+        book.active_sheet = 1;
+        let mut doc = Document::new(book);
+        doc.edit_sheet("Earlier edit", |sheet| {
+            sheet.set_title(sheet.root, "Future")
+        })
+        .unwrap();
+        assert!(doc.undo());
+        let guard = Arc::new(SceneGuard::default());
+        doc.set_edit_validator(Some(guard.clone()));
+        let before = doc.workbook().clone();
+        let state = doc.state_id();
+        let history = doc.history_bytes();
+        let error = edit(&mut doc).unwrap_err();
+        assert!(
+            error.to_string().contains("Scene policy rejected"),
+            "{name}: {error}"
+        );
+        assert_eq!(guard.calls.load(Ordering::SeqCst), 1, "{name}");
+        assert!(guard.book.lock().unwrap().is_some(), "{name}");
+        assert_eq!(doc.workbook(), &before, "{name}");
+        assert_eq!(doc.state_id(), state, "{name}");
+        assert_eq!(doc.history_bytes(), history, "{name}");
+        assert!(!doc.is_dirty(), "{name}");
+        assert!(!doc.can_undo(), "{name}");
+        assert!(doc.can_redo(), "{name}");
+        assert_eq!(doc.redo_label(), Some("Earlier edit"));
+    }
+}
+
+#[test]
+fn document_scene_guard_accepts_once_and_is_retained_by_previews_clones_and_replacements() {
+    let (sheet, [pool, ..]) = nested();
+    let mut doc = Document::new(Workbook::new(sheet));
+    let guard = Arc::new(SceneGuard::default());
+    guard.accept.store(true, Ordering::SeqCst);
+    doc.set_edit_validator(Some(guard.clone()));
+    let before = doc.workbook().clone();
+    doc.move_canvas_objects(&[pool], Vec2::new(20.0, 30.0))
+        .unwrap();
+    let after = doc.workbook().clone();
+    assert_eq!(guard.calls.load(Ordering::SeqCst), 1);
+    assert!(doc.undo());
+    assert_eq!(doc.workbook(), &before);
+    assert!(doc.redo());
+    assert_eq!(doc.workbook(), &after);
+    assert_eq!(guard.calls.load(Ordering::SeqCst), 1);
+    let state = doc.state_id();
+    let history = doc.history_bytes();
+    doc.edit_sheet("No change", |_| Ok(())).unwrap();
+    assert_eq!(guard.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(doc.state_id(), state);
+    assert_eq!(doc.history_bytes(), history);
+    guard.accept.store(false, Ordering::SeqCst);
+    for mut copy in [doc.clone(), doc.preview()] {
+        assert_ne!(copy.instance_id(), doc.instance_id());
+        assert!(
+            copy.move_canvas_objects(&[pool], Vec2::new(5.0, 5.0))
+                .is_err()
+        );
+        assert_eq!(copy.workbook(), &after);
+    }
+    doc.replace(before.clone());
+    assert!(
+        doc.move_canvas_objects(&[pool], Vec2::new(5.0, 5.0))
+            .is_err()
+    );
+    assert_eq!(doc.workbook(), &before);
+    doc.set_edit_validator(None);
+    doc.move_canvas_objects(&[pool], Vec2::new(5.0, 5.0))
+        .unwrap();
+    assert!(doc.can_undo());
+}
+
+#[test]
+fn workbook_guard_and_history_cover_metadata_and_early_failures_atomically() {
+    let (sheet, _) = nested();
+    let mut doc = Document::new(Workbook::new(sheet));
+    let guard = Arc::new(SceneGuard::default());
+    guard.accept.store(true, Ordering::SeqCst);
+    doc.set_edit_validator(Some(guard.clone()));
+    let before = doc.workbook().clone();
+    for fail_in_closure in [true, false] {
+        assert!(
+            doc.edit_book("Invalid bulk edit", |book| {
+                book.metadata.creator = "Must roll back".into();
+                if fail_in_closure {
+                    return Err(EditError::Invalid("Canceled".into()));
+                }
+                book.sheets.clear();
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(doc.workbook(), &before);
+        assert!(!doc.can_undo());
+    }
+    assert_eq!(guard.calls.load(Ordering::SeqCst), 0);
+    doc.edit_book("Metadata", |book| {
+        book.metadata.creator = "Accepted".into();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(guard.calls.load(Ordering::SeqCst), 1);
+    let after = doc.workbook().clone();
+    assert!(doc.is_dirty());
+    assert!(doc.undo());
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.is_dirty());
+    assert!(!doc.can_undo());
+    assert!(doc.redo());
+    assert_eq!(doc.workbook(), &after);
+    doc.add_sheet(Sheet::new("Other", "Root")).unwrap();
+    assert_eq!(doc.active_index(), 1);
+    let state = doc.state_id();
+    doc.edit_book("Only switch active sheet", |book| {
+        book.active_sheet = 0;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(doc.active_index(), 0);
+    assert_eq!(doc.state_id(), state);
 }
 
 #[test]

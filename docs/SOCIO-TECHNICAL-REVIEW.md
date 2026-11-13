@@ -452,3 +452,55 @@ the board-catalog coverage was also rerun against the final canvas changes.
 Formatting, affected-package clippy (`--all-targets -- -D warnings`),
 core/canvas/app builds and `cargo check --workspace` passed. No native
 screen-reader, live browser or device acceptance is claimed.
+
+## 13. Document-transaction checkpoint: author critique
+
+**Implemented:** a shared runtime validator at document sheet/workbook/reload
+commit boundaries, complete workbook rollback/history and policy retention by
+clones and previews. Unconfigured documents retain unbound behavior.
+
+**Rubber-duck questions and dispositions:**
+
+- Can a generic paste, delete or style command forget a reparent-specific
+  validator? An installed document guard sees the final transaction regardless
+  of which low-level sheet helper produced it. Bulk sheet operations have an
+  equivalent whole-workbook context.
+- Is the policy looking at an incomplete connector graph? It runs after
+  reconciliation, endpoint detachment and structural/resource checks. Tests
+  inspect induced dependent owners and real point terminals, while a cyclic
+  candidate never reaches the policy.
+- Does the guard really detect inherited semantic consequences? A test-only
+  bound-scope policy follows the shared hierarchy through transparent unbound
+  containers. It rejects both ordinary and bulk reparenting, but allows moving
+  the same subtree geometrically. No production semantic rules are inferred.
+- Could a refused proposal leak metadata, identifiers or history changes?
+  Rejection restores the original sheet or complete workbook before recording
+  history. Workbook snapshots were widened because restoring only sheets
+  would leak edited metadata and make metadata-only acceptance non-undoable.
+  Clipboard, reload and existing redo entries are covered.
+- Can a preview silently disable the policy? No. Clone/preview/reset retain
+  the same runtime guard. Clearing it requires explicit configuration. A
+  semantic-aware application must not drop its validator just because the
+  current snapshot is unbound.
+- Are reset and history replay new semantic decisions? No. Trusted construction
+  and `replace` remain loading/reset boundaries, not guarded edits; `reload`
+  is guarded. Undo/redo replays accepted snapshots. The future binding model
+  must live in those snapshots, not only in mutable callback state.
+- Can this callback host asynchronous confirmation? No. It is an immutable
+  candidate acceptance/veto interface. Detached proposal presentation,
+  explicit user decisions and document-instance/state checks still need the
+  semantic authoring integration; a refusal string is not a confirmation UI.
+- Does the hook itself change native or clipboard schemas? No. It is runtime
+  configuration, and the same scene fields remain authoritative.
+
+**Critique:** the core commit boundary can now enforce shared policies without
+requiring every command to remember a callback. This is necessary infrastructure,
+not evidence that bound workflows, collapse or Software examples are available.
+SC0/SC1 remain partial. This is an author critique, not an independent review
+or release acceptance.
+
+**Validation evidence:** core/canvas regression suites passed 1,247 tests with
+2 ignored; the serialized app library run passed 971 tests with 2 ignored.
+Affected-package clippy (`--all-targets -- -D warnings`), core/canvas/app builds,
+workspace check, formatting and diff checks passed. No native/browser/device
+or production semantic-authoring acceptance is claimed.

@@ -2957,6 +2957,48 @@ fn scene_selection_multiselect_lock_z_order_and_undo() {
 }
 
 #[test]
+fn hierarchy_keyboard_delete_surfaces_document_policy_rejection_without_partial_edits() {
+    use thinoda_core::document::{DocumentEditContext, DocumentEditValidator};
+    #[derive(Debug)]
+    struct KeepObjects;
+    impl DocumentEditValidator for KeepObjects {
+        fn validate(&self, context: DocumentEditContext<'_>) -> thinoda_core::EditResult<()> {
+            let DocumentEditContext::Sheet { before, after, .. } = context else {
+                return Err(thinoda_core::EditError::Invalid(
+                    "Workbook edit refused".into(),
+                ));
+            };
+            if after.canvas.objects.len() < before.canvas.objects.len() {
+                Err(thinoda_core::EditError::Invalid(
+                    "Bound objects must be retained".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let (sheet, [_, _, _, first, _, _, _]) = containment_board();
+    let mut h = harness(sheet);
+    h.state_mut()
+        .doc
+        .set_edit_validator(Some(std::sync::Arc::new(KeepObjects)));
+    h.get_by_label("Rectangle: First").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert_eq!(h.state().errors.len(), 1);
+    assert!(
+        h.state().errors[0]
+            .to_string()
+            .contains("Bound objects must be retained")
+    );
+}
+
+#[test]
 fn hierarchy_keyboard_navigation_selects_reveals_and_focuses_without_editing_history() {
     let (mut sheet, [pool, lane, sublane, first, second, outside, empty]) = containment_board();
     sheet.canvas.object_mut(pool).unwrap().locked = true;

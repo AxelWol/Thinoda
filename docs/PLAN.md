@@ -45,11 +45,17 @@ previous/next-sibling keyboard selection, reveal and focus, with localized
 containment descriptions and inherited-lock announcements. Boundaries do not
 wrap, and navigation preserves history/redo. Existing flat-board/map shortcuts,
 text editing and focused controls retain ownership.
+The document-transaction checkpoint adds an optional runtime validator enforced
+after reconciliation for generic sheet/workbook edits and reload. Rejection
+restores the complete proposal before history changes; previews/clones retain
+the guard. Whole-workbook rollback and history now include metadata, not just
+sheets. A stub binding policy exercises inherited scope changes through ordinary
+commands; no persisted semantic graph or confirmation UI is added.
 These changes need no additional saved fields or format version.
 This is partial SC1, not a released container UI:
-collapse, headers/stack layout, card occurrences, remaining command/binding
-integration, full platform/accessibility acceptance and semantic authoring remain open; see the
-checkpoints in SCENE-CONTAINERS.md.
+collapse, headers/stack layout, card occurrences, production binding-policy
+installation/confirmation, full platform/accessibility acceptance and semantic
+authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
 
 User-requested starter content: add a **Software** start-page template group
 with editable socio-technical examples for human/service handoffs, approval

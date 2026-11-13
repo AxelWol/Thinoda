@@ -566,6 +566,58 @@ Software start-page examples remain open. No storage/version change is needed.
 SC0/SC1 are still partial; this checkpoint does not complete the socio-technical
 editor.
 
+### 5.6 Document-transaction checkpoint: shared runtime guard
+
+`DocumentEditValidator` installs one optional runtime policy on a document.
+Generic sheet commands invoke it once on a read-only `DocumentEditContext`
+after Sankey/FIM reconciliation, dangling-endpoint repair, resource checks and
+board validation. The context includes the operation label, sheet index and
+complete before/after sheets. Workbook commands and reload provide the complete
+before/after workbook instead; sheet-scoped identities are not paired by a
+second ownership model.
+
+The guard sits at the transaction boundary, not just the reparent helper.
+Move, resize, paint order, style, ungroup, delete, add and clipboard transactions
+therefore cannot bypass an installed policy by choosing an unbound `Sheet`
+convenience method. Sheet duplicate/delete/reorder/merge and direct bulk edits
+use the workbook guard. Low-level sheet helpers remain useful for constructing
+unbound data and detached proposals; bound live editing must use the guarded
+document.
+
+A veto restores the candidate before dirty state, history, redo or identifier
+allocation becomes observable as a committed edit. Whole-workbook edits now
+snapshot/restore metadata too: retaining only sheets would leave a rejected
+proposal partly applied and omit metadata from undo. The same complete
+workbook snapshot serves history accounting and undo/redo. Changing only the
+active sheet remains a view change without an undo entry.
+
+Clones and history-free previews retain the validator. `replace` retains it
+across the existing **trusted reset** boundary but, like construction, does not
+invoke it or preserve history; it must not substitute for a guarded edit.
+`reload` does invoke it before replacement or marking the document saved.
+Undo/redo restores already accepted snapshots without running policy again.
+Only explicitly configuring `None` clears the guard.
+
+Core fixtures exercise a binding stub that rejects a task's inherited scope
+change beneath unbound intermediate containers, including edits made through
+ordinary sheet and workbook commands. They also cover normalized connector
+owners/point detachment, invalid candidates rejected before the callback,
+clipboard identifier rollback, whole-workbook metadata/reload rejection,
+unchanged redo/history accounting, accepted/no-op transactions and guard
+retention by clones/previews/resets. A headless keyboard delete verifies that a
+policy refusal surfaces through the canvas error channel without deleting the
+object or clearing its selection.
+
+**Remaining boundary:** this is a synchronous acceptance/veto hook, not a
+semantic graph, diagnostic presentation or modal confirmation protocol. The
+semantic-aware application must install its policy for every document,
+including presently unbound documents whose history may later restore bindings.
+Policy installation on load/promotion/recovery and prepared proposals with
+explicit decisions and stale-state checks remain STC integration gates. No
+stored fields or format version change. Collapse, layout/header policies,
+structural draw.io fidelity, semantic authoring and Software examples remain
+open; SC0/SC1 are still partial.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,
