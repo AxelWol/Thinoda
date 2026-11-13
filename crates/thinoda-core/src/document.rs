@@ -1075,6 +1075,26 @@ impl Document {
         })
     }
 
+    pub fn set_canvas_container(&mut self, id: CanvasObjectId, enabled: bool) -> EditResult<()> {
+        self.edit_sheet("Change container state", |sheet| {
+            sheet
+                .set_canvas_container(id, enabled)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn reparent_canvas_objects(
+        &mut self,
+        ids: &[CanvasObjectId],
+        target: Option<CanvasObjectId>,
+    ) -> EditResult<()> {
+        self.edit_sheet("Change parent container", |sheet| {
+            sheet
+                .reparent_canvas_objects(ids, target)
+                .map_err(EditError::Invalid)
+        })
+    }
+
     pub fn set_canvas_container_collapsed(
         &mut self,
         id: CanvasObjectId,

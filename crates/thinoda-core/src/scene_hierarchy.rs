@@ -392,6 +392,11 @@ impl<'a> SceneHierarchy<'a> {
         Ok(self.parents.get(&id).copied())
     }
 
+    /// Indexed inherited-lock lookup over the validated, bounded parent chain.
+    pub fn is_locked(&self, id: CanvasObjectId) -> bool {
+        self.require_unlocked_path(id).is_err()
+    }
+
     /// Locks do not hide navigation targets. The layer itself is not an object.
     pub fn navigate(
         &self,

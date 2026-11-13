@@ -651,3 +651,34 @@ warnings, builds, wasm32 web compilation, workspace check, formatting and diff
 checks passed. An initial handle fixture incorrectly expected a connection-arrow
 label; its assertion was removed rather than treating an unrelated arrow policy
 as part of the transform-handle contract.
+
+## 17. Free-container authoring: author rubber-duck
+
+- Are users still forced to author hierarchy through JSON? No. Mark a shape,
+  choose its parent, then collapse/expand through the ordinary properties panel.
+  The existing tools already create shapes, labels and connectors.
+- Does selecting a parent imply positional containment or automatic layout? No.
+  Ownership and sheet-space position remain distinct; a visible caption states
+  that free containers do not arrange contents.
+- Can a parent choice create a cycle or hide the selected object? Choices exclude
+  self/descendants and collapsed/hidden destinations using shared resolvers.
+  Core validation still checks the exact candidate, including depth and locks.
+- Do names act as identities? No. Duplicate/empty names retain explicit object IDs.
+  Commands bind to the complete document/selection/revision, not display text.
+- Is scanning locks cheap enough? The first implementation used the canvas's
+  linear object lookup for each candidate. Review replaced it with the validated
+  hierarchy's indexed, depth-bounded lookup. Whole-menu/render latency still
+  requires measured SC0/SC2 acceptance rather than an asymptotic claim alone.
+- Does this complete semantic authoring? No. The optional transaction hook remains
+  the boundary for future semantics; no graph, promotion or confirmation is faked.
+
+**Critique:** this closes the basic free-container authoring gap without adding
+a second parent model or an unsafe storage bypass. The picker is deliberately
+less convenient than direct manipulation; full keyboard/native/web acceptance,
+headers/stack policies, structural interchange, semantic lifecycle and Software
+starter examples remain open. This is an author review, not independent review.
+
+**Validation evidence:** serialized app regressions passed 977 tests (2 ignored);
+the hierarchy/container/collapse suites passed 72. Affected all-target clippy with
+denied warnings, builds, wasm32 web compilation, workspace check, formatting and
+diff checks passed. No live native/browser acceptance is claimed.

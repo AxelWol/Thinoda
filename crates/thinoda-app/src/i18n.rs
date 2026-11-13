@@ -4188,6 +4188,18 @@ const DE: &[(&str, &str)] = &[
     ("Format", "Format"),
     ("Layers", "Ebenen"),
     ("Container", "Container"),
+    ("Use as container", "Als Container verwenden"),
+    ("No parent container", "Kein übergeordneter Container"),
+    ("Change container state", "Containerstatus ändern"),
+    ("Change parent container", "Übergeordneten Container ändern"),
+    (
+        "Containers must be unrotated and ungrouped. Empty and expand a container before clearing it.",
+        "Container müssen ungedreht und ungruppiert sein. Leeren und erweitern Sie einen Container, bevor Sie seinen Status aufheben.",
+    ),
+    (
+        "Free containers preserve child positions; they do not arrange contents.",
+        "Freie Container behalten die Positionen ihrer Kinder bei; sie ordnen Inhalte nicht automatisch an.",
+    ),
     ("Collapsed", "Eingeklappt"),
     ("Expanded", "Ausgeklappt"),
     ("Collapse container", "Container einklappen"),

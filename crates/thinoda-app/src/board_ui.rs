@@ -119,6 +119,12 @@ struct ContainerCollapseDraft {
 }
 
 #[derive(Clone, Copy)]
+enum SceneStructureChange {
+    Container(bool),
+    Parent(Option<CanvasObjectId>),
+}
+
+#[derive(Clone, Copy)]
 struct ConnectorProperties {
     semantic: bool,
     route: ConnectorRoute,
@@ -1504,6 +1510,139 @@ impl ThinodaApp {
     }
 
     /// Shows properties for a selected free object instead of topic styling.
+    fn apply_scene_structure(
+        &mut self,
+        target: &ConnectorTarget,
+        change: SceneStructureChange,
+    ) -> Result<(), String> {
+        let (current, enabled) = self
+            .single_board_object()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        if !enabled || current != *target {
+            return Err(t("Not possible here").to_owned());
+        }
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let id = target.owner.object;
+        if doc.doc.sheet().canvas.is_locked(id) {
+            return Err(t("Locked").to_owned());
+        }
+        match change {
+            SceneStructureChange::Container(enabled) => doc.doc.set_canvas_container(id, enabled),
+            SceneStructureChange::Parent(parent) => doc.doc.reparent_canvas_objects(&[id], parent),
+        }
+        .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(id);
+        Ok(())
+    }
+
+    fn board_structure_properties(&mut self, ui: &mut Ui) -> bool {
+        let Some((target, enabled)) = self.single_board_object() else {
+            return false;
+        };
+        let Some(doc) = self.doc() else { return false };
+        let sheet = doc.doc.sheet();
+        let id = target.owner.object;
+        let Some(object) = sheet.canvas.object(id) else {
+            return false;
+        };
+        if matches!(object.kind, CanvasObjectKind::Connector(_)) {
+            return false;
+        }
+        let enabled = enabled && !sheet.canvas.is_locked(id);
+        let mut container = sheet.canvas.scene.containers.contains(&id);
+        let mut parent = sheet.canvas.scene.parents.get(&id).copied();
+        let previous_parent = parent;
+        let can_toggle = matches!(object.kind, CanvasObjectKind::Shape { .. })
+            && object.rotation == 0.0
+            && object.group.is_none()
+            && (!container
+                || (!sheet
+                    .canvas
+                    .scene
+                    .parents
+                    .values()
+                    .any(|parent| *parent == id)
+                    && !sheet.canvas.scene.collapsed.contains_key(&id)));
+        let mut change = None;
+        ui.push_id(("scene_structure", &target.owner), |ui| {
+            ui.strong(t("Structure"));
+            if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+                ui.add_enabled_ui(enabled && can_toggle, |ui| {
+                    if ui.checkbox(&mut container, t("Use as container")).changed() {
+                        change = Some(SceneStructureChange::Container(container));
+                    }
+                }).response.on_hover_text(t(
+                    "Containers must be unrotated and ungrouped. Empty and expand a container before clearing it.",
+                ));
+            }
+            if !sheet.canvas.scene.containers.is_empty() {
+                let choices = (|| {
+                    let hierarchy = thinoda_core::scene_hierarchy::SceneHierarchy::from_canvas(&sheet.canvas)?;
+                    let descendants: std::collections::BTreeSet<_> = hierarchy
+                        .descendant_closure(&[id])?.into_iter().collect();
+                    let projection = thinoda_core::scene::CollapsePreview::new(sheet, &[])?;
+                    Ok::<_, String>(sheet.canvas.objects.iter().filter(|object| {
+                        let candidate = object.id;
+                        sheet.canvas.scene.containers.contains(&candidate)
+                            && !descendants.contains(&candidate)
+                            && !hierarchy.is_locked(candidate)
+                            && !sheet.canvas.scene.collapsed.contains_key(&candidate)
+                            && projection.visible_representative(candidate) == Some(candidate)
+                    }).map(|object| {
+                        let name = if object.label().is_empty() {
+                            t("Container")
+                        } else {
+                            object.label()
+                        };
+                        (object.id, format!("{name} ({})", object.id))
+                    }).collect::<Vec<_>>())
+                })();
+                match choices {
+                    Ok(choices) => {
+                        let selected = parent.and_then(|id| sheet.canvas.object(id))
+                            .map(|object| {
+                                let name = if object.label().is_empty() {
+                                    t("Container")
+                                } else {
+                                    object.label()
+                                };
+                                format!("{name} ({})", object.id)
+                            }).unwrap_or_else(|| t("No parent container").to_owned());
+                        ui.add_enabled_ui(enabled, |ui| {
+                            widgets::property_field(ui, t("Parent container"), |ui| {
+                                egui::ComboBox::from_id_salt(("scene_parent", &target))
+                                    .selected_text(selected)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut parent, None, t("No parent container"));
+                                        for (id, name) in choices {
+                                            ui.selectable_value(&mut parent, Some(id), name);
+                                        }
+                                    }).response
+                            });
+                        });
+                        if parent != previous_parent {
+                            change = Some(SceneStructureChange::Parent(parent));
+                        }
+                    }
+                    Err(error) => {
+                        widgets::caption(ui, &error);
+                    }
+                }
+            }
+            widgets::caption(ui, t("Free containers preserve child positions; they do not arrange contents."));
+            ui.separator();
+        });
+        if let Some(change) = change {
+            if let Err(error) = self.apply_scene_structure(&target, change) {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        false
+    }
+
     fn container_context(&self) -> Option<ContainerContext> {
         let (target, enabled) = self.single_board_object()?;
         let sheet = self.doc()?.doc.sheet();
@@ -2044,6 +2183,7 @@ impl ThinodaApp {
                 self.toasts.error(error);
             }
         }
+        self.board_structure_properties(ui);
         true
     }
 
@@ -6854,6 +6994,13 @@ mod tests {
             );
             assert_eq!(app.doc().unwrap().doc.workbook(), &before, "{case}");
             assert_eq!(app.doc().unwrap().doc.state_id(), revision, "{case}");
+            assert!(
+                app.apply_scene_structure(&target, SceneStructureChange::Parent(None))
+                    .is_err(),
+                "{case}"
+            );
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before, "{case}");
+            assert_eq!(app.doc().unwrap().doc.state_id(), revision, "{case}");
         }
     }
 
@@ -6924,6 +7071,12 @@ mod tests {
     #[test]
     fn container_collapse_labels_are_localized() {
         for key in [
+            "Use as container",
+            "No parent container",
+            "Change container state",
+            "Change parent container",
+            "Containers must be unrotated and ungrouped. Empty and expand a container before clearing it.",
+            "Free containers preserve child positions; they do not arrange contents.",
             "Collapsed",
             "Expanded",
             "Collapse container",
@@ -6939,6 +7092,165 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn scene_structure_properties_create_and_reparent_containers_without_geometry_changes() {
+        let (mut app, container, _) = container_app();
+        let orphan = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_min_size(Vec2::new(500.0, 100.0), Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        app.doc_mut().unwrap().view.select_board_object(orphan);
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let mut h = container_properties_harness(app);
+        h.get_by_role_and_label(egui::Role::CheckBox, "Use as container")
+            .click();
+        h.run_steps(3);
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .scene
+                .containers
+                .contains(&orphan)
+        );
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        h.get_by_label(&format!("Container ({container})")).click();
+        h.run_steps(3);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(
+            doc.doc.sheet().canvas.scene.parents.get(&orphan),
+            Some(&container)
+        );
+        assert_eq!(
+            doc.doc.sheet().canvas.object(orphan),
+            before.active().canvas.object(orphan)
+        );
+        assert_eq!(doc.view.board_selection, vec![orphan]);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("No parent container").click();
+        h.run_steps(3);
+        assert!(
+            !h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .scene
+                .parents
+                .contains_key(&orphan)
+        );
+        for _ in 0..3 {
+            assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        }
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
+    fn scene_structure_properties_exclude_cycles_hidden_and_locked_targets() {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Unlock child", |sheet| {
+                sheet.canvas.object_mut(child).unwrap().locked = false;
+                Ok(())
+            })
+            .unwrap();
+        let mut h = container_properties_harness(app);
+        assert!(
+            h.get_by_role_and_label(egui::Role::CheckBox, "Use as container")
+                .accesskit_node()
+                .is_disabled()
+        );
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        assert!(
+            h.query_by_label(&format!("Container ({container})"))
+                .is_none()
+        );
+        assert!(h.query_by_label(&format!("Container ({child})")).is_none());
+        h.key_press(egui::Key::Escape);
+        let app = h.state_mut();
+        let target = app.single_board_object().unwrap().0;
+        let before = app.doc().unwrap().doc.workbook().clone();
+        assert!(
+            app.apply_scene_structure(&target, SceneStructureChange::Parent(Some(child)))
+                .is_err()
+        );
+        assert!(
+            app.apply_scene_structure(&target, SceneStructureChange::Container(false))
+                .is_err()
+        );
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_container_collapsed(
+                container,
+                Some(BoardRect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 40.0))),
+            )
+            .unwrap();
+        let orphan = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_min_size(Vec2::new(600.0, 100.0), Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        app.doc_mut().unwrap().view.select_board_object(orphan);
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        assert!(
+            h.query_by_label(&format!("Container ({container})"))
+                .is_none()
+        );
+        assert!(h.query_by_label(&format!("Container ({child})")).is_none());
+        h.key_press(egui::Key::Escape);
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_container_collapsed(container, None)
+            .unwrap();
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Lock target", |sheet| {
+                sheet
+                    .set_canvas_objects_locked(&[container], true)
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        assert!(
+            h.query_by_label(&format!("Container ({container})"))
+                .is_none()
+        );
+        assert!(h.query_by_label(&format!("Container ({child})")).is_none());
     }
 
     #[test]

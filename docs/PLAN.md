@@ -72,8 +72,12 @@ respect inherited locks without blocking on individually locked contents, and
 use the document transaction guard. Accessible containers announce their state;
 unsupported compact resizing and container rotation handles are hidden.
 No automatic header-size policy is introduced.
+The free-container authoring checkpoint adds a properties checkbox for eligible
+shapes and a parent-container picker. It excludes self/descendant, locked and
+collapsed/hidden destinations; reparenting preserves sheet-space coordinates.
+Commands use the same guarded document transactions and one-step history.
 This is partial SC1, not a released container UI:
-container creation/reparent authoring, headers/stack layout, card occurrences, production
+headers/stack layout, card occurrences, production
 binding-policy installation/confirmation, full platform/accessibility acceptance
 and semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
 

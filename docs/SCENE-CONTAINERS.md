@@ -764,6 +764,40 @@ acceptance. No storage/version change is needed.
 free/stack policies, structural draw.io fidelity, semantic authoring and Software
 examples remain open. SC0/SC1 and the complete editor are still partial.
 
+### 5.10 Free-container authoring checkpoint
+
+Object properties now let users mark eligible unrotated, ungrouped shapes as
+free containers, then assign shape/ink parents using a keyboard-accessible picker.
+The picker identifies duplicate/unnamed containers by object ID. It excludes
+the selected object and its descendants, inherited-locked destinations, collapsed
+containers and containers hidden by another collapsed ancestor. Targets come
+from the shared hierarchy and collapse projection, not geometry containment.
+Connector ownership remains derived through existing endpoint reconciliation,
+not an independent editable parent selector.
+
+Parent changes keep source rectangles and controls in sheet space, append roots
+using existing sibling-order rules and reconcile affected connector owners.
+Clearing container status requires empty, expanded contents. Geometry/layout
+does not move simply because ownership changed. These commands do not introduce
+drag/drop containment, stack layout or semantic role/pool inference.
+
+Document-level container-state and reparent commands use the existing complete
+transaction guard and history. App actions revalidate document/sheet/selection/
+tool/revision and inherited locks before invoking them. Parent-option lock
+filtering uses the hierarchy's indexed bounded lookup, avoiding one linear
+canvas scan per candidate. Errors retain the ordinary error channel.
+
+Focused headless properties tests create containers, assign/remove a parent,
+verify unchanged geometry/selection, undo each action and refuse invalid/stale
+actions. The document-policy matrix covers both new command entry points,
+including unchanged history/redo on veto. Locale catalogs include every control.
+
+**Remaining boundary:** no semantic graph or prepared semantic confirmation is
+present. Header/stack policies, card occurrences, structural interchange,
+measured interaction budgets and full native/web acceptance remain open. The
+Software examples are still a separate pending task; this checkpoint does not
+mark any broad phase complete.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,

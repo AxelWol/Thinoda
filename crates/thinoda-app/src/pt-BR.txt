@@ -1,4 +1,10 @@
 # Regional wording overrides.
+Use as container|Usar como contêiner
+No parent container|Sem contêiner superior
+Change container state|Alterar estado do contêiner
+Change parent container|Alterar contêiner superior
+Containers must be unrotated and ungrouped. Empty and expand a container before clearing it.|Os contêineres não podem estar girados nem agrupados. Esvazie e expanda um contêiner antes de remover o estado.
+Free containers preserve child positions; they do not arrange contents.|Os contêineres livres mantêm as posições dos elementos; não organizam o conteúdo.
 Collapse container|Recolher contêiner
 Expand container|Expandir contêiner
 Corner radius|Raio dos cantos
