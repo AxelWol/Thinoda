@@ -31,8 +31,10 @@ remaining decisions.
 The first SC0 checkpoint adds an immutable object-only hierarchy prototype with
 bounded validation, ordered traversal, reparent previews and deduplicated movement
 previews in `thinoda-core`. It does not enter saved documents or live editor
-commands. Persistence/lifecycle integration, card occurrences, swimlane layout
-and semantic authoring remain open; see the checkpoint in SCENE-CONTAINERS.md.
+commands. The next command-contract checkpoint adds stable reparent insertion,
+affected-edge ownership reconciliation and a shared binding-validation preview
+hook. Persistence/lifecycle integration, card occurrences, swimlane layout and
+semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
 
 ## draw.io diagram support (2026-11-05)
 

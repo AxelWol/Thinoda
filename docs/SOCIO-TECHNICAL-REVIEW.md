@@ -234,8 +234,52 @@ the canvas immutably, so candidate failures cannot mutate a document.
   maximum-object fixture is not a substitute for SC2's measured latency gate.
 - Is reparent already a complete transaction? No. Geometry-preserving topology
   previews are present, but stored edge-parent normalization, target insertion
-  ordering, binding consequences, history and persistence are later gates.
+  ordering, binding consequences, history and persistence were later gates at
+  this first checkpoint. The next checkpoint below advances the preview contract,
+  not persisted editing.
 
 This is an author critique, not another independent review. The previous
 independent verdict accepted the plan only; it does not certify this code or
 close the implementation gates.
+
+## 9. Command-contract checkpoint critique
+
+**Implemented:** stable child ordering across chained previews; reconciliation of
+affected connector parents, including connector-to-connector dependencies; and
+one shared read-only validation context for reparent/translation previews.
+Candidate geometry stays in sheet space and source data stays immutable.
+
+**Rubber-duck questions and dispositions:**
+
+- Does a reparent reset a previous edit's sibling order? No. The candidate
+  clones the current hierarchy and appends actually moved roots in prior
+  traversal order. Same-parent requests do not reorder siblings.
+- Does the edge solver normalize an entire imported document? No. Only edges
+  whose endpoint ancestry changes are reconciled. A geometry move leaves all
+  imported parents unchanged; unrelated edge parents survive reparenting too.
+- Could edge dependencies make the result depend on source array order?
+  Ownership uses a dependency queue, but insertion uses prior traversal order.
+  Duplicate endpoint dependencies are counted separately. Missing targets and
+  connector cycles reject the preview instead of producing partial ownership.
+- Can a late consequence violate depth or lock constraints? The full candidate
+  is validated after edge reconciliation and before binding validation. A
+  locked external edge or old/new ancestor can reject the edit; locked edges
+  carried by a selected structural ancestor keep their locks and move as a unit.
+- Can ownership be unchanged while paint order changes? Yes, if an explicitly
+  selected edge is normalized back to its original owner. The before/after
+  child lists disclose this ordering consequence, even with no final owner delta.
+- Can bindings observe only part of the edit, or mutate it during validation?
+  No. The one-shot callback receives reconciled read-only structure, geometry
+  and consequences. A stub-bound policy can detect a nested task's inherited
+  scope change through intermediate containers and reject the whole candidate.
+- Is this already the production semantic transaction hook? No. Only the two
+  immutable preview mutations are wired. Live delete/paste/ungroup, history,
+  confirmation UI, actual semantic diagnostics and persisted format gates are
+  still required. Unbound convenience methods must not be used by bound commands.
+
+**Critique:** this removes concrete command-contract gaps without shipping an
+unsafe intermediate document format. It also exposes a real distinction between
+dependency order and paint order that a flat-parent rewrite would lose.
+The remaining risk is integration, not missing visual symbols: SC0 is still
+partial, and SC1 cannot be declared complete from these previews. This is an
+author review, not a new independent rubber-duck sign-off.

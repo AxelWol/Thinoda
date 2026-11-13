@@ -341,14 +341,68 @@ no model fields, format versions, import/export behavior or UI controls changed.
 Its translation result is geometry-only preview data, not a savable nested
 document. Existing editor mutations retain their existing behavior.
 
-SC0 remains **partial**. Card occurrences, binding-hook contracts, ordered
+At this first checkpoint SC0 was **partial**. Card occurrences, binding-hook contracts, ordered
 reparent insertion, edge-parent reconciliation, source-policy/corpus fixtures,
-numerical/layout budgets and measured keyboard/rendering behavior are still
-open. SC1 remains open in full: do not wire previews into live commands until
+numerical/layout budgets and measured keyboard/rendering behavior were still
+open; the next checkpoint below advances the command contract.
+SC1 remains open in full: do not wire previews into live commands until
 native/clipboard/recovery/private-snapshot gates, history, delete/partial-copy
 behavior, all generic mutation paths and editable-export loss protection land
 together. Headers, stack/table layout, collapse and semantic bindings are not
 implemented by this checkpoint.
+
+### 5.2 Command-contract checkpoint: ownership, order and binding validation
+
+The same immutable hierarchy now maintains ordered child lists through chained
+reparent previews, instead of rebuilding order from the original flat canvas.
+An actual parent change appends selected roots in their prior hierarchy traversal
+order. Reparenting to the current parent preserves order; selecting descendants
+alongside an ancestor still moves only the ancestor's structural unit.
+
+Explicit endpoint reparenting reconciles affected edges to the nearest common
+container, including edges attached to other edges. A bounded dependency queue
+computes owners before dependents, independently of source paint order.
+Changed edges append after existing destination children in their **prior
+traversal order**, not dependency-evaluation or selection order. Unrelated
+imported edge parents remain intact. Geometry-only translation never normalizes
+edge ownership.
+
+For this object-only contract, a container endpoint contributes itself to the
+common-container search; an ordinary endpoint starts at its parent. Free points
+and topic endpoints contribute the layer until scene occurrences exist. Real
+endpoint IDs, labels, rectangles, fixed ports and control points do not change
+when ownership changes. Parent-depth validation runs again after induced edits,
+so edge reconciliation cannot quietly introduce a 33rd parent link.
+
+An induced change to an edge outside the carried subtree is rejected if its
+direct lock, old ancestor or proposed ancestor is locked. Locked edges already
+carried by a selected ancestor retain their lock and follow the structural unit.
+The prototype still refuses hierarchy membership in legacy flat groups.
+
+Both current mutation previews route through a shared read-only
+`SceneEditContext` callback, once, **after** structural/geometry reconciliation:
+the context exposes the operation, before/after trees, candidate geometry,
+selection, affected closure and final edge-owner deltas. Sibling order changes
+remain visible through the two trees even when an edge's final owner equals its
+original owner. A validator error rejects the complete candidate. The unbound
+convenience methods supply a no-op validator; bound live commands must supply the
+document's validator, not choose that convenience path.
+
+Fixtures exercise inherited scope changes through an unbound intermediate
+container and a nested lane, unbound acceptance, bound-policy rejection,
+unchanged source geometry, repeated reparent order, connector dependency chains,
+free/topic endpoints, locks, induced depth overflow, malformed connector
+dependencies and a 20,000-object edge-fanout case. This remains a core contract
+spike, not a measured SC2 latency or live-editor acceptance claim.
+
+**Remaining boundary:** no persisted schema, native/transport versions, generic
+legacy command integration, semantic model or UI was added. SC0 remains partial:
+card-occurrence decisions, supported source policies/corpus cases, document-byte
+and layout budgets, keyboard/rendering prototypes and reference-hardware
+measurements remain open. The callback is the initial preview validation
+interface, not the complete semantic confirmation/diagnostic protocol. SC1 must
+still integrate every generic mutation path with history and the full storage/
+clipboard/recovery/export-loss contract before exposing nested editing.
 
 ## 6. Adversarial acceptance and critique
 
