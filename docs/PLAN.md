@@ -1,4 +1,4 @@
-_Last updated: 2026-11-11 11:17:15 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-12 16:51:23 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda — phased plan
 

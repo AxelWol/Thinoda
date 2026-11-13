@@ -1,4 +1,4 @@
-_Last updated: 2026-11-10 17:42:36 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-12 16:51:23 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # draw.io (diagrams.net) support: research, concept and phase plan
 
