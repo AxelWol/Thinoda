@@ -76,6 +76,8 @@ const SANKEY_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SANKEY-1";
 const SANKEY_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SANKEY-1";
 const STENCIL_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-STENCIL-1";
 const STENCIL_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-STENCIL-1";
+const SCENE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SCENE-1";
+const SCENE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SCENE-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -97,7 +99,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_stencils() {
+        tuple.serialize_element(if self.workbook.has_scene_hierarchy() {
+            SCENE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_stencils() {
             STENCIL_INK_WORKBOOK_VERSION
         } else if self.workbook.has_sankey() {
             SANKEY_INK_WORKBOOK_VERSION
@@ -190,7 +194,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_stencils() {
+    let version = if workbook.has_scene_hierarchy() {
+        SCENE_WORKBOOK_VERSION
+    } else if workbook.has_stencils() {
         STENCIL_WORKBOOK_VERSION
     } else if workbook.has_sankey() {
         SANKEY_WORKBOOK_VERSION
@@ -252,6 +258,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_scene_hierarchy() {
+                return Err(A::Error::custom(
+                    "scene hierarchy requires scene-aware recovery",
+                ));
+            }
             if workbook.has_stencils() {
                 return Err(A::Error::custom(
                     "stencil shapes require a versioned recovery workbook",
@@ -345,6 +356,8 @@ where
                 && version != SANKEY_INK_WORKBOOK_VERSION
                 && version != STENCIL_WORKBOOK_VERSION
                 && version != STENCIL_INK_WORKBOOK_VERSION
+                && version != SCENE_WORKBOOK_VERSION
+                && version != SCENE_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -353,6 +366,19 @@ where
             let workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != SCENE_WORKBOOK_VERSION
+                && version != SCENE_INK_WORKBOOK_VERSION
+                && workbook.has_scene_hierarchy()
+            {
+                return Err(A::Error::custom(
+                    "scene hierarchy requires scene-aware recovery",
+                ));
+            }
+            let version = match version.as_str() {
+                SCENE_WORKBOOK_VERSION => STENCIL_WORKBOOK_VERSION.to_owned(),
+                SCENE_INK_WORKBOOK_VERSION => STENCIL_INK_WORKBOOK_VERSION.to_owned(),
+                _ => version,
+            };
             if version != STENCIL_WORKBOOK_VERSION
                 && version != STENCIL_INK_WORKBOOK_VERSION
                 && workbook.has_stencils()
@@ -2240,6 +2266,59 @@ mod lock_tests {
                 SANKEY_INK_WORKBOOK_VERSION
             } else {
                 SANKEY_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn scene_hierarchy_requires_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::stencil_object::{find_package, new_object};
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+        let mut book = Workbook::default();
+        let pool = book
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+            ))
+            .unwrap();
+        book.active_mut().set_canvas_container(pool, true).unwrap();
+        let package = find_package("thinoda.general").unwrap();
+        book.active_mut()
+            .add_canvas_object(new_object(
+                package,
+                package.definition("message").unwrap(),
+                Vec2::new(20.0, 20.0),
+            ))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let restored: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(restored.workbook, book);
+            assert_eq!(restored.pending_ink.as_deref(), ink);
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    SCENE_INK_WORKBOOK_VERSION
+                } else {
+                    SCENE_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                STENCIL_INK_WORKBOOK_VERSION
+            } else {
+                STENCIL_WORKBOOK_VERSION
             });
             assert!(serde_json::from_value::<Snapshot>(older).is_err());
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

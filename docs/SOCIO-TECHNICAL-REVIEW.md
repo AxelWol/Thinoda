@@ -283,3 +283,62 @@ dependency order and paint order that a flat-parent rewrite would lose.
 The remaining risk is integration, not missing visual symbols: SC0 is still
 partial, and SC1 cannot be declared complete from these previews. This is an
 author review, not a new independent rubber-duck sign-off.
+
+## 10. Persistent free-container checkpoint critique
+
+**Implemented:** one stored object-only parent relation, scene-aware native and
+transport gates, core subtree lifecycle operations and conservative refusals
+where existing flat commands would lose structure. The Software starter group
+and original human/service, approval and incident-response examples are now
+explicitly in the STC3/STC4 plan; they are not yet start-page content.
+
+**Rubber-duck questions and dispositions:**
+
+- Is there now a second ownership model? No. Stored IDs/order are authoritative;
+  the immutable hierarchy is derived. Cards remain outside this slice rather
+  than being silently converted or assigned an invented parent.
+- Can a geometry preview accidentally restore old ancestry? The final audit
+  found this integration hazard in chained previews. Translation now stores the
+  current derived tree/order before transforming geometry; a regression case
+  detaches a task, moves its former lane and verifies both stored ownership and
+  the task's unchanged position.
+- Can old envelopes silently flatten the model? Native, sheet/board clipboard,
+  recovery and private XMind paths select scene-aware versions and reject
+  forged older or unversioned hierarchy. Raw scene-field detection also protects
+  malformed private snapshots from outline fallback. Empty ordinary documents
+  retain their previous serialization and required versions.
+- Is the central export guard sufficient? No: explicit draw.io clipboard
+  encoding calls a lower-level writer. That writer now rejects hierarchy too.
+  Lossy consent cannot bypass this boundary; native copy remains supported.
+- Do legacy lifecycle operations leave dangling IDs? Subtree deletion prunes
+  stored ancestry, partial copy detaches omitted parents, paste remaps IDs, and
+  Sankey endpoint reconciliation removes the parent entry of its deleted flow.
+  Duplication, sheet merging, masking and document history preserve the relation.
+- Are failed edits truly rolled back? Structural/geometry candidates commit
+  only after validation; `Document` restores the whole sheet and history on
+  failure, including the legacy allocator's reserved IDs on failed creation.
+  Direct low-level insertion may reserve an unused ID, as before, but does not
+  insert partial canvas data.
+- Can inherited locks or overlapping selections break movement? Root-based
+  selection checks avoid double moves and allow a parent to carry locked
+  descendants. Direct child edits and lock presentation consult ancestry.
+  Unrelated mixed legacy groups still move cards and objects together.
+- Does safe persistence close SC1? No. Free-frame resize deliberately leaves
+  children in sheet coordinates. Rotation, reconnection, paint ordering,
+  category changes and conflicting legacy grouping/band edits have explicit
+  limitations. Collapse, navigation, complete binding-aware transactions and
+  accepted authoring UI are still open; headers/stack layout and draw.io fidelity
+  follow in SC2/SC3.
+
+**Critique:** this makes the first stored structural slice usable by core
+commands without pretending that flat exports or old transports preserve it.
+The remaining risk is end-to-end authoring and layout integration, not symbol
+coverage. The conservative refusals must be replaced with shared, tested
+commands before exposing a first-class editor or starter templates. This is an
+author critique, not another independent review or release acceptance.
+
+**Validation evidence:** `cargo test -p thinoda-core -p thinoda-io -p
+thinoda-platform` passed 1,477 tests across 67 suites, with 10 ignored. Formatting,
+affected-package clippy (`--all-targets -- -D warnings`) and builds passed;
+`cargo check --workspace` also passed. These checks cover model/transport
+integration, not browser/native UI or reference-renderer acceptance.

@@ -831,6 +831,10 @@ impl Sheet {
         self.canvas.has_stencils()
     }
 
+    pub fn has_scene_hierarchy(&self) -> bool {
+        !self.canvas.scene.is_empty()
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -2392,6 +2396,10 @@ impl Workbook {
 
     pub fn has_stencils(&self) -> bool {
         self.sheets.iter().any(Sheet::has_stencils)
+    }
+
+    pub fn has_scene_hierarchy(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_hierarchy)
     }
 
     pub fn active(&self) -> &Sheet {

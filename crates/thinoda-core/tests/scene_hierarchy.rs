@@ -253,9 +253,13 @@ fn reparent_retains_geometry_and_nested_selection_structure_without_mutating_the
     assert_eq!(moved.parent(id(2)).unwrap(), Some(id(4)));
     assert_eq!(moved.parent(id(3)).unwrap(), Some(id(2)));
     assert_eq!(moved.preorder(), vec![id(1), id(4), id(2), id(3)]);
+    let stored = moved.preview_translation(&[id(2)], Vec2::ZERO).unwrap();
+    for object in &before.objects {
+        assert_eq!(stored.object(object.id), Some(object));
+    }
     assert_eq!(
-        moved.preview_translation(&[id(2)], Vec2::ZERO).unwrap(),
-        before
+        SceneHierarchy::from_canvas(&stored).unwrap().preorder(),
+        moved.preorder()
     );
     assert_eq!(tree.parent(id(2)).unwrap(), Some(id(1)));
     let detached = tree.preview_reparent(&[id(3)], None).unwrap();

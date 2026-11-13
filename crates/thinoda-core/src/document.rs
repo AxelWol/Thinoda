@@ -236,6 +236,8 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
         + sheet.floating.len() * size_of::<crate::model::TopicId>()
         + sheet.canvas.groups.len() * size_of::<crate::board::CanvasGroup>()
         + sheet.canvas.card_states.len() * size_of::<crate::board::CanvasCardState>()
+        + sheet.canvas.scene.containers.len() * (size_of::<CanvasObjectId>() + 48)
+        + sheet.canvas.scene.parents.len() * (2 * size_of::<CanvasObjectId>() + 48)
         + sheet
             .relationships
             .iter()

@@ -32,6 +32,7 @@ const DRAWIO_ROUNDING_SNAPSHOT_VERSION: &str = "THINODA-XMIND-DRAWIO-ROUNDING-1"
 const FINAL_STATE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-FINAL-STATE-1";
 const SANKEY_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SANKEY-1";
 const STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-1";
+const SCENE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -721,7 +722,9 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_stencils() {
+    if book.has_scene_hierarchy() {
+        Ok(serde_json::to_string(&(SCENE_SNAPSHOT_VERSION, book))?)
+    } else if book.has_stencils() {
         Ok(serde_json::to_string(&(STENCIL_SNAPSHOT_VERSION, book))?)
     } else if book.has_sankey() {
         Ok(serde_json::to_string(&(SANKEY_SNAPSHOT_VERSION, book))?)
@@ -814,6 +817,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == FINAL_STATE_SNAPSHOT_VERSION
                 || version == SANKEY_SNAPSHOT_VERSION
                 || version == STENCIL_SNAPSHOT_VERSION
+                || version == SCENE_SNAPSHOT_VERSION
         })
 }
 
@@ -829,9 +833,13 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .get("sheets")
         .and_then(Value::as_array)
         .is_some_and(|sheets| {
-            sheets
-                .iter()
-                .any(|sheet| sheet.get("sankey").is_some_and(|v| !v.is_null()))
+            sheets.iter().any(|sheet| {
+                sheet.get("sankey").is_some_and(|v| !v.is_null())
+                    || sheet
+                        .get("canvas")
+                        .and_then(|canvas| canvas.get("scene"))
+                        .is_some()
+            })
         })
     {
         return true;
@@ -894,10 +902,21 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != FINAL_STATE_SNAPSHOT_VERSION
             && version != SANKEY_SNAPSHOT_VERSION
             && version != STENCIL_SNAPSHOT_VERSION
+            && version != SCENE_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != SCENE_SNAPSHOT_VERSION && workbook.has_scene_hierarchy() {
+            return Err(IoError::NewerVersion(
+                "scene hierarchy requires a scene-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if version == SCENE_SNAPSHOT_VERSION {
+            STENCIL_SNAPSHOT_VERSION.to_owned()
+        } else {
+            version
+        };
         if version != STENCIL_SNAPSHOT_VERSION && workbook.has_stencils() {
             return Err(IoError::NewerVersion(
                 "stencil shapes require a stencil-aware private XMind snapshot".into(),
@@ -1073,6 +1092,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_scene_hierarchy() {
+            return Err(IoError::NewerVersion(
+                "scene hierarchy requires a scene-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_stencils() {
             return Err(IoError::NewerVersion(
                 "stencil shapes require a stencil-aware private XMind snapshot".into(),
@@ -2551,6 +2575,47 @@ mod tests {
             assert!(read_private_snapshot(&forged).is_err(), "{version}");
         }
         assert!(read_private_snapshot(&serde_json::to_string(&book).unwrap()).is_err());
+    }
+
+    #[test]
+    fn scene_hierarchy_rejects_old_or_unversioned_private_snapshots() {
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+        let mut book = Workbook::default();
+        let pool = book
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+            ))
+            .unwrap();
+        book.active_mut().set_canvas_container(pool, true).unwrap();
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(strict_private_snapshot(&snapshot));
+        assert!(snapshot_contains_versioned_fields(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        let original = archive_entries(&export(&book).unwrap());
+        for source in [
+            serde_json::to_string(&(STENCIL_SNAPSHOT_VERSION, &book)).unwrap(),
+            serde_json::to_string(&book).unwrap(),
+        ] {
+            assert!(snapshot_contains_versioned_fields(&source));
+            assert!(matches!(
+                read_private_snapshot(&source),
+                Err(IoError::NewerVersion(_))
+            ));
+            let mut entries = original.clone();
+            let (_, bytes) = entries
+                .iter_mut()
+                .find(|(name, _)| name == "metadata.json")
+                .unwrap();
+            let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+            metadata["thinodaWorkbook"] = json!(source);
+            *bytes = serde_json::to_vec(&metadata).unwrap();
+            assert!(matches!(
+                import(&make_archive(&entries)),
+                Err(IoError::NewerVersion(_))
+            ));
+        }
     }
 
     #[test]

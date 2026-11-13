@@ -4766,6 +4766,11 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
 fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<String, IoError> {
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
     for (index, sheet) in sheets.into_iter().enumerate() {
+        if sheet.has_scene_hierarchy() {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve nested scene hierarchy yet".into(),
+            ));
+        }
         let (grid, thinoda_grid) = match sheet.board.grid {
             GridKind::None => (0, "none"),
             GridKind::Dots => (1, "dots"),

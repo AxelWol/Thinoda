@@ -342,7 +342,7 @@ owned-path commit. Failure of an exit gate keeps that phase open.
 | STC1 - Consume the common scene milestone / L, shared not additive | STC0; SC0-SC3 | Use the single shared tree, nested stack swimlanes, collapse/routing/keyboard commands, connector styling and structural persistence delivered by SC0-SC3 | Pass the scene-only nested draw.io import/edit/export/reimport gate without any semantic model. No second lane engine, schema field or duplicated dash implementation |
 | STC2 - Semantic core and safe persistence / L | STC0, STC1 | Optional typed graph/bindings, accountable-owner relations, decision rationale, unresolved-reference drafts, transactions; native/transport gates, masking/history and loss guards | All lifecycle rows in section 5 have focused positive/negative tests against real nested containers; malformed/older envelopes reject without mutation; old plain-board fixtures unchanged. No palette exposes unsafely persisted semantics |
 | STC3 - Complete workflow authoring / L | STC2 | Progressive palette, nested lane/performer commands, Data inspector including accountability/rationale, keyboard relationship list, decision branches, exchange labels and diagnostics | Build all workflow reference scenarios without raw JSON; each semantic command undoable; distinguish sequence/exchange, actor/role, boundary/scope and collapsed/black-box; invalid drafts save and repair |
-| STC4 - First-class v1 release / M-L | STC3 | Original starter templates, help/legend, native/web end-to-end coverage, accessibility, localization, presentation output and performance | Pass the release checklist below on native and web; publish exact supported/unsupported features and known limitations; written critique has no unresolved data-loss or semantic-integrity blocker |
+| STC4 - First-class v1 release / M-L | STC3 | Start-page **Software** template group with original socio-technical examples, help/legend, native/web end-to-end coverage, accessibility, localization, presentation output and performance | Pass the release checklist below on native and web; publish exact supported/unsupported features and known limitations; written critique has no unresolved data-loss or semantic-integrity blocker |
 | STC5 - Linked context view / M-L | STC4 | Second presentation, shared identity, independent layout and honest aggregation; persisted active view only if required | Rename reflects in both views; workflow conditions survive aggregation; layout/filter changes never mutate behavior; deleting an occurrence is distinct from deleting its entity; clipboard/export/view-state cases covered |
 | STC6 - Interoperability profile / L | STC4; relevant DRAWIO fidelity slice for draw.io extension | Decide demand first; bounded BPMN XML subset and/or conflict-safe draw.io semantic extension. These are independent adapters, not one mandatory bundled deliverable | External tool opens supported original fixtures; supported import/edit/export/reimport preserves meaning and DI; unsupported data produces exact blocking/loss diagnostics; edited extension baselines cannot resurrect stale semantics |
 | STC7 - Experience and intention extensions / L, separately scoped | STC5; separate profile decision | Choose blueprint OR goal/dependency view based on use; add required explicit data and mappings. Formal S-BPM/ArchiMate are separate future proposals | Version-pinned vocabulary and independent scenario/round-trip tests; no conversion guesses visibility, intentions, authority or execution order |
@@ -360,6 +360,22 @@ adapters, not implementation of BPMN XML or semantic draw.io extensions early.
 **Release boundaries:** STC3 is a usable development slice, not "first class".
 STC4 is the first proposed release. STC5 is a linked-view enhancement.
 STC6 and STC7 are optional subsequent investments, not prerequisites for v1.
+
+### Software starter templates
+
+User-requested addition: add a **Software** template group to the start page,
+using the existing template catalog, category filtering, previews and localization.
+Include original examples for human/service handoffs, an approval workflow and
+incident response. Demonstrate peer human/software participants, nested
+responsibility lanes, scope/boundary distinctions and labeled interactions using
+the actual supported editor model, not flattened artwork.
+
+Implement the examples alongside the relevant authoring capabilities in STC3,
+with start-page integration and native/web acceptance completed by STC4. Each
+template must create an independent, editable document and survive save/reopen,
+undo, copy/paste and presentation export. Show a short legend and disclose the
+supported Thinoda profile rather than claiming BPMN conformance. Do not expose
+semantic examples before their data can be safely persisted.
 Do not advertise a context editor or BPMN compatibility before their gates pass.
 
 ### V1 release checklist

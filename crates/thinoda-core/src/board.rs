@@ -7,6 +7,7 @@
 
 use crate::geometry::{Color, Rect, Vec2};
 use crate::model::{PresentationSource, Sheet, Topic, TopicId, ZoneId, id_type, valid_position};
+use crate::scene_hierarchy::{SceneHierarchy, SceneStructure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -122,11 +123,16 @@ pub struct CanvasLayer {
     /// Only cards with a group or a direct lock need an entry.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub card_states: Vec<CanvasCardState>,
+    #[serde(skip_serializing_if = "SceneStructure::is_empty")]
+    pub scene: SceneStructure,
 }
 
 impl CanvasLayer {
     pub fn is_empty(&self) -> bool {
-        self.objects.is_empty() && self.groups.is_empty() && self.card_states.is_empty()
+        self.objects.is_empty()
+            && self.groups.is_empty()
+            && self.card_states.is_empty()
+            && self.scene.is_empty()
     }
 
     pub fn object(&self, id: CanvasObjectId) -> Option<&CanvasObject> {
@@ -172,14 +178,27 @@ impl CanvasLayer {
             .collect()
     }
 
-    /// An object is locked directly or through its group.
+    /// An object is locked directly, through its group, or through scene ancestry.
     pub fn is_locked(&self, id: CanvasObjectId) -> bool {
-        self.object(id).is_some_and(|o| {
-            o.locked
-                || o.group
-                    .and_then(|g| self.group(g))
-                    .is_some_and(|g| g.locked)
-        })
+        let mut cursor = Some(id);
+        for _ in 0..=crate::scene_hierarchy::MAX_SCENE_DEPTH {
+            let Some(id) = cursor else {
+                return false;
+            };
+            let Some(object) = self.object(id) else {
+                return false;
+            };
+            if object.locked
+                || object
+                    .group
+                    .and_then(|group| self.group(group))
+                    .is_some_and(|group| group.locked)
+            {
+                return true;
+            }
+            cursor = self.scene.parents.get(&id).copied();
+        }
+        true
     }
 
     /// Total number of stored ink points.
@@ -1897,6 +1916,9 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
         }
     }
     let canvas = &sheet.canvas;
+    if !canvas.scene.is_empty() {
+        SceneHierarchy::from_canvas(canvas)?;
+    }
     if canvas.objects.len() > MAX_CANVAS_OBJECTS {
         return Err(format!("canvas exceeds {MAX_CANVAS_OBJECTS} objects"));
     }
@@ -2490,8 +2512,20 @@ impl Sheet {
             .filter(|group| group.locked)
             .map(|group| group.id)
             .collect();
+        let scene_objects: Vec<_> = members
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Object(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        if !self.canvas.scene.is_empty() && !scene_objects.is_empty() {
+            SceneHierarchy::from_canvas(&self.canvas)?
+                .require_unlocked_selection(&scene_objects)?;
+        }
         for object in &self.canvas.objects {
             if selected.contains(&BoardMember::Object(object.id))
+                && self.canvas.scene.is_empty()
                 && (object.locked
                     || object
                         .group
@@ -2517,7 +2551,7 @@ impl Sheet {
         &self,
         members: &[BoardMember],
     ) -> Result<(), String> {
-        if self.canvas.groups.is_empty() {
+        if self.canvas.groups.is_empty() && self.canvas.scene.is_empty() {
             if members.is_empty() {
                 return Err("nothing selected".into());
             }
@@ -2632,7 +2666,29 @@ impl Sheet {
             }
         }
         let id = object.id;
-        self.canvas.objects.push(object);
+        if self.canvas.scene.is_empty() {
+            self.canvas.objects.push(object);
+        } else {
+            let hierarchy = SceneHierarchy::from_canvas(&self.canvas)?;
+            let parent = match &object.kind {
+                CanvasObjectKind::Connector(connector) => match (connector.from, connector.to) {
+                    (Endpoint::Object(from), Endpoint::Object(to)) => {
+                        hierarchy.nearest_common_container(from, to)?
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(parent) = parent {
+                hierarchy.require_unlocked_selection(&[parent])?;
+            }
+            let mut candidate = self.canvas.clone();
+            candidate.objects.push(object);
+            if let Some(parent) = parent {
+                candidate.scene.parents.insert(id, parent);
+            }
+            self.canvas = SceneHierarchy::from_canvas(&candidate)?.stored_canvas();
+        }
         Ok(id)
     }
 
@@ -2667,6 +2723,11 @@ impl Sheet {
     }
 
     fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
+        if !self.canvas.scene.is_empty() && !ids.is_empty() {
+            SceneHierarchy::from_canvas(&self.canvas)?.require_unlocked_selection(ids)?;
+            let members: Vec<_> = ids.iter().copied().map(BoardMember::Object).collect();
+            return self.require_unlocked_board_selection(&members);
+        }
         for id in ids {
             if self.canvas.object(*id).is_none() {
                 return Err(format!("canvas object {id} not found"));
@@ -2690,7 +2751,13 @@ impl Sheet {
             return Err("nothing selected".into());
         }
         self.require_unlocked(ids)?;
-        let removed: HashSet<_> = ids.iter().copied().collect();
+        let removed: HashSet<_> = if self.canvas.scene.is_empty() {
+            ids.to_vec()
+        } else {
+            SceneHierarchy::from_canvas(&self.canvas)?.descendant_closure(ids)?
+        }
+        .into_iter()
+        .collect();
         let referenced: HashSet<_> = self
             .canvas
             .objects
@@ -2782,6 +2849,14 @@ impl Sheet {
             }
         }
         self.canvas.objects.retain(|o| !removed.contains(&o.id));
+        self.canvas
+            .scene
+            .containers
+            .retain(|id| !removed.contains(id));
+        self.canvas
+            .scene
+            .parents
+            .retain(|child, parent| !removed.contains(child) && !removed.contains(parent));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
                 zone.objects.retain(|id| !removed.contains(id));
@@ -2814,6 +2889,11 @@ impl Sheet {
     ) -> Result<(), String> {
         if !valid_position(delta) {
             return Err("movement out of range".into());
+        }
+        if !self.canvas.scene.is_empty() && !ids.is_empty() {
+            self.canvas =
+                SceneHierarchy::from_canvas(&self.canvas)?.preview_translation(ids, delta)?;
+            return Ok(());
         }
         self.require_unlocked(ids)?;
         let set: HashSet<_> = ids.iter().copied().collect();
@@ -2888,7 +2968,18 @@ impl Sheet {
             }
         }
         let mut canvas = self.canvas.clone();
-        Self::translate_canvas_objects(&mut canvas, &objects, delta)?;
+        if !canvas.scene.is_empty() && !objects.is_empty() {
+            let ids: Vec<_> = objects.iter().copied().collect();
+            let cards = positions.iter().map(|(id, _)| *id).collect();
+            canvas = SceneHierarchy::from_canvas(&canvas)?.preview_translation_with_cards(
+                &ids,
+                &cards,
+                delta,
+                |_| Ok(()),
+            )?;
+        } else {
+            Self::translate_canvas_objects(&mut canvas, &objects, delta)?;
+        }
         self.canvas = canvas;
         for (id, position) in positions {
             self.topic_mut(id).expect("selection validated").position = Some(position);
@@ -2915,6 +3006,9 @@ impl Sheet {
             return Err("rotation must be finite".into());
         }
         let members = self.expand_board_selection(members)?;
+        if members.iter().any(|member| matches!(member, BoardMember::Object(id) if self.canvas.scene.containers.contains(id))) {
+            return Err("scene containers do not support rotation yet".into());
+        }
         self.require_board_members_unlocked(&members)?;
         // Keep the sign for the transform: mapping a tiny negative angle into
         // [0, 360) can round it to a full turn and silently discard it.
@@ -3063,6 +3157,9 @@ impl Sheet {
     /// Sets the absolute rotation in degrees (normalised). Connectors cannot rotate.
     pub fn rotate_canvas_object(&mut self, id: CanvasObjectId, degrees: f32) -> Result<(), String> {
         self.require_unlocked(&[id])?;
+        if self.canvas.scene.containers.contains(&id) {
+            return Err("scene containers do not support rotation yet".into());
+        }
         if !degrees.is_finite() {
             return Err("rotation must be finite".into());
         }
@@ -3096,6 +3193,42 @@ impl Sheet {
             return Err("rotation must be finite".into());
         }
         object.rotation = normalize_rotation(object.rotation);
+        if !self.canvas.scene.is_empty()
+            && std::mem::discriminant(&object.kind)
+                != std::mem::discriminant(
+                    &self
+                        .canvas
+                        .object(id)
+                        .ok_or("canvas object not found")?
+                        .kind,
+                )
+        {
+            return Err("changing object categories in nested scenes is not supported yet".into());
+        }
+        if self.canvas.scene.containers.contains(&id) {
+            let original = self.canvas.object(id).ok_or("scene container not found")?;
+            if object.rect != original.rect
+                || object.rotation != original.rotation
+                || !matches!(object.kind, CanvasObjectKind::Shape { .. })
+            {
+                return Err(
+                    "use the scene move or resize command to change container geometry".into(),
+                );
+            }
+        }
+        if !self.canvas.scene.is_empty()
+            && let (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after)) = (
+                &self
+                    .canvas
+                    .object(id)
+                    .ok_or("canvas object not found")?
+                    .kind,
+                &object.kind,
+            )
+            && (before.from != after.from || before.to != after.to)
+        {
+            return Err("reconnecting edges in nested scenes is not supported yet".into());
+        }
         validate_object(&object)?;
         if let CanvasObjectKind::Connector(c) = &object.kind {
             let old_waypoints = match &self.canvas.object(id).expect("checked").kind {
@@ -3146,6 +3279,9 @@ impl Sheet {
         ids: &[CanvasObjectId],
         order: ZOrder,
     ) -> Result<(), String> {
+        if !self.canvas.scene.is_empty() {
+            return Err("nested scenes require sibling-aware paint ordering".into());
+        }
         let set: HashSet<_> = ids.iter().copied().collect();
         if set.is_empty() {
             return Err("canvas object not found".into());
@@ -3201,6 +3337,9 @@ impl Sheet {
     /// Moves objects to another band, next to the map: on top of `Below` or at the
     /// bottom of `Above`.
     pub fn set_canvas_band(&mut self, ids: &[CanvasObjectId], band: Band) -> Result<(), String> {
+        if ids.iter().any(|id| self.canvas.scene.contains(*id)) {
+            return Err("changing paint bands of scene members is not supported yet".into());
+        }
         let set: HashSet<_> = ids.iter().copied().collect();
         if set.is_empty() {
             return Err("canvas object not found".into());
@@ -3226,6 +3365,11 @@ impl Sheet {
         members: &[BoardMember],
     ) -> Result<CanvasGroupId, String> {
         let selected = self.validate_board_selection(members)?;
+        if selected.iter().any(
+            |member| matches!(member, BoardMember::Object(id) if self.canvas.scene.contains(*id)),
+        ) {
+            return Err("scene members cannot belong to legacy flat groups".into());
+        }
         if selected.len() < 2 {
             return Err("select at least two board members to group".into());
         }

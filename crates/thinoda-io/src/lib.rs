@@ -750,6 +750,22 @@ pub fn export_bytes_with_consent_and_visual_context(
     allow_lossy: bool,
     visual: VisualExportContext,
 ) -> Result<Vec<u8>, IoError> {
+    if exported_sheets(book, format, opts).any(|sheet| sheet.has_scene_hierarchy())
+        && !matches!(
+            format,
+            Format::Thinoda
+                | Format::XMind
+                | Format::Svg
+                | Format::Png
+                | Format::Jpeg
+                | Format::Pdf
+                | Format::PowerPoint
+        )
+    {
+        return Err(IoError::Invalid(
+            "this editable format cannot preserve scene hierarchy; save as .thinoda or export a visual presentation".into(),
+        ));
+    }
     if exported_sheets(book, format, opts).any(|s| s.fim.is_some())
         && !matches!(
             format,

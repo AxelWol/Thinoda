@@ -1,9 +1,8 @@
 //! Shared, object-only container prototype for draw.io and socio-technical scenes.
 //!
-//! This is an immutable view over an existing canvas, not persisted document
-//! state. Previews never mutate the source. Integration into live commands must
-//! wait for the persistence, clipboard, history and binding gates in
-//! `docs/SCENE-CONTAINERS.md`; there is deliberately no serialization interface.
+//! The persisted structure has one parent relation and canvas-ordered siblings.
+//! Immutable previews validate complete candidates before sheet commands commit
+//! them. Header/layout/collapse policies and semantic bindings remain separate.
 
 use crate::board::{
     CanvasLayer, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_GROUPS, MAX_CANVAS_OBJECTS,
@@ -11,10 +10,85 @@ use crate::board::{
 };
 use crate::geometry::Vec2;
 use crate::model::{Sheet, valid_position};
-use std::collections::{HashMap, HashSet, VecDeque};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 /// Maximum number of parent links from any object to its layer.
 pub const MAX_SCENE_DEPTH: usize = 32;
+
+/// Authoritative object-only ancestry. Sibling order is stored by the canvas
+/// object vector; geometry remains in sheet coordinates.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneStructure {
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub containers: BTreeSet<CanvasObjectId>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub parents: BTreeMap<CanvasObjectId, CanvasObjectId>,
+}
+
+impl Sheet {
+    /// Marks an existing unrotated shape as a free container. Clearing a nonempty
+    /// container requires explicitly reparenting or deleting its contents first.
+    pub fn set_canvas_container(
+        &mut self,
+        id: CanvasObjectId,
+        enabled: bool,
+    ) -> Result<(), String> {
+        SceneHierarchy::from_canvas(&self.canvas)?.require_unlocked_selection(&[id])?;
+        if !enabled
+            && self
+                .canvas
+                .scene
+                .parents
+                .values()
+                .any(|parent| *parent == id)
+        {
+            return Err("reparent or delete the container contents first".into());
+        }
+        let mut candidate = self.canvas.clone();
+        if enabled {
+            candidate.scene.containers.insert(id);
+        } else {
+            candidate.scene.containers.remove(&id);
+        }
+        let candidate = SceneHierarchy::from_canvas(&candidate)?.stored_canvas();
+        self.canvas = candidate;
+        Ok(())
+    }
+
+    pub fn reparent_canvas_objects(
+        &mut self,
+        ids: &[CanvasObjectId],
+        target: Option<CanvasObjectId>,
+    ) -> Result<(), String> {
+        self.reparent_canvas_objects_with_validator(ids, target, |_| Ok(()))
+    }
+
+    pub fn reparent_canvas_objects_with_validator(
+        &mut self,
+        ids: &[CanvasObjectId],
+        target: Option<CanvasObjectId>,
+        validate: impl FnOnce(&SceneEditContext<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let hierarchy = SceneHierarchy::from_canvas(&self.canvas)?;
+        let candidate = hierarchy
+            .preview_reparent_with_validator(ids, target, validate)?
+            .stored_canvas();
+        self.canvas = candidate;
+        Ok(())
+    }
+}
+
+impl SceneStructure {
+    pub fn is_empty(&self) -> bool {
+        self.containers.is_empty() && self.parents.is_empty()
+    }
+
+    pub fn contains(&self, id: CanvasObjectId) -> bool {
+        self.containers.contains(&id) || self.parents.contains_key(&id)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SceneEditKind {
@@ -66,6 +140,65 @@ pub struct SceneHierarchy<'a> {
 }
 
 impl<'a> SceneHierarchy<'a> {
+    pub fn from_canvas(canvas: &'a CanvasLayer) -> Result<Self, String> {
+        if canvas.scene.containers.len() > MAX_CANVAS_OBJECTS
+            || canvas.scene.parents.len() > MAX_CANVAS_OBJECTS
+        {
+            return Err("scene hierarchy exceeds canvas limits".into());
+        }
+        Self::new(
+            canvas,
+            &canvas.scene.containers.iter().copied().collect::<Vec<_>>(),
+            &canvas
+                .scene
+                .parents
+                .iter()
+                .map(|(child, parent)| (*child, *parent))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub(crate) fn stored_canvas(&self) -> CanvasLayer {
+        let mut canvas = self.canvas.clone();
+        canvas.scene = SceneStructure {
+            containers: self.containers.iter().copied().collect(),
+            parents: self
+                .parents
+                .iter()
+                .map(|(child, parent)| (*child, *parent))
+                .collect(),
+        };
+        let ranks: HashMap<_, _> = self
+            .preorder()
+            .into_iter()
+            .enumerate()
+            .map(|(rank, id)| (id, rank))
+            .collect();
+        canvas.objects.sort_by_key(|object| ranks[&object.id]);
+        canvas
+    }
+
+    pub(crate) fn require_unlocked_selection(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
+        let selected = self.selection(ids)?;
+        for id in self.selection_roots(&selected) {
+            self.require_unlocked_path(id)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn copy_closure(
+        &self,
+        ids: &[CanvasObjectId],
+    ) -> Result<Vec<CanvasObjectId>, String> {
+        let mut included = self.closure(&self.selection(ids)?);
+        self.include_internal_connectors(&mut included);
+        Ok(self
+            .preorder()
+            .into_iter()
+            .filter(|id| included.contains(id))
+            .collect())
+    }
+
     /// Validates container IDs and `(child, parent)` links without changing the
     /// source. The canvas should come from a validated sheet; topic endpoints
     /// and other sheet-wide constraints remain the sheet validator's concern.
@@ -448,6 +581,16 @@ impl<'a> SceneHierarchy<'a> {
         delta: Vec2,
         validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
     ) -> Result<CanvasLayer, String> {
+        self.preview_translation_with_cards(ids, &HashSet::new(), delta, validate)
+    }
+
+    pub(crate) fn preview_translation_with_cards(
+        &self,
+        ids: &[CanvasObjectId],
+        cards: &HashSet<crate::model::TopicId>,
+        delta: Vec2,
+        validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
+    ) -> Result<CanvasLayer, String> {
         if !valid_position(delta) {
             return Err("movement out of range".into());
         }
@@ -456,12 +599,10 @@ impl<'a> SceneHierarchy<'a> {
             .iter()
             .filter_map(|id| self.canvas.objects[self.objects[id]].group)
             .collect();
-        if self
-            .canvas
-            .card_states
-            .iter()
-            .any(|state| state.group.is_some_and(|group| groups.contains(&group)))
-        {
+        if self.canvas.card_states.iter().any(|state| {
+            state.group.is_some_and(|group| groups.contains(&group))
+                && !cards.contains(&state.topic)
+        }) {
             return Err("mixed card groups require a scene occurrence adapter".into());
         }
         let selected = self
@@ -479,7 +620,7 @@ impl<'a> SceneHierarchy<'a> {
         }
         let mut moved = self.closure(&selected);
         self.include_internal_connectors(&mut moved);
-        let mut candidate = self.canvas.clone();
+        let mut candidate = self.stored_canvas();
         Sheet::translate_canvas_objects(&mut candidate, &moved, delta)?;
         let affected: Vec<_> = self
             .preorder()

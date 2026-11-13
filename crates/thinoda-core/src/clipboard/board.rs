@@ -36,6 +36,7 @@ const DRAWIO_ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-16\n";
 const FINAL_STATE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-17\n";
 const SANKEY_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-18\n";
 const STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-19\n";
+const SCENE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-20\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -54,7 +55,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_stencils() {
+        if self.fragment.has_scene_hierarchy() {
+            SCENE_BOARD_PREFIX
+        } else if self.fragment.has_stencils() {
             STENCIL_BOARD_PREFIX
         } else if self.fragment.has_sankey() {
             SANKEY_BOARD_PREFIX
@@ -289,9 +292,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(STENCIL_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-19\r\n"))
-        .map(|json| (19, json))
+        .strip_prefix(SCENE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-20\r\n"))
+        .map(|json| (20, json))
+        .or_else(|| {
+            text.strip_prefix(STENCIL_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-19\r\n"))
+                .map(|json| (19, json))
+        })
         .or_else(|| {
             text.strip_prefix(SANKEY_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-18\r\n"))
@@ -425,6 +433,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err(
             "standard draw.io rectangle rounding requires board clipboard version 16".into(),
         );
+    }
+    if version < 20 && payload.fragment.has_scene_hierarchy() {
+        return Err("scene hierarchy requires board clipboard version 20".into());
     }
     if version < 19 && payload.fragment.has_stencils() {
         return Err("stencil shapes require board clipboard version 19".into());
@@ -565,6 +576,12 @@ pub fn prepare_board_selection<'a>(
     }
     if topics.is_empty() && objects.is_empty() {
         return Ok(None);
+    }
+    if !objects.is_empty() && sheet.has_scene_hierarchy() {
+        objects = crate::scene_hierarchy::SceneHierarchy::from_canvas(&sheet.canvas)?
+            .copy_closure(&objects.iter().copied().collect::<Vec<_>>())?
+            .into_iter()
+            .collect();
     }
 
     let mut summary_owner = HashMap::new();
@@ -834,6 +851,22 @@ fn copy_prepared_board_selection(
     } else {
         HashMap::new()
     };
+    fragment.canvas.scene.containers = sheet
+        .canvas
+        .scene
+        .containers
+        .iter()
+        .filter(|id| objects.contains(id))
+        .copied()
+        .collect();
+    fragment.canvas.scene.parents = sheet
+        .canvas
+        .scene
+        .parents
+        .iter()
+        .filter(|(child, parent)| objects.contains(child) && objects.contains(parent))
+        .map(|(child, parent)| (*child, *parent))
+        .collect();
     for mut object in copied_objects {
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             let from_external = is_external(connector.from, &owned, &objects);
@@ -1326,6 +1359,16 @@ pub fn paste_board_selection(
         candidate.canvas.card_states.push(state);
     }
     let mut pasted_objects = Vec::new();
+    for id in &source.canvas.scene.containers {
+        candidate.canvas.scene.containers.insert(map_object(*id)?);
+    }
+    for (child, parent) in &source.canvas.scene.parents {
+        candidate
+            .canvas
+            .scene
+            .parents
+            .insert(map_object(*child)?, map_object(*parent)?);
+    }
     for original in &source.canvas.objects {
         let mut object = original.clone();
         object.id = map_object(original.id)?;

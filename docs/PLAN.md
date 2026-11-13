@@ -30,11 +30,22 @@ remaining decisions.
 
 The first SC0 checkpoint adds an immutable object-only hierarchy prototype with
 bounded validation, ordered traversal, reparent previews and deduplicated movement
-previews in `thinoda-core`. It does not enter saved documents or live editor
-commands. The next command-contract checkpoint adds stable reparent insertion,
+previews in `thinoda-core`. That checkpoint did not enter saved documents or live
+editor commands. The next command-contract checkpoint added stable reparent insertion,
 affected-edge ownership reconciliation and a shared binding-validation preview
-hook. Persistence/lifecycle integration, card occurrences, swimlane layout and
-semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
+hook. The current persistence checkpoint adds object-only free containers to
+the core model, native v27 and scene-aware clipboard/recovery/XMind gates,
+subtree move/delete/copy and history integration. Unsafe editable exports are
+refused rather than flattened. This is partial SC1, not a released container UI:
+collapse, headers/stack layout, card occurrences, remaining command/binding
+integration, accessibility and semantic authoring remain open; see the
+checkpoints in SCENE-CONTAINERS.md.
+
+User-requested starter content: add a **Software** start-page template group
+with editable socio-technical examples for human/service handoffs, approval
+workflows and incident response. Build these on the supported shared hierarchy
+and semantic authoring model during STC3, and complete localized start-page
+integration and native/web acceptance in STC4; do not substitute flattened art.
 
 ## draw.io diagram support (2026-11-05)
 

@@ -598,6 +598,84 @@ fn stencils_require_v26_and_aware_xmind_snapshots() {
     );
 }
 
+fn scene_book() -> Workbook {
+    let mut book = central();
+    let sheet = book.active_mut();
+    let pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0)),
+        ))
+        .unwrap();
+    let child = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(40.0, 60.0), Vec2::new(100.0, 50.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(pool, true).unwrap();
+    sheet.reparent_canvas_objects(&[child], Some(pool)).unwrap();
+    book
+}
+
+#[test]
+fn scene_hierarchy_requires_v27_and_preserves_native_and_private_xmind_data() {
+    let book = scene_book();
+    assert_eq!(required_native_version(&book), 27);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 27);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":26,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(matches!(
+        import_bytes(Format::Thinoda, &forged),
+        Err(IoError::NewerVersion(_))
+    ));
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-SCENE-1")
+    );
+}
+
+#[test]
+fn scene_editable_exports_and_drawio_clipboard_refuse_silent_flattening() {
+    let book = scene_book();
+    for format in [
+        Format::DrawIo,
+        Format::DrawIoSvg,
+        Format::DrawIoPng,
+        Format::FreeMind,
+        Format::Opml,
+        Format::Markdown,
+        Format::MindManager,
+        Format::Word,
+    ] {
+        assert!(
+            export_bytes_with_consent(&book, format, &ExportOptions::default(), true).is_err(),
+            "{format:?}"
+        );
+    }
+    let svg = export(&book, Format::Svg);
+    assert!(String::from_utf8(svg).unwrap().contains("<svg"));
+    let sheet = book.active();
+    let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
+    let pool = *sheet.canvas.scene.containers.first().unwrap();
+    let payload = thinoda_core::clipboard::copy_board_selection(sheet, &layout, &[], &[pool])
+        .unwrap()
+        .unwrap();
+    assert!(thinoda_io::drawio_clipboard::encode(&payload).is_err());
+}
+
 #[test]
 fn final_states_require_v24_and_aware_xmind_snapshots() {
     let (mut book, _) = half_circle_marker_book();

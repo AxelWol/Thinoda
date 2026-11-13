@@ -404,6 +404,73 @@ interface, not the complete semantic confirmation/diagnostic protocol. SC1 must
 still integrate every generic mutation path with history and the full storage/
 clipboard/recovery/export-loss contract before exposing nested editing.
 
+### 5.3 Persistence checkpoint: object-only free containers
+
+The authoritative relation is now `CanvasLayer.scene`: a set of container object
+IDs and a child-to-parent map. Canvas object order supplies sibling order;
+the immutable `SceneHierarchy` is a validated derived index, not another stored
+tree. Empty metadata is omitted, so plain documents keep their previous format
+requirements. Geometry remains in sheet space.
+
+This slice explicitly supports **canvas objects only**. Existing unrotated
+shapes can be marked as free containers; topic/card ownership is unchanged.
+Scene members cannot also belong to legacy flat groups. Unrelated legacy mixed
+object/card groups remain usable, including atomic moves alongside a scene.
+There is no new per-symbol shape variant or second layout implementation.
+
+Supported core commands mark/unmark empty containers, reparent, move and delete
+subtrees, create common-owner object-to-object connectors and copy/paste with ID
+remapping. Partial child copies detach omitted ancestry; container copies carry
+descendants and internal connectors. External surviving endpoints follow the
+existing explicit detachment behavior. Parent/child selections move once;
+parents carry individually locked descendants, while direct edits enforce
+ancestor locks. Free-container resize changes the frame, **not** child geometry.
+Style edits remain available. Translation of a chained reparent preview writes
+the preview's current ancestry and ordering, not its borrowed source's relation.
+
+Stored structure participates in validation, undo/redo, failed document-edit
+rollback, history byte estimates, whole-sheet duplication/merge and masked
+copies. Removing a Sankey endpoint also prunes ownership of the automatically
+removed flow; it does not leave a dangling scene child. These are unbound core
+commands. The reparent validator is available, but a production semantic
+transaction/confirmation protocol is still future work.
+
+| Transport | Scene-aware version |
+|---|---|
+| Native `.thinoda` | 27 |
+| Whole-sheet clipboard | `THINODA-SHEET-23` |
+| Mixed board clipboard | `THINODA-BOARD-CLIPBOARD-20` |
+| Recovery | `THINODA-RECOVERY-SCENE-1` |
+| Pending-ink recovery | `THINODA-RECOVERY-INK-SCENE-1` |
+| Private XMind workbook | `THINODA-XMIND-SCENE-1` |
+
+Older/forged envelopes and unversioned hierarchy are rejected. Clipboard accepts
+LF and CRLF. Recovery preserves pending ink and older supported features under
+the new envelope. Malformed or old private XMind snapshots cannot silently fall
+back to its public outline when scene fields are present. XMind preservation is
+a private Thinoda snapshot, **not** native XMind nested-container authoring.
+
+Unsupported editable exports are refused even with lossy consent. The guard
+also covers the lower-level draw.io encoder used by the explicit draw.io
+clipboard action; ordinary native clipboard transport remains available.
+Native storage, private XMind snapshots and visual SVG/PNG/JPEG/PDF/PowerPoint
+remain available. Visual output is not editable structural interchange.
+
+Until sibling/layout-aware commands are implemented, container rotation,
+generic container geometry replacement, hierarchy-member legacy grouping/band
+changes, scene paint reordering and connector reconnection are refused explicitly.
+Object-category replacement is also refused in a scene. These are conservative
+limitations, not claims that the remaining authoring paths are finished.
+
+**Release boundary:** this checkpoint adds savable free-container structure and
+safe core commands, not new authoring controls or accepted nested swimlane UX.
+SC0 and SC1 remain partial. Collapse, keyboard containment navigation, all
+binding-aware live mutations, header/stack/table policies, source corpus and
+latency budgets, draw.io structural fidelity and native/web acceptance remain
+open. Later stored policies need their own compatible version decision; v27
+readers do not silently accept future scene fields. The Software starter group
+is planned for STC3/STC4, after supported semantic authoring, not shipped here.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,
