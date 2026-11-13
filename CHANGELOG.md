@@ -39,6 +39,23 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.26.0](https://github.com/AxelWol/Thinoda/compare/v0.25.1...v0.26.0) (2026-11-13)
+
+
+### Features
+
+* add Sankey diagram family and extend draw.io support ([6c1db07](https://github.com/AxelWol/Thinoda/commit/6c1db07ed307e95425ed00a80c88b5c1b0e0c63f))
+* add Sankey diagram family and extend draw.io support ([e26b6db](https://github.com/AxelWol/Thinoda/commit/e26b6db2ebc4caf4a71c3cdf9da92ca94fa6cdf2))
+* **sankey:** add named alluvial stages ([02b0e28](https://github.com/AxelWol/Thinoda/commit/02b0e2825fb5065ad9ebc5a676bcc230a4e2ffec))
+* **sankey:** include rank-skipping links in crossing reduction ([126a864](https://github.com/AxelWol/Thinoda/commit/126a864df1aa03d0f3615116256f8a2be66c5461))
+* **sankey:** manage alluvial stages ([88b33ca](https://github.com/AxelWol/Thinoda/commit/88b33ca0f2320674a07417c4037e8e1364cc894c))
+* **stencil:** declarative JSON stencil interpreter, data library and draw.io XML adapter ([18bd156](https://github.com/AxelWol/Thinoda/commit/18bd156a8a014aa8e99237e4d678f0a41088c403))
+
+
+### Documentation
+
+* **drawio:** require a declarative JSON stencil interpreter ([d39a882](https://github.com/AxelWol/Thinoda/commit/d39a88212db05bcf2694c0cb725423cfd43cabf6))
+
 ## [0.25.1](https://github.com/AxelWol/Thinoda/compare/v0.25.0...v0.25.1) (2026-11-11)
 
 
