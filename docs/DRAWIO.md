@@ -4,6 +4,15 @@ _Last updated: 2026-11-12 16:51:23 UTC (non-binding repository metadata)._ <!-- 
 
 Status: 🟡 in progress — Milestone A (codec, import, export) landed 2026-11-05; see [§4.1](#41-implementation-progress). Tracked in [BACKLOG](BACKLOG.md#p1--drawio-diagram-support-user-request-2026-11-05) and [PLAN](PLAN.md#drawio-diagram-support-2026-11-05).
 
+**Common nested-swimlane solution (2026-11-13, proposed):**
+[SCENE-CONTAINERS.md](SCENE-CONTAINERS.md) refines the shared scene hierarchy
+in section 3.2.1 for nested containers, independent header/stack axes,
+resize/layout policies, collapse routing, persistence and draw.io mapping.
+SC0-SC3 are one structural milestone carved out of Phase 10, consumed by the
+[socio-technical plan](SOCIO-TECHNICAL.md), not a second pool/lane implementation.
+SC4 adds container tables in the same engine. draw.io imports remain visual
+scene data unless users explicitly promote them to a semantic model.
+
 ## 1. Problem & goal
 
 ### Sankey interoperability
@@ -57,7 +66,9 @@ Anything outside a tier is reported in diagnostics as "preserved, shown approxim
    shared, bounded interpreter, not another Rust enum variant or renderer branch
    for each shape. This supersedes the earlier proposal to port individual
    JavaScript shapes into Rust. Existing native shapes need a staged, non-breaking
-   migration; the JSON interpreter is not implemented yet.
+   migration; the interpreter foundation is implemented, with persistence,
+   rendering and library integration still partial (see the implementation
+   status under section 3.1.2).
 
 ## 2. Research summary
 
@@ -521,6 +532,15 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
 ### 3.2 Core model extensions (all `#[serde(default, skip_serializing_if)]`)
 
 #### 3.2.1 Scene hierarchy & geometry (resolves parent-tree/relative-geometry gap)
+
+The [common container contract](SCENE-CONTAINERS.md) is the authoritative
+refinement for nested swimlane structure and editing shared with
+socio-technical diagrams. Header orientation is independent of stacking;
+plain containers and table cells need different growth policies. There is
+one scene parent tree, no BPMN inference on import and no semantic parent tree
+duplicating occurrence ancestry. Existing flat groups and Zones are unchanged.
+The proposals below remain the wider target, not a claim of shipped hierarchy.
+
 - New `parent: Option<SceneParent>` on `CanvasObject` where `SceneParent = Layer(id) |
   Object(id)` (container/group/vertex **or connector** — edge labels and edge-attached
   children). `None` = default layer = today's behaviour.
@@ -1151,6 +1171,9 @@ connections arrive in Phase 8 without changing the gestures).
   shape picker (stencil tiles inherit Phase 1 pick/drag/hover behaviour).
 
 ### Phase 10 — Layers, containers, swimlanes, tables (`p10-structure`)
+- Nested containers/swimlanes use [SC0-SC3](SCENE-CONTAINERS.md) as the common
+  structural milestone shared with socio-technical editing; SC4 covers tables
+  in that same engine. The wider Layers work remains in this parent phase.
 - Layers panel; containers (move children, collapse/expand, drop-into highlight);
   swimlane & table editing.
 

@@ -9,6 +9,25 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## Socio-technical diagram editor (2026-11-13)
+
+Proposed, not implemented or approved for execution.
+[SOCIO-TECHNICAL.md](SOCIO-TECHNICAL.md) researches BPMN collaboration,
+S-BPM, ArchiMate, service blueprints, iStar, UML and C4, and recommends a
+workflow-first Thinoda notation with peer human/software participants,
+explicit responsibilities, typed flows, use cases and distinct boundaries.
+STC0-STC4 cover contract spikes, consuming shared scene foundations, safe semantic
+persistence, complete authoring and first-release acceptance. Linked context
+views, interoperability and experience/intention extensions are later,
+separately gated work. Reuse the implemented JSON stencil interpreter and the
+shared [nested-container/swimlane contract](SCENE-CONTAINERS.md);
+SC0-SC3 deliver one scene-only milestone carved out of draw.io Phase 10, and
+SC4 adds tables in the same engine. Socio-technical meaning is optional binding
+data, never a second hierarchy or something inferred from imported shapes.
+Do not introduce per-symbol Rust variants or claim standards conformance. The
+[rubber-duck review](SOCIO-TECHNICAL-REVIEW.md) records the critique and
+remaining decisions.
+
 ## draw.io diagram support (2026-11-05)
 
 🟡 In progress (Milestone A — codec, import, export — landed; see DRAWIO.md §4.1).
@@ -22,8 +41,10 @@ boards to draw.io behaviour and ships independently of file support.
 extensible JSON stencil definitions and a shared, bounded interpreter, not more
 hardcoded native shape variants. [DRAWIO.md §3.1.2](DRAWIO.md#312-json-stencil-dsl-and-interpreter-contract-proposed-2026-11-12)
 defines the proposed DSL, persistence, third-party adapters and ST0-ST7 migration.
-Existing shapes remain compatible while migrating. The interpreter is not yet
-implemented; the unfinished shape-specific envelope prototype has been shelved.
+Existing shapes remain compatible while migrating. The interpreter foundation
+is implemented; persistence/rendering/library integration is partial, as
+recorded in DRAWIO.md's implementation status. The unfinished shape-specific
+envelope prototype has been shelved.
 
 ## Sankey family support (2026-11-11)
 
