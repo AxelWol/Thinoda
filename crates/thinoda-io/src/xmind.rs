@@ -36,6 +36,7 @@ const SCENE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-1";
 const PINNED_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-2";
 const CLOSED_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-3";
 const SCENE_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-STENCIL-1";
+const COLLAPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-COLLAPSE-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -725,7 +726,9 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_scene_hierarchy()
+    if book.has_scene_collapse() {
+        Ok(serde_json::to_string(&(COLLAPSE_SNAPSHOT_VERSION, book))?)
+    } else if book.has_scene_hierarchy()
         && (book.has_stencil_definition_hashes() || book.has_stencil_definition_closures())
     {
         Ok(serde_json::to_string(&(
@@ -841,6 +844,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == PINNED_STENCIL_SNAPSHOT_VERSION
                 || version == CLOSED_STENCIL_SNAPSHOT_VERSION
                 || version == SCENE_STENCIL_SNAPSHOT_VERSION
+                || version == COLLAPSE_SNAPSHOT_VERSION
         })
 }
 
@@ -929,12 +933,19 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != PINNED_STENCIL_SNAPSHOT_VERSION
             && version != CLOSED_STENCIL_SNAPSHOT_VERSION
             && version != SCENE_STENCIL_SNAPSHOT_VERSION
+            && version != COLLAPSE_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        if version != COLLAPSE_SNAPSHOT_VERSION && workbook.has_scene_collapse() {
+            return Err(IoError::NewerVersion(
+                "collapsed containers require a collapse-aware private XMind snapshot".into(),
+            ));
+        }
         if version != SCENE_SNAPSHOT_VERSION
             && version != SCENE_STENCIL_SNAPSHOT_VERSION
+            && version != COLLAPSE_SNAPSHOT_VERSION
             && workbook.has_scene_hierarchy()
         {
             return Err(IoError::NewerVersion(
@@ -943,7 +954,8 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         }
         let version = if version == SCENE_SNAPSHOT_VERSION {
             STENCIL_SNAPSHOT_VERSION.to_owned()
-        } else if version == SCENE_STENCIL_SNAPSHOT_VERSION {
+        } else if version == SCENE_STENCIL_SNAPSHOT_VERSION || version == COLLAPSE_SNAPSHOT_VERSION
+        {
             CLOSED_STENCIL_SNAPSHOT_VERSION.to_owned()
         } else {
             version

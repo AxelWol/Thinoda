@@ -72,6 +72,13 @@ impl DocumentEditValidator for SceneGuard {
 fn document_scene_guard_cannot_be_bypassed_by_generic_sheet_commands() {
     type Edit = fn(&mut Document, [CanvasObjectId; 5]) -> thinoda_core::EditResult<()>;
     let edits: &[(&str, Edit)] = &[
+        ("collapse", |doc, ids| {
+            let original = doc.sheet().canvas.object(ids[0]).unwrap().rect;
+            doc.set_canvas_container_collapsed(
+                ids[0],
+                Some(Rect::from_min_size(original.min, Vec2::new(100.0, 30.0))),
+            )
+        }),
         ("move", |doc, ids| {
             doc.move_canvas_objects(&[ids[0]], Vec2::new(20.0, 30.0))
         }),

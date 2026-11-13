@@ -112,6 +112,10 @@ draw.io shapes, even BPMN stencils, acquire no socio-technical meaning on open.
 - Hidden descendants keep their sheet-space geometry. Moving a collapsed
   ancestor translates hidden descendants and stored expanded bounds once too;
   expanding must not restore pre-move coordinates.
+  In the saved collapse representation, the container object's rectangle is its
+  active compact frame; `SceneStructure.collapsed[id]` holds its expanded frame.
+  Their origins may differ (for example a right-side compact header), and
+  neither replaces descendant geometry.
 - Exclude selected descendants when their ancestor already moves. Preserve
   sibling paint order, hit-testing and locked/selectable state. A parent move
   moves locked descendants as a unit unless the container itself is locked;
@@ -662,6 +666,70 @@ Compact-frame/header policies, layout, obstacle avoidance and complete
 paint/label/export parity across consumers remain open. The preview must not be
 treated as a savable collapsed sheet. Persistence/lifecycle gates and native/web
 acceptance are still required; SC0/SC1 and the overall editor remain partial.
+
+### 5.8 Collapse persistence checkpoint: saved frames and lifecycle
+
+`SceneStructure.collapsed` maps collapsed container IDs to their expanded
+rectangles. The object itself stores its active compact rectangle; children
+and connector controls remain in sheet space. This lets shared canvas/export
+consumers use the same compact object for geometry, styles and labels, without
+each inventing a second rendering projection. Empty collapse metadata is omitted,
+and expanded documents retain their previous minimum format versions.
+
+Sheet and document `set_canvas_container_collapsed(id, Some(frame))` collapse;
+`None` restores the saved expanded frame. Transactions check inherited locks,
+container identity, frame bounds and positive compact dimensions. Compact and
+expanded origins may differ, without translating children. Repeating the same
+collapse is a no-op, not an overwrite of the original expanded bounds.
+Changing compact size, ordinary
+resize or clearing container status requires expanding first; header-driven
+resize policies have not been implemented. Sankey sheets still refuse collapse.
+These are shared core commands, not exposed UI affordances.
+
+Movement carries compact and expanded frames, nested collapsed frames and
+hidden locked descendants once, validating the resulting expanded geometry
+before accepting. Reparent/order previews retain collapse metadata. Deletion
+prunes it; undo/redo and whole-workbook snapshots retain it. History accounting
+includes the saved frames. Native board copy includes hidden descendants,
+remaps collapse IDs and translates both frames when pasted. Partial copies
+retain only collapse state for included containers.
+
+The ordinary scene builder now applies saved collapse through the same bounded
+visibility/terminal projection as transient previews. Its existing validated-sheet
+precondition remains: load/import/recovery/paste validate the saved graph before
+rendering. Parent walks are capped at 32 links; connector visibility and cycle
+validation share an iterative dependency order. A transient preview extends
+stored collapse rather than implicitly expanding it.
+
+| Transport | Collapse-aware version |
+|---|---|
+| Native `.thinoda` | 29 |
+| Whole-sheet clipboard | `THINODA-SHEET-24` |
+| Mixed board clipboard | `THINODA-BOARD-CLIPBOARD-23` |
+| Recovery | `THINODA-RECOVERY-COLLAPSE-1` |
+| Pending-ink recovery | `THINODA-RECOVERY-INK-COLLAPSE-1` |
+| Private XMind workbook | `THINODA-XMIND-COLLAPSE-1` |
+
+These envelopes also preserve pinned/embedded JSON stencil definitions and
+other previously supported fields. Readers reject collapse under older
+envelopes, including forged scene/stencil-aware envelopes. Private XMind
+preservation remains Thinoda-specific; it is not native XMind container support.
+Unsupported editable exports remain refused, including explicit draw.io clipboard.
+
+Core fixtures cover nested restoration after movement, offset compact frames,
+history, locks, invalid frames/state, clipboard remapping and downgrade rejection. Headless
+canvas coverage verifies hidden descendants are absent from accessible reading
+order and cannot be entered through containment navigation. SVG and contextual
+editable PowerPoint fixtures verify hidden objects are omitted; native/private
+XMind and recovery fixtures round-trip both plain and stencil-bearing documents.
+
+**Remaining boundary:** no collapse buttons/shortcuts, header/compact-size
+defaults, collapsed-state announcements, layout policies, obstacle avoidance or
+live native/browser acceptance is claimed. Native/visual paths consume the shared
+state, but complete paint/label/port/presentation parity and measured latency
+still need the SC2 acceptance matrix. Production semantic policy installation,
+prepared confirmations, structural draw.io fidelity, semantic authoring and the
+Software examples remain subsequent work; SC0/SC1 are still partial.
 
 ## 6. Adversarial acceptance and critique
 

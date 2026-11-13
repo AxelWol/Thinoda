@@ -557,3 +557,66 @@ the additional JSON stencil case. Serialized app library regressions passed
 971 tests with 2 ignored. Affected-package clippy (`--all-targets -- -D warnings`),
 core/canvas/IO/app builds, workspace check, formatting and diff checks passed.
 No live native/browser/device acceptance is claimed.
+
+## 15. Collapse persistence checkpoint: author critique
+
+**Implemented:** validated saved expanded frames, active compact object frames,
+document-guarded collapse/expand, shared scene consumption and coordinated
+native/clipboard/recovery/private XMind capabilities.
+
+**Rubber-duck questions and dispositions:**
+
+- Are there two competing rectangles for layout? No. A collapsed object's
+  rectangle is its active compact frame; the map retains the frame to restore
+  on expansion. Children remain in sheet coordinates. Review removed an initial
+  same-origin restriction: right/bottom headers can need an offset compact
+  frame. A regression verifies exact restoration after moving that frame.
+- Can a repeated collapse forget the true expanded frame? No. An identical
+  command is a no-op; changing the compact frame requires expansion first.
+  Ordinary resize and clearing container status also require expansion until
+  a shared header/resize policy is implemented.
+- Does movement preserve hidden state? Compact/expanded frames and nested
+  collapsed descendants translate through the same deduplicated movement
+  command. Expanded frame validation is part of candidate acceptance, not
+  postponed until the user expands.
+- Can history, deletion or a structural preview lose metadata? Scene storage
+  retains it, deletion removes entries for deleted containers, history counts
+  and snapshots it, and undo restores it. Copy/paste carries hidden contents,
+  remaps IDs and translates the restore frames with their compact objects.
+- Could an ordinary command bypass semantic policy? The document command uses
+  the shared transaction guard. A veto fixture confirms collapse cannot leak
+  compact geometry, restore metadata or history changes.
+- Will older readers silently expand or flatten saved state? Native v29 and
+  dedicated clipboard/recovery/private XMind envelopes gate the new field.
+  Downgraded payloads fail even when their envelope supports the older hierarchy
+  and embedded stencil closures. Documents without collapse keep earlier gates.
+- Is visual geometry now divergent from labels/styles? Saved objects hold their
+  compact frames, so existing consumers see the same object geometry as the
+  shared scene. SVG and editable contextual PowerPoint omit hidden objects.
+  Full consumer/port/label parity still requires the declared SC2 matrix.
+- Are fit bounds and waypoint controls using the painted route? Review found
+  auxiliary bounds/connector helpers still used expanded contents or raw
+  hidden-child targets. They now use saved collapse projection too. A far-hidden
+  task regression checks actual visible bounds and waypoint insertion positions.
+- Can keyboard focus land on hidden descendants? Accessible items come from
+  the shared scene. A collapsed frame has no navigable first child, and canvas
+  navigation refuses nonvisible targets. Headless coverage exercises the real
+  focus path rather than only testing the hierarchy resolver.
+- Is persistence equivalent to complete UX? No. There are no collapse controls
+  or automatic compact/header defaults yet. Sankey collapse remains explicitly
+  unsupported; semantic black-box state is not inferred from visual collapse.
+
+**Critique:** this closes the saved collapse/lifecycle slice without declaring
+SC1 or the editor complete. It intentionally refuses unsupported resizing rather
+than guessing a header policy. Next work is shared header/free/stack behavior
+and authoring controls, followed by structural interchange and semantic editing.
+Software starter examples still depend on those capabilities. This is an author
+critique, not an independent review or release acceptance.
+
+**Validation evidence:** the broad core/canvas/IO/platform run passed 2,143
+tests with 12 ignored. Subsequent helper/offset refinements passed the focused
+hierarchy/container/collapse suites (72 tests, including 16 collapse fixtures),
+core/canvas library regressions, and targeted canvas/export/recovery fixtures.
+Serialized app library regressions passed 971 tests with 2 ignored.
+Affected-package clippy (`--all-targets -- -D warnings`), builds, workspace
+check, formatting and diff checks passed. No live platform acceptance is claimed.

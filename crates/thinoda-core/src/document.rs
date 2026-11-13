@@ -253,6 +253,8 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
         + sheet.canvas.card_states.len() * size_of::<crate::board::CanvasCardState>()
         + sheet.canvas.scene.containers.len() * (size_of::<CanvasObjectId>() + 48)
         + sheet.canvas.scene.parents.len() * (2 * size_of::<CanvasObjectId>() + 48)
+        + sheet.canvas.scene.collapsed.len()
+            * (size_of::<CanvasObjectId>() + size_of::<Rect>() + 48)
         + sheet
             .relationships
             .iter()
@@ -1071,6 +1073,25 @@ impl Document {
                 .remove_board_members(members)
                 .map_err(EditError::Invalid)
         })
+    }
+
+    pub fn set_canvas_container_collapsed(
+        &mut self,
+        id: CanvasObjectId,
+        compact: Option<Rect>,
+    ) -> EditResult<()> {
+        self.edit_sheet(
+            if compact.is_some() {
+                "Collapse container"
+            } else {
+                "Expand container"
+            },
+            |sheet| {
+                sheet
+                    .set_canvas_container_collapsed(id, compact)
+                    .map_err(EditError::Invalid)
+            },
+        )
     }
 
     pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> EditResult<()> {

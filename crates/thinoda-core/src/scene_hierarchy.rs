@@ -2,13 +2,13 @@
 //!
 //! The persisted structure has one parent relation and canvas-ordered siblings.
 //! Immutable previews validate complete candidates before sheet commands commit
-//! them. Header/layout/collapse policies and semantic bindings remain separate.
+//! them. Header/layout policies and semantic bindings remain separate.
 
 use crate::board::{
     Band, CanvasLayer, CanvasObject, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_GROUPS,
     MAX_CANVAS_OBJECTS, MAX_CARD_STATES, ZOrder, validate_object,
 };
-use crate::geometry::Vec2;
+use crate::geometry::{Rect, Vec2};
 use crate::model::{Sheet, valid_position};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -27,16 +27,56 @@ pub enum SceneNavigation {
 
 /// Authoritative object-only ancestry. Sibling order is stored by the canvas
 /// object vector; geometry remains in sheet coordinates.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SceneStructure {
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub containers: BTreeSet<CanvasObjectId>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub parents: BTreeMap<CanvasObjectId, CanvasObjectId>,
+    /// Expanded frames of collapsed containers; their objects hold compact frames.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub collapsed: BTreeMap<CanvasObjectId, Rect>,
 }
 
 impl Sheet {
+    /// Collapses to an explicit compact frame, or restores the saved expanded frame.
+    /// Collapse changes presentation only; descendants and real endpoints stay put.
+    pub fn set_canvas_container_collapsed(
+        &mut self,
+        id: CanvasObjectId,
+        compact: Option<Rect>,
+    ) -> Result<(), String> {
+        let hierarchy = SceneHierarchy::from_canvas(&self.canvas)?;
+        hierarchy.require_container(id)?;
+        hierarchy.require_unlocked_selection(&[id])?;
+        if compact.is_some() && self.has_sankey() {
+            return Err("collapse does not support Sankey sheets".into());
+        }
+        let mut candidate = self.canvas.clone();
+        let object = candidate
+            .object_mut(id)
+            .ok_or("scene container not found")?;
+        if let Some(rect) = compact {
+            if self.canvas.scene.collapsed.contains_key(&id) {
+                if rect == object.rect {
+                    return Ok(());
+                }
+                return Err("expand the container before changing its compact frame".into());
+            }
+            let expanded = object.rect;
+            object.rect = rect;
+            validate_object(object)?;
+            candidate.scene.collapsed.insert(id, expanded);
+        } else if let Some(expanded) = self.canvas.scene.collapsed.get(&id) {
+            object.rect = *expanded;
+            candidate.scene.collapsed.remove(&id);
+        }
+        SceneHierarchy::from_canvas(&candidate)?;
+        self.canvas = candidate;
+        Ok(())
+    }
+
     /// Marks an existing unrotated shape as a free container. Clearing a nonempty
     /// container requires explicitly reparenting or deleting its contents first.
     pub fn set_canvas_container(
@@ -45,6 +85,9 @@ impl Sheet {
         enabled: bool,
     ) -> Result<(), String> {
         SceneHierarchy::from_canvas(&self.canvas)?.require_unlocked_selection(&[id])?;
+        if !enabled && self.canvas.scene.collapsed.contains_key(&id) {
+            return Err("expand the container before clearing its container state".into());
+        }
         if !enabled
             && self
                 .canvas
@@ -104,7 +147,7 @@ impl Sheet {
 
 impl SceneStructure {
     pub fn is_empty(&self) -> bool {
-        self.containers.is_empty() && self.parents.is_empty()
+        self.containers.is_empty() && self.parents.is_empty() && self.collapsed.is_empty()
     }
 
     pub fn contains(&self, id: CanvasObjectId) -> bool {
@@ -167,6 +210,7 @@ impl<'a> SceneHierarchy<'a> {
     pub fn from_canvas(canvas: &'a CanvasLayer) -> Result<Self, String> {
         if canvas.scene.containers.len() > MAX_CANVAS_OBJECTS
             || canvas.scene.parents.len() > MAX_CANVAS_OBJECTS
+            || canvas.scene.collapsed.len() > MAX_CANVAS_OBJECTS
         {
             return Err("scene hierarchy exceeds canvas limits".into());
         }
@@ -191,6 +235,7 @@ impl<'a> SceneHierarchy<'a> {
                 .iter()
                 .map(|(child, parent)| (*child, *parent))
                 .collect(),
+            collapsed: self.canvas.scene.collapsed.clone(),
         };
         let ranks: HashMap<_, _> = self
             .preorder()
@@ -292,6 +337,20 @@ impl<'a> SceneHierarchy<'a> {
                 ));
             }
         }
+        for (id, expanded) in &canvas.scene.collapsed {
+            if !container_set.contains(id) {
+                return Err(format!("collapsed object {id} is not a scene container"));
+            }
+            let object = &canvas.objects[objects[id]];
+            if object.rect.size.x <= 0.0 || object.rect.size.y <= 0.0 {
+                return Err(format!(
+                    "collapsed container {id} requires a positive compact frame"
+                ));
+            }
+            let mut restored = object.clone();
+            restored.rect = *expanded;
+            validate_object(&restored)?;
+        }
         let mut parent_map = HashMap::new();
         for (child, parent) in parents {
             if !objects.contains_key(child) {
@@ -343,10 +402,15 @@ impl<'a> SceneHierarchy<'a> {
         let parent = self.parents.get(&id).copied();
         match direction {
             SceneNavigation::Parent => Ok(parent),
-            SceneNavigation::FirstChild => Ok(self
-                .children
-                .get(&Some(id))
-                .and_then(|children| children.first().copied())),
+            SceneNavigation::FirstChild => {
+                if self.canvas.scene.collapsed.contains_key(&id) {
+                    return Ok(None);
+                }
+                Ok(self
+                    .children
+                    .get(&Some(id))
+                    .and_then(|children| children.first().copied()))
+            }
             SceneNavigation::PreviousSibling | SceneNavigation::NextSibling => {
                 let siblings = self
                     .children

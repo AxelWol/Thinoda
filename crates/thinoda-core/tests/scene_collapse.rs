@@ -565,3 +565,317 @@ fn maximum_ancestry_depth_projects_to_the_visible_outer_container() {
         Some(id(1))
     );
 }
+
+#[test]
+fn stored_nested_collapse_moves_and_expands_atomically_with_history() {
+    use thinoda_core::{Document, Workbook};
+    let (mut sheet, [pool, _, sublane, task, _, _, outside]) = nested();
+    let crossing = edge(
+        &mut sheet,
+        Endpoint::Object(task),
+        Endpoint::Object(outside),
+    );
+    sheet.canvas.object_mut(task).unwrap().locked = true;
+    let original = sheet.clone();
+    let mut doc = Document::new(Workbook::new(sheet));
+    let inner = doc.sheet().canvas.object(sublane).unwrap().rect;
+    doc.set_canvas_container_collapsed(
+        sublane,
+        Some(Rect::from_min_size(inner.min, Vec2::new(300.0, 30.0))),
+    )
+    .unwrap();
+    doc.set_canvas_container_collapsed(pool, Some(compact()))
+        .unwrap();
+    let collapsed = doc.sheet().clone();
+    let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
+    let scene = build_scene(doc.sheet(), &layout);
+    assert!(scene.item(SceneId::Object(task)).is_none());
+    assert!(on_border(compact(), path(&scene, crossing)[0]));
+    assert_eq!(
+        doc.sheet().canvas.scene.collapsed[&pool],
+        original.canvas.object(pool).unwrap().rect
+    );
+    assert_eq!(
+        doc.sheet().canvas.object(task),
+        original.canvas.object(task)
+    );
+    assert_eq!(
+        thinoda_core::scene_hierarchy::SceneHierarchy::from_canvas(&doc.sheet().canvas)
+            .unwrap()
+            .navigate(
+                pool,
+                thinoda_core::scene_hierarchy::SceneNavigation::FirstChild
+            )
+            .unwrap(),
+        None
+    );
+    let delta = Vec2::new(25.0, 35.0);
+    doc.move_canvas_objects(&[pool, task], delta).unwrap();
+    let moved = doc.sheet().clone();
+    assert_eq!(
+        moved.canvas.scene.collapsed[&pool],
+        original.canvas.object(pool).unwrap().rect.translate(delta)
+    );
+    assert!(doc.undo());
+    assert_eq!(doc.sheet(), &collapsed);
+    assert!(doc.redo());
+    assert_eq!(doc.sheet(), &moved);
+    doc.set_canvas_container_collapsed(pool, None).unwrap();
+    assert!(doc.sheet().canvas.scene.collapsed.contains_key(&sublane));
+    assert!(!doc.sheet().canvas.scene.collapsed.contains_key(&pool));
+    doc.set_canvas_container_collapsed(sublane, None).unwrap();
+    let mut expected = original;
+    expected.move_canvas_objects(&[pool, task], delta).unwrap();
+    assert_eq!(doc.sheet(), &expected);
+    assert!(doc.undo());
+    assert!(doc.sheet().canvas.scene.collapsed.contains_key(&sublane));
+    doc.remove_canvas_objects(&[pool]).unwrap();
+    assert!(doc.sheet().canvas.scene.collapsed.is_empty());
+    assert!(doc.undo());
+    assert!(doc.sheet().canvas.scene.collapsed.contains_key(&sublane));
+}
+
+#[test]
+fn stored_collapse_rejects_bad_frames_locks_resize_and_malformed_saved_state() {
+    let (mut sheet, [pool, _, _, task, _, _, _]) = nested();
+    let original = sheet.clone();
+    for frame in [
+        Rect::from_min_size(Vec2::ZERO, Vec2::ZERO),
+        compact().translate(Vec2::new(f32::INFINITY, 0.0)),
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(f32::NAN, 40.0)),
+    ] {
+        assert!(
+            sheet
+                .set_canvas_container_collapsed(pool, Some(frame))
+                .is_err()
+        );
+        assert_eq!(sheet, original);
+    }
+    assert!(
+        sheet
+            .set_canvas_container_collapsed(task, Some(compact()))
+            .is_err()
+    );
+    sheet.canvas.object_mut(pool).unwrap().locked = true;
+    assert!(
+        sheet
+            .set_canvas_container_collapsed(pool, Some(compact()))
+            .is_err()
+    );
+    sheet.canvas.object_mut(pool).unwrap().locked = false;
+    sheet
+        .set_canvas_container_collapsed(pool, Some(compact()))
+        .unwrap();
+    let collapsed = sheet.clone();
+    sheet
+        .set_canvas_container_collapsed(pool, Some(compact()))
+        .unwrap();
+    assert_eq!(sheet, collapsed);
+    assert!(
+        sheet
+            .resize_canvas_object(pool, compact())
+            .unwrap_err()
+            .contains("expand")
+    );
+    assert!(
+        sheet
+            .set_canvas_container(pool, false)
+            .unwrap_err()
+            .contains("expand")
+    );
+    assert!(
+        sheet
+            .set_canvas_container_collapsed(
+                pool,
+                Some(Rect::from_min_size(Vec2::ZERO, Vec2::new(400.0, 40.0)))
+            )
+            .is_err()
+    );
+    assert_eq!(sheet, collapsed);
+    for (id, frame) in [
+        (task, compact()),
+        (CanvasObjectId(99999), compact()),
+        (pool, compact().translate(Vec2::new(999_999.0, 0.0))),
+        (pool, Rect::from_min_size(Vec2::ZERO, Vec2::new(-1.0, 40.0))),
+    ] {
+        let mut bad = collapsed.clone();
+        bad.canvas.scene.collapsed.insert(id, frame);
+        assert!(bad.validate().is_err());
+    }
+    let mut bad = collapsed.clone();
+    bad.canvas.object_mut(pool).unwrap().rect.size.x = 0.0;
+    assert!(bad.validate().is_err());
+    let mut bad = collapsed.clone();
+    bad.sankey = Some(Default::default());
+    assert!(bad.validate().unwrap_err().contains("Sankey"));
+    sheet.set_canvas_container_collapsed(pool, None).unwrap();
+    assert_eq!(sheet, original);
+    sheet.canvas.object_mut(pool).unwrap().rect.size.x = 999_990.0;
+    sheet
+        .set_canvas_container_collapsed(pool, Some(compact()))
+        .unwrap();
+    let before = sheet.clone();
+    assert!(
+        sheet
+            .move_canvas_objects(&[pool], Vec2::new(20.0, 0.0))
+            .is_err()
+    );
+    assert_eq!(sheet, before);
+}
+
+#[test]
+fn offset_compact_frames_restore_expanded_origins_after_movement() {
+    let (mut sheet, [pool, _, _, task, _, _, _]) = nested();
+    let original = sheet.clone();
+    let frame = Rect::from_min_size(Vec2::new(460.0, 0.0), Vec2::new(40.0, 300.0));
+    sheet
+        .set_canvas_container_collapsed(pool, Some(frame))
+        .unwrap();
+    assert_eq!(sheet.canvas.object(task), original.canvas.object(task));
+    let encoded = thinoda_core::clipboard::encode_sheet(&sheet).unwrap();
+    assert_eq!(
+        thinoda_core::clipboard::decode_sheet(&encoded).unwrap(),
+        sheet
+    );
+    let delta = Vec2::new(-40.0, 80.0);
+    sheet.move_canvas_objects(&[pool], delta).unwrap();
+    assert_eq!(
+        sheet.canvas.object(pool).unwrap().rect,
+        frame.translate(delta)
+    );
+    assert_eq!(
+        sheet.canvas.scene.collapsed[&pool],
+        original.canvas.object(pool).unwrap().rect.translate(delta)
+    );
+    sheet.set_canvas_container_collapsed(pool, None).unwrap();
+    let mut expected = original;
+    expected.move_canvas_objects(&[pool], delta).unwrap();
+    assert_eq!(sheet, expected);
+}
+
+#[test]
+fn stored_collapse_bounds_and_waypoint_helpers_follow_the_visible_route() {
+    let mut sheet = Sheet::new("Collapse helpers", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let pool = shape(&mut sheet, "Pool", compact());
+    let task = shape(
+        &mut sheet,
+        "Far hidden task",
+        Rect::from_min_size(Vec2::new(1000.0, 1000.0), Vec2::new(80.0, 40.0)),
+    );
+    sheet.set_canvas_container(pool, true).unwrap();
+    sheet.reparent_canvas_objects(&[task], Some(pool)).unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Object(task),
+        Endpoint::Point(Vec2::new(600.0, 100.0)),
+    );
+    connector.route = ConnectorRoute::Straight;
+    let crossing = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    sheet
+        .set_canvas_container_collapsed(pool, Some(compact()))
+        .unwrap();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let scene = build_scene(&sheet, &layout);
+    assert_eq!(
+        thinoda_core::scene::canvas_bounds(&sheet, &layout),
+        scene.bounds()
+    );
+    assert!(
+        thinoda_core::scene::object_bounds(&sheet, &layout, sheet.canvas.object(task).unwrap())
+            .is_none()
+    );
+    assert_eq!(
+        thinoda_core::scene::object_bounds(&sheet, &layout, sheet.canvas.object(crossing).unwrap()),
+        scene
+            .item(SceneId::Object(crossing))
+            .unwrap()
+            .visible_bounds(),
+    );
+    let mut preview = sheet.canvas.object(pool).unwrap().clone();
+    preview.rect = preview.rect.translate(Vec2::new(100.0, -30.0));
+    assert_eq!(
+        thinoda_core::scene::object_bounds(&sheet, &layout, &preview),
+        Some(preview.rect)
+    );
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(crossing).unwrap().kind
+    else {
+        panic!("connector")
+    };
+    assert_eq!(
+        thinoda_core::scene::connector_path(&sheet, &layout, connector),
+        path(&scene, crossing)
+    );
+    let handles = thinoda_core::scene::connector_insert_handles(&sheet, &layout, connector);
+    assert_eq!(handles.len(), 1);
+    assert_eq!(
+        handles[0].point,
+        thinoda_core::board::polyline_midpoint(path(&scene, crossing)).unwrap()
+    );
+}
+
+#[test]
+fn stored_collapse_clipboards_preserve_hidden_geometry_remap_ids_and_refuse_downgrades() {
+    use thinoda_core::clipboard;
+    let (mut sheet, [pool, _, sublane, task, _, _, _]) = nested();
+    let inner = sheet.canvas.object(sublane).unwrap().rect;
+    sheet
+        .set_canvas_container_collapsed(
+            sublane,
+            Some(Rect::from_min_size(inner.min, Vec2::new(300.0, 30.0))),
+        )
+        .unwrap();
+    sheet
+        .set_canvas_container_collapsed(pool, Some(compact()))
+        .unwrap();
+    let encoded = clipboard::encode_sheet(&sheet).unwrap();
+    assert!(encoded.starts_with("THINODA-SHEET-24\n"));
+    assert_eq!(clipboard::decode_sheet(&encoded).unwrap(), sheet);
+    assert_eq!(
+        clipboard::decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        sheet
+    );
+    assert!(
+        clipboard::decode_sheet(&encoded.replacen("SHEET-24", "SHEET-23", 1))
+            .unwrap_err()
+            .contains("collapsed")
+    );
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let payload = clipboard::copy_board_selection(&sheet, &layout, &[], &[pool])
+        .unwrap()
+        .unwrap();
+    let encoded = clipboard::encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with("THINODA-BOARD-CLIPBOARD-23\n"));
+    assert!(
+        clipboard::decode_board_payload(&encoded.replacen("CLIPBOARD-23", "CLIPBOARD-22", 1))
+            .unwrap_err()
+            .contains("collapsed")
+    );
+    let payload = clipboard::decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap();
+    let mut pasted = Sheet::new("Paste", "");
+    shape(&mut pasted, "Existing", compact());
+    let result =
+        clipboard::paste_board_selection(&mut pasted, &payload, Vec2::new(1000.0, 500.0)).unwrap();
+    let copied_pool = result.objects[0];
+    let copied_task = pasted.canvas.objects.iter().find(|object| matches!(&object.kind, CanvasObjectKind::Shape { label, .. } if label == "Task")).unwrap().id;
+    let delta = pasted.canvas.object(copied_pool).unwrap().rect.min - compact().min;
+    assert_ne!(copied_pool, pool);
+    assert_eq!(pasted.canvas.scene.collapsed.len(), 2);
+    assert_eq!(
+        pasted.canvas.scene.collapsed[&copied_pool],
+        sheet.canvas.scene.collapsed[&pool].translate(delta)
+    );
+    assert_eq!(
+        pasted.canvas.object(copied_task).unwrap().rect,
+        sheet.canvas.object(task).unwrap().rect.translate(delta)
+    );
+    pasted
+        .set_canvas_container_collapsed(copied_pool, None)
+        .unwrap();
+    assert_eq!(
+        pasted.canvas.object(copied_pool).unwrap().rect,
+        sheet.canvas.scene.collapsed[&pool].translate(delta)
+    );
+    pasted.validate().unwrap();
+}

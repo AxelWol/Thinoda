@@ -1919,6 +1919,9 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     if !canvas.scene.is_empty() {
         SceneHierarchy::from_canvas(canvas)?;
     }
+    if sheet.has_scene_collapse() && sheet.has_sankey() {
+        return Err("collapse does not support Sankey sheets".into());
+    }
     if canvas.objects.len() > MAX_CANVAS_OBJECTS {
         return Err(format!("canvas exceeds {MAX_CANVAS_OBJECTS} objects"));
     }
@@ -2881,6 +2884,10 @@ impl Sheet {
             .scene
             .parents
             .retain(|child, parent| !removed.contains(child) && !removed.contains(parent));
+        self.canvas
+            .scene
+            .collapsed
+            .retain(|id, _| !removed.contains(id));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
                 zone.objects.retain(|id| !removed.contains(id));
@@ -2951,6 +2958,14 @@ impl Sheet {
                 CanvasObjectKind::Shape { .. } => {}
             }
             validate_object(o)?;
+        }
+        for (id, expanded) in &mut canvas.scene.collapsed {
+            if ids.contains(id) {
+                *expanded = expanded.translate(delta);
+            }
+        }
+        if !canvas.scene.collapsed.is_empty() {
+            SceneHierarchy::from_canvas(canvas)?;
         }
         Ok(())
     }
@@ -3148,6 +3163,9 @@ impl Sheet {
     /// Sets the unrotated frame; ink points are scaled with it.
     pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> Result<(), String> {
         self.require_unlocked(&[id])?;
+        if self.canvas.scene.collapsed.contains_key(&id) {
+            return Err("expand the container before resizing".into());
+        }
         if !valid_rect(rect) {
             return Err("object frame out of range".into());
         }

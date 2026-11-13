@@ -4977,6 +4977,7 @@ fn board_run(doc: &mut Document, view: &mut MapView, action: BoardAction, out: &
 fn containment_navigation(
     ui: &Ui,
     sheet: &Sheet,
+    scene: &Scene,
     view: &mut MapView,
     out: &mut CanvasOutput,
 ) -> bool {
@@ -5035,6 +5036,9 @@ fn containment_navigation(
         .and_then(|hierarchy| hierarchy.navigate(source, direction))
     {
         Ok(Some(target)) => {
+            if scene.item(SceneId::Object(target)).is_none() {
+                return true;
+            }
             select_item(view, sheet, SceneId::Object(target));
             ui.ctx()
                 .memory_mut(|memory| memory.request_focus(item_id(SceneId::Object(target))));
@@ -5117,7 +5121,7 @@ pub(super) fn keyboard(
         return false;
     }
 
-    if containment_navigation(ui, doc.sheet(), view, out) {
+    if containment_navigation(ui, doc.sheet(), scene, view, out) {
         return true;
     }
 

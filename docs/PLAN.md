@@ -58,8 +58,16 @@ resolve to visible boundaries without rewriting stored endpoints, ports or
 sheet-space geometry. Nested collapse and connector dependencies use the same
 bounded hierarchy/routing engine; nonempty collapse on Sankey sheets is explicitly
 refused. This prototype has no saved collapse fields, controls or app activation.
+The following persistence checkpoint adds saved expanded bounds with active
+compact object frames, guarded core collapse/expand transactions, and move,
+delete, clipboard and history integration. Native v29, whole-sheet clipboard
+v24, mixed-board clipboard v23 and collapse-aware recovery/private XMind
+envelopes preserve the state and reject downgraded payloads. The shared scene
+builder consumes saved collapse automatically; hidden descendants leave hit
+testing and the accessible reading order. Core commands exist, but no new
+collapse/expand controls or automatic header-size policy are exposed.
 This is partial SC1, not a released container UI:
-persisted collapse and its UI, headers/stack layout, card occurrences, production
+collapse authoring UI, headers/stack layout, card occurrences, production
 binding-policy installation/confirmation, full platform/accessibility acceptance
 and semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
 

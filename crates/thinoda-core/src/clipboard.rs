@@ -40,12 +40,15 @@ const FINAL_STATE_SHEET_PREFIX: &str = "THINODA-SHEET-20\n";
 const SANKEY_SHEET_PREFIX: &str = "THINODA-SHEET-21\n";
 const STENCIL_SHEET_PREFIX: &str = "THINODA-SHEET-22\n";
 const SCENE_SHEET_PREFIX: &str = "THINODA-SHEET-23\n";
+const COLLAPSE_SHEET_PREFIX: &str = "THINODA-SHEET-24\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_scene_hierarchy() {
+    let prefix = if sheet.has_scene_collapse() {
+        COLLAPSE_SHEET_PREFIX
+    } else if sheet.has_scene_hierarchy() {
         SCENE_SHEET_PREFIX
     } else if sheet.has_stencils() {
         STENCIL_SHEET_PREFIX
@@ -110,9 +113,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(SCENE_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-23\r\n"))
-        .map(|json| (23, json))
+        .strip_prefix(COLLAPSE_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-24\r\n"))
+        .map(|json| (24, json))
+        .or_else(|| {
+            text.strip_prefix(SCENE_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-23\r\n"))
+                .map(|json| (23, json))
+        })
         .or_else(|| {
             text.strip_prefix(STENCIL_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-22\r\n"))
@@ -265,6 +273,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         return Err(
             "standard draw.io rectangle rounding requires sheet clipboard version 19".into(),
         );
+    }
+    if version < 24 && sheet.has_scene_collapse() {
+        return Err("collapsed containers require sheet clipboard version 24".into());
     }
     if version < 23 && sheet.has_scene_hierarchy() {
         return Err("scene hierarchy requires sheet clipboard version 23".into());

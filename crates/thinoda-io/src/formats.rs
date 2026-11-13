@@ -167,6 +167,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "standard draw.io rectangle rounding requires native format version 23".into(),
             ));
         }
+        if version < 29 && book.has_scene_collapse() {
+            return Err(IoError::NewerVersion(
+                "collapsed containers require native format version 29".into(),
+            ));
+        }
         if version < 27 && book.has_scene_hierarchy() {
             return Err(IoError::NewerVersion(
                 "scene hierarchy requires native format version 27".into(),

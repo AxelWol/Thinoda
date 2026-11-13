@@ -84,6 +84,8 @@ const CLOSED_STENCIL_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-STENCIL-3";
 const CLOSED_STENCIL_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-STENCIL-3";
 const SCENE_STENCIL_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SCENE-STENCIL-1";
 const SCENE_STENCIL_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SCENE-STENCIL-1";
+const COLLAPSE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-COLLAPSE-1";
+const COLLAPSE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-COLLAPSE-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -105,54 +107,54 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(
-            if self.workbook.has_scene_hierarchy()
-                && (self.workbook.has_stencil_definition_hashes()
-                    || self.workbook.has_stencil_definition_closures())
-            {
-                SCENE_STENCIL_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_scene_hierarchy() {
-                SCENE_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_stencil_definition_closures() {
-                CLOSED_STENCIL_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_stencil_definition_hashes() {
-                PINNED_STENCIL_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_stencils() {
-                STENCIL_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_sankey() {
-                SANKEY_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_final_states() {
-                FINAL_STATE_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_drawio_rectangle_rounding() {
-                DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_fixed_connector_ports() {
-                FIXED_PORT_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_double_ellipses() {
-                DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_rectangle_sides() {
-                RECTANGLE_SIDES_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_shape_rounding() {
-                ROUNDING_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_bar_connector_markers() {
-                BAR_MARKER_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_half_circle_connector_markers() {
-                HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_oval_connector_markers() {
-                OVAL_MARKER_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_diamond_connector_markers() {
-                DIAMOND_MARKER_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_connector_marker_fills() {
-                FILLED_MARKER_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_connector_marker_sizes() {
-                SIZED_MARKER_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_extended_connector_markers() {
-                EXTENDED_MARKER_INK_WORKBOOK_VERSION
-            } else if self.workbook.has_connector_markers() {
-                MARKER_INK_WORKBOOK_VERSION
-            } else {
-                INK_WORKBOOK_VERSION
-            },
-        )?;
+        tuple.serialize_element(if self.workbook.has_scene_collapse() {
+            COLLAPSE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_scene_hierarchy()
+            && (self.workbook.has_stencil_definition_hashes()
+                || self.workbook.has_stencil_definition_closures())
+        {
+            SCENE_STENCIL_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_scene_hierarchy() {
+            SCENE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_stencil_definition_closures() {
+            CLOSED_STENCIL_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_stencil_definition_hashes() {
+            PINNED_STENCIL_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_stencils() {
+            STENCIL_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_sankey() {
+            SANKEY_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_final_states() {
+            FINAL_STATE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_drawio_rectangle_rounding() {
+            DRAWIO_ROUNDING_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_fixed_connector_ports() {
+            FIXED_PORT_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_double_ellipses() {
+            DOUBLE_ELLIPSE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rectangle_sides() {
+            RECTANGLE_SIDES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_shape_rounding() {
+            ROUNDING_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_bar_connector_markers() {
+            BAR_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_half_circle_connector_markers() {
+            HALF_CIRCLE_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_oval_connector_markers() {
+            OVAL_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_diamond_connector_markers() {
+            DIAMOND_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_marker_fills() {
+            FILLED_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_marker_sizes() {
+            SIZED_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_extended_connector_markers() {
+            EXTENDED_MARKER_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_markers() {
+            MARKER_INK_WORKBOOK_VERSION
+        } else {
+            INK_WORKBOOK_VERSION
+        })?;
         tuple.serialize_element(self.workbook)?;
         tuple.serialize_element(pending_ink)?;
         tuple.end()
@@ -211,7 +213,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_scene_hierarchy()
+    let version = if workbook.has_scene_collapse() {
+        COLLAPSE_WORKBOOK_VERSION
+    } else if workbook.has_scene_hierarchy()
         && (workbook.has_stencil_definition_hashes() || workbook.has_stencil_definition_closures())
     {
         SCENE_STENCIL_WORKBOOK_VERSION
@@ -389,6 +393,8 @@ where
                 && version != CLOSED_STENCIL_INK_WORKBOOK_VERSION
                 && version != SCENE_STENCIL_WORKBOOK_VERSION
                 && version != SCENE_STENCIL_INK_WORKBOOK_VERSION
+                && version != COLLAPSE_WORKBOOK_VERSION
+                && version != COLLAPSE_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -398,10 +404,20 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            if version != COLLAPSE_WORKBOOK_VERSION
+                && version != COLLAPSE_INK_WORKBOOK_VERSION
+                && workbook.has_scene_collapse()
+            {
+                return Err(A::Error::custom(
+                    "collapsed containers require collapse-aware recovery",
+                ));
+            }
             if version != SCENE_WORKBOOK_VERSION
                 && version != SCENE_INK_WORKBOOK_VERSION
                 && version != SCENE_STENCIL_WORKBOOK_VERSION
                 && version != SCENE_STENCIL_INK_WORKBOOK_VERSION
+                && version != COLLAPSE_WORKBOOK_VERSION
+                && version != COLLAPSE_INK_WORKBOOK_VERSION
                 && workbook.has_scene_hierarchy()
             {
                 return Err(A::Error::custom(
@@ -411,8 +427,10 @@ where
             let version = match version.as_str() {
                 SCENE_WORKBOOK_VERSION => STENCIL_WORKBOOK_VERSION.to_owned(),
                 SCENE_INK_WORKBOOK_VERSION => STENCIL_INK_WORKBOOK_VERSION.to_owned(),
-                SCENE_STENCIL_WORKBOOK_VERSION => CLOSED_STENCIL_WORKBOOK_VERSION.to_owned(),
-                SCENE_STENCIL_INK_WORKBOOK_VERSION => {
+                SCENE_STENCIL_WORKBOOK_VERSION | COLLAPSE_WORKBOOK_VERSION => {
+                    CLOSED_STENCIL_WORKBOOK_VERSION.to_owned()
+                }
+                SCENE_STENCIL_INK_WORKBOOK_VERSION | COLLAPSE_INK_WORKBOOK_VERSION => {
                     CLOSED_STENCIL_INK_WORKBOOK_VERSION.to_owned()
                 }
                 _ => version,
@@ -2393,6 +2411,71 @@ mod lock_tests {
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn collapsed_containers_require_aware_recovery_including_stencils_and_pending_ink() {
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+        let mut book = Workbook::default();
+        let pool = book
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+            ))
+            .unwrap();
+        book.active_mut().set_canvas_container(pool, true).unwrap();
+        book.active_mut()
+            .set_canvas_container_collapsed(
+                pool,
+                Some(Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 30.0))),
+            )
+            .unwrap();
+        for with_stencil in [false, true] {
+            if with_stencil {
+                let package =
+                    thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+                book.active_mut()
+                    .add_canvas_object(thinoda_core::stencil_object::new_object(
+                        package,
+                        package.definition("message").unwrap(),
+                        Vec2::new(250.0, 0.0),
+                    ))
+                    .unwrap();
+            }
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let restored: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(restored.workbook, book);
+                assert_eq!(restored.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        COLLAPSE_INK_WORKBOOK_VERSION
+                    } else {
+                        COLLAPSE_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    SCENE_STENCIL_INK_WORKBOOK_VERSION
+                } else {
+                    SCENE_STENCIL_WORKBOOK_VERSION
+                });
+                assert!(
+                    serde_json::from_value::<Snapshot>(older)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("collapsed")
+                );
+            }
         }
     }
 

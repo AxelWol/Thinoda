@@ -3131,6 +3131,41 @@ fn hierarchy_keyboard_navigation_selects_reveals_and_focuses_without_editing_his
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
+#[test]
+fn stored_collapse_hides_accessible_descendants_and_keeps_navigation_on_visible_frames() {
+    let (mut sheet, [pool, lane, _, first, _, _, _]) = containment_board();
+    let frame = sheet.canvas.object(pool).unwrap().rect;
+    sheet
+        .set_canvas_container_collapsed(
+            pool,
+            Some(thinoda_core::Rect::from_min_size(
+                frame.min,
+                Vec2::new(frame.size.x, 30.0),
+            )),
+        )
+        .unwrap();
+    let mut h = harness(sheet);
+    h.run_steps(2);
+    assert!(h.query_by_label("Container: Lane").is_none());
+    assert!(h.query_by_label("Rectangle: First").is_none());
+    let layout =
+        thinoda_core::layout_sheet(h.state().doc.sheet(), &thinoda_core::ApproxMeasure, false);
+    let scene = build_scene(h.state().doc.sheet(), &layout);
+    assert!(scene.item(SceneId::Object(pool)).is_some());
+    assert!(scene.item(SceneId::Object(lane)).is_none());
+    assert!(scene.item(SceneId::Object(first)).is_none());
+    h.get_by_label("Container: Pool").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::PageDown);
+    h.run_steps(3);
+    assert_eq!(h.state().view.board_selection, vec![pool]);
+    assert!(h.get_by_label("Container: Pool, Selected").is_focused());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
 fn containment_board() -> (Sheet, [CanvasObjectId; 7]) {
     let mut sheet = board();
     let pool = shape(&mut sheet, -200.0, 0.0, "Pool");

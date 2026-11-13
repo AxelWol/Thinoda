@@ -835,6 +835,10 @@ impl Sheet {
         !self.canvas.scene.is_empty()
     }
 
+    pub fn has_scene_collapse(&self) -> bool {
+        !self.canvas.scene.collapsed.is_empty()
+    }
+
     /// Whether any stencil instance pins a specific definition revision.
     pub fn has_stencil_definition_hashes(&self) -> bool {
         self.canvas.objects.iter().any(|object| {
@@ -2440,6 +2444,10 @@ impl Workbook {
 
     pub fn has_scene_hierarchy(&self) -> bool {
         self.sheets.iter().any(Sheet::has_scene_hierarchy)
+    }
+
+    pub fn has_scene_collapse(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_collapse)
     }
 
     /// Whether any stencil instance pins a specific definition revision.

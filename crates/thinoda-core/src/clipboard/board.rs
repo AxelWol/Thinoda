@@ -40,6 +40,7 @@ const SCENE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-20\n";
 const PINNED_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-20\n";
 const CLOSED_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-21\n";
 const SCENE_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-22\n";
+const COLLAPSE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-23\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -58,7 +59,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_scene_hierarchy()
+        if self.fragment.has_scene_collapse() {
+            COLLAPSE_BOARD_PREFIX
+        } else if self.fragment.has_scene_hierarchy()
             && (self.fragment.has_stencil_definition_hashes()
                 || self.fragment.has_stencil_definition_closures())
         {
@@ -304,9 +307,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(SCENE_STENCIL_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-22\r\n"))
-        .map(|json| (22, json))
+        .strip_prefix(COLLAPSE_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-23\r\n"))
+        .map(|json| (23, json))
+        .or_else(|| {
+            text.strip_prefix(SCENE_STENCIL_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-22\r\n"))
+                .map(|json| (22, json))
+        })
         .or_else(|| {
             text.strip_prefix(CLOSED_STENCIL_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-21\r\n"))
@@ -416,6 +424,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let mut payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 23 && payload.fragment.has_scene_collapse() {
+        return Err("collapsed containers require board clipboard version 23".into());
+    }
     if version < 21 && payload.fragment.has_stencil_definition_closures() {
         return Err("stencil definition closures require board clipboard version 21".into());
     }
@@ -912,6 +923,14 @@ fn copy_prepared_board_selection(
         .iter()
         .filter(|(child, parent)| objects.contains(child) && objects.contains(parent))
         .map(|(child, parent)| (*child, *parent))
+        .collect();
+    fragment.canvas.scene.collapsed = sheet
+        .canvas
+        .scene
+        .collapsed
+        .iter()
+        .filter(|(id, _)| objects.contains(id))
+        .map(|(id, rect)| (*id, *rect))
         .collect();
     for mut object in copied_objects {
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
@@ -1414,6 +1433,13 @@ pub fn paste_board_selection(
             .scene
             .parents
             .insert(map_object(*child)?, map_object(*parent)?);
+    }
+    for (id, expanded) in &source.canvas.scene.collapsed {
+        candidate
+            .canvas
+            .scene
+            .collapsed
+            .insert(map_object(*id)?, expanded.translate(delta));
     }
     for original in &source.canvas.objects {
         let mut object = original.clone();
