@@ -6,6 +6,13 @@
   "title": "Parametric shapes",
   "revision": 1,
   "license": "MIT",
+  "extensions": {
+    "drawio.import": {
+      "folder": {"definition": "folder", "absent": {"tabWidth": 60, "tabHeight": 20, "tabPosition": 1}},
+      "cube": "cube",
+      "message": "message"
+    }
+  },
   "definitions": [
     {
       "id": "message",

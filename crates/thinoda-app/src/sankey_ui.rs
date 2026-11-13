@@ -384,40 +384,97 @@ impl ThinodaApp {
                             let editable = !locked && !node_locked(&original, other)
                                 && !original.canvas.is_locked(o.id);
                             ui.push_id(o.id.0, |ui| {
-                                let weight_label = ui.label(format!("{name} — {}", t("Weight")));
-                                ui.add_enabled_ui(editable, |ui| {
-                                  if !(parents && mode == SankeyMode::Probability) {
-                                    let mut assigned = flow.weight.is_some();
-                                    if ui.checkbox(&mut assigned, t("Assigned")).changed() {
-                                        flow.weight = assigned.then_some(0);
-                                    }
-                                    if let Some(value) = &mut flow.weight {
-                                        let percent = sankey::percent(*value);
-                                        if let Some(percent)=number_edit(ui,ui.scope_id().with(("weight",o.id.0,parents)),weight_label.id,percent,0.0..=100.0,3,&mut commits) {
-                                            *value = (percent*1000.0).round() as u32;
-                                        }
-                                    }
-                                  } else if flow.weight.is_none() {
-                                      ui.label(t("Unassigned"));
-                                  }
-                                    let label = ui.label(t("Link label"));
-                                    ui.text_edit_singleline(&mut c.label).labelled_by(label.id);
-                                });
-                                if mode == SankeyMode::Probability {
-                                    ui.label(format!("{}: {:.3}%", t("Overall mass"), values.mass.get(&o.id).copied().unwrap_or(0.0)));
-                                }
+                                let marker_x = ui.cursor().left() + 3.0;
                                 ui.horizontal(|ui| {
-                                    if parents && mode==SankeyMode::Probability
-                                        && ui.small_button(t("Edit upstream conditional")).clicked() {
-                                        focus_node=Some(other);
-                                    }
-                                    if ui.small_button(t("Select link")).clicked() {
-                                        focus_link = Some(o.id);
-                                    }
-                                    if ui.add_enabled(editable, egui::Button::new(t(if parents { "Remove parent link" } else { "Remove child link" })).small()).clicked() {
-                                        removed.push(o.id);
-                                    }
+                                    ui.add_space(10.0);
+                                    ui.vertical(|ui| {
+                                        let weight_label =
+                                            ui.label(format!("{name} — {}", t("Weight")));
+                                        ui.add_enabled_ui(editable, |ui| {
+                                            if !(parents && mode == SankeyMode::Probability) {
+                                                let mut assigned = flow.weight.is_some();
+                                                if ui
+                                                    .checkbox(&mut assigned, t("Assigned"))
+                                                    .changed()
+                                                {
+                                                    flow.weight = assigned.then_some(0);
+                                                }
+                                                if let Some(value) = &mut flow.weight {
+                                                    let percent = sankey::percent(*value);
+                                                    if let Some(percent) = number_edit(
+                                                        ui,
+                                                        ui.scope_id().with((
+                                                            "weight",
+                                                            o.id.0,
+                                                            parents,
+                                                        )),
+                                                        weight_label.id,
+                                                        percent,
+                                                        0.0..=100.0,
+                                                        3,
+                                                        &mut commits,
+                                                    ) {
+                                                        *value = (percent * 1000.0).round() as u32;
+                                                    }
+                                                }
+                                            } else if flow.weight.is_none() {
+                                                ui.label(t("Unassigned"));
+                                            }
+                                            let label = ui.label(t("Link label"));
+                                            ui.text_edit_singleline(&mut c.label)
+                                                .labelled_by(label.id);
+                                        });
+                                        if mode == SankeyMode::Probability {
+                                            ui.label(format!(
+                                                "{}: {:.3}%",
+                                                t("Overall mass"),
+                                                values.mass.get(&o.id).copied().unwrap_or(0.0)
+                                            ));
+                                        }
+                                        ui.horizontal(|ui| {
+                                            if parents
+                                                && mode == SankeyMode::Probability
+                                                && ui
+                                                    .small_button(
+                                                        t("Edit upstream conditional"),
+                                                    )
+                                                    .clicked()
+                                            {
+                                                focus_node = Some(other);
+                                            }
+                                            if ui.small_button(t("Select link")).clicked() {
+                                                focus_link = Some(o.id);
+                                            }
+                                            if ui
+                                                .add_enabled(
+                                                    editable,
+                                                    egui::Button::new(t(if parents {
+                                                        "Remove parent link"
+                                                    } else {
+                                                        "Remove child link"
+                                                    }))
+                                                    .small(),
+                                                )
+                                                .clicked()
+                                            {
+                                                removed.push(o.id);
+                                            }
+                                        });
+                                    });
                                 });
+                                let group_rect = ui.min_rect();
+                                if group_rect.height() > 4.0 {
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::pos2(marker_x, group_rect.top() + 2.0),
+                                            egui::pos2(marker_x, group_rect.bottom() - 2.0),
+                                        ],
+                                        egui::Stroke::new(
+                                            2.0,
+                                            ui.visuals().selection.bg_fill,
+                                        ),
+                                    );
+                                }
                                 // Existing Style tab remains the full connector style editor.
                             });
                         }

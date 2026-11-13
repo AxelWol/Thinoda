@@ -145,6 +145,122 @@ fn shape(sheet: &mut Sheet, x: f32, y: f32, label: &str) -> CanvasObjectId {
 }
 
 #[test]
+fn stencil_handle_drag_updates_its_parameter_and_is_undoable() {
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let object =
+        thinoda_core::stencil_object::new_object(package, definition, Vec2::new(100.0, 100.0));
+    let render = thinoda_core::stencil_object::render(&object).unwrap();
+    let start = render.to_sheet(render.handles[0].at, object.rect, object.rotation);
+    let end = start + Vec2::new(12.0, 0.0);
+    let mut sheet = board();
+    let id = sheet.add_canvas_object(object).unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(2);
+
+    let start = point(&h, start);
+    let end = point(&h, end);
+    drag(&mut h, start, end);
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .is_empty()
+    );
+    assert_eq!(
+        crate::view::board_input::stencil_handle_preview(&h.state().view)
+            .unwrap()
+            .stencil
+            .unwrap()
+            .parameters
+            .get("tabWidth"),
+        Some(&52.0)
+    );
+    finish_drag(&mut h, end);
+
+    let stencil = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(id)
+        .unwrap()
+        .stencil
+        .as_ref()
+        .unwrap();
+    assert_eq!(stencil.parameters.get("tabWidth"), Some(&52.0));
+    assert!(h.state_mut().doc.undo());
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .is_empty()
+    );
+}
+
+#[test]
+fn stencil_handle_can_be_adjusted_with_the_keyboard() {
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let object =
+        thinoda_core::stencil_object::new_object(package, definition, Vec2::new(100.0, 100.0));
+    let mut sheet = board();
+    let id = sheet.add_canvas_object(object).unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(2);
+
+    h.get_by_label("Tab width").click();
+    h.run_steps(2);
+    h.key_press(Key::ArrowRight);
+    h.run_steps(2);
+
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .get("tabWidth"),
+        Some(&41.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .is_empty()
+    );
+}
+
+#[test]
 fn deep_board_duplication_fails_before_layout_and_preserves_history() {
     let mut sheet = board();
     let card = sheet

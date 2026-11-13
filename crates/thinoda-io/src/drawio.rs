@@ -811,11 +811,21 @@ impl Style {
         self.map.get(key).map(String::as_str)
     }
 
-    /// A Thinoda stencil reference stored in the style, if any.
+    /// A stencil reference: an explicit Thinoda reference, otherwise a plain
+    /// draw.io shape that no native kind draws exactly but a built-in stencil
+    /// package (or the cell's inline `stencil(...)`) defines as data.
     fn stencil(&self) -> Option<thinoda_core::stencil_object::StencilRef> {
-        self.get(crate::drawio_stencil::STYLE_PACKAGE_KEY)?;
-        crate::drawio_stencil::reference_from_style(
+        let explicit = self.get(crate::drawio_stencil::STYLE_PACKAGE_KEY).is_some();
+        let implicit = !explicit
+            && crate::drawio_stencil::maps_drawio_shape(self.shape())
+            && matches!(classify_native(self), Kind::Approx(..) | Kind::Unknown);
+        if !explicit && !implicit {
+            return None;
+        }
+        crate::drawio_stencil::style_reference(
             self.map.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+            self.shape(),
+            implicit,
         )
     }
 
@@ -1950,6 +1960,12 @@ struct PageImport<'a> {
     locked: Vec<BoardMember>,
     deferred: Vec<(usize, Context)>,
     adaptive_fixed_colors: bool,
+    inline_stencils: Option<
+        Option<(
+            std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+            String,
+        )>,
+    >,
 }
 
 impl<'a> PageImport<'a> {
@@ -2003,12 +2019,48 @@ impl<'a> PageImport<'a> {
         }
     }
 
+    /// The page's inline stencils, embedded once as a single closure resource.
+    fn inline_stencils(
+        &mut self,
+    ) -> Option<(
+        std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+        String,
+    )> {
+        if self.inline_stencils.is_none() {
+            let cells = self.cells;
+            let bundle =
+                crate::drawio_stencil::inline_bundle(cells.iter().map(|cell| cell.style.shape()))
+                    .and_then(|package| {
+                        let bytes = serde_json::to_vec(package.as_ref()).ok()?;
+                        let resource = thinoda_core::resources::Resource::new(
+                            "stencil-package.json",
+                            "application/json",
+                            bytes,
+                        )
+                        .ok()?;
+                        let reference = self.sheet.resources.insert(resource).ok()?;
+                        Some((package, reference))
+                    });
+            self.inline_stencils = Some(bundle);
+        }
+        self.inline_stencils.clone().flatten()
+    }
+
     fn add_object(
         &mut self,
         cell: usize,
-        object: CanvasObject,
+        mut object: CanvasObject,
         context: Context,
     ) -> Option<CanvasObjectId> {
+        if let Some(stencil) = &object.stencil
+            && stencil.package == crate::drawio_stencil::INLINE_PACKAGE_ID
+            && stencil.package_resource.is_none()
+            && let Some((package, reference)) = self.inline_stencils()
+            && package.definition(&stencil.definition).is_some()
+            && let Some(stencil) = &mut object.stencil
+        {
+            stencil.embed_package(package, reference);
+        }
         let shape = match &object.kind {
             CanvasObjectKind::Shape { shape, .. } => Some(*shape),
             _ => None,
@@ -3385,6 +3437,7 @@ fn import_page(
         locked: Vec::new(),
         deferred: Vec::new(),
         adaptive_fixed_colors: !matches!(model.attr("adaptiveColors"), Some("simple" | "none")),
+        inline_stencils: None,
     };
     import.run();
     if let Some(extension) = model.attr("thinodaSankey") {

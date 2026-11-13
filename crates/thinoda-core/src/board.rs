@@ -2106,6 +2106,8 @@ fn anchor_content(sheet: &Sheet, include_title: bool) -> Option<&'static str> {
 pub(crate) fn mask_canvas(sheet: &mut Sheet) {
     for (index, object) in sheet.canvas.objects.iter_mut().enumerate() {
         object.alt_text.clear();
+        // Package programs and metadata can contain private text; use the legacy fallback.
+        object.stencil = None;
         match &mut object.kind {
             CanvasObjectKind::Shape { label, .. } if !label.is_empty() => {
                 *label = format!("Shape {}", index + 1);
@@ -2630,6 +2632,27 @@ impl Sheet {
         if self.canvas.objects.len() >= MAX_CANVAS_OBJECTS {
             return Err(format!("canvas exceeds {MAX_CANVAS_OBJECTS} objects"));
         }
+        let mut resources = self.resources.clone();
+        if let Some(stencil) = &mut object.stencil {
+            if stencil.package_resource.is_some() {
+                stencil.hydrate_package(&resources)?;
+            } else if !stencil.is_installed_builtin()
+                && let Some(package) = stencil.resolved_package().cloned()
+            {
+                let closure = package
+                    .definition_closure(&[&stencil.definition])
+                    .map_err(|error| error.to_string())?;
+                let bytes = serde_json::to_vec(&closure).map_err(|error| error.to_string())?;
+                let resource = crate::resources::Resource::new(
+                    "stencil-package.json",
+                    "application/json",
+                    bytes,
+                )?;
+                let reference = resources.insert(resource)?;
+                stencil.package_resource = Some(reference.clone());
+                stencil.set_embedded_package(std::sync::Arc::new(closure), reference);
+            }
+        }
         if !object.rotation.is_finite() {
             return Err("rotation must be finite".into());
         }
@@ -2689,6 +2712,7 @@ impl Sheet {
             }
             self.canvas = SceneHierarchy::from_canvas(&candidate)?.stored_canvas();
         }
+        self.resources = resources;
         Ok(id)
     }
 

@@ -177,6 +177,16 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "stencil shapes require native format version 26".into(),
             ));
         }
+        if version < 27 && book.has_stencil_definition_hashes() {
+            return Err(IoError::Invalid(
+                "pinned stencil definitions require native format version 27".into(),
+            ));
+        }
+        if version < 28 && book.has_stencil_definition_closures() {
+            return Err(IoError::Invalid(
+                "stencil definition closures require native format version 28".into(),
+            ));
+        }
         if version < 25 && book.has_sankey() {
             return Err(IoError::Invalid(
                 "Sankey flows require native format version 25".into(),
@@ -187,6 +197,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "final states require native format version 24".into(),
             ));
         }
+        book.hydrate_stencil_packages().map_err(IoError::Invalid)?;
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
@@ -198,6 +209,16 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         if book.has_stencils() {
             return Err(IoError::Invalid(
                 "stencil shapes require native format version 26".into(),
+            ));
+        }
+        if book.has_stencil_definition_hashes() {
+            return Err(IoError::Invalid(
+                "pinned stencil definitions require a versioned native archive".into(),
+            ));
+        }
+        if book.has_stencil_definition_closures() {
+            return Err(IoError::Invalid(
+                "stencil definition closures require a versioned native archive".into(),
             ));
         }
         if book.has_sankey() {

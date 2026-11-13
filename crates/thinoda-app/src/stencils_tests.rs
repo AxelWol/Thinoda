@@ -29,6 +29,254 @@ fn rect_entry() -> StencilEntry {
     }
 }
 
+fn team_package() -> StencilPackage {
+    let mut package = thinoda_core::stencil_object::find_package("thinoda.general")
+        .unwrap()
+        .clone();
+    package.id = "test.team".into();
+    package.title = "Team shapes".into();
+    for definition in &mut package.definitions {
+        definition.title = format!("Team {}", definition.title);
+    }
+    package
+}
+
+#[test]
+fn json_package_import_is_atomic_and_rejects_duplicate_or_builtin_ids() {
+    let mut panel = loaded_panel();
+    let package = team_package();
+    let json = package.to_json();
+    let (id, unavailable) = panel.import_package(&json).unwrap();
+    assert_eq!((id.as_str(), unavailable), ("lib-1", 0));
+    assert_eq!(panel.state.packages[0].json, json);
+    let before = panel.state.clone();
+    let mut updated = package;
+    updated.revision += 1;
+    assert!(
+        panel
+            .import_package(&updated.to_json())
+            .unwrap_err()
+            .contains("already installed")
+    );
+    let builtin = thinoda_core::stencil_object::find_package("thinoda.general")
+        .unwrap()
+        .to_json();
+    assert!(panel.import_package(&builtin).is_err());
+    assert!(panel.import_package("{broken").is_err());
+    assert_eq!(panel.state, before);
+    assert_eq!(panel.packages.len(), 1);
+    assert_eq!(panel.import("Team", &library("Team")).unwrap().0, "lib-2");
+}
+
+#[test]
+fn installed_packages_survive_reload_and_removal_does_not_change_pinned_objects() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::Paths::from_root(dir.path());
+    paths.ensure().unwrap();
+    let mut panel = StencilPanel::default();
+    assert_eq!(panel.ensure_loaded(Some(&paths)), None);
+    let package = team_package();
+    let (id, _) = panel.import_package(&package.to_json()).unwrap();
+    panel.save(Some(&paths)).unwrap();
+    let mut restored = StencilPanel::default();
+    assert_eq!(restored.ensure_loaded(Some(&paths)), None);
+    assert_eq!(restored.state, panel.state);
+    let section = restored
+        .sections()
+        .into_iter()
+        .find(|section| section.id == id)
+        .unwrap();
+    let mut destination = Sheet::new("Destination", "Root");
+    for (index, entry) in section.entries() {
+        let prepared = restored
+            .prepared(&section, index, entry, false, &mut 1)
+            .unwrap()
+            .unwrap();
+        paste_board_selection(
+            &mut destination,
+            &prepared.payload,
+            Vec2::new(index as f32 * 200.0, 0.0),
+        )
+        .unwrap();
+    }
+    let expected: Vec<_> = destination
+        .canvas
+        .objects
+        .iter()
+        .map(|object| thinoda_core::stencil_object::render(object).unwrap())
+        .collect();
+    assert_eq!(expected[0].ports.len(), 12);
+    let serialized = serde_json::to_string(&destination).unwrap();
+    restored.remove_library(&id);
+    assert!(restored.state.packages.is_empty());
+    let mut updated = package;
+    updated.revision += 1;
+    updated.definitions[0].connections.clear();
+    restored.import_package(&updated.to_json()).unwrap();
+    let mut offline: Sheet = serde_json::from_str(&serialized).unwrap();
+    offline.hydrate_stencil_packages().unwrap();
+    offline.validate().unwrap();
+    for (object, expected) in offline.canvas.objects.iter().zip(expected) {
+        assert_eq!(
+            thinoda_core::stencil_object::render(object).unwrap(),
+            expected
+        );
+        assert_eq!(
+            object
+                .stencil
+                .as_ref()
+                .unwrap()
+                .resolve()
+                .unwrap()
+                .0
+                .revision,
+            1
+        );
+    }
+}
+
+#[test]
+fn json_package_tiles_support_tag_search_keyboard_drag_and_undo() {
+    let mut app = app();
+    assert_eq!(app.stencils.ensure_loaded(None), None);
+    app.stencils
+        .import_package(&team_package().to_json())
+        .unwrap();
+    let mut h = harness(app);
+    search(&mut h, "envelope");
+    let tile = h.get_by_role_and_label(Role::Button, "Team Message");
+    tile.focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(object_count(h.state()), 1);
+    let object = &h.state().doc().unwrap().doc.sheet().canvas.objects[0];
+    let stencil = object.stencil.as_ref().unwrap();
+    assert_eq!(stencil.package, "test.team");
+    assert!(stencil.package_resource.is_some());
+    // Measured from the published draw.io 32.7.2 message shape and the supplied BPMN screenshot.
+    let render = thinoda_core::stencil_object::render(object).unwrap();
+    assert_eq!(render.size, Vec2::new(60.0, 40.0));
+    assert_eq!(render.paths.len(), 2);
+    assert_eq!(
+        render.paths[1].subpaths[0].points,
+        [Vec2::ZERO, Vec2::new(30.0, 20.0), Vec2::new(60.0, 0.0)]
+    );
+    let ports = [
+        (9.0, 2.0, false),
+        (30.0, 0.0, true),
+        (51.0, 2.0, false),
+        (0.0, 12.0, true),
+        (0.0, 20.0, true),
+        (0.0, 28.0, true),
+        (60.0, 12.0, true),
+        (60.0, 20.0, true),
+        (60.0, 28.0, true),
+        (9.0, 38.0, false),
+        (30.0, 40.0, true),
+        (51.0, 38.0, false),
+    ];
+    assert_eq!(render.ports.len(), ports.len());
+    for (port, (x, y, perimeter)) in render.ports.iter().zip(ports) {
+        assert!((port.at - Vec2::new(x, y)).length() < 0.001);
+        assert_eq!(port.perimeter, perimeter);
+    }
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(object_count(h.state()), 0);
+    assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+    assert_eq!(object_count(h.state()), 1);
+    let start = h.get_by_label("Team Message").rect().center();
+    let target = h.state().doc().unwrap().view.canvas_rect().center();
+    h.hover_at(start);
+    h.drag_at(start);
+    h.run_steps(1);
+    h.hover_at(start + vec2(-20.0, 0.0));
+    h.run_steps(2);
+    h.hover_at(target);
+    h.run_steps(2);
+    h.event(egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(4);
+    assert_eq!(object_count(h.state()), 2);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .objects
+            .iter()
+            .all(|object| {
+                object
+                    .stencil
+                    .as_ref()
+                    .is_some_and(|stencil| stencil.package_resource.is_some())
+            })
+    );
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(object_count(h.state()), 1);
+}
+
+#[test]
+fn unsupported_json_definitions_keep_diagnostics_and_never_insert_a_fallback() {
+    let mut package = team_package();
+    package.definitions[0].requires.push("vendor.future".into());
+    let mut app = app();
+    assert_eq!(app.stencils.ensure_loaded(None), None);
+    assert_eq!(
+        app.stencils.import_package(&package.to_json()).unwrap().1,
+        1
+    );
+    let mut h = harness(app);
+    search(&mut h, "Team Message");
+    h.get_by_role_and_label(Role::Button, "Team Message")
+        .click();
+    h.run_steps(3);
+    assert_eq!(object_count(h.state()), 0);
+    assert!(
+        h.state()
+            .toasts
+            .texts()
+            .any(|text| text.contains("vendor.future"))
+    );
+}
+
+#[test]
+fn importing_json_leaves_its_source_unchanged_and_damaged_saved_packages_are_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("team.JSON");
+    let json = team_package().to_json();
+    std::fs::write(&source, &json).unwrap();
+    let mut app = app();
+    app.import_stencil_libraries(std::slice::from_ref(&source));
+    assert_eq!(std::fs::read_to_string(source).unwrap(), json);
+    assert_eq!(app.stencils.packages.len(), 1);
+
+    let paths = thinoda_platform::Paths::from_root(dir.path());
+    paths.ensure().unwrap();
+    let state = StencilState {
+        packages: vec![SavedPackage {
+            id: "lib-1".into(),
+            json: "{broken".into(),
+        }],
+        ..Default::default()
+    };
+    thinoda_platform::stencils::save(&paths, &state).unwrap();
+    let before =
+        std::fs::read(paths.config_dir.join(thinoda_platform::stencils::FILE_NAME)).unwrap();
+    let mut panel = StencilPanel::default();
+    assert!(panel.ensure_loaded(Some(&paths)).is_some());
+    assert!(panel.save(Some(&paths)).is_err());
+    assert_eq!(
+        std::fs::read(paths.config_dir.join(thinoda_platform::stencils::FILE_NAME)).unwrap(),
+        before
+    );
+}
+
 fn clipped_entry(x: u32) -> StencilEntry {
     StencilEntry {
         title: "Clipped child".into(),
@@ -101,6 +349,7 @@ fn the_scratchpad_comes_first_followed_by_built_in_sections_and_imports() {
             "flowchart",
             "arrows",
             "thinoda.general",
+            "thinoda.drawio",
             "lib-1"
         ]
     );
@@ -404,12 +653,12 @@ fn sections_share_libraries_until_the_scratchpad_changes() {
     let mut panel = loaded_panel();
     let first = panel.sections().remove(0);
     let second = panel.sections().remove(0);
-    assert!(Arc::ptr_eq(&first.library, &second.library));
+    assert!(Arc::ptr_eq(first.library(), second.library()));
     panel.add_to_scratchpad(rect_entry()).unwrap();
     let updated = panel.sections().remove(0);
-    assert!(!Arc::ptr_eq(&first.library, &updated.library));
-    assert!(first.library.entries.is_empty());
-    assert_eq!(updated.library.entries.len(), 1);
+    assert!(!Arc::ptr_eq(first.library(), updated.library()));
+    assert!(first.library().entries.is_empty());
+    assert_eq!(updated.library().entries.len(), 1);
 }
 
 #[test]
@@ -437,7 +686,7 @@ fn ellipse_thumbnail_styling_does_not_change_inserted_or_imported_content() {
         .find(|section| section.id == "general")
         .unwrap();
     let (index, double) = general
-        .library
+        .library()
         .entries
         .iter()
         .enumerate()
@@ -454,7 +703,7 @@ fn ellipse_thumbnail_styling_does_not_change_inserted_or_imported_content() {
 
     for dark in [false, true] {
         let preview = panel
-            .prepared(&general, index, &double, dark, &mut 1)
+            .prepared(&general, index, SectionEntry::Drawio(&double), dark, &mut 1)
             .unwrap()
             .unwrap();
         let object = &preview.sheet.canvas.objects[0];
@@ -492,9 +741,9 @@ fn ellipse_thumbnail_styling_does_not_change_inserted_or_imported_content() {
                 .into_iter()
                 .find(|section| section.id == id)
                 .unwrap();
-            let entry = &section.library.entries[0];
+            let entry = &section.library().entries[0];
             let preview = panel
-                .prepared(&section, 0, entry, dark, &mut 1)
+                .prepared(&section, 0, SectionEntry::Drawio(entry), dark, &mut 1)
                 .unwrap()
                 .unwrap();
             let object = &preview.sheet.canvas.objects[0];
@@ -692,14 +941,14 @@ fn ellipse_stencil_tiles_keep_transparent_theme_aware_outlines_on_hover() {
                     .find(|section| section.id == "general")
                     .unwrap();
                 let (index, entry) = section
-                    .library
+                    .library()
                     .entries
                     .iter()
                     .enumerate()
                     .find(|(_, entry)| entry.title == title)
                     .unwrap();
                 let prepared = panel
-                    .prepared(&section, index, entry, dark, &mut 1)
+                    .prepared(&section, index, SectionEntry::Drawio(entry), dark, &mut 1)
                     .unwrap()
                     .unwrap();
                 let bounds = prepared.bounds;
@@ -724,7 +973,7 @@ fn ellipse_stencil_tiles_keep_transparent_theme_aware_outlines_on_hover() {
                                 index,
                                 title,
                                 Some(&prepared),
-                                false,
+                                None,
                                 dark,
                                 false,
                             );

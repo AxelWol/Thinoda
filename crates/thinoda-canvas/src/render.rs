@@ -86,10 +86,11 @@ pub(crate) struct GhostClip {
     pub moving_zone: Option<ZoneId>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct PaintSceneExtras {
     pub ghost_clip: Option<GhostClip>,
     pub editing_board_object: Option<CanvasObjectId>,
+    pub stencil_handle_preview: Option<Box<CanvasObject>>,
 }
 
 /// Background color of the sheet.
@@ -190,6 +191,7 @@ pub(crate) fn paint_map_scene(
             _ => frame,
         })
     };
+    let stencil_handle_preview = extras.stencil_handle_preview.as_deref();
     let objects: HashMap<_, _> = sheet
         .canvas
         .objects
@@ -274,6 +276,7 @@ pub(crate) fn paint_map_scene(
         xf,
         opts,
         extras.editing_board_object,
+        stencil_handle_preview,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -498,6 +501,7 @@ pub(crate) fn paint_map_scene(
         xf,
         opts,
         extras.editing_board_object,
+        stencil_handle_preview,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -726,6 +730,7 @@ fn paint_objects_in_band(
     xf: Xf,
     opts: &PaintOptions<'_>,
     editing_board_object: Option<CanvasObjectId>,
+    stencil_handle_preview: Option<&CanvasObject>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
 ) {
@@ -734,9 +739,12 @@ fn paint_objects_in_band(
         let SceneId::Object(id) = item.id else {
             continue;
         };
-        let Some(object) = objects.get(&id) else {
+        let Some(object) = objects.get(&id).copied() else {
             continue;
         };
+        let object = stencil_handle_preview
+            .filter(|preview| preview.id == id)
+            .unwrap_or(object);
         if !object_in_viewport(object, item, xf.zoom, viewport) {
             continue;
         }

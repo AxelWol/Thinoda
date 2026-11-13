@@ -1328,6 +1328,7 @@ fn double_ellipse_board_clipboard_requires_version_fourteen() {
             );
             assert!(decode_board_payload(&forged).is_err(), "version {version}");
         }
+
         for value in [serde_json::json!(-1), serde_json::json!("invalid")] {
             let mut malformed = serde_json::to_value(&payload).unwrap();
             malformed["fragment"]["canvas"]["objects"][0]["double_ellipse_margin"] = value;
@@ -1347,6 +1348,87 @@ fn double_ellipse_board_clipboard_requires_version_fourteen() {
         ));
         assert_eq!(restored.double_ellipse_margin, margin);
     }
+}
+
+#[test]
+fn stencil_definition_closures_and_hashes_use_distinct_clipboard_versions() {
+    let mut package = crate::stencil_object::find_package("thinoda.general")
+        .unwrap()
+        .clone();
+    package.id = "vendor.clipboard-offline".into();
+    let definition = package.definition("folder").unwrap();
+    let object = crate::stencil_object::new_object(&package, definition, Vec2::ZERO);
+    let mut source = Sheet::new("Source", "Root");
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(CLOSED_STENCIL_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let decoded = decode_board_payload(&encoded).unwrap();
+    let mut destination = Sheet::new("Destination", "Root");
+    paste_board_selection(&mut destination, &decoded, Vec2::ZERO).unwrap();
+    assert!(
+        crate::stencil_object::render(&destination.canvas.objects[0]).is_some(),
+        "the pasted closure should render without an installed library"
+    );
+    let older_closure_prefix = encoded.replacen(
+        "THINODA-BOARD-CLIPBOARD-21",
+        "THINODA-BOARD-CLIPBOARD-20",
+        1,
+    );
+    assert!(
+        decode_board_payload(&older_closure_prefix)
+            .unwrap_err()
+            .contains("definition closures")
+    );
+
+    let mut hash_only_source = source.clone();
+    hash_only_source.canvas.objects[0]
+        .stencil
+        .as_mut()
+        .unwrap()
+        .package_resource = None;
+    hash_only_source.resources = Default::default();
+    let hash_only = copy(&hash_only_source, &[], &[id]);
+    let encoded = encode_board_payload(&hash_only).unwrap();
+    assert!(encoded.starts_with(PINNED_STENCIL_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), hash_only);
+
+    let legacy_prefix = encoded.replacen(
+        "THINODA-BOARD-CLIPBOARD-20",
+        "THINODA-BOARD-CLIPBOARD-19",
+        1,
+    );
+    assert!(
+        decode_board_payload(&legacy_prefix)
+            .unwrap_err()
+            .contains("pinned stencil definitions")
+    );
+
+    let mut hashless_source = hash_only_source;
+    hashless_source.canvas.objects[0]
+        .stencil
+        .as_mut()
+        .unwrap()
+        .definition_hash = None;
+    let hashless = copy(&hashless_source, &[], &[id]);
+    let encoded = encode_board_payload(&hashless).unwrap();
+    assert!(encoded.starts_with(STENCIL_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), hashless);
+}
+
+#[test]
+fn installed_builtin_stencils_are_pinned_by_hash_without_a_closure() {
+    let package = crate::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let object = crate::stencil_object::new_object(package, definition, Vec2::ZERO);
+    let mut sheet = Sheet::new("Built-in", "Root");
+    sheet.add_canvas_object(object).unwrap();
+    let stencil = sheet.canvas.objects[0].stencil.as_ref().unwrap();
+    assert!(stencil.package_resource.is_none());
+    assert!(stencil.definition_hash.is_some());
+    assert!(sheet.resources.entries.is_empty());
+    assert!(crate::stencil_object::render(&sheet.canvas.objects[0]).is_some());
 }
 
 #[test]

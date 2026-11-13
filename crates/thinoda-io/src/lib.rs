@@ -1066,6 +1066,14 @@ fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
         })
         .filter_map(|topic| topic.image.as_deref())
         .collect();
+    let inline_stencils: HashSet<&str> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| object.stencil.as_ref())
+        .filter(|stencil| stencil.package == drawio_stencil::INLINE_PACKAGE_ID)
+        .filter_map(|stencil| stencil.package_resource.as_deref())
+        .collect();
     sheet.topics.values().all(|topic| {
         topic.attachment.is_none()
             && topic
@@ -1073,9 +1081,11 @@ fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
                 .as_deref()
                 .is_none_or(|image| card_images.contains(image))
     }) && sheet.resources.entries.iter().all(|(id, resource)| {
-        matches!(resource.media_type.as_str(), "image/png" | "image/jpeg")
-            && card_images
-                .contains(format!("{}{id}", thinoda_core::resources::RESOURCE_PREFIX).as_str())
+        let reference = format!("{}{id}", thinoda_core::resources::RESOURCE_PREFIX);
+        // draw.io re-creates an imported inline stencil from its `shape=stencil(...)` style.
+        (resource.media_type == "application/json" && inline_stencils.contains(reference.as_str()))
+            || (matches!(resource.media_type.as_str(), "image/png" | "image/jpeg")
+                && card_images.contains(reference.as_str()))
     })
 }
 

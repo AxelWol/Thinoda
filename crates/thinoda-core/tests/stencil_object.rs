@@ -18,6 +18,10 @@ fn stencil_sheet() -> Sheet {
         .parameters
         .insert("dx".into(), 12.0);
     sheet.add_canvas_object(object).unwrap();
+    let stencil = sheet.canvas.objects[0].stencil.as_mut().unwrap();
+    stencil.definition_hash = None;
+    stencil.package_resource = None;
+    sheet.resources = Default::default();
     sheet
 }
 

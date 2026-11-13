@@ -524,6 +524,8 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
         t("Drag or use arrow keys to move; double-click or press Delete to remove.").into();
     labels.insert_waypoint_hint =
         t("Drag, press Enter, or use arrow keys to add a waypoint.").into();
+    labels.stencil_handle_hint =
+        t("Drag to adjust; use arrow keys to nudge, Shift for larger steps.").into();
     labels.connect_up = t("Add connected shape above").into();
     labels.connect_right = t("Add connected shape to the right").into();
     labels.connect_down = t("Add connected shape below").into();
@@ -1778,6 +1780,88 @@ impl ThinodaApp {
                 CanvasObjectKind::Ink(ink) => {
                     color_field(ui, "Stroke", &mut ink.color);
                     width_field(ui, &mut ink.width);
+                }
+            }
+            let definition = edited
+                .stencil
+                .as_ref()
+                .and_then(|stencil| stencil.resolve())
+                .map(|(_, definition)| definition.parameters.clone());
+            if let (Some(stencil), Some(parameters)) = (edited.stencil.as_mut(), definition)
+                && !parameters.is_empty()
+            {
+                ui.separator();
+                ui.strong(t("Stencil parameters"));
+                for (name, parameter) in &parameters {
+                    let mut value = parameter.clamp(
+                        stencil
+                            .parameters
+                            .get(name)
+                            .copied()
+                            .unwrap_or(parameter.default),
+                    );
+                    let label = if parameter.label.is_empty() {
+                        name.as_str()
+                    } else {
+                        parameter.label.as_str()
+                    };
+                    let changed = match parameter.kind {
+                        thinoda_core::stencil::ParameterKind::Number => {
+                            widgets::property_field(ui, label, |ui| {
+                                let mut drag = egui::DragValue::new(&mut value).speed(0.1);
+                                if let Some(unit) = &parameter.unit {
+                                    drag = drag.suffix(unit);
+                                }
+                                ui.add(drag)
+                            })
+                            .changed()
+                        }
+                        thinoda_core::stencil::ParameterKind::Choice => {
+                            let mut selected = value as usize;
+                            let selected_text = parameter
+                                .options
+                                .get(selected)
+                                .map_or("", String::as_str);
+                            widgets::property_field(ui, label, |ui| {
+                                egui::ComboBox::from_id_salt(("stencil_parameter", id, name))
+                                    .selected_text(selected_text)
+                                    .show_ui(ui, |ui| {
+                                        for (index, option) in
+                                            parameter.options.iter().enumerate()
+                                        {
+                                            ui.selectable_value(&mut selected, index, option);
+                                        }
+                                    })
+                                    .response
+                            });
+                            let changed = selected != value as usize;
+                            value = selected as f64;
+                            changed
+                        }
+                        thinoda_core::stencil::ParameterKind::Toggle => {
+                            let mut enabled = value != 0.0;
+                            let changed = ui.checkbox(&mut enabled, label).changed();
+                            value = if enabled { 1.0 } else { 0.0 };
+                            changed
+                        }
+                    };
+                    let reset = stencil.parameters.contains_key(name)
+                        && ui
+                            .small_button(t("Reset"))
+                            .on_hover_text(t("Reset to the stencil default"))
+                            .clicked();
+                    if changed || reset {
+                        if reset {
+                            stencil.parameters.remove(name);
+                        } else {
+                            let value = parameter.clamp(value);
+                            if value == parameter.default {
+                                stencil.parameters.remove(name);
+                            } else {
+                                stencil.parameters.insert(name.clone(), value);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -6977,6 +7061,80 @@ mod tests {
         assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
         harness.run_steps(2);
         assert!(current(harness.state()).stencil.is_some());
+    }
+
+    #[test]
+    fn stencil_parameter_inspector_edits_defaults_and_is_undoable() {
+        let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+        let definition = package.definition("folder").unwrap();
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .add_canvas_object(thinoda_core::stencil_object::new_object(
+                package,
+                definition,
+                Vec2::new(100.0, 100.0),
+            ))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .stencil
+                .as_ref()
+                .unwrap()
+                .parameters
+                .clone()
+        };
+        assert!(harness.query_by_label("Stencil parameters").is_some());
+        assert_eq!(
+            harness
+                .get_by_role_and_label(egui::Role::SpinButton, "Tab width")
+                .value()
+                .as_deref(),
+            Some("40.0")
+        );
+        let width = harness.get_by_role_and_label(egui::Role::SpinButton, "Tab width");
+        width.click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(egui::Role::SpinButton, "Tab width")
+            .type_text("55");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).get("tabWidth"), Some(&55.0));
+
+        harness
+            .get_by_role_and_label(egui::Role::ComboBox, "Tab position")
+            .click();
+        harness.run_steps(2);
+        harness.get_by_label("Right").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).get("tabPosition"), Some(&1.0));
+
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).get("tabPosition"), None);
+        assert_eq!(current(harness.state()).get("tabWidth"), Some(&55.0));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert!(current(harness.state()).is_empty());
     }
 
     #[test]

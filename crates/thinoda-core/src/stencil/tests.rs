@@ -75,6 +75,69 @@ fn builtin_library_loads_and_every_definition_evaluates() {
 }
 
 #[test]
+fn drawio_shape_package_validates_and_every_definition_evaluates() {
+    let package = StencilPackage::from_json(builtin_sources()[1])
+        .unwrap_or_else(|e| panic!("drawio-shapes.json: {e}"));
+    assert_eq!(package.id, "thinoda.drawio");
+    for definition in &package.definitions {
+        let [w, h] = definition.default_size();
+        let params = definition.resolve_parameters(&BTreeMap::new());
+        let out = package
+            .evaluate(
+                &definition.id,
+                &Instance {
+                    width: w,
+                    height: h,
+                    stroke_width: 1.0,
+                    parameters: &params,
+                },
+            )
+            .unwrap_or_else(|e| panic!("{} failed: {e}", definition.id));
+        assert!(
+            out.paths.len() > 1 || out.paths[0].background,
+            "{}",
+            definition.id
+        );
+        assert!(
+            [(0.5, 0.6), (0.75, 0.5), (0.1, 0.1), (0.5, 0.95)]
+                .iter()
+                .any(|(x, y)| out.contains(Vec2::new(w as f32 * x, h as f32 * y))),
+            "{} is not hit-testable",
+            definition.id
+        );
+        assert_eq!(out.handles.len(), definition.handles.len());
+        assert!(!out.ports.is_empty(), "{} has no ports", definition.id);
+        let bound = |p: Vec2| {
+            p.x.is_finite()
+                && p.y.is_finite()
+                && p.x > -0.5 * w as f32
+                && p.x < 1.5 * w as f32
+                && p.y > -0.5 * h as f32
+                && p.y < 1.5 * h as f32
+        };
+        for point in out
+            .paths
+            .iter()
+            .flat_map(|path| &path.subpaths)
+            .flat_map(|subpath| &subpath.points)
+            .chain(out.ports.iter().map(|port| &port.at))
+            .chain(out.handles.iter().map(|handle| &handle.at))
+        {
+            assert!(bound(*point), "{} point {point:?} escapes", definition.id);
+        }
+    }
+    let imports = package.extensions["drawio.import"].as_object().unwrap();
+    assert_eq!(imports.len(), package.definitions.len());
+    for target in imports.values() {
+        let id = target
+            .as_str()
+            .or_else(|| target["definition"].as_str())
+            .unwrap();
+        assert!(package.definition(id).is_some(), "missing {id}");
+    }
+}
+
+#[test]
 fn json_round_trips_and_hash_is_stable() {
     let general = &builtin_packages()[0];
     let again = StencilPackage::from_json(&general.to_json()).expect("round trip");
@@ -83,6 +146,44 @@ fn json_round_trips_and_hash_is_stable() {
     let b = StencilPackage::definition_hash(&again.definitions[0]);
     assert_eq!(a, b);
     assert_ne!(a, StencilPackage::definition_hash(&general.definitions[1]));
+}
+
+#[test]
+fn definition_closure_keeps_transitive_includes_and_package_metadata() {
+    let package = load(
+        r#"{"id":"root","title":"Root","background":{"op":"rect","x":0,"y":0,"w":100,"h":100},"foreground":[{"op":"include","definition":"shared","x":0,"y":0,"w":100,"h":100}]},
+           {"id":"shared","title":"Shared","background":{"op":"rect","x":0,"y":0,"w":100,"h":100},"foreground":[{"op":"include","definition":"leaf","x":0,"y":0,"w":100,"h":100}]},
+           {"id":"leaf","title":"Leaf","background":{"op":"rect","x":0,"y":0,"w":100,"h":100}},
+           {"id":"unrelated","title":"Unrelated","background":{"op":"rect","x":0,"y":0,"w":100,"h":100}}"#,
+    );
+    let closure = package.definition_closure(&["root"]).unwrap();
+    assert_eq!(
+        closure
+            .definitions
+            .iter()
+            .map(|definition| definition.id.as_str())
+            .collect::<Vec<_>>(),
+        ["root", "shared", "leaf"]
+    );
+    assert_eq!(closure.id, package.id);
+    assert_eq!(closure.revision, package.revision);
+    assert!(
+        closure
+            .evaluate(
+                "root",
+                &Instance {
+                    width: 100.0,
+                    height: 100.0,
+                    stroke_width: 1.0,
+                    parameters: &BTreeMap::new(),
+                }
+            )
+            .is_ok()
+    );
+    assert!(matches!(
+        package.definition_closure(&["missing"]),
+        Err(StencilError::UnknownDefinition(id)) if id == "missing"
+    ));
 }
 
 #[test]

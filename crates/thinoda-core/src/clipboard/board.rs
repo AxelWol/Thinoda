@@ -37,6 +37,9 @@ const FINAL_STATE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-17\n";
 const SANKEY_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-18\n";
 const STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-19\n";
 const SCENE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-20\n";
+const PINNED_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-20\n";
+const CLOSED_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-21\n";
+const SCENE_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-22\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -55,8 +58,17 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_scene_hierarchy() {
+        if self.fragment.has_scene_hierarchy()
+            && (self.fragment.has_stencil_definition_hashes()
+                || self.fragment.has_stencil_definition_closures())
+        {
+            SCENE_STENCIL_BOARD_PREFIX
+        } else if self.fragment.has_scene_hierarchy() {
             SCENE_BOARD_PREFIX
+        } else if self.fragment.has_stencil_definition_closures() {
+            CLOSED_STENCIL_BOARD_PREFIX
+        } else if self.fragment.has_stencil_definition_hashes() {
+            PINNED_STENCIL_BOARD_PREFIX
         } else if self.fragment.has_stencils() {
             STENCIL_BOARD_PREFIX
         } else if self.fragment.has_sankey() {
@@ -292,9 +304,20 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(SCENE_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-20\r\n"))
-        .map(|json| (20, json))
+        .strip_prefix(SCENE_STENCIL_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-22\r\n"))
+        .map(|json| (22, json))
+        .or_else(|| {
+            text.strip_prefix(CLOSED_STENCIL_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-21\r\n"))
+                .map(|json| (21, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SCENE_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix(PINNED_STENCIL_BOARD_PREFIX))
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-20\r\n"))
+                .map(|json| (20, json))
+        })
         .or_else(|| {
             text.strip_prefix(STENCIL_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-19\r\n"))
@@ -391,8 +414,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
                 .map(|json| (1, json))
         })
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
-    let payload: BoardClipboardPayload =
+    let mut payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 21 && payload.fragment.has_stencil_definition_closures() {
+        return Err("stencil definition closures require board clipboard version 21".into());
+    }
+    if version < 20 && payload.fragment.has_stencil_definition_hashes() {
+        return Err("pinned stencil definitions require board clipboard version 20".into());
+    }
     if version < 4 && payload.fragment.has_connector_markers() {
         return Err("connector markers require board clipboard version 4".into());
     }
@@ -452,6 +481,7 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     if version < 2 && payload.fragment.has_inline_text() {
         return Err("inline card text requires board clipboard version 2".into());
     }
+    payload.fragment.hydrate_stencil_packages()?;
     payload.validate()?;
     Ok(payload)
 }
@@ -826,6 +856,22 @@ fn copy_prepared_board_selection(
         .filter(|object| objects.contains(&object.id))
         .cloned()
         .collect();
+    for object in &copied_objects {
+        if let Some(reference) = object
+            .stencil
+            .as_ref()
+            .and_then(|stencil| stencil.package_resource.as_deref())
+        {
+            let resource = sheet.resources.get(reference)?;
+            let id = reference
+                .strip_prefix(crate::resources::RESOURCE_PREFIX)
+                .ok_or("invalid stencil package resource reference")?;
+            fragment
+                .resources
+                .entries
+                .insert(id.to_owned(), resource.clone());
+        }
+    }
     let requires_detachment = copied_objects.iter().any(|object| {
         if let CanvasObjectKind::Connector(connector) = &object.kind {
             [connector.from, connector.to]
@@ -1407,6 +1453,7 @@ pub fn paste_board_selection(
         pasted_objects.push(object.id);
         candidate.canvas.objects.push(object);
     }
+    candidate.hydrate_stencil_packages()?;
     candidate.validate()?;
     *sheet = candidate;
     Ok(BoardPasteResult {

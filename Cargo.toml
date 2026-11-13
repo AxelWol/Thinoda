@@ -40,7 +40,7 @@ thinoda-ai = { path = "crates/thinoda-ai", version = "0.25.1" } # x-release-plea
 thinoda-app = { path = "crates/thinoda-app", version = "0.25.1" } # x-release-please-version
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 semver = "1"
 thiserror = "2"
 anyhow = "1"

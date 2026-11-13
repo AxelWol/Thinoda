@@ -562,6 +562,18 @@ fn stencils_require_v26_and_aware_xmind_snapshots() {
             Vec2::new(300.0, 200.0),
         ))
         .unwrap();
+    let stencil = book
+        .active_mut()
+        .canvas
+        .objects
+        .last_mut()
+        .unwrap()
+        .stencil
+        .as_mut()
+        .unwrap();
+    stencil.definition_hash = None;
+    stencil.package_resource = None;
+    book.active_mut().resources = Default::default();
     assert_eq!(required_native_version(&book), 26);
     let native = export(&book, Format::Thinoda);
     assert_eq!(manifest_version(&native), 26);
