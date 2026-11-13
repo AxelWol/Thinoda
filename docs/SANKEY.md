@@ -1,3 +1,5 @@
+_Last updated: 2026-11-12 14:19:20 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Sankey family: research, design and implementation plan
 
 Status: in progress, requested 2026-11-11. This extends, rather than replaces,
