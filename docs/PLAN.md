@@ -64,10 +64,16 @@ delete, clipboard and history integration. Native v29, whole-sheet clipboard
 v24, mixed-board clipboard v23 and collapse-aware recovery/private XMind
 envelopes preserve the state and reject downgraded payloads. The shared scene
 builder consumes saved collapse automatically; hidden descendants leave hit
-testing and the accessible reading order. Core commands exist, but no new
-collapse/expand controls or automatic header-size policy are exposed.
+testing and the accessible reading order. The authoring checkpoint exposes
+localized collapse/expand controls for selected containers in object properties.
+Compact dimensions are explicit, initially matching the expanded frame; editing
+them alone does not mutate the document. Commands reject stale/blocked contexts,
+respect inherited locks without blocking on individually locked contents, and
+use the document transaction guard. Accessible containers announce their state;
+unsupported compact resizing and container rotation handles are hidden.
+No automatic header-size policy is introduced.
 This is partial SC1, not a released container UI:
-collapse authoring UI, headers/stack layout, card occurrences, production
+container creation/reparent authoring, headers/stack layout, card occurrences, production
 binding-policy installation/confirmation, full platform/accessibility acceptance
 and semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
 

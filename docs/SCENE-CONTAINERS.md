@@ -731,6 +731,39 @@ still need the SC2 acceptance matrix. Production semantic policy installation,
 prepared confirmations, structural draw.io fidelity, semantic authoring and the
 Software examples remain subsequent work; SC0/SC1 are still partial.
 
+### 5.9 Explicit collapse authoring checkpoint
+
+The shared native/web object-properties panel offers collapse/expand for one
+selected marked container. Expanded containers expose compact width/height,
+initially equal to the current frame; no arbitrary header size is inferred.
+Changing these inputs is a view draft, not a document edit. Collapse retains
+the current origin; expand uses the complete saved restore frame. The guarded
+document command owns history and preserves hidden contents and endpoint IDs.
+
+Drafts and actions are scoped to viewport, document identity/instance, sheet,
+object, tool and revision. Input widget identity also changes with revision so
+an unfinished numeric edit cannot cross a document mutation. Applying rechecks
+the live target and gesture/draft/modal/pending-ink gates. Core bounds and
+installed policies can veto the transaction; errors use the normal toast channel,
+without success-shaped state changes. The selected frame remains selected and
+is revealed. Individually locked descendants do not disable parent collapse;
+inherited locks do.
+
+All application locales include controls and state labels. Visible accessible
+containers announce expanded/collapsed state and child counts. Empty collapsed
+containers no longer offer unsupported resize/rotate handles; expanded containers
+retain resize but not unsupported rotation. Ordinary board shapes are unchanged.
+
+Headless UI fixtures exercise exact dimensions, nonmutating drafts, restore and
+undo, locked contents, inherited locks, stale owner/revision rejection, numeric
+draft expiry and policy refusal. Shared canvas fixtures cover actual state
+announcements and handle availability. This is not live screen-reader/browser
+acceptance. No storage/version change is needed.
+
+**Remaining boundary:** ordinary UI creation/reparenting, automatic header sizing,
+free/stack policies, structural draw.io fidelity, semantic authoring and Software
+examples remain open. SC0/SC1 and the complete editor are still partial.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,

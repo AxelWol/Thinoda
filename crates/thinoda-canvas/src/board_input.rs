@@ -2042,9 +2042,16 @@ fn selection_controls(
     ]
     .into_iter()
     .filter(|(kind, point)| {
-        clip.is_none_or(|clip| {
-            clip.contains(*point) || (*kind == ControlKind::Rotate && clip.contains(anchor))
-        })
+        let unsupported = if let SceneId::Object(id) = item {
+            (*kind == ControlKind::Resize && sheet.canvas.scene.collapsed.contains_key(&id))
+                || (*kind == ControlKind::Rotate && sheet.canvas.scene.containers.contains(&id))
+        } else {
+            false
+        };
+        !unsupported
+            && clip.is_none_or(|clip| {
+                clip.contains(*point) || (*kind == ControlKind::Rotate && clip.contains(anchor))
+            })
     })
     .map(|(kind, point)| Control {
         item,
@@ -4852,6 +4859,14 @@ pub(super) fn accessibility(ui: &mut Ui, view: &mut MapView, sheet: &Sheet, scen
                 ));
             }
             if sheet.canvas.scene.containers.contains(&id) {
+                description.push(
+                    if sheet.canvas.scene.collapsed.contains_key(&id) {
+                        &view.board_labels.collapsed
+                    } else {
+                        &view.board_labels.expanded
+                    }
+                    .clone(),
+                );
                 description.push(format!(
                     "{}: {}",
                     view.board_labels.contained_objects,

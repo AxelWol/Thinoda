@@ -1,4 +1,6 @@
 # Regional wording overrides.
+Collapse container|Recolher contêiner
+Expand container|Expandir contêiner
 Corner radius|Raio dos cantos
 Relative corner radius|Raio relativo dos cantos
 Connect at rounded corners|Conectar nos cantos arredondados

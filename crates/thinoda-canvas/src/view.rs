@@ -123,6 +123,8 @@ pub struct BoardLabels {
     /// Generic fallback when a shape has no entry in `shape_names`.
     pub shape: String,
     pub container: String,
+    pub collapsed: String,
+    pub expanded: String,
     pub parent_container: String,
     pub contained_objects: String,
     pub containment_hint: String,
@@ -169,6 +171,8 @@ impl Default for BoardLabels {
             image: "Image card".into(),
             shape: "Shape".into(),
             container: "Container".into(),
+            collapsed: "Collapsed".into(),
+            expanded: "Expanded".into(),
             parent_container: "Parent container".into(),
             contained_objects: "Contained objects".into(),
             containment_hint: "Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.".into(),

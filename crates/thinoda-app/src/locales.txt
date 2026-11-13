@@ -1,4 +1,11 @@
 # Clipboard feedback.
+Collapsed|Contraído|Replié|Sammenfoldet|Ingeklapt|Recolhido|Compresso|Zwinięty
+Expanded|Expandido|Déplié|Udvidet|Uitgeklapt|Expandido|Espanso|Rozwinięty
+Collapse container|Contraer contenedor|Replier le conteneur|Fold beholder sammen|Container inklappen|Recolher contentor|Comprimi contenitore|Zwiń kontener
+Expand container|Expandir contenedor|Déplier le conteneur|Udvid beholder|Container uitklappen|Expandir contentor|Espandi contenitore|Rozwiń kontener
+Compact width|Ancho compacto|Largeur compacte|Kompakt bredde|Compacte breedte|Largura compacta|Larghezza compatta|Szerokość po zwinięciu
+Compact height|Alto compacto|Hauteur compacte|Kompakt højde|Compacte hoogte|Altura compacta|Altezza compatta|Wysokość po zwinięciu
+Collapse hides contents without moving them. Set compact dimensions before collapsing.|Contraer oculta el contenido sin moverlo. Define las dimensiones compactas antes de contraer.|Le repli masque le contenu sans le déplacer. Définissez les dimensions compactes avant de replier.|Sammenfoldning skjuler indhold uden at flytte det. Angiv kompakte mål før sammenfoldning.|Inklappen verbergt inhoud zonder deze te verplaatsen. Stel eerst de compacte afmetingen in.|Recolher oculta o conteúdo sem o mover. Defina as dimensões compactas antes de recolher.|La compressione nasconde il contenuto senza spostarlo. Imposta prima le dimensioni compatte.|Zwijanie ukrywa zawartość bez jej przesuwania. Najpierw ustaw wymiary po zwinięciu.
 Could not copy|No se pudo copiar|Impossible de copier|Kunne ikke kopiere|Kopiëren is mislukt|Não foi possível copiar|Impossibile copiare|Nie udało się skopiować
 Could not paste clipboard data|No se pudieron pegar los datos del portapapeles|Impossible de coller les données du presse-papiers|Kunne ikke indsætte data fra udklipsholderen|Klembordgegevens konden niet worden geplakt|Não foi possível colar os dados da área de transferência|Impossibile incollare i dati degli appunti|Nie udało się wkleić danych ze schowka
 Clipboard data exceeds 16 MiB.|Los datos del portapapeles superan los 16 MiB.|Les données du presse-papiers dépassent 16 Mio.|Dataene i udklipsholderen overstiger 16 MiB.|De klembordgegevens zijn groter dan 16 MiB.|Os dados da área de transferência excedem 16 MiB.|I dati degli appunti superano 16 MiB.|Dane ze schowka przekraczają 16 MiB.

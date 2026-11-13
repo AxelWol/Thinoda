@@ -3161,9 +3161,41 @@ fn stored_collapse_hides_accessible_descendants_and_keeps_navigation_on_visible_
     h.run_steps(3);
     assert_eq!(h.state().view.board_selection, vec![pool]);
     assert!(h.get_by_label("Container: Pool, Selected").is_focused());
+    assert!(
+        h.get_by_label("Container: Pool, Selected")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Collapsed")
+    );
     assert_eq!(h.state().doc.workbook(), &before);
     assert!(!h.state().doc.can_undo());
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn empty_container_controls_only_offer_supported_transforms() {
+    let (mut sheet, [_, _, _, _, _, _, empty]) = containment_board();
+    let mut h = harness(sheet.clone());
+    h.state_mut().view.select_board_object(empty);
+    h.run_steps(3);
+    assert!(h.query_by_label("Resize board item").is_some());
+    assert!(h.query_by_label("Rotate board item").is_none());
+    let original = sheet.canvas.object(empty).unwrap().rect;
+    sheet
+        .set_canvas_container_collapsed(
+            empty,
+            Some(thinoda_core::Rect::from_min_size(
+                original.min,
+                Vec2::new(100.0, 30.0),
+            )),
+        )
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(empty);
+    h.run_steps(3);
+    assert!(h.query_by_label("Resize board item").is_none());
+    assert!(h.query_by_label("Rotate board item").is_none());
 }
 
 fn containment_board() -> (Sheet, [CanvasObjectId; 7]) {
@@ -3205,7 +3237,7 @@ fn hierarchy_accessibility_describes_containment_and_inherited_locks_with_locali
     assert!(description.contains("Members: 2"));
     assert_eq!(
         h.get_by_label("Box: Empty").accesskit_node().description(),
-        Some("Members: 0".into())
+        Some("Expanded. Members: 0".into())
     );
     h.get_by_label("Rectangle: First, Locked").focus();
     h.run_steps(2);

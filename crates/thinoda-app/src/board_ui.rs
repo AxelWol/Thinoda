@@ -105,6 +105,19 @@ struct ConnectorTarget {
     revision: u64,
 }
 
+struct ContainerContext {
+    target: ConnectorTarget,
+    enabled: bool,
+    rect: thinoda_core::Rect,
+    collapsed: bool,
+}
+
+#[derive(Clone)]
+struct ContainerCollapseDraft {
+    target: ConnectorTarget,
+    size: thinoda_core::Vec2,
+}
+
 #[derive(Clone, Copy)]
 struct ConnectorProperties {
     semantic: bool,
@@ -493,6 +506,8 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.image = t("Image card").into();
     labels.shape = t("Shape").into();
     labels.container = t("Container").into();
+    labels.collapsed = t("Collapsed").into();
+    labels.expanded = t("Expanded").into();
     labels.parent_container = t("Parent container").into();
     labels.contained_objects = t("Contained objects").into();
     labels.containment_hint = t("Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.").into();
@@ -1489,7 +1504,116 @@ impl ThinodaApp {
     }
 
     /// Shows properties for a selected free object instead of topic styling.
+    fn container_context(&self) -> Option<ContainerContext> {
+        let (target, enabled) = self.single_board_object()?;
+        let sheet = self.doc()?.doc.sheet();
+        let id = target.owner.object;
+        if !sheet.canvas.scene.containers.contains(&id) {
+            return None;
+        }
+        Some(ContainerContext {
+            rect: sheet.canvas.object(id)?.rect,
+            collapsed: sheet.canvas.scene.collapsed.contains_key(&id),
+            enabled: enabled && !sheet.canvas.is_locked(id) && !sheet.has_sankey(),
+            target,
+        })
+    }
+
+    fn apply_container_collapse(
+        &mut self,
+        target: &ConnectorTarget,
+        compact: Option<thinoda_core::Rect>,
+    ) -> Result<(), String> {
+        let context = self
+            .container_context()
+            .filter(|context| context.enabled && context.target == *target)
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .set_canvas_container_collapsed(context.target.owner.object, compact)
+            .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(context.target.owner.object);
+        Ok(())
+    }
+
+    /// Returns true when a command was attempted, so properties use a fresh snapshot next frame.
+    fn board_container_properties(&mut self, ui: &mut Ui) -> bool {
+        let slot = egui::Id::unique(("container_collapse_draft", self.current_viewport));
+        let Some(context) = self.container_context() else {
+            ui.ctx().data_mut(|data| {
+                data.remove::<ContainerCollapseDraft>(slot);
+            });
+            return false;
+        };
+        let mut draft = ui
+            .ctx()
+            .data(|data| data.get_temp::<ContainerCollapseDraft>(slot))
+            .filter(|draft| context.enabled && draft.target == context.target)
+            .unwrap_or_else(|| ContainerCollapseDraft {
+                target: context.target.clone(),
+                size: context.rect.size,
+            });
+        let mut apply = false;
+        ui.push_id(&context.target.owner, |ui| {
+            ui.strong(t("Container"));
+            ui.label(t(if context.collapsed {
+                "Collapsed"
+            } else {
+                "Expanded"
+            }));
+            ui.add_enabled_ui(context.enabled, |ui| {
+                if !context.collapsed {
+                    widgets::caption(
+                        ui,
+                        t("Collapse hides contents without moving them. Set compact dimensions before collapsing."),
+                    );
+                    ui.push_id(context.target.revision, |ui| {
+                        widgets::property_field(ui, t("Compact width"), |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut draft.size.x)
+                                    .speed(1.0)
+                                    .range(1.0..=MAX_BOARD_COORDINATE),
+                            )
+                        });
+                        widgets::property_field(ui, t("Compact height"), |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut draft.size.y)
+                                    .speed(1.0)
+                                    .range(1.0..=MAX_BOARD_COORDINATE),
+                            )
+                        });
+                    });
+                }
+                ui.push_id("toggle_container_collapse", |ui| {
+                    apply = ui
+                        .button(t(if context.collapsed {
+                            "Expand container"
+                        } else {
+                            "Collapse container"
+                        }))
+                        .clicked();
+                });
+            });
+            ui.separator();
+        });
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(slot, draft.clone()));
+        if apply {
+            let compact = (!context.collapsed)
+                .then(|| thinoda_core::Rect::from_min_size(context.rect.min, draft.size));
+            if let Err(error) = self.apply_container_collapse(&context.target, compact) {
+                self.toasts.error(error);
+            }
+        }
+        apply
+    }
+
     pub(crate) fn board_object_properties(&mut self, ui: &mut Ui) -> bool {
+        if self.board_container_properties(ui) {
+            return true;
+        }
         let Some(doc) = self.doc() else { return false };
         if doc.view.board_selection.is_empty() {
             return false;
@@ -6589,6 +6713,232 @@ mod tests {
         let screen_center =
             view.canvas_rect().center() + view.offset + vec2(center.x, center.y) * view.zoom;
         assert!(screen_center.distance(view.canvas_rect().center()) < 0.1);
+    }
+
+    fn container_app() -> (ThinodaApp, CanvasObjectId, CanvasObjectId) {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let (container, child) = doc
+            .doc
+            .edit_sheet("Containers", |sheet| {
+                let mut add = |size| {
+                    sheet
+                        .add_canvas_object(CanvasObject::shape(
+                            ShapeKind::Rectangle,
+                            BoardRect::from_min_size(Vec2::new(25.0, 40.0), size),
+                        ))
+                        .map_err(thinoda_core::EditError::Invalid)
+                };
+                let container = add(Vec2::new(800.0, 400.0))?;
+                let child = add(Vec2::new(120.0, 80.0))?;
+                sheet
+                    .set_canvas_container(container, true)
+                    .and_then(|_| sheet.set_canvas_container(child, true))
+                    .and_then(|_| sheet.reparent_canvas_objects(&[child], Some(container)))
+                    .and_then(|_| sheet.set_canvas_objects_locked(&[child], true))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok((container, child))
+            })
+            .unwrap();
+        doc.view.select_board_object(container);
+        (app, container, child)
+    }
+
+    fn container_properties_harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1000.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness
+    }
+
+    #[test]
+    fn container_collapse_properties_use_explicit_dimensions_and_restore_with_undo() {
+        let (app, container, child) = container_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let revision = app.doc().unwrap().doc.state_id();
+        let mut h = container_properties_harness(app);
+        for (label, value) in [("Compact width", "240"), ("Compact height", "45")] {
+            h.get_by_role_and_label(egui::Role::SpinButton, label)
+                .click();
+            h.run_steps(2);
+            h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            h.get_by_role_and_label(egui::Role::SpinButton, label)
+                .type_text(value);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(3);
+        }
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        h.get_by_role_and_label(egui::Role::Button, "Collapse container")
+            .click();
+        h.run_steps(3);
+        let doc = h.state().doc().unwrap();
+        let original = before.active().canvas.object(container).unwrap().rect;
+        assert_eq!(
+            doc.doc.sheet().canvas.object(container).unwrap().rect,
+            BoardRect::from_min_size(original.min, Vec2::new(240.0, 45.0))
+        );
+        assert_eq!(doc.doc.sheet().canvas.scene.collapsed[&container], original);
+        assert_eq!(
+            doc.doc.sheet().canvas.object(child),
+            before.active().canvas.object(child)
+        );
+        assert_eq!(doc.view.board_selection, vec![container]);
+        assert!(h.query_by_label("Collapsed").is_some());
+        assert!(
+            h.query_by_role_and_label(egui::Role::SpinButton, "Compact width")
+                .is_none()
+        );
+        let collapsed = h.state().doc().unwrap().doc.workbook().clone();
+        h.get_by_role_and_label(egui::Role::Button, "Expand container")
+            .click();
+        h.run_steps(3);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &collapsed);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
+    fn container_collapse_refuses_stale_owners_and_blocked_contexts() {
+        for case in ["revision", "selection", "instance", "lock", "modal", "tool"] {
+            let (mut app, container, child) = container_app();
+            let target = app.container_context().unwrap().target;
+            match case {
+                "revision" => {
+                    app.doc_mut()
+                        .unwrap()
+                        .doc
+                        .update_canvas_object("Description", container, |object| {
+                            object.alt_text = "Changed".into();
+                        })
+                        .unwrap();
+                }
+                "selection" => app.doc_mut().unwrap().view.select_board_object(child),
+                "instance" => {
+                    let book = app.doc().unwrap().doc.workbook().clone();
+                    app.doc_mut().unwrap().doc = thinoda_core::Document::new(book);
+                }
+                "lock" => {
+                    let doc = app.doc_mut().unwrap();
+                    doc.doc
+                        .edit_sheet("Ancestor lock", |sheet| {
+                            sheet.canvas.object_mut(child).unwrap().locked = false;
+                            sheet.canvas.object_mut(container).unwrap().locked = true;
+                            Ok(())
+                        })
+                        .unwrap();
+                    doc.view.select_board_object(child);
+                    assert!(!app.container_context().unwrap().enabled);
+                }
+                "modal" => app.dialogs.settings = true,
+                "tool" => app.doc_mut().unwrap().view.set_board_tool(BoardTool::Pen),
+                _ => unreachable!(),
+            }
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let revision = app.doc().unwrap().doc.state_id();
+            assert!(
+                app.apply_container_collapse(
+                    &target,
+                    Some(BoardRect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 40.0),))
+                )
+                .is_err(),
+                "{case}"
+            );
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before, "{case}");
+            assert_eq!(app.doc().unwrap().doc.state_id(), revision, "{case}");
+        }
+    }
+
+    #[test]
+    fn container_collapse_draft_expires_after_document_changes_and_policy_refusal_is_atomic() {
+        use thinoda_core::document::{DocumentEditContext, DocumentEditValidator};
+        #[derive(Debug)]
+        struct Refuse;
+        impl DocumentEditValidator for Refuse {
+            fn validate(&self, _: DocumentEditContext<'_>) -> thinoda_core::EditResult<()> {
+                Err(thinoda_core::EditError::Invalid(
+                    "Container policy refused".into(),
+                ))
+            }
+        }
+        let (app, container, _) = container_app();
+        let mut h = container_properties_harness(app);
+        let slot = egui::Id::unique(("container_collapse_draft", h.state().current_viewport));
+        h.get_by_role_and_label(egui::Role::SpinButton, "Compact width")
+            .click();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.get_by_role_and_label(egui::Role::SpinButton, "Compact width")
+            .type_text("250");
+        h.run_steps(2);
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .update_canvas_object("Description", container, |object| {
+                object.alt_text = "New revision".into();
+            })
+            .unwrap();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(
+            h.ctx
+                .data(|data| data.get_temp::<ContainerCollapseDraft>(slot).unwrap().size),
+            Vec2::new(800.0, 400.0)
+        );
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_edit_validator(Some(std::sync::Arc::new(Refuse)));
+        let target = h.state().container_context().unwrap().target;
+        assert_eq!(
+            h.state_mut().apply_container_collapse(
+                &target,
+                Some(BoardRect::from_min_size(Vec2::ZERO, Vec2::new(250.0, 40.0),))
+            ),
+            Err("Container policy refused".into())
+        );
+        h.get_by_role_and_label(egui::Role::Button, "Collapse container")
+            .click();
+        h.run_steps(3);
+        assert!(
+            h.query_by_role_and_label(egui::Role::Button, "Expand container")
+                .is_none()
+        );
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+
+    #[test]
+    fn container_collapse_labels_are_localized() {
+        for key in [
+            "Collapsed",
+            "Expanded",
+            "Collapse container",
+            "Expand container",
+            "Compact width",
+            "Compact height",
+            "Collapse hides contents without moving them. Set compact dimensions before collapsing.",
+        ] {
+            assert!(i18n::has_translations(key), "{key}");
+            for language in i18n::Lang::ALL {
+                if language != i18n::Lang::En {
+                    assert_ne!(i18n::t_in(language, key), key, "{language:?}: {key}");
+                }
+            }
+        }
     }
 
     #[test]

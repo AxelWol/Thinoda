@@ -4188,6 +4188,16 @@ const DE: &[(&str, &str)] = &[
     ("Format", "Format"),
     ("Layers", "Ebenen"),
     ("Container", "Container"),
+    ("Collapsed", "Eingeklappt"),
+    ("Expanded", "Ausgeklappt"),
+    ("Collapse container", "Container einklappen"),
+    ("Expand container", "Container ausklappen"),
+    ("Compact width", "Kompakte Breite"),
+    ("Compact height", "Kompakte Höhe"),
+    (
+        "Collapse hides contents without moving them. Set compact dimensions before collapsing.",
+        "Einklappen blendet Inhalte aus, ohne sie zu verschieben. Legen Sie vorher die kompakten Abmessungen fest.",
+    ),
     ("Parent container", "Übergeordneter Container"),
     ("Contained objects", "Enthaltene Objekte"),
     (

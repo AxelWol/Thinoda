@@ -620,3 +620,34 @@ core/canvas library regressions, and targeted canvas/export/recovery fixtures.
 Serialized app library regressions passed 971 tests with 2 ignored.
 Affected-package clippy (`--all-targets -- -D warnings`), builds, workspace
 check, formatting and diff checks passed. No live platform acceptance is claimed.
+
+## 16. Explicit collapse controls: author rubber-duck
+
+- Should the editor invent a compact header height? No. Width/height are explicit
+  view drafts initialized from the current frame. The user can choose to hide
+  contents without changing that frame; automatic layout remains separate work.
+- Can a properties edit leak into another document revision? Actions compare the
+  complete live owner and revision. Numeric widget identity also includes revision,
+  preventing an unfinished text buffer from surviving a document change.
+- Do locked children make the parent unusable? Collapse checks the selected
+  container's ancestry, not its expanded descendant selection. A parent can hide
+  individually locked contents without modifying them; inherited locks still block.
+- Does the UI bypass the shared policy guard? No. It invokes the existing document
+  command and surfaces rejection through ordinary errors. No local geometry patch
+  or success notification substitutes for acceptance.
+- Are there misleading affordances? Empty collapsed containers previously offered
+  resize/rotate handles that core commands refuse. Those are suppressed, along with
+  unsupported rotation for expanded containers, without changing ordinary shapes.
+
+**Critique:** this makes saved collapse editable without pretending the container
+editor is finished. Explicit dimensions are intentionally less convenient than
+policy-aware headers. Creation/reparent controls, shared header/free/stack policies,
+interchange, semantic authoring and Software templates remain required. The review
+is an author critique, not independent review or live native/web acceptance.
+
+**Validation evidence:** serialized app regressions passed 975 tests (2 ignored);
+canvas regressions passed 551 (2 ignored). Affected all-target clippy with denied
+warnings, builds, wasm32 web compilation, workspace check, formatting and diff
+checks passed. An initial handle fixture incorrectly expected a connection-arrow
+label; its assertion was removed rather than treating an unrelated arrow policy
+as part of the transform-handle contract.
