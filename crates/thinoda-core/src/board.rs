@@ -3203,11 +3203,11 @@ impl Sheet {
         f: impl FnOnce(&mut CanvasObject),
     ) -> Result<(), String> {
         self.require_unlocked(&[id])?;
-        let mut object = self
+        let original = self
             .canvas
             .object(id)
-            .cloned()
             .ok_or_else(|| format!("canvas object {id} not found"))?;
+        let mut object = original.clone();
         let (group, locked) = (object.group, object.locked);
         f(&mut object);
         object.id = id;
@@ -3218,41 +3218,26 @@ impl Sheet {
         }
         object.rotation = normalize_rotation(object.rotation);
         if !self.canvas.scene.is_empty()
-            && std::mem::discriminant(&object.kind)
-                != std::mem::discriminant(
-                    &self
-                        .canvas
-                        .object(id)
-                        .ok_or("canvas object not found")?
-                        .kind,
-                )
+            && std::mem::discriminant(&object.kind) != std::mem::discriminant(&original.kind)
         {
             return Err("changing object categories in nested scenes is not supported yet".into());
         }
-        if self.canvas.scene.containers.contains(&id) {
-            let original = self.canvas.object(id).ok_or("scene container not found")?;
-            if object.rect != original.rect
+        if self.canvas.scene.containers.contains(&id)
+            && (object.rect != original.rect
                 || object.rotation != original.rotation
-                || !matches!(object.kind, CanvasObjectKind::Shape { .. })
-            {
-                return Err(
-                    "use the scene move or resize command to change container geometry".into(),
-                );
-            }
-        }
-        if !self.canvas.scene.is_empty()
-            && let (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after)) = (
-                &self
-                    .canvas
-                    .object(id)
-                    .ok_or("canvas object not found")?
-                    .kind,
-                &object.kind,
-            )
-            && (before.from != after.from || before.to != after.to)
+                || !matches!(object.kind, CanvasObjectKind::Shape { .. }))
         {
-            return Err("reconnecting edges in nested scenes is not supported yet".into());
+            return Err("use the scene move or resize command to change container geometry".into());
         }
+        if self.canvas.scene.contains(id) && object.band != original.band {
+            return Err("changing paint bands of scene members is not supported yet".into());
+        }
+        let reconnecting = !self.canvas.scene.is_empty()
+            && matches!((
+                &original.kind,
+                &object.kind,
+            ), (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after))
+                if before.from != after.from || before.to != after.to);
         validate_object(&object)?;
         if let CanvasObjectKind::Connector(c) = &object.kind {
             let old_waypoints = match &self.canvas.object(id).expect("checked").kind {
@@ -3288,6 +3273,11 @@ impl Sheet {
                 ));
             }
         }
+        if reconnecting {
+            self.canvas = SceneHierarchy::from_canvas(&self.canvas)?
+                .preview_reconnect_with_validator(&object, |_| Ok(()))?;
+            return Ok(());
+        }
         let is_connector = object.is_connector();
         let previous = std::mem::replace(self.canvas.object_mut(id).expect("checked"), object);
         if is_connector && let Err(error) = crate::scene::validate_connector_cycles(self) {
@@ -3304,7 +3294,7 @@ impl Sheet {
         order: ZOrder,
     ) -> Result<(), String> {
         if !self.canvas.scene.is_empty() {
-            return Err("nested scenes require sibling-aware paint ordering".into());
+            return self.reorder_canvas_objects_with_validator(ids, order, |_| Ok(()));
         }
         let set: HashSet<_> = ids.iter().copied().collect();
         if set.is_empty() {

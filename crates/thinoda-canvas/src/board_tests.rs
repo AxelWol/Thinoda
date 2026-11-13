@@ -2957,6 +2957,46 @@ fn scene_selection_multiselect_lock_z_order_and_undo() {
 }
 
 #[test]
+fn hierarchy_paint_action_updates_hit_order_inside_a_container_and_undoes_once() {
+    let mut sheet = board();
+    let pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(700.0, 300.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(pool, true).unwrap();
+    let bottom = shape(&mut sheet, -100.0, 0.0, "Bottom");
+    let top = shape(&mut sheet, -100.0, 0.0, "Top");
+    sheet
+        .reparent_canvas_objects(&[bottom, top], Some(pool))
+        .unwrap();
+    let mut h = harness(sheet);
+    let overlap = point(&h, Vec2::new(-100.0, 0.0));
+    click(&mut h, overlap, Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![top]);
+    let before = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        apply_board_action(
+            &mut state.doc,
+            &mut state.view,
+            BoardAction::ZOrder(ZOrder::Back),
+        )
+        .unwrap();
+    }
+    h.run_steps(2);
+    click(&mut h, overlap, Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![bottom]);
+    assert_eq!(h.state().doc.sheet().canvas.scene.parents[&top], pool);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn fixed_connector_attachment_shift_drag_uses_release_modifiers_and_undo() {
     let mut sheet = board();
     let target = shape(&mut sheet, 300.0, 120.0, "Target");
@@ -3596,6 +3636,82 @@ fn connection_points_reconnect_existing_endpoints_and_support_keyboard_cycles() 
     h.key_press(Key::End);
     h.run_steps(3);
     assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn hierarchy_endpoint_drag_reconciles_cross_container_dependents_and_undoes_once() {
+    let mut sheet = board();
+    let pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(-200.0, 0.0), Vec2::new(480.0, 300.0)),
+        ))
+        .unwrap();
+    let destination_pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(200.0, 0.0), Vec2::new(240.0, 180.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(pool, true).unwrap();
+    sheet.set_canvas_container(destination_pool, true).unwrap();
+    let source = shape(&mut sheet, -200.0, 0.0, "Source");
+    let original_target = shape(&mut sheet, -40.0, 0.0, "Original");
+    let target = shape(&mut sheet, 200.0, 0.0, "Target");
+    sheet
+        .reparent_canvas_objects(&[source, original_target], Some(pool))
+        .unwrap();
+    sheet
+        .reparent_canvas_objects(&[target], Some(destination_pool))
+        .unwrap();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(source),
+            Endpoint::Object(original_target),
+        )))
+        .unwrap();
+    let dependent = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(edge),
+            Endpoint::Object(source),
+        )))
+        .unwrap();
+    assert_eq!(sheet.canvas.scene.parents[&edge], pool);
+    assert_eq!(sheet.canvas.scene.parents[&dependent], pool);
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let handle = h.get_by_label("Connector To").rect().center();
+    let cross = point(&h, Vec2::new(140.0, 0.0));
+    drag(&mut h, handle, cross);
+    finish_drag(&mut h, cross);
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(
+        !h.state()
+            .doc
+            .sheet()
+            .canvas
+            .scene
+            .parents
+            .contains_key(&edge)
+    );
+    assert!(
+        !h.state()
+            .doc
+            .sheet()
+            .canvas
+            .scene
+            .parents
+            .contains_key(&dependent)
+    );
+    let after = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &after);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 

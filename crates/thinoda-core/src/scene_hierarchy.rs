@@ -5,8 +5,8 @@
 //! them. Header/layout/collapse policies and semantic bindings remain separate.
 
 use crate::board::{
-    CanvasLayer, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_GROUPS, MAX_CANVAS_OBJECTS,
-    MAX_CARD_STATES, validate_object,
+    Band, CanvasLayer, CanvasObject, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_GROUPS,
+    MAX_CANVAS_OBJECTS, MAX_CARD_STATES, ZOrder, validate_object,
 };
 use crate::geometry::Vec2;
 use crate::model::{Sheet, valid_position};
@@ -78,6 +78,19 @@ impl Sheet {
         self.canvas = candidate;
         Ok(())
     }
+
+    pub fn reorder_canvas_objects_with_validator(
+        &mut self,
+        ids: &[CanvasObjectId],
+        order: ZOrder,
+        validate: impl FnOnce(&SceneEditContext<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let candidate = SceneHierarchy::from_canvas(&self.canvas)?
+            .preview_reorder_with_validator(ids, order, validate)?
+            .stored_canvas();
+        self.canvas = candidate;
+        Ok(())
+    }
 }
 
 impl SceneStructure {
@@ -94,6 +107,8 @@ impl SceneStructure {
 pub enum SceneEditKind {
     Reparent { target: Option<CanvasObjectId> },
     Translate { delta: Vec2 },
+    Reorder { order: ZOrder },
+    Reconnect { object: CanvasObjectId },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -418,23 +433,149 @@ impl<'a> SceneHierarchy<'a> {
         candidate.append_reparented(&changed, &order);
         candidate.validate_topology()?;
         let mut affected = self.closure(&changed);
-        let edge_parent_changes = candidate.reconcile_edge_parents(self, &affected, &order)?;
+        let edge_parent_changes =
+            candidate.reconcile_edge_parents(self, &affected, None, &order)?;
         affected.extend(edge_parent_changes.iter().map(|change| change.object));
         candidate.validate_topology()?;
         let affected: Vec<_> = order
             .into_iter()
             .filter(|id| affected.contains(id))
             .collect();
+        let geometry = candidate.stored_canvas();
         validate(&SceneEditContext {
             kind: SceneEditKind::Reparent { target },
             before: self,
             after: &candidate,
-            geometry: self.canvas,
+            geometry: &geometry,
             selection: ids,
             affected: &affected,
             edge_parent_changes: &edge_parent_changes,
         })?;
         Ok(candidate)
+    }
+
+    /// Reorders selection roots only among siblings in the same paint band.
+    /// Descendants remain a unit and keep their internal order and geometry.
+    pub fn preview_reorder_with_validator(
+        &self,
+        ids: &[CanvasObjectId],
+        order: ZOrder,
+        validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let selected = self.selection(ids)?;
+        let roots: HashSet<_> = self.selection_roots(&selected).into_iter().collect();
+        for id in &roots {
+            self.require_unlocked_path(*id)?;
+        }
+        let mut candidate = self.clone();
+        for siblings in candidate.children.values_mut() {
+            if !siblings.iter().any(|id| roots.contains(id)) {
+                continue;
+            }
+            for band in [Band::Below, Band::Above] {
+                let slots: Vec<_> = siblings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, id)| self.canvas.objects[self.objects[id]].band == band)
+                    .map(|(index, _)| index)
+                    .collect();
+                match order {
+                    ZOrder::Front | ZOrder::Back => {
+                        let mut ordered: Vec<_> =
+                            slots.iter().map(|slot| siblings[*slot]).collect();
+                        ordered.sort_by_key(|id| roots.contains(id) != (order == ZOrder::Back));
+                        for (slot, id) in slots.into_iter().zip(ordered) {
+                            siblings[slot] = id;
+                        }
+                    }
+                    ZOrder::Forward => {
+                        for index in (0..slots.len().saturating_sub(1)).rev() {
+                            if roots.contains(&siblings[slots[index]])
+                                && !roots.contains(&siblings[slots[index + 1]])
+                            {
+                                siblings.swap(slots[index], slots[index + 1]);
+                            }
+                        }
+                    }
+                    ZOrder::Backward => {
+                        for index in 1..slots.len() {
+                            if roots.contains(&siblings[slots[index]])
+                                && !roots.contains(&siblings[slots[index - 1]])
+                            {
+                                siblings.swap(slots[index], slots[index - 1]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let affected_set = self.closure(&roots);
+        let affected: Vec<_> = self
+            .preorder()
+            .into_iter()
+            .filter(|id| affected_set.contains(id))
+            .collect();
+        let geometry = candidate.stored_canvas();
+        validate(&SceneEditContext {
+            kind: SceneEditKind::Reorder { order },
+            before: self,
+            after: &candidate,
+            geometry: &geometry,
+            selection: ids,
+            affected: &affected,
+            edge_parent_changes: &[],
+        })?;
+        Ok(candidate)
+    }
+
+    /// Reconciles a checked connector replacement, including dependent edges.
+    /// Topic endpoints and sheet-wide resource budgets are checked by the sheet.
+    pub fn preview_reconnect_with_validator(
+        &self,
+        object: &CanvasObject,
+        validate: impl FnOnce(&SceneEditContext<'_, '_>) -> Result<(), String>,
+    ) -> Result<CanvasLayer, String> {
+        self.require_object(object.id)?;
+        self.require_unlocked_path(object.id)?;
+        let original = &self.canvas.objects[self.objects[&object.id]];
+        let (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after)) =
+            (&original.kind, &object.kind)
+        else {
+            return Err("only connectors can be reconnected".into());
+        };
+        if object.group != original.group || object.locked != original.locked {
+            return Err("reconnection cannot change group or lock state".into());
+        }
+        if self.parents.contains_key(&object.id) && object.band != original.band {
+            return Err("changing paint bands of scene members is not supported yet".into());
+        }
+        let order = self.preorder();
+        let mut canvas = self.stored_canvas();
+        *canvas
+            .object_mut(object.id)
+            .ok_or("scene connector not found")? = object.clone();
+        let mut candidate = SceneHierarchy::from_canvas(&canvas)?;
+        let reconnected = (before.from != after.from || before.to != after.to).then_some(object.id);
+        let changes =
+            candidate.reconcile_edge_parents(self, &HashSet::new(), reconnected, &order)?;
+        candidate.validate_topology()?;
+        let mut affected_set: HashSet<_> = changes.iter().map(|change| change.object).collect();
+        affected_set.insert(object.id);
+        let affected: Vec<_> = order
+            .into_iter()
+            .filter(|id| affected_set.contains(id))
+            .collect();
+        let geometry = candidate.stored_canvas();
+        validate(&SceneEditContext {
+            kind: SceneEditKind::Reconnect { object: object.id },
+            before: self,
+            after: &candidate,
+            geometry: &geometry,
+            selection: &[object.id],
+            affected: &affected,
+            edge_parent_changes: &changes,
+        })?;
+        Ok(geometry)
     }
 
     fn set_parent(&mut self, id: CanvasObjectId, parent: Option<CanvasObjectId>) {
@@ -461,9 +602,10 @@ impl<'a> SceneHierarchy<'a> {
         &mut self,
         before: &Self,
         carried: &HashSet<CanvasObjectId>,
+        reconnected: Option<CanvasObjectId>,
         order: &[CanvasObjectId],
     ) -> Result<Vec<SceneParentChange>, String> {
-        if carried.is_empty() {
+        if carried.is_empty() && reconnected.is_none() {
             return Ok(Vec::new());
         }
         let mut affected = carried.clone();
@@ -473,9 +615,10 @@ impl<'a> SceneHierarchy<'a> {
             let CanvasObjectKind::Connector(connector) = &object.kind else {
                 continue;
             };
-            if ![connector.from, connector.to]
-                .into_iter()
-                .any(|end| matches!(end, Endpoint::Object(id) if affected.contains(&id)))
+            if reconnected != Some(object.id)
+                && ![connector.from, connector.to]
+                    .into_iter()
+                    .any(|end| matches!(end, Endpoint::Object(id) if affected.contains(&id)))
             {
                 continue;
             }

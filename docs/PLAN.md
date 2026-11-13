@@ -33,10 +33,15 @@ bounded validation, ordered traversal, reparent previews and deduplicated moveme
 previews in `thinoda-core`. That checkpoint did not enter saved documents or live
 editor commands. The next command-contract checkpoint added stable reparent insertion,
 affected-edge ownership reconciliation and a shared binding-validation preview
-hook. The current persistence checkpoint adds object-only free containers to
+hook. The persistence checkpoint added object-only free containers to
 the core model, native v27 and scene-aware clipboard/recovery/XMind gates,
 subtree move/delete/copy and history integration. Unsafe editable exports are
-refused rather than flattened. This is partial SC1, not a released container UI:
+refused rather than flattened. After merging the latest develop stencil work,
+the next checkpoint adds sibling/band-aware paint ordering and endpoint
+reconnection with dependent-edge ownership reconciliation. Existing board
+controls use those commands, with undo/redo and headless hit-test/drag coverage.
+These changes need no additional saved fields or format version.
+This is partial SC1, not a released container UI:
 collapse, headers/stack layout, card occurrences, remaining command/binding
 integration, accessibility and semantic authoring remain open; see the
 checkpoints in SCENE-CONTAINERS.md.

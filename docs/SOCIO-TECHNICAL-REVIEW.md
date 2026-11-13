@@ -342,3 +342,61 @@ thinoda-platform` passed 1,477 tests across 67 suites, with 10 ignored. Formatti
 affected-package clippy (`--all-targets -- -D warnings`) and builds passed;
 `cargo check --workspace` also passed. These checks cover model/transport
 integration, not browser/native UI or reference-renderer acceptance.
+
+## 11. Live hierarchy command checkpoint critique
+
+**Implemented:** latest develop stencil changes merged into this worktree;
+scene-aware sibling paint commands and endpoint reconnection now replace two
+temporary refusals. Existing document/canvas actions consume the shared core,
+without new shape variants, stored fields or an independent ownership solver.
+
+**Rubber-duck questions and dispositions:**
+
+- Does bring-to-front flatten a nested lane? No. Only selected structural roots
+  reorder among siblings in the same parent/band. Their descendants retain their
+  geometry, internal order and locks; overlapping selections are deduplicated.
+- Can a selection jump between parents or paint bands? No. Each sibling/band
+  sequence is independent. A related audit also closed the generic-object-update
+  bypass of the existing hierarchy-member band-change refusal.
+- Can reconnecting an edge leave dependent edges with stale owners? The edited
+  edge is explicitly seeded into the shared dependency solver. Owner changes
+  propagate to dependents; unchanged owners do not normalize unrelated imported
+  edges. Both free/topic terminals remain attached to their real identities.
+- Will reversed dependency and paint order change rendering unpredictably?
+  Solving and insertion remain separate. Changed owners append edges in prior
+  traversal order, even when a dependent is painted before its attachment.
+- Does reconnection translate manual controls or rewrite fixed ports? No.
+  The checked object replacement is retained; induced ownership changes leave
+  dependent objects untouched. Headless drag coverage also exercises existing
+  fixed attachment controls rather than only calling a core helper.
+- Can a locked consequence or deep target produce a partial edit? Old/new owner
+  ancestry, edited/dependent edge locks, endpoint validity, connector cycles and
+  final depth all gate assignment. A maximum-depth case rejects the induced
+  33rd link, and document history restores the complete candidate in one step.
+- Can binding validation inspect stale stored metadata? The read-only geometry
+  context now agrees with the proposed tree/order for reparent, reorder and
+  reconnect. A rejecting validator runs once and commits nothing. This remains
+  a preview interface, not the complete semantic confirmation workflow.
+- Do zero-change terminal edits normalize imported parents? No. Changing only
+  labels/ports does not trigger endpoint-owner reconciliation. A regression
+  preserves intentionally noncanonical imported ownership.
+- Is this only a model-level proxy for the UI? Headless canvas cases verify
+  actual overlap hit order, fixed endpoint dragging across containers and
+  undo/redo. They do not establish native/browser/device acceptance or accessible
+  containment navigation.
+- Does this complete socio-technical support? No. Collapse, layout/header
+  policies, containment navigation, structural draw.io fidelity, semantic
+  persistence/authoring and Software examples are still outstanding. The
+  20,000-object fanout verifies bounded behavior, not a measured latency gate.
+
+**Critique:** existing board operations can now consume the saved hierarchy
+without substituting flat behavior or a second solver. The remaining work is
+the declared scene/semantic authoring stack; existing stencil expansion alone
+must not be presented as socio-technical modeling. This is an author critique,
+not independent review or release acceptance.
+
+**Validation evidence:** core regression suites passed 623 tests; the targeted
+canvas hierarchy filter passed 3 headless tests; IO/platform suites passed 879
+tests with 10 ignored. Formatting, core/canvas clippy (`--all-targets -- -D
+warnings`), core/canvas builds and `cargo check --workspace` passed. No live
+browser, native-device or draw.io reference-renderer acceptance is claimed.

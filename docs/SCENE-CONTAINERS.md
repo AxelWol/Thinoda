@@ -471,6 +471,52 @@ open. Later stored policies need their own compatible version decision; v27
 readers do not silently accept future scene fields. The Software starter group
 is planned for STC3/STC4, after supported semantic authoring, not shipped here.
 
+### 5.4 Live command checkpoint: sibling ordering and reconnection
+
+After integrating develop's newer data-driven stencil support, existing paint
+commands now operate on scene sibling lists rather than flattening the canvas.
+Front/back and forward/backward preserve selection order within each parent
+and paint band. Selected descendants of a selected ancestor stay in that
+ancestor's unit; child order, geometry, locks and stored ownership do not change.
+Selections spanning parents are handled independently. This supersedes the
+scene paint-order refusal recorded in the previous checkpoint.
+
+Existing connector endpoint editing now reconciles the edited edge's owner and
+any dependent connector owners in one candidate. The same bounded dependency
+solver used by reparenting computes nearest common containers; changed edges
+append to their new siblings in **prior traversal order**, not solver order.
+Affected old/new ancestry and induced external-edge locks can reject the edit.
+Final depth validation catches a 33rd parent link. Cyclic/missing object targets
+are rejected, while free/topic ends remain their real endpoints and contribute
+the layer. Unrelated imported owners and unchanged-terminal style edits are not
+silently normalized. Manual controls, labels, fixed ports and dependent edge
+geometry remain unchanged unless the caller explicitly edits them.
+
+Reorder and reconnect previews expose one reconciled read-only binding context
+and permit one-shot rejection. Reparent's geometry context now also contains
+the final stored ancestry/order instead of only unchanged object geometry.
+Existing `Document`/canvas actions provide one undo step per successful paint
+or endpoint operation. Direct generic object editing can no longer bypass the
+still-unsupported hierarchy-member band-change guard.
+
+Core fixtures cover nested selections, multiple parents/bands, stable selected
+blocks, inherited locks, reversed connector dependency/paint order, real free
+and topic attachments, validator rejection, depth overflow, history and native
+clipboard preservation. A maximum **20,000-object** reconnection fanout exercises
+all induced owner changes without recursive/fixed-point propagation. Headless
+canvas fixtures also click overlapping nested shapes after paint reordering and
+drag a fixed attachment across containers with a dependent connector, then
+undo/redo the complete change.
+
+**Remaining boundary:** no additional fields or format gate are required;
+the existing scene-aware transports retain these operations. There are still no
+new container-authoring controls, collapse state, layout/header policies or
+semantic graph. The shared validator is not yet a complete document-level
+confirmation protocol for every generic mutation. SC0/SC1 remain partial;
+SC2/SC3 and STC2-STC4, including the Software starters, remain open. Container
+rotation, conflicting legacy grouping, member band changes and category
+replacement remain explicit limitations.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,

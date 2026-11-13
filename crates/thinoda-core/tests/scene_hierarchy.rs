@@ -484,7 +484,15 @@ fn endpoint_reparent_reconciles_only_affected_edges_and_preserves_controls() {
                     },
                 ]
             );
-            assert_eq!(change.geometry, &before);
+            for object in &before.objects {
+                assert_eq!(change.geometry.object(object.id), Some(object));
+            }
+            assert_eq!(
+                SceneHierarchy::from_canvas(change.geometry)
+                    .unwrap()
+                    .preorder(),
+                change.after.preorder()
+            );
             Ok(())
         })
         .unwrap();
@@ -770,6 +778,45 @@ fn maximum_edge_fanout_reparents_atomically_in_stable_order() {
         Some(id(2))
     );
     assert_eq!(tree.parent(id(MAX_CANVAS_OBJECTS as u64)).unwrap(), None);
+}
+
+#[test]
+fn maximum_reconnect_fanout_reconciles_every_dependent_without_changing_controls() {
+    let mut source = layer(&[1, 2, 3, 4]);
+    source.objects.push(edge(5, 3, Endpoint::Object(id(3))));
+    for number in 6..=MAX_CANVAS_OBJECTS as u64 {
+        source
+            .objects
+            .push(edge(number, 5, Endpoint::Object(id(3))));
+    }
+    let mut parents = vec![(id(3), id(1)), (id(4), id(2))];
+    parents.extend((5..=MAX_CANVAS_OBJECTS as u64).map(|number| (id(number), id(1))));
+    let tree = SceneHierarchy::new(&source, &[id(1), id(2)], &parents).unwrap();
+    let mut replacement = source.object(id(5)).unwrap().clone();
+    let CanvasObjectKind::Connector(connector) = &mut replacement.kind else {
+        panic!("connector");
+    };
+    connector.to = Endpoint::Object(id(4));
+    let candidate = tree
+        .preview_reconnect_with_validator(&replacement, |context| {
+            assert_eq!(context.edge_parent_changes.len(), MAX_CANVAS_OBJECTS - 4);
+            assert_eq!(context.affected.len(), MAX_CANVAS_OBJECTS - 4);
+            Ok(())
+        })
+        .unwrap();
+    let after = SceneHierarchy::from_canvas(&candidate).unwrap();
+    assert_eq!(&after.roots()[..4], &[id(1), id(2), id(5), id(6)]);
+    assert_eq!(after.roots().len(), MAX_CANVAS_OBJECTS - 2);
+    assert_eq!(after.roots().last(), Some(&id(MAX_CANVAS_OBJECTS as u64)));
+    assert_eq!(after.parent(id(MAX_CANVAS_OBJECTS as u64)).unwrap(), None);
+    assert_eq!(
+        tree.parent(id(MAX_CANVAS_OBJECTS as u64)).unwrap(),
+        Some(id(1))
+    );
+    assert_eq!(
+        candidate.object(id(MAX_CANVAS_OBJECTS as u64)),
+        source.object(id(MAX_CANVAS_OBJECTS as u64))
+    );
 }
 
 #[test]
