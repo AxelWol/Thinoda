@@ -2072,9 +2072,14 @@ impl ThinodaApp {
                     } else {
                         parameter.label.as_str()
                     };
+                    let label = if stencil.is_installed_builtin() {
+                        crate::stencils::builtin_title(label)
+                    } else {
+                        label.to_owned()
+                    };
                     let changed = match parameter.kind {
                         thinoda_core::stencil::ParameterKind::Number => {
-                            widgets::property_field(ui, label, |ui| {
+                            widgets::property_field(ui, &label, |ui| {
                                 let mut drag = egui::DragValue::new(&mut value).speed(0.1);
                                 if let Some(unit) = &parameter.unit {
                                     drag = drag.suffix(unit);
@@ -2089,7 +2094,7 @@ impl ThinodaApp {
                                 .options
                                 .get(selected)
                                 .map_or("", String::as_str);
-                            widgets::property_field(ui, label, |ui| {
+                            widgets::property_field(ui, &label, |ui| {
                                 egui::ComboBox::from_id_salt(("stencil_parameter", id, name))
                                     .selected_text(selected_text)
                                     .show_ui(ui, |ui| {
@@ -2107,7 +2112,7 @@ impl ThinodaApp {
                         }
                         thinoda_core::stencil::ParameterKind::Toggle => {
                             let mut enabled = value != 0.0;
-                            let changed = ui.checkbox(&mut enabled, label).changed();
+                            let changed = ui.checkbox(&mut enabled, &label).changed();
                             value = if enabled { 1.0 } else { 0.0 };
                             changed
                         }
@@ -7727,6 +7732,75 @@ mod tests {
         assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
         harness.run_steps(2);
         assert!(current(harness.state()).stencil.is_some());
+    }
+
+    #[test]
+    fn software_header_properties_localize_the_installed_definition() {
+        let mut app = ThinodaApp::headless();
+        app.new_doc(thinoda_core::templates::instantiate("software-handoff"));
+        let root = *app
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .scene
+            .containers
+            .first()
+            .unwrap();
+        app.doc_mut().unwrap().view.select_board_object(root);
+        let previous = i18n::lang();
+        i18n::set_lang(i18n::Lang::De);
+        let mut h = container_properties_harness(app);
+        let found = h
+            .query_by_role_and_label(
+                egui::Role::SpinButton,
+                i18n::t_in(i18n::Lang::De, "Header height"),
+            )
+            .is_some();
+        i18n::set_lang(previous);
+        assert!(found);
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::SpinButton, "Header height")
+            .click();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.get_by_role_and_label(egui::Role::SpinButton, "Header height")
+            .type_text("55");
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(root)
+                .unwrap()
+                .stencil
+                .as_ref()
+                .unwrap()
+                .parameters
+                .get("headerHeight"),
+            Some(&55.0)
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(root)
+                .unwrap()
+                .stencil
+                .as_ref()
+                .unwrap()
+                .parameters
+                .is_empty()
+        );
     }
 
     #[test]

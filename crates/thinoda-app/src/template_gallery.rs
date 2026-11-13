@@ -310,7 +310,9 @@ mod tests {
                     );
                     let board = matches!(
                         info.category,
-                        TemplateCategory::Boards | TemplateCategory::Sankey
+                        TemplateCategory::Boards
+                            | TemplateCategory::Sankey
+                            | TemplateCategory::Software
                     );
                     assert_eq!(is_board(sheet), board, "{}", info.id);
                     let hidden = usize::from(sheet.root_mode == SheetRootMode::Hidden);
@@ -420,6 +422,10 @@ mod tests {
             .find(|info| info.category == TemplateCategory::Boards)
             .unwrap();
         assert!(bottom.contains(&last_board.id), "{bottom:?}");
+        let (software, _) = render(Some(TemplateCategory::Software), 0.0, &[]);
+        for id in ["software-handoff", "software-approval", "software-incident"] {
+            assert!(software.contains(&id), "{id}: {software:?}");
+        }
     }
 
     #[test]

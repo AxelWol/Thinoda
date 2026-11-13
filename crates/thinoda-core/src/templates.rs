@@ -4,12 +4,14 @@ use crate::model::{Sheet, Structure, Workbook};
 
 mod boards;
 mod sankey;
+mod software;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateCategory {
     Basic,
     /// Free-form boards: hidden central topic, frames, cards, shapes, several roots.
     Boards,
+    Software,
     Sankey,
     Knowledge,
     Meeting,
@@ -21,9 +23,10 @@ pub enum TemplateCategory {
 }
 
 impl TemplateCategory {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Basic,
         Self::Boards,
+        Self::Software,
         Self::Sankey,
         Self::Knowledge,
         Self::Meeting,
@@ -38,6 +41,7 @@ impl TemplateCategory {
         match self {
             Self::Basic => "Basic",
             Self::Boards => "Boards",
+            Self::Software => "Software",
             Self::Sankey => "Sankey diagrams",
             Self::Knowledge => "Knowledge management",
             Self::Meeting => "Meeting and planning",
@@ -64,6 +68,24 @@ pub const TEMPLATES: &[TemplateInfo] = &[
         id: "mind-map",
         category: TemplateCategory::Basic,
         name: "Mind Map",
+        structure: Structure::MapClockwise,
+    },
+    TemplateInfo {
+        id: "software-handoff",
+        category: TemplateCategory::Software,
+        name: "Human/service handoff",
+        structure: Structure::MapClockwise,
+    },
+    TemplateInfo {
+        id: "software-approval",
+        category: TemplateCategory::Software,
+        name: "Approval workflow",
+        structure: Structure::MapClockwise,
+    },
+    TemplateInfo {
+        id: "software-incident",
+        category: TemplateCategory::Software,
+        name: "Incident response",
         structure: Structure::MapClockwise,
     },
     sankey_info("sankey-blank", "Blank Sankey"),
@@ -318,6 +340,7 @@ const fn sankey_info(id: &'static str, name: &'static str) -> TemplateInfo {
 pub fn board_strings() -> Vec<&'static str> {
     let mut strings = boards::board_strings();
     strings.extend(sankey::strings());
+    strings.extend(software::strings());
     strings
 }
 
@@ -345,6 +368,9 @@ pub fn instantiate_localized(id: &str, tr: &dyn Fn(&'static str) -> String) -> W
         .unwrap_or(TEMPLATES[0]);
     if info.category == TemplateCategory::Sankey {
         return sankey::build(info.id, &tr(info.name), tr);
+    }
+    if info.category == TemplateCategory::Software {
+        return software::build(info.id, &tr(info.name), tr);
     }
     if let Some(board) = boards::find(info.id) {
         let mut wb = boards::build(board, &tr(info.name), tr);
@@ -734,6 +760,88 @@ mod tests {
                     .iter()
                     .any(|template| template.category == category)
             );
+        }
+    }
+
+    #[test]
+    fn software_examples_have_editable_nested_structure_and_clamped_json_headers() {
+        use crate::{CanvasObjectKind, Rect, Vec2, stencil_object};
+        for id in ["software-handoff", "software-approval", "software-incident"] {
+            let mut workbook = instantiate_localized(id, &|text| format!("translated:{text}"));
+            workbook.validate().unwrap();
+            let sheet = workbook.active_mut();
+            assert_eq!(sheet.root_mode, crate::SheetRootMode::Hidden);
+            assert_eq!(sheet.canvas.scene.containers.len(), 4);
+            let root = *sheet.canvas.scene.containers.first().unwrap();
+            let lane = sheet
+                .canvas
+                .scene
+                .parents
+                .iter()
+                .find_map(|(&child, &parent)| {
+                    (parent == root && sheet.canvas.scene.containers.contains(&child))
+                        .then_some(child)
+                })
+                .unwrap();
+            let child = sheet
+                .canvas
+                .scene
+                .parents
+                .iter()
+                .find_map(|(&child, &parent)| (parent == lane).then_some(child))
+                .unwrap();
+            let before = sheet.canvas.object(child).unwrap().clone();
+            let frame = sheet.canvas.object(lane).unwrap().rect;
+            let object = sheet.canvas.object_mut(lane).unwrap();
+            object
+                .stencil
+                .as_mut()
+                .unwrap()
+                .parameters
+                .insert("headerHeight".into(), 500.0);
+            let render = stencil_object::render(object).unwrap();
+            assert_eq!(
+                stencil_object::label_rect(object, &render).size.y,
+                frame.size.y
+            );
+            sheet
+                .set_canvas_container_collapsed(
+                    lane,
+                    Some(Rect::from_min_size(
+                        frame.min,
+                        Vec2::new(frame.size.x, 40.0),
+                    )),
+                )
+                .unwrap();
+            let object = sheet.canvas.object(lane).unwrap();
+            let render = stencil_object::render(object).unwrap();
+            assert_eq!(stencil_object::label_rect(object, &render).size.y, 40.0);
+            assert_eq!(sheet.canvas.object(child).unwrap(), &before);
+            assert!(sheet.canvas.objects.iter().all(|object| {
+                match &object.kind {
+                    CanvasObjectKind::Shape { label, .. } => label.starts_with("translated:"),
+                    CanvasObjectKind::Connector(connector) => {
+                        connector.label.is_empty() || connector.label.starts_with("translated:")
+                    }
+                    CanvasObjectKind::Ink(_) => false,
+                }
+            }));
+            workbook.validate().unwrap();
+            let layout = crate::layout_sheet(workbook.active(), &crate::ApproxMeasure, false);
+            let payload =
+                crate::clipboard::copy_board_selection(workbook.active(), &layout, &[], &[root])
+                    .unwrap()
+                    .unwrap();
+            let mut destination = Sheet::new("Copy", "");
+            crate::clipboard::paste_board_selection(
+                &mut destination,
+                &payload,
+                Vec2::new(120.0, 80.0),
+            )
+            .unwrap();
+            destination.validate().unwrap();
+            assert_eq!(destination.canvas.scene.containers.len(), 4);
+            assert_eq!(destination.canvas.scene.collapsed.len(), 1);
         }
     }
 

@@ -798,6 +798,37 @@ measured interaction budgets and full native/web acceptance remain open. The
 Software examples are still a separate pending task; this checkpoint does not
 mark any broad phase complete.
 
+### 5.11 Early Software starter examples
+
+The start-page Software group now offers human/service handoff, approval workflow
+and incident-response diagrams. These are native editable free-container scenes:
+one enclosing frame, three nested participant frames, activities and real object
+connectors, including approval branches and an incident-monitoring loop.
+Human/software labels describe peers; they are not persisted semantic bindings.
+A visible legend explicitly states the absence of typed semantics and automatic
+lane layout. This brings a useful structural subset forward from STC3/STC4
+without relaxing those phases' semantic lifecycle or release gates.
+
+The header frame is a versioned JSON definition in `thinoda.general` revision 2,
+interpreted by the existing bounded engine. Its editable header height clamps
+to the active frame, including a compact collapsed frame. The 36-unit drawing
+preset neither chooses compact bounds nor reflows/moves children. No renderer branch,
+new shape variant or second ownership model is introduced. It is a visual frame,
+not an automatic container marker, stack policy or bound participant type.
+Existing stencil entries retain their original ordering and definition hashes.
+Its plain-art draw.io mapping does not bypass the hierarchy export refusal.
+
+Locale catalogs cover the group, examples, activity/participant text, legend and
+header property. Installed-definition parameter localization uses the existing
+static catalog whitelist; imported custom labels remain literal. Gallery previews
+use the actual instantiated documents in every locale and appearance.
+
+Fixtures verify valid localized ancestry, header clamping before/after collapse,
+unchanged hidden geometry, undoable property editing, native save/reopen, shared
+SVG object geometry, subtree movement/undo and category preview visibility.
+No live native/browser or screen-reader acceptance is claimed. Typed semantic
+versions must be authored explicitly later, not inferred from existing labels.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,

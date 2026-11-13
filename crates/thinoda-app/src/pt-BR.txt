@@ -1,4 +1,8 @@
 # Regional wording overrides.
+On-call (human)|Plantão (pessoa)
+Monitor (software)|Monitoramento (software)
+Record approval|Registrar aprovação
+Detect incident|Detectar incidente
 Use as container|Usar como contêiner
 No parent container|Sem contêiner superior
 Change container state|Alterar estado do contêiner

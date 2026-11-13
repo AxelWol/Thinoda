@@ -4,7 +4,7 @@
   "dslVersion": 1,
   "id": "thinoda.general",
   "title": "Parametric shapes",
-  "revision": 1,
+  "revision": 2,
   "license": "MIT",
   "extensions": {
     "drawio.import": {
@@ -333,6 +333,35 @@
         {"parameter": "size", "label": "Cap height", "x": {"op": "mul", "args": ["w", 0.5]}, "y": {"op": "mul", "args": [{"op": "min", "args": ["size", {"op": "mul", "args": ["h", 0.5]}]}, 2]}, "value": {"op": "mul", "args": ["py", 0.5]}}
       ],
       "interchange": {"drawio": {"style": "shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;", "parameters": {"size": "size"}}}
+    },
+    {
+      "id": "header-frame",
+      "title": "Header frame",
+      "tags": ["frame", "header"],
+      "frame": {"w": 400, "h": 180, "units": "instance"},
+      "parameters": {
+        "headerHeight": {"label": "Header height", "default": 36, "min": 0, "max": 10000}
+      },
+      "background": {"op": "rect", "x": 0, "y": 0, "w": "w", "h": "h"},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "path", "commands": [
+          {"op": "move", "x": 0, "y": {"op": "min", "args": ["headerHeight", "h"]}},
+          {"op": "line", "x": "w", "y": {"op": "min", "args": ["headerHeight", "h"]}}
+        ]},
+        {"op": "stroke"}
+      ],
+      "label": {"x": 0, "y": 0, "w": "w", "h": {"op": "min", "args": ["headerHeight", "h"]}},
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "interchange": {"drawio": {
+        "style": "shape=swimlane;horizontal=1;html=1;",
+        "parameters": {"headerHeight": "startSize"}
+      }}
     }
   ]
 }

@@ -820,6 +820,8 @@ pub(crate) const BUILTIN_TITLES: &[&str] = &[
     "Arrow",
     "Bidirectional arrow",
     "Parametric shapes",
+    "Header frame",
+    "Header height",
     "Message",
     "Folder",
     "Note",

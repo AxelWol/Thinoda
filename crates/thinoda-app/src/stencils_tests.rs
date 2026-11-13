@@ -76,6 +76,7 @@ fn installed_packages_survive_reload_and_removal_does_not_change_pinned_objects(
     let mut panel = StencilPanel::default();
     assert_eq!(panel.ensure_loaded(Some(&paths)), None);
     let package = team_package();
+    let revision = package.revision;
     let (id, _) = panel.import_package(&package.to_json()).unwrap();
     panel.save(Some(&paths)).unwrap();
     let mut restored = StencilPanel::default();
@@ -130,7 +131,7 @@ fn installed_packages_survive_reload_and_removal_does_not_change_pinned_objects(
                 .unwrap()
                 .0
                 .revision,
-            1
+            revision
         );
     }
 }

@@ -331,7 +331,8 @@ expansion, do not fetch payload URLs, and do not execute API descriptions.
 
 ## 6. Phased execution and exit gates
 
-All phases below are **not started**. Estimates are relative complexity, not
+Shared scene foundations and unbound starter examples have started; the semantic
+lifecycle and release gates below are **not complete**. Estimates are relative complexity, not
 delivery promises. Assign one accountable implementer per phase; use existing
 test/CI tooling. Every phase ends with evidence, a written critique and an
 owned-path commit. Failure of an exit gate keeps that phase open.
@@ -377,6 +378,13 @@ undo, copy/paste and presentation export. Show a short legend and disclose the
 supported Thinoda profile rather than claiming BPMN conformance. Do not expose
 semantic examples before their data can be safely persisted.
 Do not advertise a context editor or BPMN compatibility before their gates pass.
+
+**Scheduling clarification:** the Software group and an explicitly unbound
+structural subset are now available earlier, using safely persisted free containers,
+connector endpoints and JSON header frames. A visible legend distinguishes them
+from the typed-semantic examples specified above. This does not complete STC3/STC4;
+typed versions, full lifecycle coverage and live native/web acceptance remain
+gated. Existing documents must not acquire bindings by interpreting these labels.
 
 ### V1 release checklist
 

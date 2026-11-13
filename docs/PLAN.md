@@ -81,11 +81,15 @@ headers/stack layout, card occurrences, production
 binding-policy installation/confirmation, full platform/accessibility acceptance
 and semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
 
-User-requested starter content: add a **Software** start-page template group
-with editable socio-technical examples for human/service handoffs, approval
-workflows and incident response. Build these on the supported shared hierarchy
-and semantic authoring model during STC3, and complete localized start-page
-integration and native/web acceptance in STC4; do not substitute flattened art.
+The user-requested **Software** start-page group now includes original editable
+human/service handoff, approval workflow and incident-response examples. This
+structural subset is brought forward from STC3/STC4: it uses the supported shared
+hierarchy, real connector endpoints and a shared JSON header-frame definition,
+not flattened art. All examples visibly state that labels are descriptive and
+typed semantics/automatic lane layout are not enabled. Their header height is
+editable through the existing bounded stencil interpreter.
+Typed versions and native/web release acceptance remain STC3/STC4 work; existing
+unbound diagrams must never be silently promoted by interpreting their labels.
 
 ## draw.io diagram support (2026-11-05)
 

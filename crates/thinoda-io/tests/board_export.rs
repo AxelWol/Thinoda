@@ -689,6 +689,30 @@ fn scene_editable_exports_and_drawio_clipboard_refuse_silent_flattening() {
 }
 
 #[test]
+fn software_starters_round_trip_native_and_export_shared_scene_geometry() {
+    for id in ["software-handoff", "software-approval", "software-incident"] {
+        let book = thinoda_core::templates::instantiate(id);
+        let native = export(&book, Format::Thinoda);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+        let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+        for object in &book.active().canvas.objects {
+            assert!(
+                svg.contains(&format!("id=\"object-{}\"", object.id)),
+                "{id}"
+            );
+        }
+        let mut document = thinoda_core::Document::new(book.clone());
+        let root = *book.active().canvas.scene.containers.first().unwrap();
+        document
+            .move_canvas_objects(&[root], Vec2::new(25.0, 40.0))
+            .unwrap();
+        document.workbook().validate().unwrap();
+        assert!(document.undo());
+        assert_eq!(document.workbook(), &book);
+    }
+}
+
+#[test]
 fn collapsed_containers_round_trip_with_capability_gates_and_hide_visual_content() {
     let mut book = scene_book();
     let pool = *book.active().canvas.scene.containers.first().unwrap();

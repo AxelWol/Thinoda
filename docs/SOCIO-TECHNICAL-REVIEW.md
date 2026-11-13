@@ -682,3 +682,40 @@ starter examples remain open. This is an author review, not independent review.
 the hierarchy/container/collapse suites passed 72. Affected all-target clippy with
 denied warnings, builds, wasm32 web compilation, workspace check, formatting and
 diff checks passed. No live native/browser acceptance is claimed.
+
+## 18. Early Software examples: author rubber-duck
+
+- Are these diagrams editable examples or pictures? They contain the same real
+  free-container ancestry, shapes and connector endpoints as user-authored scenes.
+  Moving a frame carries its contents; property editing, collapse and undo use
+  the shared model. Native save/reopen and SVG use that same structure.
+- Does bringing examples forward silently relax semantic gates? No. A visible,
+  localized legend says these are structural examples, not typed semantics or
+  automatic lane layout. STC3/STC4 still require typed authoring and acceptance.
+- Is this another hard-coded swimlane renderer? No. One JSON header-frame
+  definition supplies the outline, separator, label region and height parameter
+  through the existing bounded interpreter. Header height clamps to compact bounds.
+  No new Rust shape variant, layout engine or inferred participant binding exists.
+- Will old labels be reinterpreted when semantics arrive? They must not be.
+  Semantic promotion remains explicit, even for older starter documents.
+- Are revisions and existing library behavior preserved? The package revision is
+  incremented while existing definition order and hashes stay unchanged. Review
+  caught index-dependent fixtures when the new definition was initially prepended;
+  appending it preserves ordering. The pinned-library test now compares against
+  the original package revision instead of assuming revision one forever.
+- What does draw.io support mean here? The header has a plain-art mapping.
+  Structural diagrams remain protected by the existing hierarchy export refusal;
+  this does not assert SC3 interoperability or BPMN conformance.
+
+**Critique:** the examples make current capabilities discoverable without
+pretending to deliver a complete socio-technical editor. Their free placement and
+descriptive labels are intentional interim limits. Typed relationships,
+accountability/rationale, automatic layout, structural interchange, performance
+budgets and live platform/accessibility acceptance remain required.
+
+**Validation evidence:** core library regressions passed 422 tests; canvas passed
+551 (2 ignored); board export passed 68 (3 ignored); serialized app regressions
+passed 978 (2 ignored). Focused fixtures cover template copy/paste including
+collapsed state, localized header editing, native round trips and SVG geometry.
+Affected all-target clippy with denied warnings, builds, wasm32 web compilation,
+workspace check, formatting and diff checks passed.

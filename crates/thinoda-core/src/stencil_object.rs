@@ -141,7 +141,7 @@ impl StencilRef {
 
     /// Whether this pins a built-in definition that this build installs
     /// unchanged, so the sheet need not embed a copy of its closure.
-    pub(crate) fn is_installed_builtin(&self) -> bool {
+    pub fn is_installed_builtin(&self) -> bool {
         self.package_resource.is_none()
             && self.definition_hash.as_ref().is_some_and(|hash| {
                 builtin_definition_hashes().get(&(self.package.clone(), self.definition.clone()))

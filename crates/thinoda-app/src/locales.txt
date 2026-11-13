@@ -1,4 +1,31 @@
 # Clipboard feedback.
+Software|Software|Logiciel|Software|Software|Software|Software|Oprogramowanie
+Human/service handoff|Traspaso entre persona y servicio|Relais humain/service|Overdragelse mellem menneske og tjeneste|Overdracht tussen mens en dienst|Passagem entre pessoa e serviço|Passaggio persona/servizio|Przekazanie człowiek/usługa
+Approval workflow|Flujo de aprobación|Circuit d’approbation|Godkendelsesforløb|Goedkeuringsproces|Fluxo de aprovação|Flusso di approvazione|Obieg zatwierdzania
+Incident response|Respuesta a incidentes|Réponse aux incidents|Hændelseshåndtering|Incidentafhandeling|Resposta a incidentes|Risposta agli incidenti|Reagowanie na incydenty
+Customer (human)|Cliente (persona)|Client (humain)|Kunde (menneske)|Klant (mens)|Cliente (pessoa)|Cliente (persona)|Klient (człowiek)
+Support (human)|Soporte (persona)|Assistance (humain)|Support (menneske)|Ondersteuning (mens)|Suporte (pessoa)|Assistenza (persona)|Wsparcie (człowiek)
+Service/API (software)|Servicio/API (software)|Service/API (logiciel)|Tjeneste/API (software)|Dienst/API (software)|Serviço/API (software)|Servizio/API (software)|Usługa/API (oprogramowanie)
+Requester (human)|Solicitante (persona)|Demandeur (humain)|Ansøger (menneske)|Aanvrager (mens)|Requerente (pessoa)|Richiedente (persona)|Wnioskodawca (człowiek)
+Reviewer (human)|Revisor (persona)|Réviseur (humain)|Kontrollant (menneske)|Beoordelaar (mens)|Revisor (pessoa)|Revisore (persona)|Recenzent (człowiek)
+Approval API (software)|API de aprobación (software)|API d’approbation (logiciel)|Godkendelses-API (software)|Goedkeurings-API (software)|API de aprovação (software)|API di approvazione (software)|API zatwierdzania (oprogramowanie)
+Monitor (software)|Monitor (software)|Surveillance (logiciel)|Overvågning (software)|Bewaking (software)|Monitorização (software)|Monitoraggio (software)|Monitor (oprogramowanie)
+On-call (human)|Guardia (persona)|Astreinte (humain)|Vagt (menneske)|Wachtdienst (mens)|Prevenção (pessoa)|Reperibile (persona)|Dyżurny (człowiek)
+Recovery API (software)|API de recuperación (software)|API de rétablissement (logiciel)|Gendannelses-API (software)|Herstel-API (software)|API de recuperação (software)|API di ripristino (software)|API odzyskiwania (oprogramowanie)
+Submit request|Enviar solicitud|Soumettre la demande|Indsend anmodning|Aanvraag indienen|Enviar pedido|Invia richiesta|Wyślij żądanie
+Check request|Comprobar solicitud|Vérifier la demande|Kontrollér anmodning|Aanvraag controleren|Verificar pedido|Verifica richiesta|Sprawdź żądanie
+Fulfil request|Atender solicitud|Traiter la demande|Udfør anmodning|Aanvraag uitvoeren|Executar pedido|Soddisfa richiesta|Zrealizuj żądanie
+Receive result|Recibir resultado|Recevoir le résultat|Modtag resultat|Resultaat ontvangen|Receber resultado|Ricevi risultato|Odbierz wynik
+Approve request?|¿Aprobar solicitud?|Approuver la demande ?|Godkend anmodning?|Aanvraag goedkeuren?|Aprovar pedido?|Approvare la richiesta?|Zatwierdzić żądanie?
+Record approval|Registrar aprobación|Enregistrer l’approbation|Registrér godkendelse|Goedkeuring vastleggen|Registar aprovação|Registra approvazione|Zapisz zatwierdzenie
+Notify requester|Notificar al solicitante|Informer le demandeur|Underret ansøger|Aanvrager informeren|Notificar requerente|Notifica richiedente|Powiadom wnioskodawcę
+Detect incident|Detectar incidente|Détecter l’incident|Opdag hændelse|Incident detecteren|Detetar incidente|Rileva incidente|Wykryj incydent
+Assess impact|Evaluar impacto|Évaluer l’impact|Vurdér påvirkning|Impact beoordelen|Avaliar impacto|Valuta impatto|Oceń wpływ
+Restore service|Restaurar servicio|Rétablir le service|Gendan tjeneste|Dienst herstellen|Restaurar serviço|Ripristina servizio|Przywróć usługę
+Verify recovery|Verificar recuperación|Vérifier le rétablissement|Bekræft gendannelse|Herstel controleren|Verificar recuperação|Verifica ripristino|Sprawdź przywrócenie
+Header frame|Marco con cabecera|Cadre avec en-tête|Ramme med overskrift|Kader met koptekst|Moldura com cabeçalho|Cornice con intestazione|Ramka z nagłówkiem
+Header height|Altura de cabecera|Hauteur d’en-tête|Overskriftshøjde|Kophoogte|Altura do cabeçalho|Altezza intestazione|Wysokość nagłówka
+Editable structural example. Labels are descriptive; typed semantics and automatic lane layout are not enabled.|Ejemplo estructural editable. Las etiquetas son descriptivas; la semántica tipada y la disposición automática de carriles no están activadas.|Exemple structurel modifiable. Les libellés sont descriptifs ; la sémantique typée et la disposition automatique des couloirs ne sont pas activées.|Redigerbart strukturelt eksempel. Etiketter er beskrivende; typet semantik og automatisk banelayout er ikke aktiveret.|Bewerkbaar structureel voorbeeld. Labels zijn beschrijvend; getypeerde semantiek en automatische baanindeling zijn niet ingeschakeld.|Exemplo estrutural editável. As legendas são descritivas; a semântica tipada e a disposição automática das pistas não estão ativadas.|Esempio strutturale modificabile. Le etichette sono descrittive; la semantica tipizzata e la disposizione automatica delle corsie non sono abilitate.|Edytowalny przykład strukturalny. Etykiety są opisowe; semantyka typowana i automatyczny układ torów nie są włączone.
 Use as container|Usar como contenedor|Utiliser comme conteneur|Brug som beholder|Als container gebruiken|Usar como contentor|Usa come contenitore|Użyj jako kontenera
 No parent container|Sin contenedor superior|Aucun conteneur parent|Ingen overordnet beholder|Geen bovenliggende container|Sem contentor superior|Nessun contenitore padre|Brak kontenera nadrzędnego
 Change container state|Cambiar estado del contenedor|Modifier l’état du conteneur|Skift beholderstatus|Containerstatus wijzigen|Alterar estado do contentor|Cambia stato del contenitore|Zmień stan kontenera
