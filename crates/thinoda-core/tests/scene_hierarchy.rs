@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use thinoda_core::board::{BoardMember, MAX_BOARD_COORDINATE, MAX_CANVAS_OBJECTS};
 use thinoda_core::scene_hierarchy::{
-    MAX_SCENE_DEPTH, SceneEditKind, SceneHierarchy, SceneParentChange,
+    MAX_SCENE_DEPTH, SceneEditKind, SceneHierarchy, SceneNavigation, SceneParentChange,
 };
 use thinoda_core::{
     CanvasConnector, CanvasLayer, CanvasObject, CanvasObjectId, CanvasObjectKind, Card, CardKind,
@@ -65,6 +65,113 @@ fn nested_traversal_preserves_sibling_order_and_deduplicates_descendants() {
     assert!(tree.children(id(3)).is_err());
     assert!(tree.descendant_closure(&[]).is_err());
     assert!(tree.descendant_closure(&[id(99)]).is_err());
+}
+
+#[test]
+fn containment_navigation_uses_stored_order_without_wrapping_or_hiding_locked_objects() {
+    use SceneNavigation::*;
+    let mut source = layer(&[4, 3, 1, 2, 5, 6]);
+    source
+        .objects
+        .iter_mut()
+        .find(|object| object.id == id(1))
+        .unwrap()
+        .locked = true;
+    let before = source.clone();
+    let tree = SceneHierarchy::new(
+        &source,
+        &[id(1), id(2), id(6)],
+        &[(id(2), id(1)), (id(3), id(2)), (id(4), id(1))],
+    )
+    .unwrap();
+    for (from, direction, expected) in [
+        (1, Parent, None),
+        (1, PreviousSibling, None),
+        (1, FirstChild, Some(4)),
+        (4, PreviousSibling, None),
+        (4, NextSibling, Some(2)),
+        (2, PreviousSibling, Some(4)),
+        (2, NextSibling, None),
+        (2, FirstChild, Some(3)),
+        (3, Parent, Some(2)),
+        (3, FirstChild, None),
+        (3, NextSibling, None),
+        (1, NextSibling, Some(5)),
+        (5, PreviousSibling, Some(1)),
+        (5, NextSibling, Some(6)),
+        (6, NextSibling, None),
+        (6, FirstChild, None),
+    ] {
+        assert_eq!(
+            tree.navigate(id(from), direction).unwrap(),
+            expected.map(id)
+        );
+    }
+    assert!(tree.navigate(id(99), Parent).is_err());
+    assert_eq!(source, before);
+}
+
+#[test]
+fn containment_navigation_follows_reparent_and_reorder_previews() {
+    let source = layer(&[4, 3, 1, 2]);
+    let tree = SceneHierarchy::new(
+        &source,
+        &[id(1), id(2)],
+        &[(id(2), id(1)), (id(3), id(2)), (id(4), id(1))],
+    )
+    .unwrap();
+    let moved = tree.preview_reparent(&[id(4)], Some(id(2))).unwrap();
+    assert_eq!(
+        moved.navigate(id(4), SceneNavigation::Parent).unwrap(),
+        Some(id(2))
+    );
+    assert_eq!(
+        moved.navigate(id(3), SceneNavigation::NextSibling).unwrap(),
+        Some(id(4))
+    );
+    let reordered = moved
+        .preview_reorder_with_validator(&[id(4)], thinoda_core::ZOrder::Back, |_| Ok(()))
+        .unwrap();
+    assert_eq!(
+        reordered
+            .navigate(id(2), SceneNavigation::FirstChild)
+            .unwrap(),
+        Some(id(4))
+    );
+    assert_eq!(
+        reordered
+            .navigate(id(3), SceneNavigation::PreviousSibling)
+            .unwrap(),
+        Some(id(4))
+    );
+    assert_eq!(
+        tree.navigate(id(4), SceneNavigation::Parent).unwrap(),
+        Some(id(1))
+    );
+}
+
+#[test]
+fn containment_navigation_supports_maximum_depth_and_layer_width() {
+    let source = layer(&(1..=MAX_CANVAS_OBJECTS as u64).collect::<Vec<_>>());
+    let containers: Vec<_> = (1..=MAX_SCENE_DEPTH as u64).map(id).collect();
+    let parents: Vec<_> = (1..=MAX_SCENE_DEPTH as u64)
+        .map(|parent| (id(parent + 1), id(parent)))
+        .collect();
+    let tree = SceneHierarchy::new(&source, &containers, &parents).unwrap();
+    assert_eq!(
+        tree.navigate(id(MAX_SCENE_DEPTH as u64 + 1), SceneNavigation::Parent)
+            .unwrap(),
+        Some(id(MAX_SCENE_DEPTH as u64))
+    );
+    assert_eq!(
+        tree.navigate(id(1), SceneNavigation::NextSibling).unwrap(),
+        Some(id(MAX_SCENE_DEPTH as u64 + 2))
+    );
+    assert_eq!(
+        tree.navigate(id(MAX_CANVAS_OBJECTS as u64), SceneNavigation::NextSibling)
+            .unwrap(),
+        None
+    );
 }
 
 #[test]

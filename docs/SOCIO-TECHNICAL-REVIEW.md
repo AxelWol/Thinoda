@@ -400,3 +400,55 @@ canvas hierarchy filter passed 3 headless tests; IO/platform suites passed 879
 tests with 10 ignored. Formatting, core/canvas clippy (`--all-targets -- -D
 warnings`), core/canvas builds and `cargo check --workspace` passed. No live
 browser, native-device or draw.io reference-renderer acceptance is claimed.
+
+## 12. Containment-navigation checkpoint: author critique
+
+**Implemented:** a shared read-only structural target resolver, canvas keyboard
+selection/reveal/focus, localized parent/child descriptions and inherited-lock
+announcements. Existing persisted hierarchy and identities remain authoritative.
+
+**Rubber-duck questions and dispositions:**
+
+- Does navigation confuse geometry, paint order or semantic responsibility?
+  No. It uses stored immediate sibling order and the single structural parent
+  tree. It does not infer a process, lane performer or participant binding.
+- Can a leaf, empty container or layer boundary wrap unexpectedly? No. Missing
+  neighbors are no-ops, while an unknown source identity is an explicit error.
+  Layer roots remain object siblings; the layer itself is not a selectable
+  surrogate topic.
+- Does selecting a locked child imply permission to edit it? No. Locked objects
+  remain navigable. Accessibility now follows indexed ancestry to announce
+  inherited locks; existing mutation guards still enforce them.
+- Can focus jump without revealing offscreen content? Navigation uses the
+  existing selection/reveal path and requests the corresponding real AccessKit
+  item. Headless coverage traverses an offscreen sibling and back.
+- Can navigation dirty the workbook or destroy pending redo? It never enters
+  the document transaction path. Tests retain the exact workbook/state ID,
+  clean state, empty undo stack and an existing redo entry across navigation.
+- Do the shortcuts steal arrows, Home/End or Tab? No. Explicit Alt+Page keys
+  avoid those existing bindings. Exact event modifiers and focus ownership
+  exclude additional Command/Ctrl modifiers, focused controls, text editing,
+  flat boards and mixed/multiple selections.
+- Is the accessibility path quadratic on a large nested scene? Child counts
+  are built once per pass; lock checks use the object index and at most 32
+  ancestor links. Navigation constructs a validated bounded hierarchy only
+  when its chord is actually handled. This is bounded algorithmic work, not
+  a measured interactive latency guarantee.
+- Are these buttons now a complete accessible hierarchy? No. Localized labels
+  and descriptions improve discovery but preserve the current flat focusable
+  button structure and spatial Tab order. Native screen-reader behavior,
+  browser/platform shortcuts and future collapse semantics still need dedicated
+  acceptance.
+
+**Critique:** this closes the first keyboard containment slice without adding
+document state or parallel ownership. It does not deliver container authoring,
+collapse, layout/header policies, structural draw.io fidelity, semantic
+authoring or Software templates. Those remain explicit planned work.
+This is an author critique, not another independent review or release approval.
+
+**Validation evidence:** the final core/canvas regression run passed 1,239 tests
+with 2 ignored. The serialized app library run passed 971 tests with 2 ignored;
+the board-catalog coverage was also rerun against the final canvas changes.
+Formatting, affected-package clippy (`--all-targets -- -D warnings`),
+core/canvas/app builds and `cargo check --workspace` passed. No native
+screen-reader, live browser or device acceptance is claimed.

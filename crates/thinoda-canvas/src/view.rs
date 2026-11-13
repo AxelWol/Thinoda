@@ -122,6 +122,10 @@ pub struct BoardLabels {
     pub image: String,
     /// Generic fallback when a shape has no entry in `shape_names`.
     pub shape: String,
+    pub container: String,
+    pub parent_container: String,
+    pub contained_objects: String,
+    pub containment_hint: String,
     /// Localized, human-readable names keyed by the core shape kind.
     pub shape_names: std::collections::HashMap<ShapeKind, String>,
     pub connector: String,
@@ -164,6 +168,10 @@ impl Default for BoardLabels {
             text: "Text card".into(),
             image: "Image card".into(),
             shape: "Shape".into(),
+            container: "Container".into(),
+            parent_container: "Parent container".into(),
+            contained_objects: "Contained objects".into(),
+            containment_hint: "Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.".into(),
             shape_names: ShapeKind::ALL
                 .into_iter()
                 .map(|shape| {

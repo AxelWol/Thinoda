@@ -11,6 +11,7 @@ use thinoda_core::{
         rotate_around, rotated_corners, shape_geometry_with_style,
     },
     scene::{SceneGeometry, SceneItem},
+    scene_hierarchy::{MAX_SCENE_DEPTH, SceneHierarchy, SceneNavigation},
 };
 
 #[derive(Default)]
@@ -4555,6 +4556,7 @@ struct AccessibilityIndex<'a> {
     card_states: HashMap<TopicId, &'a CanvasCardState>,
     floating: HashSet<TopicId>,
     locked_groups: HashSet<CanvasGroupId>,
+    child_counts: HashMap<CanvasObjectId, usize>,
     duplicate_ids: bool,
 }
 
@@ -4605,12 +4607,17 @@ impl<'a> AccessibilityIndex<'a> {
                 locked_groups.insert(group);
             }
         }
+        let mut child_counts = HashMap::new();
+        for parent in sheet.canvas.scene.parents.values() {
+            *child_counts.entry(*parent).or_insert(0) += 1;
+        }
         Self {
             objects,
             zones,
             card_states,
             floating,
             locked_groups,
+            child_counts,
             duplicate_ids,
         }
     }
@@ -4619,9 +4626,27 @@ impl<'a> AccessibilityIndex<'a> {
         if self.duplicate_ids {
             return board_actions::member_is_movable(sheet, BoardMember::Object(object.id));
         }
-        object
-            .group
-            .map_or(!object.locked, |group| !self.locked_groups.contains(&group))
+        let mut current = object;
+        for depth in 0..=MAX_SCENE_DEPTH {
+            if current.locked
+                || current
+                    .group
+                    .is_some_and(|group| self.locked_groups.contains(&group))
+            {
+                return false;
+            }
+            let Some(parent) = sheet.canvas.scene.parents.get(&current.id) else {
+                return true;
+            };
+            if depth == MAX_SCENE_DEPTH || !sheet.canvas.scene.containers.contains(parent) {
+                return false;
+            }
+            let Some(object) = self.objects.get(parent) else {
+                return false;
+            };
+            current = object;
+        }
+        false
     }
 
     fn topic_is_unlocked(&self, sheet: &Sheet, id: TopicId) -> bool {
@@ -4728,7 +4753,11 @@ fn item_label(
         }
         SceneId::Object(id) => {
             let object = index.objects.get(&id)?;
-            let kind = object_kind_name(view, &object.kind);
+            let kind = if sheet.canvas.scene.containers.contains(&id) {
+                view.board_labels.container.as_str()
+            } else {
+                object_kind_name(view, &object.kind)
+            };
             let description = if !object.alt_text.is_empty() {
                 object.alt_text.as_str()
             } else {
@@ -4811,6 +4840,41 @@ pub(super) fn accessibility(ui: &mut Ui, view: &mut MapView, sheet: &Sheet, scen
         let response = ui.interact(rect, item_id(id), Sense::focusable_noninteractive());
         response
             .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &label));
+        if let SceneId::Object(id) = id
+            && !sheet.canvas.scene.is_empty()
+        {
+            let mut description = Vec::new();
+            if let Some(parent) = sheet.canvas.scene.parents.get(&id) {
+                description.push(format!(
+                    "{}: {}",
+                    view.board_labels.parent_container,
+                    endpoint_description(sheet, view, &index, Endpoint::Object(*parent))
+                ));
+            }
+            if sheet.canvas.scene.containers.contains(&id) {
+                description.push(format!(
+                    "{}: {}",
+                    view.board_labels.contained_objects,
+                    index.child_counts.get(&id).copied().unwrap_or(0)
+                ));
+            }
+            if (selected || response.has_focus())
+                && view.board_selection.len() == 1
+                && view.selection.is_empty()
+                && view.selected_object.is_none()
+                && matches!(
+                    view.board_tool,
+                    BoardTool::Select | BoardTool::Hand | BoardTool::Shape(_)
+                )
+            {
+                description.push(view.board_labels.containment_hint.clone());
+            }
+            if !description.is_empty() {
+                ui.ctx().accesskit_node_builder(response.id, |node| {
+                    node.set_description(description.join(". "));
+                });
+            }
+        }
         if response.gained_focus() && focus_after_duplicate != Some(id) {
             select_item(view, sheet, id);
             selected_topics.clear();
@@ -4910,6 +4974,77 @@ fn board_run(doc: &mut Document, view: &mut MapView, action: BoardAction, out: &
     }
 }
 
+fn containment_navigation(
+    ui: &Ui,
+    sheet: &Sheet,
+    view: &mut MapView,
+    out: &mut CanvasOutput,
+) -> bool {
+    let [source] = view.board_selection.as_slice() else {
+        return false;
+    };
+    let source = *source;
+    if sheet.canvas.scene.is_empty() || !view.selection.is_empty() || view.selected_object.is_some()
+    {
+        return false;
+    }
+    let focused = ui.ctx().memory(|memory| memory.focused());
+    if focused.is_some_and(|id| id != MapCanvas::id() && id != item_id(SceneId::Object(source))) {
+        return false;
+    }
+    let direction = ui.input_mut(|input| {
+        let (position, direction) =
+            input
+                .events
+                .iter()
+                .enumerate()
+                .find_map(|(position, event)| {
+                    let egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } = event
+                    else {
+                        return None;
+                    };
+                    let direction = match (*modifiers, *key) {
+                        (Modifiers::ALT, Key::PageUp) => SceneNavigation::Parent,
+                        (Modifiers::ALT, Key::PageDown) => SceneNavigation::FirstChild,
+                        (modifiers, Key::PageUp)
+                            if modifiers == Modifiers::ALT.plus(Modifiers::SHIFT) =>
+                        {
+                            SceneNavigation::PreviousSibling
+                        }
+                        (modifiers, Key::PageDown)
+                            if modifiers == Modifiers::ALT.plus(Modifiers::SHIFT) =>
+                        {
+                            SceneNavigation::NextSibling
+                        }
+                        _ => return None,
+                    };
+                    Some((position, direction))
+                })?;
+        input.events.remove(position);
+        Some(direction)
+    });
+    let Some(direction) = direction else {
+        return false;
+    };
+    match SceneHierarchy::from_canvas(&sheet.canvas)
+        .and_then(|hierarchy| hierarchy.navigate(source, direction))
+    {
+        Ok(Some(target)) => {
+            select_item(view, sheet, SceneId::Object(target));
+            ui.ctx()
+                .memory_mut(|memory| memory.request_focus(item_id(SceneId::Object(target))));
+        }
+        Ok(None) => {}
+        Err(error) => out.error = Some(EditError::Invalid(error)),
+    }
+    true
+}
+
 /// Returns true when a board-specific key was consumed.
 pub(super) fn keyboard(
     ui: &Ui,
@@ -4980,6 +5115,10 @@ pub(super) fn keyboard(
             return true;
         }
         return false;
+    }
+
+    if containment_navigation(ui, doc.sheet(), view, out) {
+        return true;
     }
 
     let shift_cmd = Modifiers::COMMAND.plus(Modifiers::SHIFT);

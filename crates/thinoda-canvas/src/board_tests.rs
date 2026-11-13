@@ -2957,6 +2957,261 @@ fn scene_selection_multiselect_lock_z_order_and_undo() {
 }
 
 #[test]
+fn hierarchy_keyboard_navigation_selects_reveals_and_focuses_without_editing_history() {
+    let (mut sheet, [pool, lane, sublane, first, second, outside, empty]) = containment_board();
+    sheet.canvas.object_mut(pool).unwrap().locked = true;
+    let mut h = harness(sheet);
+    h.state_mut()
+        .doc
+        .edit_sheet("Future edit", |sheet| {
+            sheet.canvas.objects[0].alt_text = "Future".into();
+            Ok(())
+        })
+        .unwrap();
+    assert!(h.state_mut().doc.undo());
+    h.run_steps(2);
+    h.get_by_label("Container: Pool, Locked").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    let state_id = h.state().doc.state_id();
+    let siblings = Modifiers::ALT.plus(Modifiers::SHIFT);
+    for (modifiers, key, expected, label) in [
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            pool,
+            "Container: Pool, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            lane,
+            "Container: Lane, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageUp,
+            lane,
+            "Container: Lane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            sublane,
+            "Container: Sublane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageUp,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageDown,
+            second,
+            "Rectangle: Second, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageDown,
+            second,
+            "Rectangle: Second, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageUp,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            sublane,
+            "Container: Sublane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            lane,
+            "Container: Lane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            pool,
+            "Container: Pool, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageDown,
+            outside,
+            "Rectangle: Outside, Selected",
+        ),
+        (siblings, Key::PageDown, empty, "Container: Empty, Selected"),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            empty,
+            "Container: Empty, Selected",
+        ),
+        (siblings, Key::PageDown, empty, "Container: Empty, Selected"),
+    ] {
+        h.key_press_modifiers(modifiers, key);
+        h.run_steps(3);
+        assert_eq!(h.state().view.board_selection, vec![expected], "{label}");
+        let node = h.get_by_label(label);
+        assert!(node.is_focused(), "{label}");
+        assert!(
+            node.rect().intersects(h.state().view.canvas_rect),
+            "{label}"
+        );
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert_eq!(h.state().doc.state_id(), state_id);
+        assert!(!h.state().doc.is_dirty());
+        assert!(!h.state().doc.can_undo());
+        assert!(h.state().doc.can_redo());
+    }
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.sheet().canvas.objects[0].alt_text, "Future");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+fn containment_board() -> (Sheet, [CanvasObjectId; 7]) {
+    let mut sheet = board();
+    let pool = shape(&mut sheet, -200.0, 0.0, "Pool");
+    let lane = shape(&mut sheet, -100.0, 0.0, "Lane");
+    let sublane = shape(&mut sheet, 0.0, 0.0, "Sublane");
+    let first = shape(&mut sheet, 200.0, 0.0, "First");
+    let second = shape(&mut sheet, -3500.0, 0.0, "Second");
+    let outside = shape(&mut sheet, 400.0, 0.0, "Outside");
+    let empty = shape(&mut sheet, 600.0, 0.0, "Empty");
+    for container in [pool, lane, sublane, empty] {
+        sheet.set_canvas_container(container, true).unwrap();
+    }
+    sheet.reparent_canvas_objects(&[lane], Some(pool)).unwrap();
+    sheet
+        .reparent_canvas_objects(&[sublane], Some(lane))
+        .unwrap();
+    sheet
+        .reparent_canvas_objects(&[first, second], Some(sublane))
+        .unwrap();
+    (sheet, [pool, lane, sublane, first, second, outside, empty])
+}
+
+#[test]
+fn hierarchy_accessibility_describes_containment_and_inherited_locks_with_localized_labels() {
+    let (mut sheet, [pool, _, _, first, second, _, _]) = containment_board();
+    sheet.canvas.object_mut(pool).unwrap().locked = true;
+    let mut h = harness(sheet);
+    let labels = &mut h.state_mut().view.board_labels;
+    labels.container = "Box".into();
+    labels.parent_container = "Within".into();
+    labels.contained_objects = "Members".into();
+    labels.containment_hint = "Navigation help".into();
+    h.run_steps(2);
+    let sublane = h.get_by_label("Box: Sublane, Locked");
+    let description = sublane.accesskit_node().description().unwrap();
+    assert!(description.contains("Within: Lane"));
+    assert!(description.contains("Members: 2"));
+    assert_eq!(
+        h.get_by_label("Box: Empty").accesskit_node().description(),
+        Some("Members: 0".into())
+    );
+    h.get_by_label("Rectangle: First, Locked").focus();
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    let selected = h.get_by_label("Rectangle: First, Selected, Locked");
+    let description = selected.accesskit_node().description().unwrap();
+    assert!(description.contains("Within: Sublane"));
+    assert!(description.contains("Navigation help"));
+    assert!(h.query_by_label("Resize board item").is_none());
+    h.state_mut().view.board_selection = vec![first, second];
+    h.run_steps(2);
+    assert!(
+        !h.get_by_label("Rectangle: First, Selected, Locked")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Navigation help")
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn flat_boards_do_not_activate_containment_shortcuts() {
+    let mut sheet = board();
+    let first = shape(&mut sheet, 0.0, 0.0, "First");
+    shape(&mut sheet, 200.0, 0.0, "Second");
+    let mut h = harness(sheet);
+    h.get_by_label("Rectangle: First").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    for modifiers in [Modifiers::ALT, Modifiers::ALT.plus(Modifiers::SHIFT)] {
+        for key in [Key::PageUp, Key::PageDown] {
+            h.key_press_modifiers(modifiers, key);
+            h.run_steps(2);
+            assert_eq!(h.state().view.board_selection, vec![first]);
+            assert!(h.get_by_label("Rectangle: First, Selected").is_focused());
+            assert_eq!(h.state().doc.workbook(), &before);
+        }
+    }
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn hierarchy_navigation_does_not_steal_controls_text_editing_or_multi_selection() {
+    let (sheet, [_, _, _, first, second, _, _]) = containment_board();
+    let mut h = harness(sheet);
+    h.get_by_label("Rectangle: First").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    h.get_by_label("Resize board item").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT, Key::PageUp);
+    h.run_steps(2);
+    assert!(h.get_by_label("Resize board item").is_focused());
+    assert_eq!(h.state().view.board_selection, vec![first]);
+
+    h.get_by_label("Rectangle: First, Selected").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT.plus(Modifiers::COMMAND), Key::PageUp);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    h.state_mut().view.board_selection = vec![first, second];
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT, Key::PageUp);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first, second]);
+
+    h.state_mut().view.board_selection = vec![first];
+    h.run_steps(2);
+    h.key_press(Key::F2);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(first));
+    h.key_press_modifiers(Modifiers::ALT, Key::PageUp);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(first));
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn hierarchy_paint_action_updates_hit_order_inside_a_container_and_undoes_once() {
     let mut sheet = board();
     let pool = sheet

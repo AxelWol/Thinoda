@@ -492,6 +492,10 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.text = t("Text card").into();
     labels.image = t("Image card").into();
     labels.shape = t("Shape").into();
+    labels.container = t("Container").into();
+    labels.parent_container = t("Parent container").into();
+    labels.contained_objects = t("Contained objects").into();
+    labels.containment_hint = t("Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.").into();
     labels.shape_names = ShapeKind::ALL
         .into_iter()
         .map(|shape| (shape, t(shape_name(shape)).into()))

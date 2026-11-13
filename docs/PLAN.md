@@ -40,10 +40,15 @@ refused rather than flattened. After merging the latest develop stencil work,
 the next checkpoint adds sibling/band-aware paint ordering and endpoint
 reconnection with dependent-edge ownership reconciliation. Existing board
 controls use those commands, with undo/redo and headless hit-test/drag coverage.
+The containment-navigation checkpoint adds read-only parent/first-child and
+previous/next-sibling keyboard selection, reveal and focus, with localized
+containment descriptions and inherited-lock announcements. Boundaries do not
+wrap, and navigation preserves history/redo. Existing flat-board/map shortcuts,
+text editing and focused controls retain ownership.
 These changes need no additional saved fields or format version.
 This is partial SC1, not a released container UI:
 collapse, headers/stack layout, card occurrences, remaining command/binding
-integration, accessibility and semantic authoring remain open; see the
+integration, full platform/accessibility acceptance and semantic authoring remain open; see the
 checkpoints in SCENE-CONTAINERS.md.
 
 User-requested starter content: add a **Software** start-page template group

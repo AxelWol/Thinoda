@@ -517,6 +517,55 @@ SC2/SC3 and STC2-STC4, including the Software starters, remain open. Container
 rotation, conflicting legacy grouping, member band changes and category
 replacement remain explicit limitations.
 
+### 5.5 Containment-navigation checkpoint
+
+The shared read-only resolver navigates parent, first child and previous/next
+sibling in stored order, including layer-root siblings. Leaves, empty containers
+and layer boundaries are no-ops; navigation never wraps or hides locked objects.
+Targets follow reparent/reorder previews without changing source data. The same
+32-parent-link and 20,000-object bounds apply.
+
+On a sheet with scene metadata, a single canvas-object selection supports:
+
+| Shortcut | Target |
+| --- | --- |
+| Alt+PageUp | Parent container |
+| Alt+PageDown | First immediate child |
+| Alt+Shift+PageUp | Previous sibling |
+| Alt+Shift+PageDown | Next sibling |
+
+These are selection/reveal/focus operations, not document commands. They do not
+allocate identifiers, change dirty state, add history or invalidate redo.
+Body/canvas focus is required; text editors, focused resize/endpoint/stencil
+controls, minimap, popups, active gestures and other tools retain keyboard
+ownership. Mixed/multiple selections do not activate these shortcuts. Legacy
+flat groups retain their whole-group selection behavior. Existing Tab spatial
+reading order, Home/End connection controls, map shortcuts and board Alt-arrow
+duplication/rotation are unchanged. Extra Command/Ctrl modifiers do not activate
+containment navigation.
+
+AccessKit labels distinguish marked containers from ordinary shapes and expose
+immediate child counts, parent names and applicable navigation help. Indexed,
+bounded ancestry checks now announce inherited locks without a linear canvas
+lookup per ancestor/object. Malformed or over-depth ancestry fails closed for
+mobility presentation. All application locales include the new labels/help.
+The focusable-button accessibility structure is retained; this is not yet a
+full accessibility tree exposing semantic participants or collapsed contents.
+
+Core fixtures cover ordered roots/children, no-wrap boundaries, locked
+descendants, unknown identities, derived edits and maximum depth/width.
+Headless keyboard fixtures verify actual selection/focus/reveal, offscreen
+siblings, unchanged saved/history/redo state, control/editor ownership,
+multiple selections, flat boards and localized containment/lock descriptions.
+Native screen-reader and browser shortcut acceptance remain release gates,
+not outcomes inferred from headless coverage.
+
+**Remaining boundary:** collapse, layout/header policies, full binding-aware
+document integration, structural draw.io fidelity, semantic authoring and the
+Software start-page examples remain open. No storage/version change is needed.
+SC0/SC1 are still partial; this checkpoint does not complete the socio-technical
+editor.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,

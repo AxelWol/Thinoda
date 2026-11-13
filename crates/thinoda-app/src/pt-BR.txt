@@ -999,6 +999,10 @@ Copy as draw.io|Copiar como draw.io
 Copied for draw.io; paste it into a diagram|Copiado para o draw.io; cole em um diagrama
 Pasted from draw.io; some content may have been omitted or simplified|Colado do draw.io; parte do conteúdo pode ter sido omitida ou simplificada
 Container frames omitted|Molduras de contêineres omitidas
+Container|Contêiner
+Parent container|Contêiner superior
+Contained objects|Objetos contidos
+Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.|Alt+PageUp: superior; Alt+PageDown: primeiro filho; Alt+Shift+PageUp/PageDown: irmão anterior/seguinte.
 Additional draw.io pages omitted|Páginas adicionais do draw.io omitidas
 The first draw.io page has no pasteable items; additional pages were not pasted.|A primeira página do draw.io não contém itens que possam ser colados; as páginas adicionais não foram coladas.
 The draw.io page has no pasteable items.|A página do draw.io não contém itens que possam ser colados.

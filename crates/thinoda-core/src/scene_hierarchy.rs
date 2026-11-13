@@ -16,6 +16,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 /// Maximum number of parent links from any object to its layer.
 pub const MAX_SCENE_DEPTH: usize = 32;
 
+/// Read-only containment navigation in stored sibling order, without wrapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneNavigation {
+    Parent,
+    FirstChild,
+    PreviousSibling,
+    NextSibling,
+}
+
 /// Authoritative object-only ancestry. Sibling order is stored by the canvas
 /// object vector; geometry remains in sheet coordinates.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -322,6 +331,38 @@ impl<'a> SceneHierarchy<'a> {
     pub fn parent(&self, id: CanvasObjectId) -> Result<Option<CanvasObjectId>, String> {
         self.require_object(id)?;
         Ok(self.parents.get(&id).copied())
+    }
+
+    /// Locks do not hide navigation targets. The layer itself is not an object.
+    pub fn navigate(
+        &self,
+        id: CanvasObjectId,
+        direction: SceneNavigation,
+    ) -> Result<Option<CanvasObjectId>, String> {
+        self.require_object(id)?;
+        let parent = self.parents.get(&id).copied();
+        match direction {
+            SceneNavigation::Parent => Ok(parent),
+            SceneNavigation::FirstChild => Ok(self
+                .children
+                .get(&Some(id))
+                .and_then(|children| children.first().copied())),
+            SceneNavigation::PreviousSibling | SceneNavigation::NextSibling => {
+                let siblings = self
+                    .children
+                    .get(&parent)
+                    .ok_or("scene siblings not found")?;
+                let position = siblings
+                    .iter()
+                    .position(|sibling| *sibling == id)
+                    .ok_or("scene object missing from siblings")?;
+                let target = match direction {
+                    SceneNavigation::PreviousSibling => position.checked_sub(1),
+                    _ => position.checked_add(1),
+                };
+                Ok(target.and_then(|position| siblings.get(position).copied()))
+            }
+        }
     }
 
     pub fn children(&self, container: CanvasObjectId) -> Result<&[CanvasObjectId], String> {

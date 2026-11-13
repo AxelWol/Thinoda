@@ -4187,6 +4187,13 @@ const DE: &[(&str, &str)] = &[
     ("Add", "Hinzufügen"),
     ("Format", "Format"),
     ("Layers", "Ebenen"),
+    ("Container", "Container"),
+    ("Parent container", "Übergeordneter Container"),
+    ("Contained objects", "Enthaltene Objekte"),
+    (
+        "Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.",
+        "Alt+BildAuf: übergeordneter Container; Alt+BildAb: erstes Kind; Alt+Umschalt+BildAuf/BildAb: vorheriges/nächstes Geschwisterobjekt.",
+    ),
     ("Protection", "Schutz"),
     ("Draw", "Zeichnen"),
     ("Canvas settings", "Zeichenflächeneinstellungen"),
@@ -5082,6 +5089,10 @@ mod tests {
             .map(|(_, label)| label);
         let other_labels = [
             "Board",
+            "Container",
+            "Parent container",
+            "Contained objects",
+            "Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.",
             "Replaces topic titles, board labels and descriptions.",
             "Zoom to selection",
             "Shape",
