@@ -34,6 +34,7 @@ pub mod resources;
 pub mod rich_text;
 pub mod sankey;
 pub mod scene;
+pub mod scene_hierarchy;
 pub mod schedule;
 pub mod search;
 pub mod stencil;

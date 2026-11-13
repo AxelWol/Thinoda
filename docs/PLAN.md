@@ -11,7 +11,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Socio-technical diagram editor (2026-11-13)
 
-Proposed, not implemented or approved for execution.
+Implementation started after user approval; the editor feature is not yet available.
 [SOCIO-TECHNICAL.md](SOCIO-TECHNICAL.md) researches BPMN collaboration,
 S-BPM, ArchiMate, service blueprints, iStar, UML and C4, and recommends a
 workflow-first Thinoda notation with peer human/software participants,
@@ -27,6 +27,12 @@ data, never a second hierarchy or something inferred from imported shapes.
 Do not introduce per-symbol Rust variants or claim standards conformance. The
 [rubber-duck review](SOCIO-TECHNICAL-REVIEW.md) records the critique and
 remaining decisions.
+
+The first SC0 checkpoint adds an immutable object-only hierarchy prototype with
+bounded validation, ordered traversal, reparent previews and deduplicated movement
+previews in `thinoda-core`. It does not enter saved documents or live editor
+commands. Persistence/lifecycle integration, card occurrences, swimlane layout
+and semantic authoring remain open; see the checkpoint in SCENE-CONTAINERS.md.
 
 ## draw.io diagram support (2026-11-05)
 

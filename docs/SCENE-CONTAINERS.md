@@ -307,6 +307,49 @@ Assign one scene/schema owner at SC0 and one adapter owner; changes to shared
 fields require review against both plans and explicit owned-path commits.
 Do not fork the same engine into a socio-technical subsystem.
 
+### 5.1 First implementation checkpoint: SC0 executable contract
+
+`thinoda-core::scene_hierarchy::SceneHierarchy` is an immutable, object-only
+prototype over the existing canvas. It is not a second persisted ownership tree
+and is not wired into the live editor. Its purpose is to exercise the shared
+structural algorithms before committing a document schema:
+
+- Validate shape-container identities, unique parents, missing references and
+  cycles. Bound objects/groups/cards by existing board limits and parent chains
+  to **32 links**; iterative traversal uses canvas order for stable siblings.
+- Preview reparenting without changing any sheet-space rectangles or controls.
+  Selected descendants remain under their selected ancestor. Invalid topology,
+  excess depth and locked source/target ancestry reject the candidate.
+- Preview an atomic translation of the unique selected descendant closure,
+  reusing the existing board geometry helper. A parent carries individually
+  locked descendants; direct movement/reparent of a locked child is refused.
+  Internal manual connector controls follow two moved object endpoints once;
+  connector-to-connector attachments propagate by dependency. Moving controls
+  on an edge with a stationary terminal does not falsely count as a rigid
+  endpoint translation. Unselected crossing-edge controls stay in sheet coordinates.
+- Preserve unrelated legacy object-only group movement. Refuse mixed card groups,
+  hierarchy membership in legacy flat groups and rotated containers explicitly
+  in this prototype, rather than flattening cards or inventing occurrence rules.
+
+The core fixtures cover pool/lane/sub-lane ancestry, ink, internal/crossing/free
+connector ends, rollback, locks, exact depth overflow and a 20,000-object scene
+at the full supported depth.
+The size fixture verifies bounded iterative behavior, not an SC2 latency benchmark.
+
+**Release boundary:** this type deliberately has no serialization interface, and
+no model fields, format versions, import/export behavior or UI controls changed.
+Its translation result is geometry-only preview data, not a savable nested
+document. Existing editor mutations retain their existing behavior.
+
+SC0 remains **partial**. Card occurrences, binding-hook contracts, ordered
+reparent insertion, edge-parent reconciliation, source-policy/corpus fixtures,
+numerical/layout budgets and measured keyboard/rendering behavior are still
+open. SC1 remains open in full: do not wire previews into live commands until
+native/clipboard/recovery/private-snapshot gates, history, delete/partial-copy
+behavior, all generic mutation paths and editable-export loss protection land
+together. Headers, stack/table layout, collapse and semantic bindings are not
+implemented by this checkpoint.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,

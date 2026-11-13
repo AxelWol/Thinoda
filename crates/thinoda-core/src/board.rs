@@ -2823,7 +2823,7 @@ impl Sheet {
         Ok(())
     }
 
-    fn translate_canvas_objects(
+    pub(crate) fn translate_canvas_objects(
         canvas: &mut CanvasLayer,
         ids: &HashSet<CanvasObjectId>,
         delta: Vec2,

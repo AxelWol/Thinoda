@@ -195,4 +195,47 @@ Author dispositions following that final review:
 These author-applied final clarifications were not submitted for another
 independent pass. The plan is coherent at the design level; its spikes,
 implementation gates and release acceptance remain open. Implementation
-approval remains a separate user decision.
+approval was a separate user decision, subsequently granted.
+
+## 8. First implementation checkpoint critique
+
+**Implemented:** a shared immutable object-only hierarchy prototype in
+`thinoda-core`, with bounded structural validation, stable traversal and atomic
+move/reparent previews. Geometry translation reuses the board helper rather
+than introducing a separate transform implementation. The hierarchy borrows
+the canvas immutably, so candidate failures cannot mutate a document.
+
+**Rubber-duck questions and dispositions:**
+
+- Does this already deliver nested swimlane editing? No. There is no live
+  command, authoring UI, persistence, header/layout/collapse policy or semantic
+  binding. SC0 is partial and SC1-SC4/STC release gates remain open.
+- Could saving silently flatten newly authored hierarchy? The prototype cannot
+  be attached to a workbook or serialized through the current model. No live
+  command may adopt it until the complete lifecycle/version gate is implemented.
+  A translation preview alone must never be treated as a saved nested document.
+- Do overlapping parent/child selections double-translate geometry or manual
+  connector controls? The closure and the implicit internal-edge set are
+  deduplicated before the existing translation helper runs.
+- What if an endpoint is another connector? A dependency queue propagates rigid
+  translations independently of source order. A selected edge whose controls
+  move while a terminal stays fixed is not classified as rigid; downstream
+  manual controls remain fixed instead of acquiring an incorrect translation.
+- Can a child escape a locked container, or can one locked child prevent a whole
+  parent move? Source/target ancestry is checked for direct edits; a selected
+  ancestor carries its individually locked descendants as one unit.
+- Do legacy groups or cards create another ownership system? Legacy editor
+  behavior is unchanged. The prototype explicitly refuses hierarchy membership
+  in flat groups and movement requiring a mixed-group card occurrence. This is
+  a documented spike boundary, not the final grouping/card integration.
+- Is the bounded implementation accidentally quadratic? Indexed identities and
+  lock sets avoid repeated linear canvas lookup during per-object ancestry
+  checks. Parent chains stop after 32 links; traversal is iterative. The
+  maximum-object fixture is not a substitute for SC2's measured latency gate.
+- Is reparent already a complete transaction? No. Geometry-preserving topology
+  previews are present, but stored edge-parent normalization, target insertion
+  ordering, binding consequences, history and persistence are later gates.
+
+This is an author critique, not another independent review. The previous
+independent verdict accepted the plan only; it does not certify this code or
+close the implementation gates.
