@@ -618,6 +618,51 @@ stored fields or format version change. Collapse, layout/header policies,
 structural draw.io fidelity, semantic authoring and Software examples remain
 open; SC0/SC1 are still partial.
 
+### 5.7 Collapse-projection checkpoint: immutable presentation
+
+`scene::CollapsePreview` borrows an immutable source sheet and accepts explicit
+compact frames for marked containers. It copies only compacted objects and
+indexes visibility; it is not serializable or a replacement sheet. Expanded
+bounds, child geometry, ports, endpoint IDs, connector ownership and manual
+controls remain in the source. Removing the preview restores ordinary rendering.
+
+The shared scene builder omits hidden descendants and internal connectors from
+geometry, hit testing and derived bounds. Crossing object terminals project to
+the visible compact ancestor using existing perimeter/routing geometry. A hidden
+child's fixed port is not reused on its ancestor. Ports on actually visible
+containers keep their existing behavior. Native shapes and JSON stencil frames
+use their existing geometry interpreters, not a second collapse renderer.
+
+Nested configuration remains independent: an outer collapsed frame hides an
+inner compact frame; removing the outer configuration reveals the inner one.
+Connector visibility is solved in dependency order, independent of paint order,
+using the same iterative dependency walk as cycle validation. Targets that are
+hidden internal connectors project to a visible container; visible connector
+targets use the midpoint of their projected route. Imported crossing edges can
+remain visible even when stored beneath a hidden container. Real visible
+container self-loops are not mistaken for hidden internal edges.
+
+Free terminals retain sheet-space coordinates; coordinate inclusion alone never
+infers ownership. Structurally hidden free/free edges remain hidden, while
+layer-owned ones remain visible. Topics/cards remain separate map objects.
+Moving the source ancestor carries hidden descendants once through existing
+commands; callers must supply correspondingly translated compact frames.
+
+Fixtures cover all three route modes, nested collapse, fixed ports, manual
+controls, edge dependencies in reversed paint order, JSON stencil geometry,
+invalid input, maximum 32-link ancestry and a 20,000-object connector chain.
+These demonstrate bounded traversal, not representative interactive latency.
+Empty collapse configuration preserves ordinary rendering, including Sankey.
+Nonempty collapse on Sankey sheets fails explicitly rather than approximating
+weighted ribbons.
+
+**Remaining boundary:** no persisted collapse metadata, new format capability,
+collapse controls, app activation or collapsed-state accessibility is added.
+Compact-frame/header policies, layout, obstacle avoidance and complete
+paint/label/export parity across consumers remain open. The preview must not be
+treated as a savable collapsed sheet. Persistence/lifecycle gates and native/web
+acceptance are still required; SC0/SC1 and the overall editor remain partial.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,

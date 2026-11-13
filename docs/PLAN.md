@@ -52,10 +52,16 @@ the guard. Whole-workbook rollback and history now include metadata, not just
 sheets. A stub binding policy exercises inherited scope changes through ordinary
 commands; no persisted semantic graph or confirmation UI is added.
 These changes need no additional saved fields or format version.
+The collapse-projection checkpoint adds an immutable presentation preview:
+compact container frames hide descendants/internal edges, and crossing terminals
+resolve to visible boundaries without rewriting stored endpoints, ports or
+sheet-space geometry. Nested collapse and connector dependencies use the same
+bounded hierarchy/routing engine; nonempty collapse on Sankey sheets is explicitly
+refused. This prototype has no saved collapse fields, controls or app activation.
 This is partial SC1, not a released container UI:
-collapse, headers/stack layout, card occurrences, production binding-policy
-installation/confirmation, full platform/accessibility acceptance and semantic
-authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
+persisted collapse and its UI, headers/stack layout, card occurrences, production
+binding-policy installation/confirmation, full platform/accessibility acceptance
+and semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
 
 User-requested starter content: add a **Software** start-page template group
 with editable socio-technical examples for human/service handoffs, approval

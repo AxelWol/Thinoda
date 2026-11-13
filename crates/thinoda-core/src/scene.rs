@@ -558,13 +558,150 @@ pub struct Scene {
     pub items: Vec<SceneItem>,
 }
 
+/// Transient collapse geometry over an immutable source sheet. This is not a
+/// savable document: real bounds, endpoints and ownership remain in the source.
+#[derive(Debug)]
+pub struct CollapsePreview<'a> {
+    sheet: &'a Sheet,
+    objects: HashMap<CanvasObjectId, &'a CanvasObject>,
+    compact: HashMap<CanvasObjectId, CanvasObject>,
+    hidden_by: HashMap<CanvasObjectId, CanvasObjectId>,
+}
+
+impl<'a> CollapsePreview<'a> {
+    pub fn new(sheet: &'a Sheet, collapsed: &[(CanvasObjectId, Rect)]) -> Result<Self, String> {
+        if collapsed.len() > crate::board::MAX_CANVAS_OBJECTS
+            || collapsed.len() > sheet.canvas.objects.len()
+        {
+            return Err("collapse preview exceeds canvas limits".into());
+        }
+        crate::board::validate_board(sheet)?;
+        if !collapsed.is_empty() && sheet.has_sankey() {
+            return Err("collapse preview does not support Sankey sheets".into());
+        }
+        let hierarchy = crate::scene_hierarchy::SceneHierarchy::from_canvas(&sheet.canvas)?;
+        let objects: HashMap<_, _> = sheet.canvas.objects.iter().map(|o| (o.id, o)).collect();
+        let mut compact = HashMap::with_capacity(collapsed.len());
+        for &(id, rect) in collapsed {
+            if !sheet.canvas.scene.containers.contains(&id) {
+                return Err(format!("collapse target {id} is not a scene container"));
+            }
+            if compact.contains_key(&id) {
+                return Err(format!("duplicate collapse target {id}"));
+            }
+            let mut object = (**objects.get(&id).ok_or("collapse target not found")?).clone();
+            object.rect = rect;
+            crate::board::validate_object(&object)?;
+            if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+                return Err(format!(
+                    "collapse target {id} requires a positive compact frame"
+                ));
+            }
+            compact.insert(id, object);
+        }
+        let mut hidden_by = HashMap::new();
+        for id in hierarchy.preorder() {
+            if let Some(parent) = hierarchy.parent(id)?
+                && let Some(owner) = hidden_by
+                    .get(&parent)
+                    .copied()
+                    .or_else(|| compact.contains_key(&parent).then_some(parent))
+            {
+                hidden_by.insert(id, owner);
+            }
+        }
+        visit_connector_dependencies(sheet, |id| {
+            let Some(CanvasObjectKind::Connector(connector)) =
+                objects.get(&id).map(|object| &object.kind)
+            else {
+                return Err("collapse dependency is not a connector".into());
+            };
+            let terminal = |end: Endpoint| match end {
+                Endpoint::Object(target) => Some((
+                    hidden_by.get(&target).copied().unwrap_or(target),
+                    hidden_by.contains_key(&target),
+                )),
+                _ => None,
+            };
+            let from = terminal(connector.from);
+            let to = terminal(connector.to);
+            let visible_self_loop = from
+                .zip(to)
+                .is_some_and(|((a, folded_a), (b, folded_b))| a == b && !folded_a && !folded_b);
+            let structural_owner = hidden_by.get(&id).copied();
+            let folded_owner = from.zip(to).and_then(|((a, folded_a), (b, folded_b))| {
+                (a == b && (folded_a || folded_b)).then_some(a)
+            });
+            let hidden_owner = structural_owner
+                .filter(|_| !visible_self_loop)
+                .filter(|owner| {
+                    [connector.from, connector.to]
+                        .into_iter()
+                        .all(|end| match end {
+                            Endpoint::Point(_) => true,
+                            Endpoint::Topic(_) => false,
+                            Endpoint::Object(_) => {
+                                terminal(end).is_some_and(|(target, _)| target == *owner)
+                            }
+                        })
+                })
+                .or(folded_owner);
+            if let Some(owner) = hidden_owner {
+                hidden_by.insert(id, owner);
+            } else {
+                // Imported crossing edges can be owned by hidden containers.
+                hidden_by.remove(&id);
+            }
+            Ok(())
+        })?;
+        Ok(Self {
+            sheet,
+            objects,
+            compact,
+            hidden_by,
+        })
+    }
+
+    pub fn source_sheet(&self) -> &Sheet {
+        self.sheet
+    }
+
+    /// The nearest visible target, or the object itself when it is visible.
+    pub fn visible_representative(&self, id: CanvasObjectId) -> Option<CanvasObjectId> {
+        self.objects.get(&id)?;
+        Some(self.hidden_by.get(&id).copied().unwrap_or(id))
+    }
+
+    /// Visible object geometry/styles for consumers of the derived scene.
+    pub fn object(&self, id: CanvasObjectId) -> Option<&CanvasObject> {
+        if self.hidden_by.contains_key(&id) {
+            return None;
+        }
+        self.compact
+            .get(&id)
+            .or_else(|| self.objects.get(&id).copied())
+    }
+
+    pub fn build_scene(&self, layout: &Layout) -> Scene {
+        build_scene_with_collapse(self.sheet, layout, Some(self))
+    }
+}
+
 /// Builds the paint-order scene of a validated `sheet` from its layout.
 /// Load/import/recovery/paste boundaries must validate first: unsupported Sankey
 /// endpoints are rejected there, never repaired or normalized by this renderer.
 pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
+    build_scene_with_collapse(sheet, layout, None)
+}
+
+fn build_scene_with_collapse<'a>(
+    sheet: &'a Sheet,
+    layout: &'a Layout,
+    collapse: Option<&'a CollapsePreview<'a>>,
+) -> Scene {
     let mut items =
         Vec::with_capacity(sheet.zones.len() + layout.order.len() + sheet.canvas.objects.len());
-    let mut connectors = ConnectorResolver::new(sheet, layout);
+    let mut connectors = ConnectorResolver::with_collapse(sheet, layout, collapse);
     let flow_values = crate::sankey::evaluate(sheet).unwrap_or_default();
     let ribbons = crate::sankey::ribbons_with_values(sheet, layout, &flow_values);
     for zone in &sheet.zones {
@@ -581,6 +718,14 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
     }
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
         for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
+            let object = if let Some(collapse) = collapse {
+                let Some(object) = collapse.object(object.id) else {
+                    continue;
+                };
+                object
+            } else {
+                object
+            };
             if let Some(item) = object_item(sheet, object, &mut connectors) {
                 if let Some(outline) = ribbons.get(&object.id) {
                     if let Some(bounds) = crate::board::points_bounds(outline) {
@@ -1513,19 +1658,47 @@ struct ConnectorResolver<'a> {
     layout: &'a Layout,
     objects: HashMap<CanvasObjectId, &'a CanvasObject>,
     paths: HashMap<CanvasObjectId, Option<Vec<Vec2>>>,
+    collapse: Option<&'a CollapsePreview<'a>>,
 }
 
 impl<'a> ConnectorResolver<'a> {
     fn new(sheet: &'a Sheet, layout: &'a Layout) -> Self {
+        Self::with_collapse(sheet, layout, None)
+    }
+
+    fn with_collapse(
+        sheet: &'a Sheet,
+        layout: &'a Layout,
+        collapse: Option<&'a CollapsePreview<'a>>,
+    ) -> Self {
+        let mut objects: HashMap<_, _> = sheet.canvas.objects.iter().map(|o| (o.id, o)).collect();
+        if let Some(collapse) = collapse {
+            objects.extend(collapse.compact.iter().map(|(id, object)| (*id, object)));
+        }
         Self {
             sheet,
             layout,
-            objects: sheet.canvas.objects.iter().map(|o| (o.id, o)).collect(),
+            objects,
             paths: HashMap::new(),
+            collapse,
         }
     }
 
+    fn visible_target(&self, id: CanvasObjectId) -> Option<CanvasObjectId> {
+        self.collapse
+            .map_or(Some(id), |collapse| collapse.visible_representative(id))
+    }
+
     fn endpoint(&self, end: Endpoint, port: Option<ConnectorPort>) -> Option<EndTarget> {
+        let (end, port) = if let Endpoint::Object(id) = end {
+            let visible = self.visible_target(id)?;
+            (
+                Endpoint::Object(visible),
+                (visible == id).then_some(port).flatten(),
+            )
+        } else {
+            (end, port)
+        };
         let target = match end {
             Endpoint::Point(p) => {
                 Some(EndTarget::boxed(Rect::from_center_size(p, Vec2::ZERO), 0.0))
@@ -1597,6 +1770,7 @@ impl<'a> ConnectorResolver<'a> {
             stack.push((id, true));
             for end in [connector.from, connector.to] {
                 if let Endpoint::Object(target) = end
+                    && let Some(target) = self.visible_target(target)
                     && self.objects.get(&target).is_some_and(|o| o.is_connector())
                     && !self.paths.contains_key(&target)
                 {
@@ -1617,6 +1791,7 @@ impl<'a> ConnectorResolver<'a> {
         } else {
             for end in [connector.from, connector.to] {
                 if let Endpoint::Object(target) = end
+                    && let Some(target) = self.visible_target(target)
                     && !self.resolve(target)
                 {
                     return None;
@@ -1631,6 +1806,13 @@ impl<'a> ConnectorResolver<'a> {
 
 /// Reject cyclic connector dependencies before a board is edited or loaded.
 pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
+    visit_connector_dependencies(sheet, |_| Ok(()))
+}
+
+fn visit_connector_dependencies(
+    sheet: &Sheet,
+    mut visit: impl FnMut(CanvasObjectId) -> Result<(), String>,
+) -> Result<(), String> {
     let connectors: HashMap<_, _> = sheet
         .canvas
         .objects
@@ -1661,6 +1843,7 @@ pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
     let mut visited = 0;
     while let Some(id) = ready.pop_front() {
         visited += 1;
+        visit(id)?;
         if let Some(owners) = dependents.get(&id) {
             for owner in owners {
                 let count = pending.get_mut(owner).expect("connector dependency exists");

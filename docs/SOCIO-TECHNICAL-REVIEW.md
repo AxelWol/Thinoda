@@ -504,3 +504,56 @@ or release acceptance.
 Affected-package clippy (`--all-targets -- -D warnings`), core/canvas/app builds,
 workspace check, formatting and diff checks passed. No native/browser/device
 or production semantic-authoring acceptance is claimed.
+
+## 14. Collapse-projection checkpoint: author critique
+
+**Implemented:** an immutable collapse preview over the shared scene builder,
+compact-frame visibility and projected connector terminals. No saved state or
+application controls are enabled.
+
+**Rubber-duck questions and dispositions:**
+
+- Does collapse destroy the geometry needed to expand? No. The preview borrows
+  the source sheet; compact copies never replace stored objects. Tests compare
+  complete source sheets before/after projection and ordinary rendering after
+  removing it.
+- Which boundary wins when both parent and child are collapsed? The outermost
+  currently visible compact frame. Removing the outer configuration reveals
+  the independently configured inner frame, without moving descendants.
+- Are connections really preserved, including fixed ports and edge targets?
+  Stored terminal IDs and ports never change. Hidden-child ports are ignored
+  only for their projected ancestor. Visible connector targets resolve from
+  projected route midpoints, even in reversed paint order.
+- Could ownership hide an imported crossing edge or a genuine self-loop?
+  Visibility considers projected terminals as well as structural ownership.
+  An initial fixture exposed incorrect hiding of a visible container self-loop;
+  that classification was corrected and retained as a regression case.
+- Do free points gain accidental containment semantics? No. They remain real
+  sheet-space points. Structural edge ownership can hide an internal edge, but
+  geometric inclusion alone does not move or fold a free terminal.
+- Is this another shape renderer? No. Compact native and JSON stencil frames
+  and connector attachment use the existing shared geometry implementation.
+- Does movement while collapsed work automatically? Only source movement is
+  implemented: existing ancestor commands carry hidden locked descendants once
+  and preserve crossing-edge manual controls. The transient caller supplies
+  the moved compact frame; saved-state/UI lifecycle integration is still open.
+- Is every diagram family supported? No. Nonempty collapse configuration on
+  Sankey sheets is explicitly refused. Empty configuration preserves ordinary
+  Sankey rendering; weighted collapse needs its own accepted ribbon contract.
+- Have scalability and release parity been proved? No. Maximum-depth and
+  20,000-object dependency fixtures establish bounded iterative behavior, not
+  platform latency, label/paint/export parity or device acceptance.
+
+**Critique:** the structural visibility/routing contract is now executable
+without prematurely freezing a document format. It is intentionally not an
+activated editor feature. Persisted collapse, header/layout policies, actual
+controls/accessibility, structural draw.io fidelity, semantic authoring and the
+Software examples remain open. This is an author critique, not an independent
+review or release acceptance.
+
+**Validation evidence:** core/canvas/IO regressions passed 1,883 tests with
+12 ignored; the final focused collapse run passed all 11 fixtures, including
+the additional JSON stencil case. Serialized app library regressions passed
+971 tests with 2 ignored. Affected-package clippy (`--all-targets -- -D warnings`),
+core/canvas/IO/app builds, workspace check, formatting and diff checks passed.
+No live native/browser/device acceptance is claimed.
