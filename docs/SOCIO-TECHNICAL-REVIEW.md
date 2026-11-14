@@ -69,6 +69,9 @@ participant" UX is not required for v1.
 extracted SVG/PDF text/metadata for distinctive fixture strings. The check
 includes hidden data, accessibility titles and retained source properties.
 Raw binary grep alone is insufficient because compression can conceal text.
+The current masked-copy fixture also verifies scene ancestry and collapsed
+restore frames survive while labels, alt text and stencil resources are removed;
+it does not replace the broader interchange/output masking matrix.
 
 **N4 - Accessibility and scale.** Spike keyboard target selection/reparenting
 before building the palette. Keep actual assistive-technology/platform checks

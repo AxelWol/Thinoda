@@ -722,6 +722,8 @@ canvas coverage verifies hidden descendants are absent from accessible reading
 order and cannot be entered through containment navigation. SVG and contextual
 editable PowerPoint fixtures verify hidden objects are omitted; native/private
 XMind and recovery fixtures round-trip both plain and stencil-bearing documents.
+Masked-copy coverage verifies that scene ancestry and expanded restore frames
+survive while labels, alt text and stencil resources are removed.
 
 **Remaining boundary:** no collapse buttons/shortcuts, header/compact-size
 defaults, collapsed-state announcements, layout policies, obstacle avoidance or

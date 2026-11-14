@@ -2675,6 +2675,33 @@ mod tests {
         }
         shape.alt_text = "SECRET alt".into();
         sheet.add_canvas_object(shape).unwrap();
+        let mut container = crate::CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(300.0, 0.0), Vec2::new(200.0, 200.0)),
+        );
+        if let crate::CanvasObjectKind::Shape { label, .. } = &mut container.kind {
+            *label = "SECRET container".into();
+        }
+        let container_id = sheet.add_canvas_object(container).unwrap();
+        sheet.canvas.scene.containers.insert(container_id);
+        let mut child = crate::CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(320.0, 40.0), Vec2::new(80.0, 40.0)),
+        );
+        if let crate::CanvasObjectKind::Shape { label, .. } = &mut child.kind {
+            *label = "SECRET child".into();
+        }
+        let child_id = sheet.add_canvas_object(child).unwrap();
+        sheet.canvas.scene.parents.insert(child_id, container_id);
+        sheet
+            .set_canvas_container_collapsed(
+                container_id,
+                Some(Rect::from_min_size(
+                    Vec2::new(300.0, 0.0),
+                    Vec2::new(200.0, 40.0),
+                )),
+            )
+            .unwrap();
         let mut package = crate::stencil_object::find_package("thinoda.general")
             .unwrap()
             .clone();
@@ -2686,9 +2713,12 @@ mod tests {
             Vec2::new(100.0, 100.0),
         );
         sheet.add_canvas_object(stencil).unwrap();
-        let masked = Workbook::new(sheet).masked_copy();
+        let source = Workbook::new(sheet);
+        let scene = source.active().canvas.scene.clone();
+        let masked = source.masked_copy();
         masked.validate().unwrap();
         assert!(!serde_json::to_string(&masked).unwrap().contains("SECRET"));
+        assert_eq!(masked.active().canvas.scene, scene);
         assert!(masked.active().resources.is_empty());
         assert!(!masked.has_stencils());
         assert!(masked.active().root_topic().title.is_empty());
