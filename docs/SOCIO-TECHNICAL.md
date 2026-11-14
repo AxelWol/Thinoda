@@ -1,9 +1,12 @@
 # Socio-technical diagrams: research, concept and phased execution
 
-Research date: 2026-11-13. Status: **proposed, not implemented or user-approved**.
+Research date: 2026-11-13. Status: **approved for staged implementation**.
+The shared free-container/collapse foundation and explicitly unbound Software
+examples are implemented; typed semantic data, authoring and release acceptance
+are not.
 This document extends the [main plan](PLAN.md) and coordinates with the
-[draw.io plan](DRAWIO.md); it does not replace either. No application behavior
-is changed by this planning work.
+[draw.io plan](DRAWIO.md); it does not replace either. Each phase remains gated
+by its stated persistence, interoperability and acceptance criteria.
 
 **Nested-swimlane clarification:** [SCENE-CONTAINERS.md](SCENE-CONTAINERS.md)
 is the common structural solution for draw.io and this editor: one scene
@@ -87,19 +90,20 @@ is explicitly selected, implemented and verified.
 
 ## 3. Verified Thinoda baseline
 
-The current checkout is the implementation baseline. The JSON interpreter
-exists; the scene-container hierarchy is still planned. This plan does not
-treat the whole draw.io roadmap as delivered.
+The current checkout is the implementation baseline. The JSON interpreter and
+a bounded, persisted object-only scene tree with collapse and partial authoring
+exist; shared header/stack layout and structural draw.io round trips remain
+open. This plan does not treat the whole draw.io roadmap as delivered.
 
 | Existing mechanism / evidence | Reuse | Gap |
 |---|---|---|
 | `thinoda-core/src/stencil.rs:1-12,112-164` | Versioned JSON definitions, bounded interpreter, metadata/interchange declarations, shared drawing output | Metadata declarations alone are not typed semantic instances, an inspector or a rule engine |
 | `thinoda-core/src/stencil_object.rs:1-6,29-34,73-80` | Generic shape references and fallback; installed built-in package resolution | Pinned document definitions, library evolution and full parameter/port editing remain incomplete |
-| `thinoda-core/src/board.rs:345-349,537-567,643-652` | Existing board objects, selection and flat groups | No nested semantic pool/lane hierarchy; flat grouping must not be reinterpreted |
+| `thinoda-core/src/board.rs:345-349,537-567,643-652` | Existing board objects, selection and flat groups | Shared object-only scene ancestry and collapse are partially implemented; flat grouping must not be reinterpreted, and nested layout/interchange remain open |
 | `thinoda-core/src/board.rs:1217-1258,1299-1345` | Endpoint identities, fixed ports, routes, waypoints, connector labels/markers | No process/message/dependency edge types; current connector model has no general dash field |
 | `thinoda-core/src/model.rs:487-510,668-714` | Zones, hidden-root sheets, canvas, optional domain data | Zones are visual frames, not process ownership or overlapping trust-domain membership |
 | `thinoda-core/src/document.rs:447,505,696-751` | Transactional sheet/workbook edits, undo and sheet lifecycle | Semantic references must participate in every mutation and lifecycle path |
-| `thinoda-io/src/board_export.rs:15-32` | Content-dependent native version selection; current maximum is 26 | New semantic data requires future native and transport gates, not an arbitrary hardcoded next version in this plan |
+| `thinoda-io/src/board_export.rs:15-32` | Content-dependent native version selection; current maximum is 29, including scene collapse | Semantic data requires its own native and transport capability gates, not an arbitrary hardcoded next version in this plan |
 | `thinoda-core/src/clipboard/board.rs:39-57,137-156` | Bounded, versioned mixed-board payloads | Copy scope, semantic dependency closure and reference remapping need explicit rules |
 
 Paths in this table are relative to `crates/`. Also reuse existing canvas and
@@ -145,7 +149,32 @@ context without pretending those formalisms exist.
 Use an optional, **sheet-scoped typed semantic model** alongside the board,
 following the precedent of optional Sankey/FIM domain data. Do not build a
 generic ontology platform or put critical references into arbitrary JSON bags.
-The exact Rust/schema design is a Phase STC0 decision; these contracts are fixed:
+The initial typed schema decision below narrows implementation choices; STC0
+remains open until the integration spikes and lifecycle inventory pass.
+
+**Initial v1 schema decision (not yet implemented or persisted):**
+
+| Record | Typed contents and identity |
+|---|---|
+| `SemanticModel` | Optional field on one `Sheet`, with schema version, typed entity and relation maps, and a canvas-occurrence binding map. No cross-sheet catalog or generic metadata bag |
+| Entity | A sheet-local `SemanticEntityId` newtype indexes one typed `Participant`, `Role`, `Process`, `Lane`, `Step`, `UseCase` or `Boundary` record. Labels, descriptions and decision rationale live here exactly once |
+| Relation | A sheet-local `SemanticRelationId` newtype indexes a typed `Sequence`, `Exchange`, process ownership, lane performer, role fulfillment, use-case link, boundary membership or accountability relation. Its type determines valid endpoints and fields |
+| Occurrence binding | `CanvasObjectId -> Entity(id) | Relation(id)`. Multiple shapes may present one participant; each v1 workflow step/scope has at most one visible occurrence, and each relation has exactly one connector occurrence |
+| Unresolved draft | A bounded source identity/text record in place of a missing endpoint ID. Resolution allocates or selects a real entity through an explicit command; dangling live semantic IDs are never stored |
+
+Both ID namespaces are stable only within their sheet; names never deduplicate
+records. A whole-sheet copy may preserve IDs because it creates another
+sheet-scoped model. Partial copy allocates fresh IDs for copied semantic
+records, rewrites internal references, and turns omitted dependencies into
+explicit unresolved/unallocated drafts—never guessed links. A bound shape or
+connector has no independent semantic label; a shared resolver supplies its
+text, while unbound objects retain current label behavior. `Document::state_id`
+and `instance_id` scope revision-owned drafts; persisted semantic schema version
+and transport envelopes are separate compatibility checks. Actual ID bounds,
+text budgets and transport version numbers are fixed with SC0/STC0 evidence,
+not guessed here.
+
+These are contracts, not assertions that code now satisfies them:
 
 1. Semantic entities/relations have stable IDs and one authoritative value for
    each label/property. A generic occurrence binding references an entity or

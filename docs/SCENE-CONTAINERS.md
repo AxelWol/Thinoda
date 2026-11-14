@@ -1,6 +1,7 @@
 # Common nested containers and swimlanes
 
-Research and design: 2026-11-13. **Proposed; implementation not started.**
+Research and design: 2026-11-13. **Implementation in progress; SC0/SC1 are
+partial, and SC2/SC3 remain open.**
 This is the common structural contract for [draw.io support](DRAWIO.md) and
 [socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO.md section
 3.2.1, rather than introducing a second container implementation.
