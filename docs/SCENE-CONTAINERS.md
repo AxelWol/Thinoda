@@ -63,6 +63,10 @@ Current code does not retain this structure as an editable scene tree:
 - `crates/thinoda-core/src/board.rs:345-349` explicitly makes `CanvasGroup`
   flat; `model.rs:487-510` gives Zones no nested-parent field.
 
+Nested containers now raise the generic unsupported-data warning when imported
+through this lossy path. This makes the loss visible; it does not preserve the
+parent tree or satisfy SC3.
+
 Thus importing visible nested rectangles is not nested-swimlane support.
 The future shared milestone must preserve structure, editing behavior and
 interchange, not just approximate the initial picture.
@@ -831,6 +835,18 @@ unchanged hidden geometry, undoable property editing, native save/reopen, shared
 SVG object geometry, subtree movement/undo and category preview visibility.
 No live native/browser or screen-reader acceptance is claimed. Typed semantic
 versions must be authored explicitly later, not inferred from existing labels.
+
+### 5.12 Nested-container import loss warning
+
+The draw.io importer now reports `ImportWarning::Other` when a container has a
+container or grouped parent whose hierarchy the current Zone/flat-group model
+cannot retain. A focused nested pool/lane/task fixture confirms that coordinates
+are still resolved to sheet space, while the parent relation is absent and the
+warning is also propagated by draw.io links and clipboard import.
+
+This is a loss diagnostic, not nested-swimlane support: Zones remain flat,
+editable export remains guarded, and SC0-SC3 are still open. Do not remove the
+warning until the shared scene importer preserves the supported hierarchy.
 
 ## 6. Adversarial acceptance and critique
 

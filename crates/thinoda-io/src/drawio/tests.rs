@@ -7447,6 +7447,45 @@ fn shaped_containers_report_their_frame_approximation() {
 }
 
 #[test]
+fn nested_swimlanes_report_lost_parent_hierarchy() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="80" width="500" height="320" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell>
+        <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="100" height="50" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report.warnings.contains(&ImportWarning::Other),
+        "nested container hierarchy is currently flattened: {:?}",
+        report.warnings
+    );
+
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(sheet.zones.len(), 2);
+    assert!(
+        sheet.canvas.scene.containers.is_empty()
+            && sheet.canvas.scene.parents.is_empty()
+            && sheet.canvas.scene.collapsed.is_empty()
+    );
+    assert_eq!(sheet.zones[1].frame, rect(130.0, 120.0, 420.0, 240.0));
+    assert_eq!(shapes(sheet)[0].rect, rect(150.0, 150.0, 100.0, 50.0));
+
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    assert_eq!(
+        crate::import_drawio_link(&link).unwrap().warnings,
+        report.warnings
+    );
+    assert!(
+        crate::drawio_clipboard::decode(&xml)
+            .unwrap()
+            .warnings
+            .contains(&ImportWarning::Other)
+    );
+}
+
+#[test]
 fn notes_text_lines_directions_and_user_objects() {
     let xml = page(
         r#"

@@ -2209,7 +2209,13 @@ impl<'a> PageImport<'a> {
                 child_context.bucket = Some(bucket);
                 self.items.insert(index, Item::Area(rect));
             }
-            Kind::Container if let Some(zone) = self.zone(cell, rect) => {
+            Kind::Container
+                if let Some(zone) = self.zone(
+                    cell,
+                    rect,
+                    context.zone.is_some() || context.bucket.is_some(),
+                ) =>
+            {
                 child_context.zone = Some(zone);
                 child_context.bucket = None;
                 self.items.insert(index, Item::Area(rect));
@@ -2235,7 +2241,10 @@ impl<'a> PageImport<'a> {
     }
 
     /// A container frame, unless it cannot be a valid Zone.
-    fn zone(&mut self, cell: &Cell, rect: Rect) -> Option<usize> {
+    fn zone(&mut self, cell: &Cell, rect: Rect, nested: bool) -> Option<usize> {
+        if nested {
+            self.warn(ImportWarning::Other);
+        }
         if self.sheet.zones.len() >= MAX_ZONES
             || rect.size.x < MIN_ZONE_SIZE
             || rect.size.y < MIN_ZONE_SIZE
