@@ -27,10 +27,13 @@ draw.io swimlanes are not just a set of rectangle symbols:
   A two-dimensional container table must not be flattened to a one-dimensional
   pool stack, nor interpreted as two simultaneous semantic parents.
 - In the inspected [draw.io Graph.js][graph], `layoutManager.getLayout` reads
-  `childLayout=stackLayout`, `horizontalStack`, `resizeParent`,
-  `resizeParentMax`, `resizeLast`, margins, spacing and border. It schedules
-  nested child/parent layouts; `getLanes` and `isLane` identify children of a
-  stack. Lane insertion is a parent/child operation, not a BPMN operation.
+  `childLayout=stackLayout`, `horizontalStack`, `stackSpacing`, `stackBorder`,
+  four margins, `resizeParent`, `resizeParentMax`, `resizeLast`, and
+  `allowGaps`. It defaults parent resize and resize-parent-max to enabled,
+  enables cross-axis fill for ordinary parents, and defaults last-child resize
+  off. It schedules nested child/parent layouts; `getLanes` and `isLane`
+  identify children of a stack. Lane insertion is a parent/child operation,
+  not a BPMN operation.
 - The underlying [mxSwimlane][mxswimlane] shape separates header size
   (`startSize`), header/content paint and `horizontal` orientation. In its
   unrotated/default-direction rendering, `horizontal=1` gives a **top header**;
@@ -848,11 +851,15 @@ as Zones. The same fixture verifies native model validation and reports lost
 ancestry when preparing a board clipboard fragment.
 
 The source import is no longer warned merely because a supported direct nested
-chain exists. Unsupported/non-direct nesting and unmapped stack/resize/collapse
-settings use the warned path. draw.io export remains refused for any scene
-hierarchy, because the writer does not yet reconstruct source parents, local
-geometry or supported policies; SC3 remains open until fixture round-trip and
-idempotence gates are met.
+chain exists. `childLayout=stackLayout` imports its axis, spacing, and padding
+when the combined border and four margins are uniform. Asymmetric margins are
+not approximated. These are partial mappings: Graph.js also fills children
+across the stack axis and defaults to resizing the parent, neither of which is
+represented by the imported `Preserve` resize mode, so stack imports warn.
+Unsupported/non-direct nesting and collapsed state also use the warned path.
+draw.io export remains refused for any scene hierarchy, because the writer does
+not yet reconstruct source parents, local geometry or supported policies; SC3
+remains open until fixture round-trip and idempotence gates are met.
 
 ### 5.13 Bounded layout, persistence and undoable application
 
@@ -894,7 +901,8 @@ extent.
 This remains below SC2 acceptance: draw.io structural fidelity, clipping,
 persistent routing policy, measured
 workload budgets and native/web visual/accessibility acceptance remain open.
-The header-side parameter is not mapped to draw.io interchange yet.
+Header side and extent import from draw.io, but export does not yet reconstruct
+them or the source hierarchy.
 
 The stack policy includes opt-in `FillLast`, `GrowParent` and `FitParent` modes.
 `FillLast` grows only the final child along the stack axis, preserving its

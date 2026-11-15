@@ -7544,10 +7544,10 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
 }
 
 #[test]
-fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_unmapped() {
+fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
     let xml = page(
         r#"
-        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;horizontalStack=0;childSpacing=8;resizeParent=1;resizeParentMax=1;margin=10;" collapsed="1" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
+        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;horizontalStack=0;stackSpacing=8;stackBorder=1;marginLeft=10;marginRight=10;marginTop=10;marginBottom=10;" collapsed="1" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
         <mxCell id="lane" value="Lane" style="swimlane;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="300" height="180" as="geometry"/></mxCell>
         "#,
     );
@@ -7555,7 +7555,52 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_unmapped() {
     assert!(report.warnings.contains(&ImportWarning::Other));
     let sheet = &report.workbook.sheets[0];
     assert_eq!(sheet.canvas.scene.containers.len(), 2);
-    assert!(sheet.canvas.scene.layout_policies.is_empty());
+    let pool = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Pool")
+        .unwrap();
+    assert_eq!(
+        sheet.canvas.scene.layout_policies.get(&pool.id),
+        Some(&thinoda_core::scene_layout::ContainerLayoutPolicy {
+            header: thinoda_core::scene_layout::HeaderPolicy {
+                side: thinoda_core::scene_layout::HeaderSide::Top,
+                extent: 40.0,
+            },
+            layout: thinoda_core::scene_layout::ContainerLayout::Stack {
+                axis: thinoda_core::scene_layout::StackAxis::Vertical,
+                spacing: 8.0,
+                padding: 11.0,
+                resize: thinoda_core::scene_layout::StackResizePolicy::Preserve,
+            },
+        })
+    );
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
+fn nested_stack_layout_does_not_approximate_asymmetric_margins() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;stackSpacing=4;marginLeft=2;marginRight=6;" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="300" height="180" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(
+        report.workbook.sheets[0]
+            .canvas
+            .scene
+            .layout_policies
+            .is_empty()
+    );
 }
 
 #[test]

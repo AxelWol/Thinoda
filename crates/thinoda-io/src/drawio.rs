@@ -847,6 +847,67 @@ impl Style {
             .filter(|v| v.is_finite())
     }
 
+    fn scene_layout_policy(
+        &self,
+        header: thinoda_core::scene_layout::HeaderPolicy,
+    ) -> (
+        Option<thinoda_core::scene_layout::ContainerLayoutPolicy>,
+        bool,
+    ) {
+        use thinoda_core::scene_layout::{
+            ContainerLayout, ContainerLayoutPolicy, StackAxis, StackResizePolicy,
+        };
+
+        if self.get("childLayout") != Some("stackLayout") {
+            return (None, self.get("childLayout").is_some());
+        }
+
+        let axis = if self.get("horizontalStack").unwrap_or("1") == "1" {
+            StackAxis::Horizontal
+        } else {
+            StackAxis::Vertical
+        };
+        let number = |key: &str, default: f32| match self.get(key) {
+            None => Some(default),
+            Some(_) => self.num(key).filter(|value| *value >= 0.0),
+        };
+        let (Some(spacing), Some(border), Some(left), Some(right), Some(top), Some(bottom)) = (
+            number("stackSpacing", 0.0),
+            number("stackBorder", 0.0),
+            number("marginLeft", 0.0),
+            number("marginRight", 0.0),
+            number("marginTop", 0.0),
+            number("marginBottom", 0.0),
+        ) else {
+            return (None, true);
+        };
+
+        let [left, right, top, bottom] =
+            [border + left, border + right, border + top, border + bottom];
+        if ![left, top, right, bottom]
+            .iter()
+            .all(|value| *value == left)
+        {
+            return (None, true);
+        }
+
+        // Graph's stack layout also fills cross-axis space and defaults to resizing its parent.
+        let unsupported = true;
+
+        (
+            Some(ContainerLayoutPolicy {
+                header,
+                layout: ContainerLayout::Stack {
+                    axis,
+                    spacing,
+                    padding: left,
+                    resize: StackResizePolicy::Preserve,
+                },
+            }),
+            unsupported,
+        )
+    }
+
     fn connector_port(&self, source: bool) -> Result<Option<ConnectorPort>, ()> {
         let keys = if source {
             ["exitX", "exitY", "exitDx", "exitDy", "exitPerimeter"]
@@ -2304,27 +2365,10 @@ impl<'a> PageImport<'a> {
         if rect.size.x < MIN_ZONE_SIZE || rect.size.y < MIN_ZONE_SIZE || style.rotation() != 0.0 {
             return None;
         }
-        const LAYOUT_KEYS: [&str; 12] = [
-            "childLayout",
-            "horizontalStack",
-            "childSpacing",
-            "resizeParent",
-            "resizeParentMax",
-            "resizeLast",
-            "border",
-            "margin",
-            "marginLeft",
-            "marginRight",
-            "marginTop",
-            "marginBottom",
-        ];
-        if cell.collapsed || LAYOUT_KEYS.iter().any(|key| style.get(key).is_some()) {
-            log::warn!(
-                "draw.io scene layout or collapse state on cell {} is not preserved",
-                cell.id
-            );
-            self.warn(ImportWarning::Other);
-        }
+        let mut header = thinoda_core::scene_layout::HeaderPolicy {
+            side: thinoda_core::scene_layout::HeaderSide::Top,
+            extent: 0.0,
+        };
 
         let label = self.label(cell);
         let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect);
@@ -2360,6 +2404,14 @@ impl<'a> PageImport<'a> {
             {
                 self.warn(ImportWarning::Formatting);
             }
+            header = thinoda_core::scene_layout::HeaderPolicy {
+                side: if horizontal {
+                    thinoda_core::scene_layout::HeaderSide::Top
+                } else {
+                    thinoda_core::scene_layout::HeaderSide::Left
+                },
+                extent,
+            };
             let mut stencil =
                 thinoda_core::stencil_object::StencilRef::new("thinoda.general", "header-frame-v2");
             stencil
@@ -2372,7 +2424,19 @@ impl<'a> PageImport<'a> {
         }
         object.band = style.band();
         object.alt_text = cell.tooltip.clone().unwrap_or_default();
-        self.add_object(index, object, context)
+        let (layout_policy, unsupported_layout) = style.scene_layout_policy(header);
+        if cell.collapsed || unsupported_layout {
+            log::warn!(
+                "draw.io scene layout or collapse state on cell {} is not fully preserved",
+                cell.id
+            );
+            self.warn(ImportWarning::Other);
+        }
+        let id = self.add_object(index, object, context)?;
+        if let Some(policy) = layout_policy {
+            self.sheet.canvas.scene.layout_policies.insert(id, policy);
+        }
+        Some(id)
     }
 
     /// A container frame, unless it cannot be a valid Zone.
