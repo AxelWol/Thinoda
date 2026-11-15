@@ -1315,6 +1315,7 @@ struct Geometry {
     height: f32,
     invalid_frame: bool,
     relative: bool,
+    alternate_bounds: Option<Rect>,
     source: Option<Vec2>,
     target: Option<Vec2>,
     offset: Option<Vec2>,
@@ -1391,6 +1392,26 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
             ("mxPoint", Some("sourcePoint")) => geometry.source = point(child, warnings),
             ("mxPoint", Some("targetPoint")) => geometry.target = point(child, warnings),
             ("mxPoint", Some("offset")) => geometry.offset = point(child, warnings),
+            ("mxRectangle", Some("alternateBounds")) => {
+                match (
+                    number(child, "x"),
+                    number(child, "y"),
+                    number(child, "width"),
+                    number(child, "height"),
+                ) {
+                    (Some(x), Some(y), Some(width), Some(height))
+                        if width >= 0.0 && height >= 0.0 =>
+                    {
+                        geometry.alternate_bounds = Some(Rect::from_min_size(
+                            Vec2::new(x, y),
+                            Vec2::new(width, height),
+                        ));
+                    }
+                    _ => {
+                        warnings.insert(ImportWarning::Other);
+                    }
+                }
+            }
             ("Array", Some("points")) => {
                 geometry.points = child
                     .children
@@ -2163,22 +2184,37 @@ impl<'a> PageImport<'a> {
         }
     }
 
-    fn vertex_rect(&self, cell: &Cell, context: Context) -> Rect {
-        let g = &cell.geometry;
-        let mut min = if g.relative && context.parent_is_vertex {
+    fn vertex_rect_from_bounds(&self, cell: &Cell, context: Context, bounds: Rect) -> Rect {
+        let geometry = &cell.geometry;
+        let mut min = if geometry.relative && context.parent_is_vertex {
             Vec2::new(
-                context.origin.x + g.x * context.parent_size.x,
-                context.origin.y + g.y * context.parent_size.y,
+                context.origin.x + bounds.min.x * context.parent_size.x,
+                context.origin.y + bounds.min.y * context.parent_size.y,
             )
         } else {
-            Vec2::new(context.origin.x + g.x, context.origin.y + g.y)
+            Vec2::new(
+                context.origin.x + bounds.min.x,
+                context.origin.y + bounds.min.y,
+            )
         };
-        if g.relative
-            && let Some(offset) = g.offset
+        if geometry.relative
+            && let Some(offset) = geometry.offset
         {
             min = min + offset;
         }
-        Rect::from_min_size(min, Vec2::new(g.width, g.height))
+        Rect::from_min_size(min, bounds.size)
+    }
+
+    fn vertex_rect(&self, cell: &Cell, context: Context) -> Rect {
+        let geometry = &cell.geometry;
+        self.vertex_rect_from_bounds(
+            cell,
+            context,
+            Rect::from_min_size(
+                Vec2::new(geometry.x, geometry.y),
+                Vec2::new(geometry.width, geometry.height),
+            ),
+        )
     }
 
     fn run(&mut self) {
@@ -2260,7 +2296,14 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Other);
             return;
         }
-        let rect = self.vertex_rect(cell, context);
+        let rect = if self.scene_container_cells.contains(&index) && cell.collapsed {
+            cell.geometry
+                .alternate_bounds
+                .map(|bounds| self.vertex_rect_from_bounds(cell, context, bounds))
+                .unwrap_or_else(|| self.vertex_rect(cell, context))
+        } else {
+            self.vertex_rect(cell, context)
+        };
         let mut child_context = Context {
             origin: rect.min,
             parent_size: rect.size,

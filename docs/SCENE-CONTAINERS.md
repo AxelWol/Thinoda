@@ -73,9 +73,9 @@ parent-relative geometry, container markers and top/left headers only when
 every scene container participates in direct container-to-container nesting.
 Isolated scene containers and other unsupported scene/header combinations
 remain refused. Separate import warnings identify partial layout behavior,
-collapsed containers imported expanded, and cards nested in scenes imported as
-standalone board cards. Clipboard paste reports both container ancestry and card
-containment losses.
+collapsed containers imported expanded using alternate bounds when available,
+and cards nested in scenes imported as standalone board cards. Clipboard paste
+reports both container ancestry and card containment losses.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in
@@ -874,7 +874,10 @@ when the combined border and four margins are uniform. Asymmetric margins are
 not approximated. These are partial mappings: Graph.js also fills children
 across the stack axis and defaults to resizing the parent, neither of which is
 represented by the imported `Preserve` resize mode, so stack imports warn.
-Unsupported/non-direct nesting and collapsed state also use the warned path.
+Unsupported/non-direct nesting remains warned. Collapsed scene containers use
+valid `alternateBounds` for their expanded frame and child coordinate context,
+but their collapsed state is not retained; missing or invalid alternate bounds
+fall back to the available frame geometry.
 For scenes with no stored layout or collapse state, the writer now emits
 parent-relative geometry, deterministic object IDs, container markers and
 top/left header styles; a pool/lane/task fixture round-trips ancestry,

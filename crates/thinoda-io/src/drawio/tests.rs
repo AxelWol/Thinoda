@@ -7694,6 +7694,45 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
 }
 
 #[test]
+fn collapsed_nested_swimlanes_expand_from_alternate_bounds() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=1;" collapsed="1" vertex="1" parent="1"><mxGeometry x="100" y="80" width="160" height="120" as="geometry"><mxRectangle x="100" y="80" width="500" height="320" as="alternateBounds"/></mxGeometry></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=1;" collapsed="1" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="120" height="100" as="geometry"><mxRectangle x="30" y="40" width="420" height="240" as="alternateBounds"/></mxGeometry></mxCell>
+        <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="100" height="50" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioCollapsedSceneExpanded),
+        "{:?}",
+        report.warnings
+    );
+
+    let sheet = &report.workbook.sheets[0];
+    let object = |label: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.label() == label)
+            .unwrap()
+    };
+    let pool = object("Pool");
+    let lane = object("Lane");
+    let task = object("Task");
+    assert_eq!(pool.rect, rect(100.0, 80.0, 500.0, 320.0));
+    assert_eq!(lane.rect, rect(130.0, 120.0, 420.0, 240.0));
+    assert_eq!(task.rect, rect(150.0, 150.0, 100.0, 50.0));
+    assert_eq!(sheet.canvas.scene.parents.get(&lane.id), Some(&pool.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&task.id), Some(&lane.id));
+    assert!(sheet.canvas.scene.collapsed.is_empty());
+    report.workbook.validate().unwrap();
+}
+
+#[test]
 fn nested_stack_layout_does_not_approximate_asymmetric_margins() {
     let xml = page(
         r#"
