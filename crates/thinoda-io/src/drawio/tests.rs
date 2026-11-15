@@ -7658,6 +7658,119 @@ fn isolated_scene_container_with_shape_child_round_trips() {
 }
 
 #[test]
+fn isolated_scene_container_with_connector_is_refused() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let container = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 80.0, 400.0, 260.0),
+            "Pool",
+        ))
+        .unwrap();
+    let task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(150.0, 140.0, 120.0, 60.0),
+            "Task",
+        ))
+        .unwrap();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(task),
+            Endpoint::Point(Vec2::new(350.0, 200.0)),
+        )))
+        .unwrap();
+    sheet.canvas.scene.containers.insert(container);
+    sheet.canvas.scene.parents.insert(task, container);
+    sheet.canvas.scene.parents.insert(edge, container);
+    let workbook = Workbook::new(sheet);
+    assert!(matches!(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("connectors inside isolated containers")
+    ));
+}
+
+#[test]
+fn isolated_scene_container_combined_with_nested_scene_is_refused() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let isolated = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 300.0, 200.0),
+            "Isolated",
+        ))
+        .unwrap();
+    let isolated_child = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(20.0, 40.0, 100.0, 50.0),
+            "Isolated child",
+        ))
+        .unwrap();
+    let parent = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(400.0, 0.0, 300.0, 200.0),
+            "Pool",
+        ))
+        .unwrap();
+    let lane = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(420.0, 30.0, 260.0, 150.0),
+            "Lane",
+        ))
+        .unwrap();
+    sheet
+        .canvas
+        .scene
+        .containers
+        .extend([isolated, parent, lane]);
+    sheet.canvas.scene.parents.insert(isolated_child, isolated);
+    sheet.canvas.scene.parents.insert(lane, parent);
+    let workbook = Workbook::new(sheet);
+    assert!(matches!(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("isolated container is combined")
+    ));
+}
+
+#[test]
+fn isolated_scene_containers_across_pages_are_refused() {
+    let isolated_sheet = |title: &str| {
+        let mut sheet = Sheet::new(title, "Root");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let container = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(0.0, 0.0, 300.0, 200.0),
+                "Pool",
+            ))
+            .unwrap();
+        let child = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(20.0, 40.0, 100.0, 50.0),
+                "Task",
+            ))
+            .unwrap();
+        sheet.canvas.scene.containers.insert(container);
+        sheet.canvas.scene.parents.insert(child, container);
+        sheet
+    };
+    let workbook = Workbook {
+        sheets: vec![isolated_sheet("First"), isolated_sheet("Second")],
+        ..Workbook::default()
+    };
+    assert!(matches!(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("isolated across multiple pages")
+    ));
+}
+
+#[test]
 fn nested_drawio_cards_are_imported_with_a_specific_containment_warning() {
     let xml = page(
         r#"

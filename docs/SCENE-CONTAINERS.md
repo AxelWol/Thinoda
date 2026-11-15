@@ -71,18 +71,18 @@ are imported as a warned partial policy; stored layout policies are not yet
 exportable. Collapsed frames retain compact bounds and valid expanded
 `alternateBounds`, while children use the expanded coordinate context. Nested
 scene trees without stored layout policies export parent-relative geometry and
-top/left headers. A Thinoda-specific marker
-preserves one isolated scene container in a single-page file when it has no
-contained connectors; the remaining isolated-container combinations and other
-unsupported scene/header combinations are refused. Separate import warnings
-identify partial layout behavior; collapsed containers are imported expanded
-with a warning when alternate bounds are absent or unusable. Cards nested in
-scenes are imported as standalone board cards. Clipboard paste reports both
-container ancestry and card containment losses. **Checkpoint critique:**
-marking every exported lane introduced formatting warnings on reimport, so the
-marker is limited to isolated frames; multi-page, multi-frame and
-connector-containing variants remain blocked until they pass the same
-scene-idempotence gate.
+top/left headers. A Thinoda-specific marker is emitted only for isolated scene
+roots; marking every lane introduced formatting warnings on reimport. One
+isolated root with shape children round-trips. Isolated roots with contained
+connectors, combined isolated/nested roots, and isolated roots across multiple
+pages remain refused. Separate import warnings identify partial layout
+behavior; collapsed containers are imported expanded with a warning when
+alternate bounds are absent or unusable. Cards nested in scenes are imported as
+standalone board cards. Clipboard paste reports both container ancestry and
+card containment losses. **Checkpoint critique:** keep the marker limited to
+isolated roots; broader multi-root and multi-page cases exposed geometry/order
+and formatting losses in the original corpus, so those combinations remain
+explicitly refused.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in
@@ -888,11 +888,13 @@ and retain both compact and expanded bounds. Missing or invalid alternate bounds
 fall back to the available frame geometry and report the lost collapsed state.
 For scenes with no stored layout policy, the writer now emits
 parent-relative geometry, deterministic object IDs, container markers and
-top/left header styles; a pool/lane/task fixture round-trips ancestry,
-sheet-space geometry and object terminals. Export still refuses stored
-layout policies, right/bottom headers and scene objects that also belong to a
-group or Zone. Collapsed frames export their compact geometry plus expanded
-`alternateBounds`, and children remain relative to the expanded parent origin.
+top/left header styles; pool/lane/task and single isolated-container fixtures
+round-trip ancestry, sheet-space geometry and object terminals. Export still
+refuses isolated roots containing connectors, isolated roots combined with
+other scene containers or spread across multiple pages, stored layout policies,
+right/bottom headers and scene objects that also belong to a group or Zone.
+Collapsed frames export their compact geometry plus expanded `alternateBounds`,
+and children remain relative to the expanded parent origin.
 **Checkpoint critique:** valid bounds are required to preserve collapse state;
 missing or invalid source bounds stay expanded with an explicit warning rather
 than receiving invented geometry. Stored layout policies remain a SC3 blocker.
@@ -984,6 +986,22 @@ not the complete layout behavior. Cross-axis fill, source layout execution,
 asymmetric margins, gap distribution and policy export remain open. The focused
 tests cover the pinned defaults, explicit fill-last/fit-parent/preserve modes
 and invalid axis values; they do not claim draw.io round-trip acceptance.
+
+### 5.15 Isolated-container export boundaries
+
+The export gate is now covered for a single isolated root with shape children,
+an isolated root with a connector, an isolated root combined with a nested
+scene, and isolated roots across pages. Only the shape-only, single-root case
+exports. Re-enabling the other cases caused the original corpus to report
+geometry/order changes in `home-lab-example.drawio` and
+`uml-package-example.drawio`, and a `Formatting` warning on repeated import of
+`ibm_iot_architecture.xml`.
+
+**Checkpoint critique:** the synthetic connector fixture is not sufficient
+evidence to relax a loss guard. Preserve these refusals until the original
+fixtures and draw.io browser behavior round-trip without warnings or geometry
+drift. Layout policies, custom/right/bottom headers, group/Zone overlap and
+indirect nesting remain open.
 
 ## 6. Adversarial acceptance and critique
 
