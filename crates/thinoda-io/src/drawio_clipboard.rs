@@ -23,6 +23,8 @@ pub const MAX_TEXT_BYTES: usize = MAX_BOARD_CLIPBOARD_BYTES;
 pub enum DrawioPasteLoss {
     /// Container frames are not supported by the board clipboard payload.
     ContainerFrames(usize),
+    /// Scene parent relationships are not supported by the board clipboard payload.
+    SceneHierarchy(usize),
     /// Only the first page of a multi-page diagram is pasted.
     AdditionalPages(usize),
 }
@@ -107,6 +109,11 @@ pub fn decode(text: &str) -> Result<DrawioPaste, IoError> {
     let mut losses = Vec::new();
     if !sheet.zones.is_empty() {
         losses.push(DrawioPasteLoss::ContainerFrames(sheet.zones.len()));
+    }
+    if !sheet.canvas.scene.parents.is_empty() {
+        losses.push(DrawioPasteLoss::SceneHierarchy(
+            sheet.canvas.scene.parents.len(),
+        ));
     }
     if additional_pages > 0 {
         losses.push(DrawioPasteLoss::AdditionalPages(additional_pages));

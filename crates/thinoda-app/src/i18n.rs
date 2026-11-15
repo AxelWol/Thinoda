@@ -4338,6 +4338,10 @@ const DE: &[(&str, &str)] = &[
     ),
     ("Container frames omitted", "Containerrahmen ausgelassen"),
     (
+        "Scene parent links omitted",
+        "Szenen-Elternbeziehungen ausgelassen",
+    ),
+    (
         "Additional draw.io pages omitted",
         "Weitere draw.io-Seiten ausgelassen",
     ),
@@ -5283,6 +5287,7 @@ mod tests {
             "Copied for draw.io; paste it into a diagram",
             "Pasted from draw.io; some content may have been omitted or simplified",
             "Container frames omitted",
+            "Scene parent links omitted",
             "Additional draw.io pages omitted",
             "Connector attachments were detached",
             "Connector attachments may have been detached",

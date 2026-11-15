@@ -7447,41 +7447,99 @@ fn shaped_containers_report_their_frame_approximation() {
 }
 
 #[test]
-fn nested_swimlanes_report_lost_parent_hierarchy() {
+fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
     let xml = page(
         r#"
         <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="80" width="500" height="320" as="geometry"/></mxCell>
-        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell>
         <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="100" height="50" as="geometry"/></mxCell>
+        <mxCell id="edge" edge="1" source="pool" target="task" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
         "#,
     );
     let report = load(&xml);
-    assert!(
-        report.warnings.contains(&ImportWarning::Other),
-        "nested container hierarchy is currently flattened: {:?}",
-        report.warnings
-    );
+    assert!(!report.warnings.contains(&ImportWarning::Other));
 
     let sheet = &report.workbook.sheets[0];
-    assert_eq!(sheet.zones.len(), 2);
-    assert!(
-        sheet.canvas.scene.containers.is_empty()
-            && sheet.canvas.scene.parents.is_empty()
-            && sheet.canvas.scene.collapsed.is_empty()
+    assert!(sheet.zones.is_empty());
+    assert_eq!(sheet.canvas.scene.containers.len(), 2);
+    assert_eq!(sheet.canvas.scene.parents.len(), 3);
+    let objects = &sheet.canvas.objects;
+    let pool = objects
+        .iter()
+        .find(|object| object.label() == "Pool")
+        .unwrap();
+    let lane = objects
+        .iter()
+        .find(|object| object.label() == "Lane")
+        .unwrap();
+    let task = objects
+        .iter()
+        .find(|object| object.label() == "Task")
+        .unwrap();
+    assert_eq!(pool.rect, rect(100.0, 80.0, 500.0, 320.0));
+    assert_eq!(lane.rect, rect(130.0, 120.0, 420.0, 240.0));
+    assert_eq!(task.rect, rect(150.0, 150.0, 100.0, 50.0));
+    assert!(sheet.canvas.scene.containers.contains(&pool.id));
+    assert!(sheet.canvas.scene.containers.contains(&lane.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&lane.id), Some(&pool.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&task.id), Some(&lane.id));
+    let connector_id = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap()
+        .id;
+    assert_eq!(
+        objects.iter().map(|object| object.id).collect::<Vec<_>>(),
+        vec![pool.id, lane.id, task.id, connector_id]
     );
-    assert_eq!(sheet.zones[1].frame, rect(130.0, 120.0, 420.0, 240.0));
-    assert_eq!(shapes(sheet)[0].rect, rect(150.0, 150.0, 100.0, 50.0));
+    assert_eq!(
+        sheet.canvas.scene.parents.get(&connector_id),
+        Some(&pool.id)
+    );
+    assert_eq!(connectors(sheet).len(), 1);
+    assert_eq!(connectors(sheet)[0].from, Endpoint::Object(pool.id));
+    assert_eq!(connectors(sheet)[0].to, Endpoint::Object(task.id));
+    assert_eq!(
+        lane.stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerHeight")),
+        Some(&24.0)
+    );
+    assert_eq!(
+        lane.stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerSide")),
+        Some(&3.0)
+    );
+    sheet.validate().unwrap();
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+    assert!(matches!(
+        export_bytes(
+            &report.workbook,
+            Format::DrawIo,
+            &ExportOptions::default()
+        ),
+        Err(IoError::Invalid(message)) if message.contains("cannot preserve scene hierarchy")
+    ));
 
     let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
     assert_eq!(
         crate::import_drawio_link(&link).unwrap().warnings,
         report.warnings
     );
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert!(pasted.warnings.contains(&ImportWarning::Other));
     assert!(
-        crate::drawio_clipboard::decode(&xml)
-            .unwrap()
-            .warnings
-            .contains(&ImportWarning::Other)
+        pasted
+            .losses
+            .contains(&crate::drawio_clipboard::DrawioPasteLoss::SceneHierarchy(3))
     );
 }
 

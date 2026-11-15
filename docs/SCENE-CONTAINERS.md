@@ -1,7 +1,8 @@
 # Common nested containers and swimlanes
 
 Research and design: 2026-11-13. **Implementation in progress; SC0/SC1 remain
-partial, SC2 has partial layout-policy support, and SC3 remains open.**
+partial, SC2 has partial layout-policy support, and SC3 has an initial nested
+ancestry-import slice; structural round-trip remains open.**
 This is the common structural contract for [draw.io support](DRAWIO.md) and
 [socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO.md section
 3.2.1, rather than introducing a second container implementation.
@@ -53,23 +54,19 @@ lane/table-container occurrences**, including three container levels in
 `maths-examples.drawio` page 2. That count includes table-related containers;
 it is not a count of 88 independently supported nested-lane diagrams.
 
-Current code does not retain this structure as an editable scene tree:
+The initial SC3 import slice promotes directly nested draw.io container cells
+to scene containers. Their source parent ancestry and sheet-space rectangles
+are preserved, and swimlane `horizontal` plus `startSize` map to the shared
+`header-frame-v2` stencil. Connectors attached to imported containers retain
+object endpoints. Flat containers continue using Zones for compatibility.
 
-- `crates/thinoda-io/src/drawio.rs:2110-2164` resolves parent-relative positions
-  while visiting cells, but converts a container into a Zone and replaces the
-  current Zone context on descent.
-- `drawio.rs:2185-2244` approximates frames as Zones; `2956-2985` applies
-  memberships and flattens grouping into board groups.
-- `crates/thinoda-core/src/board.rs:345-349` explicitly makes `CanvasGroup`
-  flat; `model.rs:487-510` gives Zones no nested-parent field.
-
-Nested containers now raise the generic unsupported-data warning when imported
-through this lossy path. This makes the loss visible; it does not preserve the
-parent tree or satisfy SC3.
-
-Thus importing visible nested rectangles is not nested-swimlane support.
-The future shared milestone must preserve structure, editing behavior and
-interchange, not just approximate the initial picture.
+This is not full SC3 support. Only direct container-to-container nesting is
+promoted; nested containers under intervening non-container/group cells remain
+on the warned legacy path. Imported stack/resize/collapse policies are not
+mapped, draw.io export remains refused for scene hierarchies, and draw.io
+clipboard fragments report ancestry as a loss. Native save/reopen and visual
+export preserve the imported scene, but full draw.io structural round-trip,
+editing policy fidelity and normalized-idempotence remain open.
 
 ## 2. One engine, three responsibilities
 
@@ -840,17 +837,20 @@ SVG object geometry, subtree movement/undo and category preview visibility.
 No live native/browser or screen-reader acceptance is claimed. Typed semantic
 versions must be authored explicitly later, not inferred from existing labels.
 
-### 5.12 Nested-container import loss warning
+### 5.12 Initial nested-container ancestry import
 
-The draw.io importer now reports `ImportWarning::Other` when a container has a
-container or grouped parent whose hierarchy the current Zone/flat-group model
-cannot retain. A focused nested pool/lane/task fixture confirms that coordinates
-are still resolved to sheet space, while the parent relation is absent and the
-warning is also propagated by draw.io links and clipboard import.
+The draw.io importer promotes directly nested container chains into the shared
+scene tree while retaining sheet-space rectangles. The focused pool/lane/task
+fixture verifies parent IDs, coordinates, header extent/orientation, and a
+connector attached to the pool. Simple un-nested containers continue to import
+as Zones. The same fixture verifies native model validation and reports lost
+ancestry when preparing a board clipboard fragment.
 
-This is a loss diagnostic, not nested-swimlane support: Zones remain flat,
-editable export remains guarded, and SC0-SC3 are still open. Do not remove the
-warning until the shared scene importer preserves the supported hierarchy.
+The source import is no longer warned merely because a supported direct nested
+chain exists. Unsupported/non-direct nesting still uses the legacy warned path.
+draw.io export remains refused for any scene hierarchy, because the writer
+does not yet reconstruct source parents, local geometry or supported policies;
+SC3 remains open until fixture round-trip and idempotence gates are met.
 
 ### 5.13 Bounded layout, persistence and undoable application
 

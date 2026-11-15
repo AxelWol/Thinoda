@@ -528,6 +528,7 @@ fn drawio_paste_loss_lines(
         .map(|loss| {
             let (count, label) = match loss {
                 DrawioPasteLoss::ContainerFrames(count) => (count, "Container frames omitted"),
+                DrawioPasteLoss::SceneHierarchy(count) => (count, "Scene parent links omitted"),
                 DrawioPasteLoss::AdditionalPages(count) => {
                     (count, "Additional draw.io pages omitted")
                 }
@@ -2619,6 +2620,27 @@ mod tests {
     fn board_item_count(app: &crate::app::ThinodaApp) -> usize {
         let sheet = app.doc().unwrap().doc.sheet();
         sheet.topics.len() + sheet.canvas.objects.len()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_reports_lost_scene_parent_links() {
+        let xml = r#"<mxfile><diagram name="Page-1"><mxGraphModel><root>
+            <mxCell id="0"/><mxCell id="1" parent="0"/>
+            <mxCell id="pool" value="Pool" style="swimlane;" vertex="1" parent="1"><mxGeometry width="300" height="200" as="geometry"/></mxCell>
+            <mxCell id="lane" value="Lane" style="swimlane;horizontal=0;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="240" height="140" as="geometry"/></mxCell>
+            <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="lane"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>
+        </root></mxGraphModel></diagram></mxfile>"#;
+        let pasted = thinoda_io::drawio_clipboard::decode(xml).unwrap();
+        assert_eq!(
+            pasted.losses,
+            vec![thinoda_io::drawio_clipboard::DrawioPasteLoss::SceneHierarchy(2)]
+        );
+        let lines = drawio_paste_loss_lines(&pasted.losses);
+        assert!(
+            lines[0].contains(crate::i18n::t("Scene parent links omitted")),
+            "{lines:?}"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

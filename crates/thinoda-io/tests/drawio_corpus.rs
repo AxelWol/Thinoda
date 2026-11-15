@@ -386,6 +386,7 @@ fn check(path: &Path) -> Result<String, String> {
     let opts = ExportOptions::default();
 
     let losses = thinoda_io::export_losses(&book, Format::DrawIo, &opts);
+    let has_scene_hierarchy = book.sheets.iter().any(|sheet| sheet.has_scene_hierarchy());
     let attachment_losses: Vec<_> = losses
         .iter()
         .filter(|loss| {
@@ -399,66 +400,81 @@ fn check(path: &Path) -> Result<String, String> {
         .cloned()
         .collect();
     let strict = thinoda_io::export_bytes(&book, Format::DrawIo, &opts);
-    let drawio = match (attachment_losses.as_slice(), strict) {
-        ([], Ok(bytes)) => bytes,
+    let drawio = match (has_scene_hierarchy, attachment_losses.as_slice(), strict) {
+        (true, _, Err(IoError::Invalid(message)))
+            if message.contains("cannot preserve scene hierarchy") =>
+        {
+            None
+        }
+        (true, _, result) => {
+            return Err(format!(
+                "nested scene hierarchy was not refused by draw.io export: {result:?}"
+            ));
+        }
+        (false, [], Ok(bytes)) => Some(bytes),
         (
+            false,
             [ExportLoss::ConnectorAttachmentsDetached(expected)],
             Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(actual)),
-        ) if expected == &actual => {
+        ) if expected == &actual => Some(
             thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
-                .map_err(|e| format!("consented draw.io export: {e}"))?
-        }
-        (expected, Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(actual)))
-            if expected == actual =>
-        {
+                .map_err(|e| format!("consented draw.io export: {e}"))?,
+        ),
+        (
+            false,
+            expected,
+            Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(actual)),
+        ) if expected == actual => Some(
             thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
-                .map_err(|e| format!("consented draw.io export: {e}"))?
-        }
-        (expected, Ok(_)) => {
+                .map_err(|e| format!("consented draw.io export: {e}"))?,
+        ),
+        (false, expected, Ok(_)) => {
             return Err(format!(
                 "strict draw.io export accepted attachment losses {expected:?}"
             ));
         }
-        (expected, Err(error)) => {
+        (false, expected, Err(error)) => {
             return Err(format!(
                 "strict draw.io export reported {error:?} instead of {expected:?}"
             ));
         }
     };
-    let again = thinoda_io::import_bytes_with_report(Format::DrawIo, &drawio)
-        .map_err(|e| format!("draw.io re-import: {e}"))?
-        .workbook;
-    if again.sheets.len() != book.sheets.len() {
-        return Err(format!(
-            "round trip pages {} -> {}",
-            book.sheets.len(),
-            again.sheets.len()
-        ));
-    }
-    for (index, (original, restored)) in book.sheets.iter().zip(&again.sheets).enumerate() {
-        if original.board != restored.board {
-            return Err(format!("page {} changed its grid settings", index + 1));
+    if let Some(drawio) = drawio {
+        let again = thinoda_io::import_bytes_with_report(Format::DrawIo, &drawio)
+            .map_err(|e| format!("draw.io re-import: {e}"))?
+            .workbook;
+        if again.sheets.len() != book.sheets.len() {
+            return Err(format!(
+                "round trip pages {} -> {}",
+                book.sheets.len(),
+                again.sheets.len()
+            ));
         }
-        if original.theme.background != restored.theme.background {
-            return Err(format!("page {} changed its background", index + 1));
+        for (index, (original, restored)) in book.sheets.iter().zip(&again.sheets).enumerate() {
+            if original.board != restored.board {
+                return Err(format!("page {} changed its grid settings", index + 1));
+            }
+            if original.theme.background != restored.theme.background {
+                return Err(format!("page {} changed its background", index + 1));
+            }
         }
+        let round_trip = items(&again);
+        if round_trip < count {
+            return Err(format!("round trip lost items {count} -> {round_trip}"));
+        }
+        check_waypoints(&book, &again)?;
+        check_markers(&book, &again)?;
+        check_partial_rectangles(&book, &again)?;
+        check_double_ellipses(&book, &again)?;
+        let detached = attachment_losses
+            .iter()
+            .find_map(|loss| match loss {
+                ExportLoss::FixedConnectorAttachmentsDetached(count) => Some(*count),
+                _ => None,
+            })
+            .unwrap_or(0);
+        check_fixed_ports(&book, &again, detached)?;
     }
-    let round_trip = items(&again);
-    if round_trip < count {
-        return Err(format!("round trip lost items {count} -> {round_trip}"));
-    }
-    check_waypoints(&book, &again)?;
-    check_markers(&book, &again)?;
-    check_partial_rectangles(&book, &again)?;
-    check_double_ellipses(&book, &again)?;
-    let detached = attachment_losses
-        .iter()
-        .find_map(|loss| match loss {
-            ExportLoss::FixedConnectorAttachmentsDetached(count) => Some(*count),
-            _ => None,
-        })
-        .unwrap_or(0);
-    check_fixed_ports(&book, &again, detached)?;
 
     let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
         .map_err(|e| format!("native export: {e}"))?;
@@ -482,6 +498,11 @@ fn check(path: &Path) -> Result<String, String> {
         let mut expected = Vec::new();
         if !book.sheets[0].zones.is_empty() {
             expected.push(DrawioPasteLoss::ContainerFrames(book.sheets[0].zones.len()));
+        }
+        if !book.sheets[0].canvas.scene.parents.is_empty() {
+            expected.push(DrawioPasteLoss::SceneHierarchy(
+                book.sheets[0].canvas.scene.parents.len(),
+            ));
         }
         if book.sheets.len() > 1 {
             expected.push(DrawioPasteLoss::AdditionalPages(book.sheets.len() - 1));
@@ -955,9 +976,13 @@ fn supplied_uml_package_keeps_its_thin_diamond_markers() {
         })
         .sum::<usize>();
     assert_eq!(count, expected);
-    let exported =
-        thinoda_io::export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
-    let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported)
+    let format = if book.sheets.iter().any(|sheet| sheet.has_scene_hierarchy()) {
+        Format::Thinoda
+    } else {
+        Format::DrawIo
+    };
+    let exported = thinoda_io::export_bytes(&book, format, &ExportOptions::default()).unwrap();
+    let reopened = thinoda_io::import_bytes_with_report(format, &exported)
         .unwrap()
         .workbook;
     check_markers(&book, &reopened).unwrap();

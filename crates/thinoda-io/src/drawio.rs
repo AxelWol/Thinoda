@@ -1,9 +1,10 @@
 //! draw.io / diagrams.net documents and embedded SVG, PNG and HTML diagrams.
 //!
 //! Import converts every page into a Freeform board sheet: vertices become shapes,
-//! notes become cards, swimlanes and containers become Zones, groups become board
-//! groups and edges become free connectors. Content without a native equivalent is
-//! approximated and reported through [`ImportWarning`] categories.
+//! notes become cards, flat swimlanes and containers become Zones, nested
+//! containers become scene frames, groups become board groups and edges become
+//! free connectors. Content without a native equivalent is approximated and
+//! reported through [`ImportWarning`] categories.
 //!
 //! Export writes one uncompressed page per sheet. Board content maps back to the
 //! same draw.io cells; ordinary mind-map topics, branches and annotations are
@@ -1927,6 +1928,7 @@ enum Item {
     Card(TopicId),
     /// Groups and Zones: edges attached to them end at the centre.
     Area(Rect),
+    Container(CanvasObjectId),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1937,6 +1939,7 @@ struct Context {
     parent_is_vertex: bool,
     zone: Option<usize>,
     bucket: Option<usize>,
+    scene_parent: Option<CanvasObjectId>,
 }
 
 enum End {
@@ -1949,6 +1952,7 @@ struct PageImport<'a> {
     cells: &'a [Cell],
     index: HashMap<&'a str, usize>,
     children: Vec<Vec<usize>>,
+    scene_container_cells: HashSet<usize>,
     sheet: Sheet,
     warnings: &'a mut BTreeSet<ImportWarning>,
     items: HashMap<usize, Item>,
@@ -2000,10 +2004,13 @@ impl<'a> PageImport<'a> {
 
     fn register(&mut self, cell: usize, item: Item, context: Context, locked: bool) {
         self.items.insert(cell, item);
+        if context.scene_parent.is_some() && matches!(item, Item::Card(_)) {
+            self.warn(ImportWarning::Other);
+        }
         let member = match item {
             Item::Object(id) => BoardMember::Object(id),
             Item::Card(id) => BoardMember::Card(id),
-            Item::Area(_) => return,
+            Item::Area(_) | Item::Container(_) => return,
         };
         if let Some(zone) = context.zone {
             match member {
@@ -2069,6 +2076,9 @@ impl<'a> PageImport<'a> {
             Ok(id) => {
                 if let Some(shape) = shape {
                     self.shapes.insert(id, shape);
+                }
+                if let Some(parent) = context.scene_parent {
+                    self.sheet.canvas.scene.parents.insert(id, parent);
                 }
                 let locked = self.cells[cell].style.flag("locked");
                 self.register(cell, Item::Object(id), context, locked);
@@ -2199,6 +2209,9 @@ impl<'a> PageImport<'a> {
         }
         match kind {
             Kind::Group => {
+                if context.scene_parent.is_some() {
+                    self.warn(ImportWarning::Other);
+                }
                 let bucket = context.bucket.unwrap_or_else(|| {
                     self.buckets.push((Vec::new(), false));
                     self.buckets.len() - 1
@@ -2208,6 +2221,36 @@ impl<'a> PageImport<'a> {
                 }
                 child_context.bucket = Some(bucket);
                 self.items.insert(index, Item::Area(rect));
+            }
+            Kind::Container
+                if self.scene_container_cells.contains(&index) && context.bucket.is_none() =>
+            {
+                if let Some(id) = self.scene_container(index, rect, context) {
+                    self.sheet.canvas.scene.containers.insert(id);
+                    child_context.zone = None;
+                    child_context.bucket = None;
+                    child_context.scene_parent = Some(id);
+                    self.items.insert(index, Item::Container(id));
+                } else {
+                    self.warn(ImportWarning::Other);
+                    let drawn = self.draw(
+                        index,
+                        Kind::Shape(ShapeKind::Rectangle, 0.0, true),
+                        rect,
+                        context,
+                    );
+                    if has_children {
+                        let bucket = match context.bucket {
+                            Some(bucket) => bucket,
+                            None => {
+                                let members = drawn.into_iter().collect();
+                                self.buckets.push((members, false));
+                                self.buckets.len() - 1
+                            }
+                        };
+                        child_context.bucket = Some(bucket);
+                    }
+                }
             }
             Kind::Container
                 if let Some(zone) = self.zone(
@@ -2238,6 +2281,67 @@ impl<'a> PageImport<'a> {
         for child in self.children[index].clone() {
             self.visit(child, child_context, depth + 1);
         }
+    }
+
+    fn scene_container(
+        &mut self,
+        index: usize,
+        rect: Rect,
+        context: Context,
+    ) -> Option<CanvasObjectId> {
+        let cell = &self.cells[index];
+        let style = &cell.style;
+        if rect.size.x < MIN_ZONE_SIZE || rect.size.y < MIN_ZONE_SIZE || style.rotation() != 0.0 {
+            return None;
+        }
+
+        let label = self.label(cell);
+        let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect);
+        if let CanvasObjectKind::Shape {
+            label: object_label,
+            ..
+        } = &mut object.kind
+        {
+            *object_label = label;
+        }
+        object.style = object_style(style);
+        if style.shape() == "swimlane" {
+            if style.get("swimlaneFillColor").is_some() || style.get("fillColor").is_some() {
+                self.warn(ImportWarning::Formatting);
+            }
+            if let Some(fill) = style.color("swimlaneFillColor", "fillOpacity") {
+                object.style.fill = Some(fill);
+            }
+            let horizontal = match style.get("horizontal") {
+                None | Some("1") => true,
+                Some("0") => false,
+                Some(_) => {
+                    self.warn(ImportWarning::Formatting);
+                    true
+                }
+            };
+            let default_extent = 40.0;
+            let source_extent = style.num("startSize").unwrap_or(default_extent);
+            let limit = if horizontal { rect.size.y } else { rect.size.x };
+            let extent = source_extent.clamp(0.0, limit);
+            if (style.get("startSize").is_some() && style.num("startSize").is_none())
+                || extent != source_extent
+            {
+                self.warn(ImportWarning::Formatting);
+            }
+            let mut stencil =
+                thinoda_core::stencil_object::StencilRef::new("thinoda.general", "header-frame-v2");
+            stencil
+                .parameters
+                .insert("headerSide".into(), if horizontal { 0.0 } else { 3.0 });
+            stencil
+                .parameters
+                .insert("headerHeight".into(), f64::from(extent));
+            object.stencil = Some(stencil);
+        }
+        object.band = style.band();
+        object.alt_text = cell.tooltip.clone().unwrap_or_default();
+        self.add_object(index, object, context)
     }
 
     /// A container frame, unless it cannot be a valid Zone.
@@ -2709,6 +2813,12 @@ impl<'a> PageImport<'a> {
                         None => End::Missing,
                     };
                 }
+                Some(Item::Container(id)) => {
+                    return End::Ready {
+                        endpoint: Endpoint::Object(*id),
+                        detached: false,
+                    };
+                }
                 None if !last_pass && !self.visited[index] => return End::Pending,
                 None => {}
             }
@@ -3057,7 +3167,7 @@ impl<'a> PageImport<'a> {
             .iter()
             .enumerate()
             .filter_map(|(rank, cell)| match self.items.get(cell) {
-                Some(Item::Object(id)) => Some((*id, rank)),
+                Some(Item::Object(id) | Item::Container(id)) => Some((*id, rank)),
                 _ => None,
             })
             .collect();
@@ -3431,10 +3541,27 @@ fn import_page(
             children[parent].push(i);
         }
     }
+    let container_cells: Vec<_> = cells
+        .iter()
+        .map(|cell| classify(&cell.style) == Kind::Container)
+        .collect();
+    let mut scene_container_cells = HashSet::new();
+    for (child, cell) in cells.iter().enumerate() {
+        if !container_cells[child] {
+            continue;
+        }
+        if let Some(parent) = cell.parent.as_deref().and_then(|id| index.get(id))
+            && container_cells[*parent]
+        {
+            scene_container_cells.insert(child);
+            scene_container_cells.insert(*parent);
+        }
+    }
     let mut import = PageImport {
         cells: &cells,
         index,
         children,
+        scene_container_cells,
         sheet,
         warnings,
         items: HashMap::new(),

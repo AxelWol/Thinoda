@@ -1011,6 +1011,7 @@ Copy as draw.io|Copiar como draw.io
 Copied for draw.io; paste it into a diagram|Copiado para o draw.io; cole em um diagrama
 Pasted from draw.io; some content may have been omitted or simplified|Colado do draw.io; parte do conteúdo pode ter sido omitida ou simplificada
 Container frames omitted|Molduras de contêineres omitidas
+Scene parent links omitted|Relações de ascendência da cena omitidas
 Container|Contêiner
 Parent container|Contêiner superior
 Contained objects|Objetos contidos
