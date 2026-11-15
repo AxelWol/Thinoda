@@ -74,7 +74,8 @@ every scene container participates in direct container-to-container nesting.
 Isolated scene containers and other unsupported scene/header combinations
 remain refused. Separate import warnings identify partial layout behavior,
 collapsed containers imported expanded, and cards nested in scenes imported as
-standalone board cards; draw.io clipboard fragments report ancestry as a loss.
+standalone board cards. Clipboard paste reports both container ancestry and card
+containment losses.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in

@@ -474,6 +474,7 @@ pub(crate) struct DrawioPasteOutcome {
     unsupported_shapes: bool,
     folded_notes: bool,
     unsupported_placeholders: bool,
+    scene_card_containment_not_preserved: bool,
 }
 
 /// Pastes draw.io clipboard text as one undoable edit centred in the view.
@@ -515,6 +516,9 @@ pub(crate) fn paste_drawio(doc: &mut OpenDoc, text: &str) -> Result<DrawioPasteO
         unsupported_placeholders: pasted
             .warnings
             .contains(&thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported),
+        scene_card_containment_not_preserved: pasted
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioSceneCardContainmentNotPreserved),
     })
 }
 
@@ -852,6 +856,7 @@ impl crate::app::ThinodaApp {
                                 || outcome.unsupported_shapes
                                 || outcome.folded_notes
                                 || outcome.unsupported_placeholders
+                                || outcome.scene_card_containment_not_preserved
                                 || outcome.possible_omissions =>
                         {
                             let message = crate::i18n::t(
@@ -885,6 +890,14 @@ impl crate::app::ThinodaApp {
                                     crate::i18n::t(
                                         "draw.io placeholders are not resolved and their data is not preserved",
                                     )
+                                    .to_owned(),
+                                );
+                            }
+                            if outcome.scene_card_containment_not_preserved {
+                                lines.push(
+                                    crate::i18n::t(crate::i18n::import_warning_label(
+                                        thinoda_io::ImportWarning::DrawioSceneCardContainmentNotPreserved,
+                                    ))
                                     .to_owned(),
                                 );
                             }
@@ -3522,6 +3535,26 @@ mod tests {
                 .texts()
                 .any(|text| text
                     .contains(crate::i18n::t("The draw.io page has no pasteable items.")))
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn drawio_clipboard_explains_nested_card_containment_loss() {
+        use crate::app::Cmd;
+
+        let nested_card = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="80" width="500" height="320" as="geometry"/></mxCell><mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell><mxCell id="note" value="Nested note" style="shape=note;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="160" height="100" as="geometry"/></mxCell></root></mxGraphModel>"#;
+        let (mut app, clipboard) = empty_board_app();
+        clipboard.borrow_mut().text = nested_card.to_owned();
+
+        app.exec(&egui::Context::default(), Cmd::MenuPaste);
+
+        let warning = crate::i18n::t(crate::i18n::import_warning_label(
+            thinoda_io::ImportWarning::DrawioSceneCardContainmentNotPreserved,
+        ));
+        assert!(
+            app.toasts.texts().any(|text| text.contains(warning)),
+            "expected clipboard warning {warning:?}"
         );
     }
 
