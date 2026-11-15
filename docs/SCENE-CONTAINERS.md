@@ -1,8 +1,9 @@
 # Common nested containers and swimlanes
 
 Research and design: 2026-11-13. **Implementation in progress; SC0/SC1 remain
-partial, SC2 has partial layout-policy support, and SC3 has initial nested
-ancestry import/export; structural round-trip remains open.**
+partial, SC2 has partial layout-policy support, and SC3 has a bounded nested
+import/export slice; original-fixture and full loss-policy acceptance remain
+open.**
 This is the common structural contract for [draw.io support](DRAWIO.md) and
 [socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO.md section
 3.2.1, rather than introducing a second container implementation.
@@ -57,7 +58,7 @@ lane/table-container occurrences**, including three container levels in
 `maths-examples.drawio` page 2. That count includes table-related containers;
 it is not a count of 88 independently supported nested-lane diagrams.
 
-The initial SC3 import slice promotes directly nested draw.io container cells
+The current SC3 import slice promotes directly nested draw.io container cells
 to scene containers. Their source parent ancestry and sheet-space rectangles
 are preserved, and swimlane `horizontal` plus `startSize` map to the shared
 `header-frame-v2` stencil. Connectors attached to imported containers retain
@@ -75,8 +76,11 @@ remain refused. Separate import warnings identify partial layout behavior and
 collapsed containers imported expanded; draw.io clipboard fragments report
 ancestry as a loss.
 Supported scene exports in the corpus are checked for normalized scene
-idempotence across repeated round trips. Broader fixture coverage and
-draw.io UI verification remain open.
+idempotence across repeated round trips, and the included draw.io example
+corpus round-trip gate passes. A nested pool/lane/task export was opened in
+app.diagrams.net and visually confirmed with its top pool header, left lane
+header, task and connector. Targeted assertions for original nested source
+fixtures and browser-console validation remain open.
 
 ## 2. One engine, three responsibilities
 
@@ -909,11 +913,13 @@ declares all four side choices; unsupported stencils show the stored side
 read-only. Draft initialization preserves a bound stencil's declared side and
 extent.
 
-This remains below SC2 acceptance: draw.io structural fidelity, clipping,
-persistent routing policy, measured
+This remains below SC2 acceptance: clipping, persistent routing policy, measured
 workload budgets and native/web visual/accessibility acceptance remain open.
-Header side and extent import from draw.io, but export does not yet reconstruct
-them or the source hierarchy.
+Supported top/left headers, parent-relative geometry and nested source
+hierarchy are reconstructed on export and were visually checked in
+app.diagrams.net. Export still refuses collapsed frames, stored layout policies,
+right/bottom headers, custom container stencils, group/Zone overlap and isolated
+scene containers rather than approximating them.
 
 The stack policy includes opt-in `FillLast`, `GrowParent` and `FitParent` modes.
 `FillLast` grows only the final child along the stack axis, preserving its

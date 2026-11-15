@@ -7452,7 +7452,8 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
         r#"
         <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="80" width="500" height="320" as="geometry"/></mxCell>
         <mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell>
-        <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="100" height="50" as="geometry"/></mxCell>
+        <mxCell id="sub-lane" value="Sub-lane" style="swimlane;startSize=18;horizontal=1;collapsible=0;" vertex="1" parent="lane"><mxGeometry x="40" y="50" width="300" height="160" as="geometry"/></mxCell>
+        <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="sub-lane"><mxGeometry x="20" y="30" width="100" height="50" as="geometry"/></mxCell>
         <mxCell id="edge" edge="1" source="pool" target="task" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
         "#,
     );
@@ -7461,8 +7462,8 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
 
     let sheet = &report.workbook.sheets[0];
     assert!(sheet.zones.is_empty());
-    assert_eq!(sheet.canvas.scene.containers.len(), 2);
-    assert_eq!(sheet.canvas.scene.parents.len(), 3);
+    assert_eq!(sheet.canvas.scene.containers.len(), 3);
+    assert_eq!(sheet.canvas.scene.parents.len(), 4);
     let objects = &sheet.canvas.objects;
     let pool = objects
         .iter()
@@ -7472,17 +7473,24 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
         .iter()
         .find(|object| object.label() == "Lane")
         .unwrap();
+    let sub_lane = objects
+        .iter()
+        .find(|object| object.label() == "Sub-lane")
+        .unwrap();
     let task = objects
         .iter()
         .find(|object| object.label() == "Task")
         .unwrap();
     assert_eq!(pool.rect, rect(100.0, 80.0, 500.0, 320.0));
     assert_eq!(lane.rect, rect(130.0, 120.0, 420.0, 240.0));
-    assert_eq!(task.rect, rect(150.0, 150.0, 100.0, 50.0));
+    assert_eq!(sub_lane.rect, rect(170.0, 170.0, 300.0, 160.0));
+    assert_eq!(task.rect, rect(190.0, 200.0, 100.0, 50.0));
     assert!(sheet.canvas.scene.containers.contains(&pool.id));
     assert!(sheet.canvas.scene.containers.contains(&lane.id));
+    assert!(sheet.canvas.scene.containers.contains(&sub_lane.id));
     assert_eq!(sheet.canvas.scene.parents.get(&lane.id), Some(&pool.id));
-    assert_eq!(sheet.canvas.scene.parents.get(&task.id), Some(&lane.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&sub_lane.id), Some(&lane.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&task.id), Some(&sub_lane.id));
     let connector_id = sheet
         .canvas
         .objects
@@ -7492,7 +7500,7 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
         .id;
     assert_eq!(
         objects.iter().map(|object| object.id).collect::<Vec<_>>(),
-        vec![pool.id, lane.id, task.id, connector_id]
+        vec![pool.id, lane.id, sub_lane.id, task.id, connector_id]
     );
     assert_eq!(
         sheet.canvas.scene.parents.get(&connector_id),
@@ -7548,12 +7556,25 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
         .iter()
         .find(|object| object.label() == "Lane")
         .unwrap();
+    let restored_sub_lane = restored
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Sub-lane")
+        .unwrap();
     assert_eq!(
         restored_lane
             .stencil
             .as_ref()
             .and_then(|stencil| stencil.parameters.get("headerSide")),
         Some(&3.0)
+    );
+    assert_eq!(
+        restored_sub_lane
+            .stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerSide")),
+        Some(&0.0)
     );
     assert_eq!(connectors(restored)[0].from, connectors(sheet)[0].from);
     assert_eq!(connectors(restored)[0].to, connectors(sheet)[0].to);
@@ -7584,7 +7605,9 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
     assert!(
         pasted
             .losses
-            .contains(&crate::drawio_clipboard::DrawioPasteLoss::SceneHierarchy(3))
+            .contains(&crate::drawio_clipboard::DrawioPasteLoss::SceneHierarchy(
+                sheet.canvas.scene.parents.len()
+            ))
     );
 }
 
