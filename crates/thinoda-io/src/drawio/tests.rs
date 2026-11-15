@@ -7612,6 +7612,52 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
 }
 
 #[test]
+fn isolated_scene_container_with_shape_child_round_trips() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let container = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 80.0, 400.0, 260.0),
+            "Pool",
+        ))
+        .unwrap();
+    let task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(150.0, 140.0, 120.0, 60.0),
+            "Task",
+        ))
+        .unwrap();
+    sheet.canvas.scene.containers.insert(container);
+    sheet.canvas.scene.parents.insert(task, container);
+    let workbook = Workbook::new(sheet);
+
+    let xml = String::from_utf8(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()).unwrap(),
+    )
+    .unwrap();
+    assert!(xml.contains("thinodaSceneContainer=1;"));
+    let imported = load(&xml);
+    assert!(imported.warnings.is_empty(), "{:?}", imported.warnings);
+    let restored = imported.workbook;
+    let sheet = &restored.sheets[0];
+    assert_eq!(sheet.canvas.scene.parents.get(&task), Some(&container));
+    assert!(sheet.canvas.scene.containers.contains(&container));
+    assert_eq!(
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.id == task)
+            .unwrap()
+            .rect,
+        rect(150.0, 140.0, 120.0, 60.0)
+    );
+    restored.validate().unwrap();
+}
+
+#[test]
 fn nested_drawio_cards_are_imported_with_a_specific_containment_warning() {
     let xml = page(
         r#"

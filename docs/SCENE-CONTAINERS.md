@@ -929,9 +929,14 @@ This remains below SC2 acceptance: clipping, persistent routing policy, measured
 workload budgets and native/web visual/accessibility acceptance remain open.
 Supported top/left headers, parent-relative geometry and nested source
 hierarchy are reconstructed on export and were visually checked in
-app.diagrams.net. Export still refuses collapsed frames, stored layout policies,
-right/bottom headers, custom container stencils, group/Zone overlap and isolated
-scene containers rather than approximating them.
+app.diagrams.net. A Thinoda-specific style marker preserves scene-container
+identity on reimport for a single isolated container in a single-page file
+without contained connectors. Multiple isolated containers, contained
+connectors in an isolated frame, isolated containers combined with other scene
+containers, and isolated containers in multi-page files remain refused. Export
+also refuses collapsed frames, stored layout policies, right/bottom headers,
+custom container stencils and group/Zone overlap rather than approximating
+them.
 
 The stack policy includes opt-in `FillLast`, `GrowParent` and `FitParent` modes.
 `FillLast` grows only the final child along the stack axis, preserving its

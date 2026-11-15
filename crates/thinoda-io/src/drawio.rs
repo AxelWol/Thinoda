@@ -3695,6 +3695,9 @@ fn import_page(
         if !container_cells[child] {
             continue;
         }
+        if cell.style.flag("thinodaSceneContainer") {
+            scene_container_cells.insert(child);
+        }
         if let Some(parent) = cell.parent.as_deref().and_then(|id| index.get(id))
             && container_cells[*parent]
         {
@@ -4632,6 +4635,9 @@ impl<'a> PageWriter<'a> {
                 }
                 if scene_container {
                     style.push_str("container=1;");
+                    if is_isolated_scene_container(self.sheet, id) {
+                        style.push_str("thinodaSceneContainer=1;");
+                    }
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
                 let special_outline = object.rectangle_sides.is_some()
@@ -5127,9 +5133,22 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
 }
 
 fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<String, IoError> {
+    let sheets: Vec<_> = sheets.into_iter().collect();
+    for sheet in &sheets {
+        validate_scene_export(sheet)?;
+    }
+    if sheets.len() > 1
+        && sheets
+            .iter()
+            .any(|sheet| has_isolated_scene_containers(sheet))
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene containers isolated across multiple pages yet"
+                .into(),
+        ));
+    }
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
     for (index, sheet) in sheets.into_iter().enumerate() {
-        validate_scene_export(sheet)?;
         let (grid, thinoda_grid) = match sheet.board.grid {
             GridKind::None => (0, "none"),
             GridKind::Dots => (1, "dots"),
@@ -5166,6 +5185,24 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
     Ok(out)
 }
 
+fn has_isolated_scene_containers(sheet: &Sheet) -> bool {
+    sheet
+        .canvas
+        .scene
+        .containers
+        .iter()
+        .any(|id| is_isolated_scene_container(sheet, *id))
+}
+
+fn is_isolated_scene_container(sheet: &Sheet, id: CanvasObjectId) -> bool {
+    let scene = &sheet.canvas.scene;
+    !scene.parents.iter().any(|(&child, &parent)| {
+        (child == id || parent == id)
+            && scene.containers.contains(&child)
+            && scene.containers.contains(&parent)
+    })
+}
+
 fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
     let scene = &sheet.canvas.scene;
     if scene.is_empty() {
@@ -5181,6 +5218,25 @@ fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
             "draw.io export cannot preserve scene layout policies yet".into(),
         ));
     }
+    if scene.containers.len() > 1 && has_isolated_scene_containers(sheet) {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene containers when an isolated container is combined with other scene containers yet"
+                .into(),
+        ));
+    }
+    if let Some(&container) = scene
+        .containers
+        .iter()
+        .find(|&&id| is_isolated_scene_container(sheet, id))
+        && sheet.canvas.objects.iter().any(|object| {
+            scene.parents.get(&object.id) == Some(&container)
+                && matches!(object.kind, CanvasObjectKind::Connector(_))
+        })
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene connectors inside isolated containers yet".into(),
+        ));
+    }
 
     let scene_objects: HashSet<_> = scene
         .containers
@@ -5189,25 +5245,6 @@ fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
         .chain(scene.parents.keys().copied())
         .chain(scene.parents.values().copied())
         .collect();
-    let linked_containers: HashSet<_> = scene
-        .parents
-        .iter()
-        .flat_map(|(&child, &parent)| {
-            (scene.containers.contains(&child) && scene.containers.contains(&parent))
-                .then_some([child, parent])
-        })
-        .flatten()
-        .collect();
-    if scene
-        .containers
-        .iter()
-        .any(|id| !linked_containers.contains(id))
-    {
-        return Err(IoError::Invalid(
-            "draw.io export cannot preserve scene containers isolated from direct nesting yet"
-                .into(),
-        ));
-    }
     if sheet
         .canvas
         .objects

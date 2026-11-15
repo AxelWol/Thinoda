@@ -660,13 +660,28 @@ fn scene_hierarchy_requires_v27_and_preserves_native_and_private_xmind_data() {
 }
 
 #[test]
-fn scene_editable_exports_and_drawio_clipboard_refuse_silent_flattening() {
+fn scene_drawio_exports_and_clipboard_preserve_non_nested_containers() {
     let book = scene_book();
-    assert!(matches!(
-        export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true),
-        Err(IoError::Invalid(message))
-            if message.contains("scene containers isolated from direct nesting")
-    ));
+    let drawio =
+        export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true).unwrap();
+    let restored = import_bytes_with_report(Format::DrawIo, &drawio)
+        .unwrap()
+        .workbook;
+    let restored_scene = &restored.sheets[0].canvas.scene;
+    assert_eq!(
+        restored_scene.containers.len(),
+        book.sheets[0].canvas.scene.containers.len()
+    );
+    assert_eq!(
+        restored_scene.parents.len(),
+        book.sheets[0].canvas.scene.parents.len()
+    );
+    assert!(
+        restored_scene
+            .parents
+            .values()
+            .all(|parent| restored_scene.containers.contains(parent))
+    );
     for format in [
         Format::DrawIoSvg,
         Format::DrawIoPng,
@@ -689,7 +704,11 @@ fn scene_editable_exports_and_drawio_clipboard_refuse_silent_flattening() {
     let payload = thinoda_core::clipboard::copy_board_selection(sheet, &layout, &[], &[pool])
         .unwrap()
         .unwrap();
-    assert!(thinoda_io::drawio_clipboard::encode(&payload).is_err());
+    assert!(
+        !thinoda_io::drawio_clipboard::encode(&payload)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
