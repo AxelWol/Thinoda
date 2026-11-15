@@ -840,7 +840,11 @@ fn shape_label_visible_bounds(
     if label.is_empty() {
         return None;
     }
-    let label_rect = thinoda_core::board::object_label_rect(object)?;
+    let label_rect = item
+        .stencil_render
+        .as_ref()
+        .map(|render| thinoda_core::stencil_object::label_rect(object, render))
+        .or_else(|| thinoda_core::board::object_label_rect(object))?;
     // Labels can extend beyond their outline; keep a generous text bound for culling.
     let (longest, line_count) = label.split('\n').fold((0, 0), |(longest, lines), line| {
         (longest.max(line.len()), lines + 1)
@@ -1550,12 +1554,12 @@ fn paint_canvas_object(
     ink_tessellation: InkTessellationConfig,
 ) {
     let z = xf.zoom;
-    if let Some(render) = thinoda_core::stencil_object::render(object) {
+    if let Some(render) = item.stencil_render.as_ref() {
         paint_stencil_object(
             painter,
             sheet,
             object,
-            &render,
+            render,
             xf,
             opts,
             editing_board_object,

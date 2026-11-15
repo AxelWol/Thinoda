@@ -6,6 +6,7 @@ use crate::board::{
 };
 use crate::edit::{EditError, EditResult};
 use crate::model::TopicId;
+use crate::scene_layout::ContainerLayoutPolicy;
 use crate::schedule::{Task, WorkCalendar};
 use crate::{
     geometry::{Rect, Vec2},
@@ -1079,6 +1080,26 @@ impl Document {
         self.edit_sheet("Change container state", |sheet| {
             sheet
                 .set_canvas_container(id, enabled)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_canvas_container_layout_policy(
+        &mut self,
+        id: CanvasObjectId,
+        policy: Option<ContainerLayoutPolicy>,
+    ) -> EditResult<()> {
+        self.edit_sheet("Set container layout policy", |sheet| {
+            sheet
+                .set_canvas_container_layout_policy(id, policy)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn layout_canvas_container(&mut self, id: CanvasObjectId) -> EditResult<()> {
+        self.edit_sheet("Arrange container contents", |sheet| {
+            sheet
+                .layout_canvas_container(id)
                 .map_err(EditError::Invalid)
         })
     }

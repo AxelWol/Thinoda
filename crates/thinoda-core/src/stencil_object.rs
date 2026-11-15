@@ -308,12 +308,39 @@ pub fn find_package(id: &str) -> Option<&'static StencilPackage> {
 
 /// Evaluates the object's stencil, or `None` to use its legacy shape.
 pub fn render(object: &CanvasObject) -> Option<StencilRender> {
+    render_with_header_policy(object, None)
+}
+
+/// Evaluates a stencil with its data-declared container header binding, when
+/// the definition exposes one. Unsupported stencils retain their own rendering.
+pub fn render_with_header_policy(
+    object: &CanvasObject,
+    header: Option<crate::scene_layout::HeaderPolicy>,
+) -> Option<StencilRender> {
     let stencil = object.stencil.as_ref()?;
     if !matches!(object.kind, CanvasObjectKind::Shape { .. }) {
         return None;
     }
     let (package, definition) = stencil.resolve()?;
-    let parameters = definition.resolve_parameters(&stencil.parameters);
+    let mut parameters = definition.resolve_parameters(&stencil.parameters);
+    let header_parameters = header.and_then(|header| {
+        let (extent_name, extent, side_name, side) =
+            container_header_parameters(definition, header)?;
+        let extent_parameter = definition.parameters.get(&extent_name)?;
+        let side_parameter = definition.parameters.get(&side_name)?;
+        (extent_parameter.kind == crate::stencil::ParameterKind::Number
+            && side_parameter.kind == crate::stencil::ParameterKind::Choice)
+            .then_some((
+                extent_name,
+                extent_parameter.clamp(extent),
+                side_name,
+                side_parameter.clamp(side),
+            ))
+    });
+    if let Some((extent_name, extent, side_name, side)) = header_parameters {
+        parameters.insert(extent_name, extent);
+        parameters.insert(side_name, side);
+    }
     package
         .evaluate(
             &definition.id,
@@ -325,6 +352,86 @@ pub fn render(object: &CanvasObject) -> Option<StencilRender> {
             },
         )
         .ok()
+}
+
+fn container_header_parameters(
+    definition: &StencilDefinition,
+    header: crate::scene_layout::HeaderPolicy,
+) -> Option<(String, f64, String, f64)> {
+    let binding = definition
+        .extensions
+        .get("thinoda.containerHeader")?
+        .as_object()?;
+    let extent_name = binding.get("extentParameter")?.as_str()?.to_owned();
+    let side_name = binding.get("sideParameter")?.as_str()?.to_owned();
+    let side = match header.side {
+        crate::scene_layout::HeaderSide::Top => "top",
+        crate::scene_layout::HeaderSide::Right => "right",
+        crate::scene_layout::HeaderSide::Bottom => "bottom",
+        crate::scene_layout::HeaderSide::Left => "left",
+    };
+    let side_value = binding
+        .get("sideValues")?
+        .as_object()?
+        .get(side)?
+        .as_f64()?;
+    Some((extent_name, f64::from(header.extent), side_name, side_value))
+}
+
+/// Whether this stencil declares a complete, usable container header binding.
+pub fn supports_container_header(object: &CanvasObject) -> bool {
+    container_header_policy(object).is_some()
+}
+
+/// Resolves a stencil's current header parameters into the shared container policy.
+pub fn container_header_policy(object: &CanvasObject) -> Option<crate::scene_layout::HeaderPolicy> {
+    let stencil = object.stencil.as_ref()?;
+    let (_, definition) = stencil.resolve()?;
+    let (extent_name, _, side_name, _) = container_header_parameters(
+        definition,
+        crate::scene_layout::HeaderPolicy {
+            side: crate::scene_layout::HeaderSide::Top,
+            extent: 0.0,
+        },
+    )?;
+    let extent_parameter = definition.parameters.get(&extent_name)?;
+    let side_parameter = definition.parameters.get(&side_name)?;
+    if extent_parameter.kind != crate::stencil::ParameterKind::Number
+        || side_parameter.kind != crate::stencil::ParameterKind::Choice
+        || side_parameter.options.len() != 4
+    {
+        return None;
+    }
+
+    let parameters = definition.resolve_parameters(&stencil.parameters);
+    let extent = extent_parameter.clamp(*parameters.get(&extent_name)?);
+    let current_side = side_parameter.clamp(*parameters.get(&side_name)?);
+    let mut side_values = Vec::with_capacity(4);
+    let mut selected_side = None;
+    for side in [
+        crate::scene_layout::HeaderSide::Top,
+        crate::scene_layout::HeaderSide::Right,
+        crate::scene_layout::HeaderSide::Bottom,
+        crate::scene_layout::HeaderSide::Left,
+    ] {
+        let (_, _, _, value) = container_header_parameters(
+            definition,
+            crate::scene_layout::HeaderPolicy { side, extent: 0.0 },
+        )?;
+        let value = side_parameter.clamp(value);
+        if side_values.contains(&value) {
+            return None;
+        }
+        side_values.push(value);
+        if value == current_side {
+            selected_side = Some(side);
+        }
+    }
+    let side = selected_side?;
+    let extent = extent as f32;
+    extent
+        .is_finite()
+        .then_some(crate::scene_layout::HeaderPolicy { side, extent })
 }
 
 fn closed(mut points: Vec<Vec2>, close: bool) -> Vec<Vec2> {

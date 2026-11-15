@@ -4,7 +4,7 @@
   "dslVersion": 1,
   "id": "thinoda.general",
   "title": "Parametric shapes",
-  "revision": 2,
+  "revision": 3,
   "license": "MIT",
   "extensions": {
     "drawio.import": {
@@ -358,6 +358,87 @@
         {"x": 0.5, "y": 1, "perimeter": true},
         {"x": 0, "y": 0.5, "perimeter": true}
       ],
+      "interchange": {"drawio": {
+        "style": "shape=swimlane;horizontal=1;html=1;",
+        "parameters": {"headerHeight": "startSize"}
+      }}
+    },
+    {
+      "id": "header-frame-v2",
+      "title": "Header frame",
+      "tags": ["frame", "header"],
+      "frame": {"w": 400, "h": 180, "units": "instance"},
+      "parameters": {
+        "headerHeight": {"label": "Header height", "default": 36, "min": 0},
+        "headerSide": {"label": "Header side", "kind": "choice", "default": 0, "options": ["Top", "Right", "Bottom", "Left"]}
+      },
+      "background": {"op": "rect", "x": 0, "y": 0, "w": "w", "h": "h"},
+      "foreground": [
+        {"op": "fillStroke"},
+        {"op": "if", "cond": {"op": "eq", "args": ["headerSide", 0]}, "then": [
+          {"op": "path", "commands": [
+            {"op": "move", "x": 0, "y": {"op": "min", "args": ["headerHeight", "h"]}},
+            {"op": "line", "x": "w", "y": {"op": "min", "args": ["headerHeight", "h"]}}
+          ]},
+          {"op": "stroke"}
+        ]},
+        {"op": "if", "cond": {"op": "eq", "args": ["headerSide", 1]}, "then": [
+          {"op": "path", "commands": [
+            {"op": "move", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["headerHeight", "w"]}]}, "y": 0},
+            {"op": "line", "x": {"op": "sub", "args": ["w", {"op": "min", "args": ["headerHeight", "w"]}]}, "y": "h"}
+          ]},
+          {"op": "stroke"}
+        ]},
+        {"op": "if", "cond": {"op": "eq", "args": ["headerSide", 2]}, "then": [
+          {"op": "path", "commands": [
+            {"op": "move", "x": 0, "y": {"op": "sub", "args": ["h", {"op": "min", "args": ["headerHeight", "h"]}]}},
+            {"op": "line", "x": "w", "y": {"op": "sub", "args": ["h", {"op": "min", "args": ["headerHeight", "h"]}]}}
+          ]},
+          {"op": "stroke"}
+        ]},
+        {"op": "if", "cond": {"op": "eq", "args": ["headerSide", 3]}, "then": [
+          {"op": "path", "commands": [
+            {"op": "move", "x": {"op": "min", "args": ["headerHeight", "w"]}, "y": 0},
+            {"op": "line", "x": {"op": "min", "args": ["headerHeight", "w"]}, "y": "h"}
+          ]},
+          {"op": "stroke"}
+        ]}
+      ],
+      "label": {
+        "x": {"op": "if", "args": [{"op": "eq", "args": ["headerSide", 3]}, {"op": "min", "args": ["headerHeight", "w"]}, 0]},
+        "y": {"op": "if", "args": [
+          {"op": "eq", "args": ["headerSide", 0]},
+          0,
+          {"op": "if", "args": [
+            {"op": "eq", "args": ["headerSide", 2]},
+            {"op": "sub", "args": ["h", {"op": "min", "args": ["headerHeight", "h"]}]},
+            0
+          ]}
+        ]},
+        "w": {"op": "if", "args": [
+          {"op": "or", "args": [{"op": "eq", "args": ["headerSide", 1]}, {"op": "eq", "args": ["headerSide", 3]}]},
+          {"op": "sub", "args": ["w", {"op": "min", "args": ["headerHeight", "w"]}]},
+          "w"
+        ]},
+        "h": {"op": "if", "args": [
+          {"op": "or", "args": [{"op": "eq", "args": ["headerSide", 0]}, {"op": "eq", "args": ["headerSide", 2]}]},
+          {"op": "min", "args": ["headerHeight", "h"]},
+          "h"
+        ]}
+      },
+      "connections": [
+        {"x": 0.5, "y": 0, "perimeter": true},
+        {"x": 1, "y": 0.5, "perimeter": true},
+        {"x": 0.5, "y": 1, "perimeter": true},
+        {"x": 0, "y": 0.5, "perimeter": true}
+      ],
+      "extensions": {
+        "thinoda.containerHeader": {
+          "extentParameter": "headerHeight",
+          "sideParameter": "headerSide",
+          "sideValues": {"top": 0, "right": 1, "bottom": 2, "left": 3}
+        }
+      },
       "interchange": {"drawio": {
         "style": "shape=swimlane;horizontal=1;html=1;",
         "parameters": {"headerHeight": "startSize"}

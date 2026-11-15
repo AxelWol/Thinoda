@@ -9,6 +9,10 @@ use thinoda_core::{
         BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, MAX_BOARD_COORDINATE,
         MAX_CONNECTOR_MARKER_SIZE, MIN_CARD_SIZE,
     },
+    scene_layout::{
+        ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+        StackResizePolicy,
+    },
 };
 use thinoda_ui::{
     icons,
@@ -116,6 +120,60 @@ struct ContainerContext {
 struct ContainerCollapseDraft {
     target: ConnectorTarget,
     size: thinoda_core::Vec2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContainerLayoutChoice {
+    Free,
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone)]
+struct ContainerLayoutDraft {
+    target: ConnectorTarget,
+    policy: ContainerLayoutPolicy,
+}
+
+fn default_container_layout_policy(
+    object: &CanvasObject,
+    frame: thinoda_core::Rect,
+) -> ContainerLayoutPolicy {
+    let legacy_extent = object
+        .stencil
+        .as_ref()
+        .and_then(|stencil| {
+            let (_, definition) = stencil.resolve()?;
+            let parameter = definition.parameters.get("headerHeight")?;
+            Some(
+                stencil
+                    .parameters
+                    .get("headerHeight")
+                    .copied()
+                    .unwrap_or(parameter.default),
+            )
+        })
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+        .clamp(0.0, frame.size.y.max(0.0));
+    let header =
+        thinoda_core::stencil_object::container_header_policy(object).unwrap_or(HeaderPolicy {
+            side: HeaderSide::Top,
+            extent: legacy_extent,
+        });
+    let header_limit = match header.side {
+        HeaderSide::Top | HeaderSide::Bottom => frame.size.y,
+        HeaderSide::Right | HeaderSide::Left => frame.size.x,
+    }
+    .clamp(0.0, MAX_BOARD_COORDINATE);
+    ContainerLayoutPolicy {
+        header: HeaderPolicy {
+            extent: header.extent.clamp(0.0, header_limit),
+            ..header
+        },
+        layout: ContainerLayout::Free,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1677,6 +1735,40 @@ impl ThinodaApp {
         Ok(())
     }
 
+    fn apply_container_layout_policy(
+        &mut self,
+        target: &ConnectorTarget,
+        policy: Option<ContainerLayoutPolicy>,
+    ) -> Result<(), String> {
+        let context = self
+            .container_context()
+            .filter(|context| context.enabled && context.target == *target)
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .set_canvas_container_layout_policy(context.target.owner.object, policy)
+            .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(context.target.owner.object);
+        Ok(())
+    }
+
+    fn apply_container_layout(&mut self, target: &ConnectorTarget) -> Result<(), String> {
+        let context = self
+            .container_context()
+            .filter(|context| context.enabled && !context.collapsed && context.target == *target)
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .layout_canvas_container(context.target.owner.object)
+            .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(context.target.owner.object);
+        Ok(())
+    }
+
     /// Returns true when a command was attempted, so properties use a fresh snapshot next frame.
     fn board_container_properties(&mut self, ui: &mut Ui) -> bool {
         let slot = egui::Id::unique(("container_collapse_draft", self.current_viewport));
@@ -1695,6 +1787,38 @@ impl ThinodaApp {
                 size: context.rect.size,
             });
         let mut apply = false;
+        let policy_slot = egui::Id::unique(("container_layout_draft", self.current_viewport));
+        let Some(doc) = self.doc() else { return false };
+        let sheet = doc.doc.sheet();
+        let Some(object) = sheet.canvas.object(context.target.owner.object) else {
+            return false;
+        };
+        let header_supported = thinoda_core::stencil_object::supports_container_header(object);
+        let expanded_frame = sheet
+            .canvas
+            .scene
+            .collapsed
+            .get(&context.target.owner.object)
+            .copied()
+            .unwrap_or(object.rect);
+        let stored_policy = sheet
+            .canvas
+            .scene
+            .layout_policies
+            .get(&context.target.owner.object)
+            .copied();
+        let mut layout_draft = ui
+            .ctx()
+            .data(|data| data.get_temp::<ContainerLayoutDraft>(policy_slot))
+            .filter(|draft| draft.target == context.target)
+            .unwrap_or_else(|| ContainerLayoutDraft {
+                target: context.target.clone(),
+                policy: stored_policy
+                    .unwrap_or_else(|| default_container_layout_policy(object, expanded_frame)),
+            });
+        let mut save_layout = false;
+        let mut apply_layout = false;
+        let mut clear_layout = false;
         ui.push_id(&context.target.owner, |ui| {
             ui.strong(t("Container"));
             ui.label(t(if context.collapsed {
@@ -1736,17 +1860,227 @@ impl ThinodaApp {
                 });
             });
             ui.separator();
+            ui.strong(t("Child layout"));
+            ui.add_enabled_ui(context.enabled, |ui| {
+                let choice = match layout_draft.policy.layout {
+                    ContainerLayout::Free => ContainerLayoutChoice::Free,
+                    ContainerLayout::Stack {
+                        axis: StackAxis::Horizontal,
+                        ..
+                    } => ContainerLayoutChoice::Horizontal,
+                    ContainerLayout::Stack {
+                        axis: StackAxis::Vertical,
+                        ..
+                    } => ContainerLayoutChoice::Vertical,
+                };
+                let mut choice = choice;
+                widgets::property_field(ui, t("Layout mode"), |ui| {
+                    egui::ComboBox::from_id_salt(("container_layout", &context.target))
+                        .selected_text(t(match choice {
+                            ContainerLayoutChoice::Free => "Free placement",
+                            ContainerLayoutChoice::Horizontal => "Horizontal stack",
+                            ContainerLayoutChoice::Vertical => "Vertical stack",
+                        }))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut choice,
+                                ContainerLayoutChoice::Free,
+                                t("Free placement"),
+                            );
+                            ui.selectable_value(
+                                &mut choice,
+                                ContainerLayoutChoice::Horizontal,
+                                t("Horizontal stack"),
+                            );
+                            ui.selectable_value(
+                                &mut choice,
+                                ContainerLayoutChoice::Vertical,
+                                t("Vertical stack"),
+                            );
+                        })
+                        .response
+                });
+                let (spacing, padding, resize) = match layout_draft.policy.layout {
+                    ContainerLayout::Free => (5.0, 10.0, StackResizePolicy::Preserve),
+                    ContainerLayout::Stack {
+                        spacing,
+                        padding,
+                        resize,
+                        ..
+                    } => (spacing, padding, resize),
+                };
+                let mut spacing = spacing;
+                let mut padding = padding;
+                let mut resize = resize;
+                if choice != ContainerLayoutChoice::Free {
+                    widgets::property_field(ui, t("Stack resizing"), |ui| {
+                        egui::ComboBox::from_id_salt(("container_stack_resize", &context.target))
+                            .selected_text(t(match resize {
+                                StackResizePolicy::Preserve => "Preserve child sizes",
+                                StackResizePolicy::FillLast => "Fill last child",
+                                StackResizePolicy::GrowParent => "Grow parent to fit",
+                                StackResizePolicy::FitParent => "Fit parent to contents",
+                            }))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::Preserve,
+                                    t("Preserve child sizes"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::FillLast,
+                                    t("Fill last child"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::GrowParent,
+                                    t("Grow parent to fit"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::FitParent,
+                                    t("Fit parent to contents"),
+                                );
+                            })
+                            .response
+                    });
+                    widgets::property_field(ui, t("Stack spacing"), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut spacing)
+                                .range(0.0..=MAX_BOARD_COORDINATE)
+                                .speed(0.5),
+                        )
+                    });
+                    widgets::property_field(ui, t("Stack padding"), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut padding)
+                                .range(0.0..=MAX_BOARD_COORDINATE)
+                                .speed(0.5),
+                        )
+                    });
+                }
+                layout_draft.policy.layout = match choice {
+                    ContainerLayoutChoice::Free => ContainerLayout::Free,
+                    ContainerLayoutChoice::Horizontal => ContainerLayout::Stack {
+                        axis: StackAxis::Horizontal,
+                        spacing,
+                        padding,
+                        resize,
+                    },
+                    ContainerLayoutChoice::Vertical => ContainerLayout::Stack {
+                        axis: StackAxis::Vertical,
+                        spacing,
+                        padding,
+                        resize,
+                    },
+                };
+                widgets::caption(ui, t("Header side and extent affect child layout; supported stencils also use them to draw the header."));
+                widgets::property_field(ui, t("Header side"), |ui| {
+                    if header_supported {
+                        egui::ComboBox::from_id_salt(("container_header_side", &context.target))
+                            .selected_text(t(match layout_draft.policy.header.side {
+                                HeaderSide::Top => "Top",
+                                HeaderSide::Right => "Right",
+                                HeaderSide::Bottom => "Bottom",
+                                HeaderSide::Left => "Left",
+                            }))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Top,
+                                    t("Top"),
+                                );
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Right,
+                                    t("Right"),
+                                );
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Bottom,
+                                    t("Bottom"),
+                                );
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Left,
+                                    t("Left"),
+                                );
+                            })
+                            .response
+                    } else {
+                        ui.label(t(match layout_draft.policy.header.side {
+                            HeaderSide::Top => "Top",
+                            HeaderSide::Right => "Right",
+                            HeaderSide::Bottom => "Bottom",
+                            HeaderSide::Left => "Left",
+                        }))
+                    }
+                });
+                let header_limit = match layout_draft.policy.header.side {
+                    HeaderSide::Top | HeaderSide::Bottom => expanded_frame.size.y,
+                    HeaderSide::Right | HeaderSide::Left => expanded_frame.size.x,
+                }
+                .min(MAX_BOARD_COORDINATE);
+                layout_draft.policy.header.extent =
+                    layout_draft.policy.header.extent.clamp(0.0, header_limit);
+                widgets::property_field(ui, t("Header extent"), |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut layout_draft.policy.header.extent)
+                            .range(0.0..=header_limit)
+                            .speed(0.5),
+                    )
+                });
+                let save_enabled = stored_policy != Some(layout_draft.policy);
+                ui.horizontal(|ui| {
+                    save_layout = ui
+                        .add_enabled(save_enabled, egui::Button::new(t("Save layout policy")))
+                        .clicked();
+                    apply_layout = ui
+                        .add_enabled(
+                            stored_policy.is_some() && !context.collapsed,
+                            egui::Button::new(t("Arrange contents")),
+                        )
+                        .clicked();
+                    clear_layout = ui
+                        .add_enabled(stored_policy.is_some(), egui::Button::new(t("Clear layout")))
+                        .clicked();
+                });
+            });
+            ui.separator();
         });
         ui.ctx()
             .data_mut(|data| data.insert_temp(slot, draft.clone()));
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(policy_slot, layout_draft.clone()));
         if apply {
             let compact = (!context.collapsed)
                 .then(|| thinoda_core::Rect::from_min_size(context.rect.min, draft.size));
             if let Err(error) = self.apply_container_collapse(&context.target, compact) {
                 self.toasts.error(error);
             }
+            return true;
         }
-        apply
+        let action = if save_layout {
+            Some(Some(layout_draft.policy))
+        } else if clear_layout {
+            Some(None)
+        } else {
+            None
+        };
+        if let Some(policy) = action {
+            if let Err(error) = self.apply_container_layout_policy(&context.target, policy) {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        if apply_layout {
+            if let Err(error) = self.apply_container_layout(&context.target) {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        false
     }
 
     pub(crate) fn board_object_properties(&mut self, ui: &mut Ui) -> bool {
@@ -6889,6 +7223,23 @@ mod tests {
         (app, container, child)
     }
 
+    fn container_app_with_header_frame() -> (ThinodaApp, CanvasObjectId, CanvasObjectId) {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Add header stencil", |sheet| {
+                sheet.canvas.object_mut(container).unwrap().stencil =
+                    Some(thinoda_core::stencil_object::StencilRef::new(
+                        "thinoda.general",
+                        "header-frame-v2",
+                    ));
+                Ok(())
+            })
+            .unwrap();
+        (app, container, child)
+    }
+
     fn container_properties_harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
         let mut harness = Harness::builder()
             .with_size(vec2(450.0, 1000.0))
@@ -6900,6 +7251,262 @@ mod tests {
             );
         harness.run_steps(3);
         harness
+    }
+
+    #[test]
+    fn container_layout_properties_save_and_apply_with_separate_undo_steps() {
+        let (mut app, container, child) = container_app_with_header_frame();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_container_layout_policy(
+                container,
+                Some(ContainerLayoutPolicy {
+                    header: HeaderPolicy {
+                        side: HeaderSide::Right,
+                        extent: 12.0,
+                    },
+                    layout: ContainerLayout::Free,
+                }),
+            )
+            .unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let original = app.doc().unwrap().doc.workbook().clone();
+        let original_child = original.active().canvas.object(child).unwrap().rect;
+        let mut h = container_properties_harness(app);
+
+        h.get_all_by_role_and_label(egui::Role::ComboBox, "Header side")
+            .find(|side| side.value().as_deref() == Some("Right"))
+            .unwrap()
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Bottom").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(3);
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &original,
+            "editing the layout draft must not mutate document state"
+        );
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+        let saved = h.state().doc().unwrap().doc.workbook().clone();
+        assert!(matches!(
+            saved.active().canvas.scene.layout_policies[&container].layout,
+            ContainerLayout::Stack {
+                axis: StackAxis::Vertical,
+                spacing: 5.0,
+                padding: 10.0,
+                resize: StackResizePolicy::Preserve,
+            }
+        ));
+        assert_eq!(
+            saved.active().canvas.scene.layout_policies[&container]
+                .header
+                .side,
+            HeaderSide::Bottom
+        );
+        assert_eq!(
+            saved.active().canvas.scene.layout_policies[&container]
+                .header
+                .extent,
+            12.0
+        );
+        assert_eq!(
+            saved.active().canvas.object(child).unwrap().rect,
+            original_child
+        );
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), original_child.size)
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &saved);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &original);
+    }
+
+    #[test]
+    fn fill_last_stack_policy_resizes_final_child_in_one_undoable_arrange() {
+        let (mut app, _, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let original = app.doc().unwrap().doc.workbook().clone();
+        let original_child = original.active().canvas.object(child).unwrap().rect;
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Fill last child").click();
+        h.run_steps(2);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &original);
+
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+        let saved = h.state().doc().unwrap().doc.workbook().clone();
+        assert!(matches!(
+            saved
+                .active()
+                .canvas
+                .scene
+                .layout_policies
+                .values()
+                .next()
+                .unwrap()
+                .layout,
+            ContainerLayout::Stack {
+                axis: StackAxis::Vertical,
+                resize: StackResizePolicy::FillLast,
+                ..
+            }
+        ));
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 380.0))
+        );
+        assert_ne!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            original_child
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &saved);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &original);
+    }
+
+    #[test]
+    fn grow_parent_stack_policy_expands_the_container_to_fit_children() {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Make container undersized", |sheet| {
+                sheet.canvas.object_mut(container).unwrap().rect.size = Vec2::new(60.0, 40.0);
+                Ok(())
+            })
+            .unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Grow parent to fit").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(container).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(25.0, 40.0), Vec2::new(140.0, 100.0))
+        );
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn fit_parent_stack_policy_shrinks_the_container_to_contents() {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Fit parent to contents").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(container).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(25.0, 40.0), Vec2::new(140.0, 100.0))
+        );
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn container_header_side_editor_is_limited_to_bound_stencils() {
+        let (app, _, _) = container_app();
+        let unsupported = container_properties_harness(app);
+        assert_eq!(
+            unsupported
+                .query_all_by_role_and_label(egui::Role::ComboBox, "Header side")
+                .count(),
+            0
+        );
+        drop(unsupported);
+
+        let (app, _, _) = container_app_with_header_frame();
+        let supported = container_properties_harness(app);
+        assert!(
+            supported
+                .query_all_by_role_and_label(egui::Role::ComboBox, "Header side")
+                .count()
+                > 0
+        );
     }
 
     #[test]

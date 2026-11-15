@@ -782,8 +782,8 @@ fn connection_points_for_item(
     }
     let candidates = object
         .and_then(|object| {
-            thinoda_core::stencil_object::render(object).map(|render| {
-                thinoda_core::stencil_object::ports(object, &render)
+            item.stencil_render.as_ref().map(|render| {
+                thinoda_core::stencil_object::ports(object, render)
                     .into_iter()
                     .map(|position| {
                         let local = rotate_around(position, rect.center(), -rotation);
@@ -2064,7 +2064,9 @@ fn selection_controls(
     .collect();
     if let SceneId::Object(id) = item {
         if let Some(object) = sheet.canvas.object(id)
-            && let Some(render) = thinoda_core::stencil_object::render(object)
+            && let Some(render) = scene
+                .item(item)
+                .and_then(|scene_item| scene_item.stencil_render.as_ref())
         {
             for (index, handle) in render.handles.iter().enumerate() {
                 let point = match view
@@ -5826,7 +5828,11 @@ fn label_editor_text_color(text: Color32, background: Color32) -> Color32 {
 fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
     let rect = match &object.kind {
         CanvasObjectKind::Shape { .. } => {
-            let label_rect = thinoda_core::board::object_label_rect(object)?;
+            let label_rect = item
+                .stencil_render
+                .as_ref()
+                .map(|render| thinoda_core::stencil_object::label_rect(object, render))
+                .or_else(|| thinoda_core::board::object_label_rect(object))?;
             thinoda_core::Rect::from_center_size(
                 rotate_around(label_rect.center(), object.rect.center(), object.rotation),
                 label_rect.size,

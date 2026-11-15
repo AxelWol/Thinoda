@@ -5,10 +5,14 @@ use std::{
     io::Cursor,
 };
 use thinoda_core::{
-    Sheet, Workbook,
+    CanvasObject, Rect, ShapeKind, Sheet, Vec2, Workbook,
     resources::{
         MAX_RESOURCE_BYTES, MAX_RESOURCES, MAX_SHEET_RESOURCE_BYTES, MAX_WORKBOOK_RESOURCE_BYTES,
         Resource,
+    },
+    scene_layout::{
+        ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+        StackResizePolicy,
     },
 };
 use zip::ZipArchive;
@@ -230,6 +234,197 @@ fn stencil_definition_closures_select_native_v28_and_restore_packages_offline() 
     .unwrap();
     let error = crate::formats::native_import(&legacy).unwrap_err();
     assert!(error.to_string().contains("definition closures"));
+}
+
+#[test]
+fn scene_layout_policies_select_native_v30_and_reject_v29_archives() {
+    let mut sheet = Sheet::new("Container", "Root");
+    let container = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 120.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(container, true).unwrap();
+    sheet
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 24.0,
+                },
+                layout: ContainerLayout::Free,
+            }),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 30);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 29,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let legacy = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&legacy).unwrap_err();
+    assert!(error.to_string().contains("scene layout policies"));
+}
+
+#[test]
+fn fill_last_stack_resize_selects_native_v31_and_rejects_v30_archives() {
+    let mut sheet = Sheet::new("Container", "Root");
+    let container = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 120.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(container, true).unwrap();
+    sheet
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 24.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    resize: StackResizePolicy::FillLast,
+                },
+            }),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 31);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 30,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let legacy = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&legacy).unwrap_err();
+    assert!(error.to_string().contains("fill-last stack resizing"));
+}
+
+#[test]
+fn grow_parent_stack_resize_selects_native_v32_and_rejects_v31_archives() {
+    let mut sheet = Sheet::new("Container", "Root");
+    let container = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 120.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(container, true).unwrap();
+    sheet
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 24.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    resize: StackResizePolicy::GrowParent,
+                },
+            }),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 32);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 31,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let legacy = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&legacy).unwrap_err();
+    assert!(error.to_string().contains("grow-parent stack resizing"));
+}
+
+#[test]
+fn fit_parent_stack_resize_selects_native_v33_and_rejects_v32_archives() {
+    let mut sheet = Sheet::new("Container", "Root");
+    let container = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 120.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(container, true).unwrap();
+    sheet
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 24.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    resize: StackResizePolicy::FitParent,
+                },
+            }),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 33);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 32,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let legacy = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&legacy).unwrap_err();
+    assert!(error.to_string().contains("fit-parent stack resizing"));
 }
 
 #[test]

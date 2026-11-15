@@ -35,6 +35,7 @@ pub mod rich_text;
 pub mod sankey;
 pub mod scene;
 pub mod scene_hierarchy;
+pub mod scene_layout;
 pub mod schedule;
 pub mod search;
 pub mod stencil;
@@ -71,6 +72,10 @@ pub use rich_text::{
 };
 pub use scene::{
     Scene, SceneBand, SceneHit, SceneId, SceneItem, build_scene, connector_path, topic_clip_zone,
+};
+pub use scene_layout::{
+    ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, SceneLayoutError, StackAxis,
+    StackResizePolicy, preview_child_layout,
 };
 pub use schedule::{
     ComputedTask, LocalDate, MAX_CALENDAR_EXCEPTIONS, MAX_SCHEDULED_TASKS, MAX_TASK_DEPENDENCIES,

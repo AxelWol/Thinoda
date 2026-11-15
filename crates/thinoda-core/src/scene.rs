@@ -466,8 +466,12 @@ impl SceneGeometry {
                     || point_in_polygon(p, outline)
                     || distance_to_outline(p, outline) <= tolerance
             }
-            SceneGeometry::Polygon { outline, .. } => {
-                point_in_polygon(p, outline) || distance_to_outline(p, outline) <= tolerance
+            SceneGeometry::Polygon { outline, details } => {
+                point_in_polygon(p, outline)
+                    || distance_to_outline(p, outline) <= tolerance
+                    || details
+                        .iter()
+                        .any(|detail| distance_to_polyline(p, detail) <= tolerance)
             }
             SceneGeometry::Ink {
                 points,
@@ -528,6 +532,8 @@ pub struct SceneItem {
     /// Optional frame clipping in sheet coordinates.
     pub clip: Option<Rect>,
     pub geometry: SceneGeometry,
+    /// Resolved stencil data shared by paint, labels, hit geometry and export.
+    pub stencil_render: Option<crate::stencil::StencilRender>,
 }
 
 impl SceneItem {
@@ -746,6 +752,7 @@ fn build_scene_with_collapse<'a>(
                 rect: zone.frame,
                 rotation: 0.0,
             },
+            stencil_render: None,
         });
     }
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
@@ -811,6 +818,7 @@ fn build_scene_with_collapse<'a>(
                 rect: t.rect,
                 rotation,
             },
+            stencil_render: None,
         });
     }
     objects(Band::Above, &mut items);
@@ -828,9 +836,21 @@ fn object_item(
         Band::Below => SceneBand::BelowMap,
         Band::Above => SceneBand::AboveMap,
     };
+    let header_policy = sheet
+        .canvas
+        .scene
+        .layout_policies
+        .get(&object.id)
+        .map(|policy| policy.header);
+    let stencil_render = matches!(object.kind, CanvasObjectKind::Shape { .. })
+        .then(|| crate::stencil_object::render_with_header_policy(object, header_policy))
+        .flatten();
     let geometry = match &object.kind {
         CanvasObjectKind::Shape { .. } => {
-            let g = crate::board::object_shape_geometry(object)?;
+            let g = stencil_render
+                .as_ref()
+                .map(|render| crate::stencil_object::geometry(object, render))
+                .or_else(|| crate::board::object_shape_geometry(object))?;
             SceneGeometry::Polygon {
                 outline: g.outline,
                 details: g.details,
@@ -907,6 +927,7 @@ fn object_item(
         bounds,
         clip,
         geometry,
+        stencil_render,
     })
 }
 

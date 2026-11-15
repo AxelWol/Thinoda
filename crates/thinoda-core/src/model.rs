@@ -5,6 +5,7 @@
 //! that `.xmind` files can be imported and exported with high fidelity.
 
 use crate::geometry::{Color, Rect, Vec2};
+use crate::scene_layout::{ContainerLayout, StackResizePolicy};
 use crate::schedule::{SchedulingData, Task, TaskDependency};
 use crate::theme::ThemeSettings;
 use serde::{Deserialize, Serialize};
@@ -837,6 +838,46 @@ impl Sheet {
 
     pub fn has_scene_collapse(&self) -> bool {
         !self.canvas.scene.collapsed.is_empty()
+    }
+
+    pub fn has_scene_layout_policies(&self) -> bool {
+        !self.canvas.scene.layout_policies.is_empty()
+    }
+
+    pub fn has_scene_fill_last_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::FillLast,
+                    ..
+                }
+            )
+        })
+    }
+
+    pub fn has_scene_grow_parent_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::GrowParent,
+                    ..
+                }
+            )
+        })
+    }
+
+    pub fn has_scene_fit_parent_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::FitParent,
+                    ..
+                }
+            )
+        })
     }
 
     /// Whether any stencil instance pins a specific definition revision.
@@ -2448,6 +2489,22 @@ impl Workbook {
 
     pub fn has_scene_collapse(&self) -> bool {
         self.sheets.iter().any(Sheet::has_scene_collapse)
+    }
+
+    pub fn has_scene_layout_policies(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_layout_policies)
+    }
+
+    pub fn has_scene_fill_last_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_fill_last_resize)
+    }
+
+    pub fn has_scene_grow_parent_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_grow_parent_resize)
+    }
+
+    pub fn has_scene_fit_parent_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_fit_parent_resize)
     }
 
     /// Whether any stencil instance pins a specific definition revision.

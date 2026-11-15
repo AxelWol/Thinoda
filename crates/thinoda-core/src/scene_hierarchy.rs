@@ -10,6 +10,9 @@ use crate::board::{
 };
 use crate::geometry::{Rect, Vec2};
 use crate::model::{Sheet, valid_position};
+use crate::scene_layout::{
+    ContainerLayout, ContainerLayoutPolicy, StackResizePolicy, preview_container_layout,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -37,6 +40,9 @@ pub struct SceneStructure {
     /// Expanded frames of collapsed containers; their objects hold compact frames.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub collapsed: BTreeMap<CanvasObjectId, Rect>,
+    /// Persistent header and free/stack layout overrides for containers.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub layout_policies: BTreeMap<CanvasObjectId, ContainerLayoutPolicy>,
 }
 
 impl Sheet {
@@ -103,8 +109,29 @@ impl Sheet {
             candidate.scene.containers.insert(id);
         } else {
             candidate.scene.containers.remove(&id);
+            candidate.scene.layout_policies.remove(&id);
         }
         let candidate = SceneHierarchy::from_canvas(&candidate)?.stored_canvas();
+        self.canvas = candidate;
+        Ok(())
+    }
+
+    /// Sets or clears a persistent header/layout policy on a free container.
+    pub fn set_canvas_container_layout_policy(
+        &mut self,
+        id: CanvasObjectId,
+        policy: Option<ContainerLayoutPolicy>,
+    ) -> Result<(), String> {
+        let hierarchy = SceneHierarchy::from_canvas(&self.canvas)?;
+        hierarchy.require_container(id)?;
+        hierarchy.require_unlocked_selection(&[id])?;
+        let mut candidate = self.canvas.clone();
+        if let Some(policy) = policy {
+            candidate.scene.layout_policies.insert(id, policy);
+        } else {
+            candidate.scene.layout_policies.remove(&id);
+        }
+        SceneHierarchy::from_canvas(&candidate)?;
         self.canvas = candidate;
         Ok(())
     }
@@ -143,15 +170,28 @@ impl Sheet {
         self.canvas = candidate;
         Ok(())
     }
+
+    /// Applies stored policies for a container subtree as one sheet edit.
+    pub fn layout_canvas_container(&mut self, id: CanvasObjectId) -> Result<(), String> {
+        let candidate = SceneHierarchy::from_canvas(&self.canvas)?
+            .preview_stored_layout_with_validator(id, |_| Ok(()))?;
+        self.canvas = candidate;
+        Ok(())
+    }
 }
 
 impl SceneStructure {
     pub fn is_empty(&self) -> bool {
-        self.containers.is_empty() && self.parents.is_empty() && self.collapsed.is_empty()
+        self.containers.is_empty()
+            && self.parents.is_empty()
+            && self.collapsed.is_empty()
+            && self.layout_policies.is_empty()
     }
 
     pub fn contains(&self, id: CanvasObjectId) -> bool {
-        self.containers.contains(&id) || self.parents.contains_key(&id)
+        self.containers.contains(&id)
+            || self.parents.contains_key(&id)
+            || self.layout_policies.contains_key(&id)
     }
 }
 
@@ -161,6 +201,7 @@ pub enum SceneEditKind {
     Translate { delta: Vec2 },
     Reorder { order: ZOrder },
     Reconnect { object: CanvasObjectId },
+    Layout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +277,7 @@ impl<'a> SceneHierarchy<'a> {
                 .map(|(child, parent)| (*child, *parent))
                 .collect(),
             collapsed: self.canvas.scene.collapsed.clone(),
+            layout_policies: self.canvas.scene.layout_policies.clone(),
         };
         let ranks: HashMap<_, _> = self
             .preorder()
@@ -350,6 +392,25 @@ impl<'a> SceneHierarchy<'a> {
             let mut restored = object.clone();
             restored.rect = *expanded;
             validate_object(&restored)?;
+        }
+        if canvas.scene.layout_policies.len() > MAX_CANVAS_OBJECTS {
+            return Err("scene layout policies exceed canvas limits".into());
+        }
+        for (id, policy) in &canvas.scene.layout_policies {
+            if !container_set.contains(id) {
+                return Err(format!(
+                    "layout policy object {id} is not a scene container"
+                ));
+            }
+            let object = &canvas.objects[objects[id]];
+            let frame = canvas
+                .scene
+                .collapsed
+                .get(id)
+                .copied()
+                .unwrap_or(object.rect);
+            preview_container_layout(frame, *policy, &[])
+                .map_err(|error| format!("invalid layout policy for container {id}: {error}"))?;
         }
         let mut parent_map = HashMap::new();
         for (child, parent) in parents {
@@ -835,6 +896,288 @@ impl<'a> SceneHierarchy<'a> {
         validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
     ) -> Result<CanvasLayer, String> {
         self.preview_translation_with_cards(ids, &HashSet::new(), delta, validate)
+    }
+
+    /// Previews one container's layout as a single sheet-space transaction.
+    /// Any configured descendant policies run top-down in the same candidate.
+    /// Policies are input-only and are not persisted.
+    pub fn preview_layout_with_validator(
+        &self,
+        container: CanvasObjectId,
+        policy: ContainerLayoutPolicy,
+        validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
+    ) -> Result<CanvasLayer, String> {
+        self.preview_layout_tree_with_validator(&BTreeMap::from([(container, policy)]), validate)
+    }
+
+    /// Previews stored policies on the container and its descendants.
+    pub fn preview_stored_layout_with_validator(
+        &self,
+        container: CanvasObjectId,
+        validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
+    ) -> Result<CanvasLayer, String> {
+        self.require_container(container)?;
+        let closure = self.closure(&HashSet::from([container]));
+        let policies: BTreeMap<_, _> = self
+            .canvas
+            .scene
+            .layout_policies
+            .iter()
+            .filter(|(id, _)| closure.contains(id))
+            .map(|(id, policy)| (*id, *policy))
+            .collect();
+        if policies.is_empty() {
+            return Err("container subtree has no stored layout policies".into());
+        }
+        self.preview_layout_tree_with_validator(&policies, validate)
+    }
+
+    /// Previews nested free/stack policies with bottom-up parent growth and a
+    /// deterministic top-down placement pass. Each object's net translation
+    /// and explicit resize are applied once to the candidate geometry.
+    /// Policies are input-only and are not persisted.
+    pub fn preview_layout_tree_with_validator(
+        &self,
+        policies: &BTreeMap<CanvasObjectId, ContainerLayoutPolicy>,
+        validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
+    ) -> Result<CanvasLayer, String> {
+        if policies.is_empty() {
+            return Err("no scene layout policies supplied".into());
+        }
+        if policies.len() > MAX_CANVAS_OBJECTS {
+            return Err("scene layout policy count exceeds canvas limits".into());
+        }
+        let order = self.preorder();
+        for id in policies.keys() {
+            self.require_container(*id)?;
+            self.require_unlocked_path(*id)?;
+            let mut ancestor = Some(*id);
+            while let Some(id) = ancestor {
+                if self.canvas.scene.collapsed.contains_key(&id) {
+                    return Err("expand collapsed ancestors before applying a layout".into());
+                }
+                ancestor = self.parents.get(&id).copied();
+            }
+        }
+
+        let mut rects: HashMap<_, _> = self
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect();
+        let mut deltas = HashMap::new();
+        let mut resized = HashMap::new();
+        let mut scheduled = Vec::with_capacity(policies.len());
+
+        for &container in order.iter().rev() {
+            let Some(policy) = policies.get(&container).copied() else {
+                continue;
+            };
+            if !matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::GrowParent | StackResizePolicy::FitParent,
+                    ..
+                }
+            ) {
+                continue;
+            }
+            let parent_rect = rects
+                .get(&container)
+                .copied()
+                .ok_or("scene layout container not found")?;
+            let children: Vec<_> = self
+                .children(container)?
+                .iter()
+                .filter_map(|id| {
+                    let object = &self.canvas.objects[self.objects[id]];
+                    matches!(object.kind, CanvasObjectKind::Shape { .. }).then_some(*id)
+                })
+                .collect();
+            let before_rects: Vec<_> = children
+                .iter()
+                .map(|id| rects.get(id).copied().ok_or("scene layout child not found"))
+                .collect::<Result<_, _>>()?;
+            let preview = preview_container_layout(parent_rect, policy, &before_rects)
+                .map_err(|error| error.to_string())?;
+            if preview.parent.size != parent_rect.size {
+                self.require_unlocked_path(container)?;
+                rects.insert(container, preview.parent);
+                resized.insert(container, preview.parent.size);
+            }
+        }
+
+        for container in order {
+            let Some(policy) = policies.get(&container).copied() else {
+                continue;
+            };
+            scheduled.push(container);
+
+            let parent_rect = rects
+                .get(&container)
+                .copied()
+                .ok_or("scene layout container not found")?;
+            let children: Vec<_> = self
+                .children(container)?
+                .iter()
+                .filter_map(|id| {
+                    let object = &self.canvas.objects[self.objects[id]];
+                    matches!(object.kind, CanvasObjectKind::Shape { .. }).then_some(*id)
+                })
+                .collect();
+            let before_rects: Vec<_> = children
+                .iter()
+                .map(|id| rects.get(id).copied().ok_or("scene layout child not found"))
+                .collect::<Result<_, _>>()?;
+            let preview = preview_container_layout(parent_rect, policy, &before_rects)
+                .map_err(|error| error.to_string())?;
+            if preview.parent.size != parent_rect.size {
+                return Err("nested parent growth did not converge".into());
+            }
+
+            for (child, rect) in children.into_iter().zip(preview.children) {
+                let before = rects[&child];
+                let delta = rect.min - before.min;
+                let size_changed = rect.size != before.size;
+                if delta == Vec2::ZERO && !size_changed {
+                    continue;
+                }
+                if size_changed && self.canvas.scene.collapsed.contains_key(&child) {
+                    return Err(
+                        "expand collapsed children before resizing them through layout".into(),
+                    );
+                }
+                self.require_unlocked_path(child)?;
+                if delta != Vec2::ZERO {
+                    let closure = self.closure(&HashSet::from([child]));
+                    for id in closure {
+                        let accumulated = deltas.get(&id).copied().unwrap_or(Vec2::ZERO) + delta;
+                        if !valid_position(accumulated) {
+                            return Err("layout movement out of range".into());
+                        }
+                        deltas.insert(id, accumulated);
+                        if let Some(object_rect) = rects.get_mut(&id) {
+                            let source = &self.canvas.objects[self.objects[&id]];
+                            let size = object_rect.size;
+                            *object_rect = source.rect.translate(accumulated);
+                            object_rect.size = size;
+                        }
+                    }
+                }
+                if size_changed {
+                    rects.insert(child, rect);
+                    resized.insert(child, rect.size);
+                }
+            }
+        }
+
+        self.add_rigid_connector_deltas(&mut deltas);
+        let mut candidate = self.stored_canvas();
+        Sheet::translate_canvas_objects_by_delta(&mut candidate, &deltas)?;
+        for (&id, &size) in &resized {
+            candidate.objects[self.objects[&id]].rect.size = size;
+        }
+        let affected: Vec<_> = self
+            .preorder()
+            .into_iter()
+            .filter(|id| deltas.contains_key(id) || resized.contains_key(id))
+            .collect();
+        validate(&SceneEditContext {
+            kind: SceneEditKind::Layout,
+            before: self,
+            after: self,
+            geometry: &candidate,
+            selection: &scheduled,
+            affected: &affected,
+            edge_parent_changes: &[],
+        })?;
+        Ok(candidate)
+    }
+
+    fn add_rigid_connector_deltas(&self, deltas: &mut HashMap<CanvasObjectId, Vec2>) {
+        if !deltas.values().any(|delta| *delta != Vec2::ZERO) {
+            return;
+        }
+        let mut rigid: HashSet<_> = deltas
+            .iter()
+            .filter(|(_, delta)| **delta != Vec2::ZERO)
+            .filter_map(|(id, _)| {
+                (!self.canvas.objects[self.objects[id]].is_connector()).then_some(*id)
+            })
+            .collect();
+        let mut remaining = vec![0_u8; self.canvas.objects.len()];
+        let mut dependents: HashMap<CanvasObjectId, Vec<usize>> = HashMap::new();
+        let mut pending = VecDeque::new();
+        let mut blocked = HashSet::new();
+
+        for (index, object) in self.canvas.objects.iter().enumerate() {
+            let CanvasObjectKind::Connector(connector) = &object.kind else {
+                continue;
+            };
+            let structurally_moved = deltas.contains_key(&object.id);
+            for endpoint in [connector.from, connector.to] {
+                match endpoint {
+                    Endpoint::Topic(_) => {
+                        blocked.insert(index);
+                    }
+                    Endpoint::Point(_) if !structurally_moved => {
+                        blocked.insert(index);
+                    }
+                    Endpoint::Object(id) if !rigid.contains(&id) => {
+                        remaining[index] += 1;
+                        dependents.entry(id).or_default().push(index);
+                    }
+                    Endpoint::Object(_) | Endpoint::Point(_) => {}
+                }
+            }
+            if remaining[index] == 0 && !blocked.contains(&index) {
+                pending.push_back(index);
+            }
+        }
+
+        while let Some(index) = pending.pop_front() {
+            let object = &self.canvas.objects[index];
+            let CanvasObjectKind::Connector(connector) = &object.kind else {
+                continue;
+            };
+            let endpoints = [connector.from, connector.to];
+            let endpoint_deltas: Vec<_> = endpoints
+                .into_iter()
+                .filter_map(|endpoint| match endpoint {
+                    Endpoint::Object(id) if rigid.contains(&id) => deltas.get(&id).copied(),
+                    Endpoint::Object(_) | Endpoint::Topic(_) | Endpoint::Point(_) => None,
+                })
+                .collect();
+            let delta = if let Some(delta) = endpoint_deltas.first().copied() {
+                delta
+            } else if deltas.contains_key(&object.id) {
+                deltas[&object.id]
+            } else {
+                continue;
+            };
+            if delta == Vec2::ZERO || endpoint_deltas.iter().any(|other| *other != delta) {
+                continue;
+            }
+            if let Some(structural_delta) = deltas.get(&object.id) {
+                if *structural_delta != delta {
+                    continue;
+                }
+            } else {
+                deltas.insert(object.id, delta);
+            }
+            if !rigid.insert(object.id) {
+                continue;
+            }
+            if let Some(dependents) = dependents.get(&object.id) {
+                for dependent in dependents {
+                    remaining[*dependent] -= 1;
+                    if remaining[*dependent] == 0 && !blocked.contains(dependent) {
+                        pending.push_back(*dependent);
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn preview_translation_with_cards(

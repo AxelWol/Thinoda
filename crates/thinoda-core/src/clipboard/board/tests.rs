@@ -6,6 +6,9 @@ use crate::board::{
 use crate::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
 use crate::geometry::{Color, Rect};
 use crate::layout::{ApproxMeasure, layout_sheet};
+use crate::scene_layout::{
+    ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis, StackResizePolicy,
+};
 use crate::{Document, EditError, Workbook};
 
 fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
@@ -1415,6 +1418,219 @@ fn stencil_definition_closures_and_hashes_use_distinct_clipboard_versions() {
     let encoded = encode_board_payload(&hashless).unwrap();
     assert!(encoded.starts_with(STENCIL_BOARD_PREFIX));
     assert_eq!(decode_board_payload(&encoded).unwrap(), hashless);
+}
+
+#[test]
+fn layout_policies_round_trip_and_remap_with_collapsed_containers() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    let child = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(130.0, 140.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    source
+        .reparent_canvas_objects(&[child], Some(container))
+        .unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Left,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Free,
+            }),
+        )
+        .unwrap();
+    source
+        .set_canvas_container_collapsed(container, Some(rect(100.0, 100.0, 120.0, 50.0)))
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LAYOUT_BOARD_PREFIX));
+    let decoded = decode_board_payload(&encoded).unwrap();
+    assert_eq!(decoded, payload);
+
+    let mut destination = hidden_sheet("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &decoded, Vec2::ZERO).unwrap();
+    let pasted_container = pasted.objects[0];
+    assert_ne!(pasted_container, container);
+    assert_eq!(
+        destination
+            .canvas
+            .scene
+            .layout_policies
+            .get(&pasted_container),
+        Some(&ContainerLayoutPolicy {
+            header: HeaderPolicy {
+                side: HeaderSide::Left,
+                extent: 20.0,
+            },
+            layout: ContainerLayout::Free,
+        })
+    );
+    assert!(
+        destination
+            .canvas
+            .scene
+            .collapsed
+            .contains_key(&pasted_container)
+    );
+    assert!(
+        destination
+            .canvas
+            .scene
+            .parents
+            .contains_key(&pasted.objects[1])
+    );
+    assert!(
+        !destination
+            .canvas
+            .scene
+            .layout_policies
+            .contains_key(&container)
+    );
+}
+
+#[test]
+fn fill_last_stack_resize_uses_clipboard_v25_and_rejects_v24() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    resize: StackResizePolicy::FillLast,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(FILL_LAST_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(FILL_LAST_LAYOUT_BOARD_PREFIX, LAYOUT_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("fill-last stack resizing")
+    );
+}
+
+#[test]
+fn grow_parent_stack_resize_uses_clipboard_v26_and_rejects_v25() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    resize: StackResizePolicy::GrowParent,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(GROW_PARENT_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        GROW_PARENT_LAYOUT_BOARD_PREFIX,
+        FILL_LAST_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("grow-parent stack resizing")
+    );
+}
+
+#[test]
+fn fit_parent_stack_resize_uses_clipboard_v27_and_rejects_v26() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    resize: StackResizePolicy::FitParent,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(FIT_PARENT_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        FIT_PARENT_LAYOUT_BOARD_PREFIX,
+        GROW_PARENT_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("fit-parent stack resizing")
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 # Common nested containers and swimlanes
 
-Research and design: 2026-11-13. **Implementation in progress; SC0/SC1 are
-partial, and SC2/SC3 remain open.**
+Research and design: 2026-11-13. **Implementation in progress; SC0/SC1 remain
+partial, SC2 has partial layout-policy support, and SC3 remains open.**
 This is the common structural contract for [draw.io support](DRAWIO.md) and
 [socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO.md section
 3.2.1, rather than introducing a second container implementation.
@@ -142,8 +142,8 @@ policy operators. Format-specific names map at the adapter boundary.
 |---|---|
 | Header | Independent side, extent, label direction, header/body fill and separator. Source direction/flip map explicitly; header side and stack axis are separate |
 | Layout | `Free`, `Stack(axis)` and later `Table(grid)`; nested layout runs in a bounded deterministic schedule, never until an unconstrained fixed point |
-| Stack | Sibling order plus extents, spacing, margins, cross-axis fill and minimum sizes; preserve manual extents unless the chosen resize policy changes them |
-| Resize | Distinguish grow-parent, grow-only-parent, fill-last and explicit distribute. Parent growth wins over fill-last where the source stack specifies that precedence. No recursive proportional scaling by default |
+| Stack | Sibling order plus extents, spacing, margins, cross-axis fill and minimum sizes; preserve manual extents unless the chosen resize policy changes them. `FillLast` grows only the final child along the stack axis; parent-resize policies preserve child sizes |
+| Resize | The shared policy supports preserve, fill-last, grow-only-parent and fit-parent. Parent sizes are computed bottom-up before deterministic top-down placement. Parent resize takes precedence over fill-last; explicit distribute and source-specific geometry mapping remain open. No recursive proportional scaling by default |
 | Auto-grow/drop | Plain swimlane defaults may grow; container-table cells default not to. Preserve supported imported flags; preview bound semantic reparent rather than making it a side effect of geometric overlap |
 | Collapse | Store expanded bounds separately; render header/compact frame and fold external connectors to the nearest visible ancestor boundary. Restore full contents/geometry on expand |
 | Clipping | Explicit body/content clipping, not implied by being a container. Headers and crossing external connectors must not disappear behind the body clip |
@@ -178,6 +178,10 @@ Notation rules are optional diagnostics/guards above it.
   reroutes affected attachment segments; automatic routes recompute. One
   transaction deduplicates edge updates whether the edge itself was selected
   or belongs to the moved subtree.
+- For a layout where endpoint subtrees move by different deltas, each edge is
+  handled once: controls follow when both endpoint subtrees have the same net
+  translation; otherwise manual controls stay in sheet space and anchored ends
+  recompute from their real endpoints.
 - Collapse keeps the **real endpoint ID**. Only visible routing terminals
   project to an ancestor boundary; expand restores the original attachment.
   An edge whose endpoints are both hidden inside the same collapsed ancestor
@@ -848,14 +852,70 @@ This is a loss diagnostic, not nested-swimlane support: Zones remain flat,
 editable export remains guarded, and SC0-SC3 are still open. Do not remove the
 warning until the shared scene importer preserves the supported hierarchy.
 
+### 5.13 Bounded layout, persistence and undoable application
+
+The core has a pure, one-container preview primitive for free and horizontal
+or vertical stack layouts. Header side and stack axis are independent. Stack
+previews preserve child sizes and sibling order, align to the leading cross-axis
+edge, and reject overflow rather than clipping or resizing the parent. Inputs
+are bounded by the canvas object limit and board coordinate range. A shared
+scene preview schedules nested policies in parent-first scene order,
+composes net child/subtree translations, and applies each object's geometry
+delta once. Connector controls follow when all moved object endpoints share a
+net delta; cross-subtree controls remain in sheet space. The complete candidate
+is passed once to the read-only binding validator, and vetoes leave the source
+canvas unchanged.
+
+The optional typed policies are now persisted per container in `SceneStructure`,
+validated with the active frame, removed when their container is disabled or
+deleted, filtered on partial copy and ID-remapped on paste. Native v30 and board
+clipboard v24 preserve them and reject older envelopes that contain them. The
+stored-policy preview can apply a container subtree's nested policies through
+one undoable document edit.
+
+The native/web property panel can now draft, save and clear a container's free,
+horizontal-stack or vertical-stack policy, and separately arrange its contents.
+Policy edits and geometry application are separate undo steps. Spacing, padding
+and header extent are editable; the header side is shown but retained unchanged.
+Scene construction now resolves a declared `thinoda.containerHeader` stencil
+binding once and carries its render data to canvas paint, label placement,
+outline/detail hit geometry and SVG/PDF export. The new JSON
+`header-frame-v2` definition maps stored header side and extent to its divider
+and label region. The original `header-frame` definition remains unchanged so
+existing pinned stencil hashes continue to resolve. Stencils without the
+binding retain their own appearance; their header extent still reserves layout
+space. The policy panel exposes side editing only for stencils whose binding
+declares all four side choices; unsupported stencils show the stored side
+read-only. Draft initialization preserves a bound stencil's declared side and
+extent.
+
+This remains below SC2 acceptance: draw.io structural fidelity, explicit
+distribute resize, clipping, persistent routing policy, measured
+workload budgets and native/web visual/accessibility acceptance remain open.
+The header-side parameter is not mapped to draw.io interchange yet.
+
+The stack policy includes opt-in `FillLast`, `GrowParent` and `FitParent` modes.
+`FillLast` grows only the final child along the stack axis, preserving its
+cross-axis size and all other children. `GrowParent` computes minimum parent
+bounds from child extents, spacing, padding and header side/extent, then grows
+without shrinking. `FitParent` uses those exact bounds, so it may grow or shrink
+the frame. Both parent policies preserve child sizes and compute nested frames
+bottom-up before placing children top-down. Parent resizing and fill-last are
+mutually exclusive; choosing either parent mode never resizes the final child.
+Layout under a collapsed ancestor or resizing a collapsed child is refused.
+`Preserve` remains the default. Fill-last requires native v31 / clipboard v25,
+grow-parent requires v32 / v26, and fit-parent requires v33 / v27. Older
+envelopes containing a non-default mode are rejected.
+
 ## 6. Adversarial acceptance and critique
 
 - Pool > lane > sub-lane > task, mixed header/stack axes, zero-sized header,
   and empty lanes preserve coordinates without accumulating header offsets.
 - Move/reparent a selected parent plus selected descendant and a crossing edge:
   exactly one translation and one undo; preserve an individually locked child.
-- Nested stack auto-grow and grow-only/fill-last combinations terminate within
-  the declared budget. Table cells do not inherit swimlane auto-grow.
+- Nested grow-only and fit-parent schedules terminate within the declared
+  budget. Parent resizing preserves child extents and takes precedence over
+  fill-last; table cells do not inherit swimlane auto-grow.
 - Collapse one ancestor of an externally connected task, then a second:
   endpoint identity survives, the nearest visible projection changes, and
   expand restores both routing and geometry. Collapse never changes black-box state.

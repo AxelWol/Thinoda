@@ -71,7 +71,7 @@ fn shape(
     object.style.stroke = Some(INK);
     object.style.text_color = Some(INK);
     if header {
-        object.stencil = Some(StencilRef::new("thinoda.general", "header-frame"));
+        object.stencil = Some(StencilRef::new("thinoda.general", "header-frame-v2"));
     }
     object.id = sheet.alloc_canvas_object_id();
     let id = object.id;

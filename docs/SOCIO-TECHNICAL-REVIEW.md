@@ -288,6 +288,53 @@ The remaining risk is integration, not missing visual symbols: SC0 is still
 partial, and SC1 cannot be declared complete from these previews. This is an
 author review, not a new independent rubber-duck sign-off.
 
+## 10. Bounded layout-preview checkpoint critique
+
+**Implemented:** a pure geometry preview for one container's direct children,
+with orthogonal header-side and stack-axis settings, deterministic sibling
+ordering, finite coordinate and object-count checks, and explicit overflow
+rejection. A scene preview applies each resulting offset to a unique descendant
+closure and its internal connectors in one candidate canvas, then offers the
+complete geometry to a read-only validator. A nested-policy preview schedules
+containers parent-first, composes net subtree deltas and applies each object's
+net geometry change once.
+
+**Rubber-duck questions and dispositions:**
+
+- Does a left header force horizontal stacking, or a top header force vertical
+  stacking? No. Header body bounds are calculated independently from the stack
+  axis, and mixed combinations have regression coverage.
+- Does the preview silently shrink, clip, or overflow children? No. Invalid
+  header/body dimensions and insufficient primary or cross-axis space reject
+  the entire preview.
+- Can a validator reject the result after inspecting partial geometry? No. It
+  receives the fully translated candidate; a veto returns no candidate and
+  leaves the source canvas unchanged.
+- Are conflicting translations silently applied twice? No. A repeated object
+  can receive successive parent and child offsets, but these are accumulated
+  into one net delta and applied once.
+- Does policy-map key order change nested results? No. The scene preorder, not
+  map order, schedules parent containers before nested containers.
+- What happens to a connector between siblings moved by different amounts?
+  Internal connector controls move with their subtree. An external connector's
+  controls follow when both endpoint subtrees share a net delta; otherwise its
+  manual controls stay fixed. Its attached endpoints remain object IDs.
+- Can a caller persist these policies or apply the output as a live edit? No.
+  Policies are not part of `SceneStructure`, and no document transaction,
+  undo history, renderer or interchange path calls this preview.
+- Does this implement full resizing, clipping or route presentation? No.
+  Minimum-size calculation, auto-grow/fill-last, clipping, collapse projection,
+  live rendering, undo and UI remain open.
+
+**Critique:** this is a useful deterministic scene preview, not a shipped
+container behavior. Parent-first layout closes the ordering gap for nested
+free/stack previews, and net-delta application limits repeated transforms.
+Explicitly fixing controls when endpoint subtrees diverge follows existing
+single-endpoint movement behavior, but still needs rendered-route acceptance.
+The persistence, resize, collapse, routing presentation, SC0/SC1/SC2/SC3 and
+socio-technical release gates remain open. This author critique does not replace
+independent review or measured runtime acceptance.
+
 ## 10. Persistent free-container checkpoint critique
 
 **Implemented:** one stored object-only parent relation, scene-aware native and
@@ -714,8 +761,8 @@ diff checks passed. No live native/browser acceptance is claimed.
 **Critique:** the examples make current capabilities discoverable without
 pretending to deliver a complete socio-technical editor. Their free placement and
 descriptive labels are intentional interim limits. Typed relationships,
-accountability/rationale, automatic layout, structural interchange, performance
-budgets and live platform/accessibility acceptance remain required.
+accountability/rationale, broader automatic layout, structural interchange,
+performance budgets and live platform/accessibility acceptance remain required.
 
 **Validation evidence:** core library regressions passed 422 tests; canvas passed
 551 (2 ignored); board export passed 68 (3 ignored); serialized app regressions
@@ -723,3 +770,143 @@ passed 978 (2 ignored). Focused fixtures cover template copy/paste including
 collapsed state, localized header editing, native round trips and SVG geometry.
 Affected all-target clippy with denied warnings, builds, wasm32 web compilation,
 workspace check, formatting and diff checks passed.
+
+## 19. First interactive layout-authoring slice
+
+The container property panel now separates policy drafting, saving and
+application. It exposes free placement and horizontal/vertical stacks with
+spacing, padding and header extent; applying a stored nested policy remains one
+undoable geometry edit. Existing policy header sides are displayed and preserved
+but are not yet editable. The panel states that header extent reserves layout
+space and does not change drawing, avoiding a false appearance of renderer
+integration.
+
+**Rubber-duck questions:** Can a draft silently change geometry? No; saving
+stores policy only, and the distinct arrange command applies it. Can the panel
+erase an imported side policy? No; the side is retained and shown read-only.
+Can an overflowing stack partially move children? No; the core candidate is
+validated before the single document edit. Does this complete swimlane editing?
+No; render/hit-test/SVG/PDF parity, a data-defined header-side mapping, resize
+policies, drop behavior, draw.io fidelity, measured performance and live
+accessibility acceptance remain open.
+
+**Validation evidence:** the focused app harness changes and persists a vertical
+stack, verifies that drafting and saving do not move children, applies the
+layout, preserves a non-top header side, and undoes the application and policy
+save independently. The serialized app suite passed 979 tests (2 ignored);
+workspace Clippy/build, wasm32 web check and diff checks passed. SC2 remains
+partial.
+
+## 20. Shared policy-driven stencil rendering
+
+The shared scene now resolves a container's stored header policy through a
+stencil definition's `thinoda.containerHeader` data binding. One evaluated
+`StencilRender` is carried by `SceneItem`; its geometry, label region, canvas
+paint, connector ports, label editor and SVG/PDF board export consume that
+result. The `header-frame-v2` JSON definition supports top, right, bottom and
+left headers. The prior `header-frame` definition is preserved unchanged so
+existing definition hashes remain valid. Definitions without the binding keep
+their original appearance, even when their container has a layout policy.
+
+**Rubber-duck questions:** Is this another renderer branch per shape? No: the
+scene reads a namespaced parameter binding, while the bounded JSON interpreter
+evaluates the selected header geometry. Does a stored side silently change a
+legacy stencil? No: the old definition remains hash-stable, and only the new
+definition declares the binding. Do the connectors acquire new ports or move
+their perimeter? No: connection points and the outer outline stay data-defined
+and unchanged; only the separator and label region vary. Are paint, hit
+geometry and export independent evaluations? No: they receive the same resolved
+scene render. Does this complete swimlane editing? No: the policy panel exposes
+side editing only for definitions with a complete data-defined four-side
+binding; unsupported stencils remain read-only. Draw.io orientation mapping,
+layout resize/drop behavior, measured performance and live native/web acceptance
+remain open.
+
+**Critique:** the scene item is now the shared boundary for derived stencil
+render data, avoiding policy lookups and divergent evaluations in renderers.
+Using a new definition ID protects older pinned documents; it also means
+existing `header-frame` instances do not gain side behavior automatically.
+That compatibility boundary is intentional and should remain explicit until a
+separate migration is designed. The tests verify each side's label region and
+divider geometry, but do not replace visual acceptance or draw.io round-trip
+tests.
+
+**Validation evidence:** the affected core/canvas/I/O suites passed 1,908 tests;
+the serialized app library suite passed 979 tests (2 ignored). Workspace build,
+all-target Clippy with warnings denied, wasm32 web check, formatting and diff
+checks passed. This does not claim live browser/native visual acceptance.
+
+## 21. Header-side policy editing
+
+The shared container properties panel now edits the stored header side for
+stencils that declare a complete `thinoda.containerHeader` four-side binding.
+Other stencils retain a read-only side value, so saving their layout policy
+cannot imply unsupported rendering behavior. Drafts initialize from the
+bound stencil's current side and extent, and extent is clamped to the selected
+side's frame dimension. The explanatory caption distinguishes layout reservation
+from visible header rendering.
+
+**Rubber-duck questions:** Can editing the policy make an unbound stencil look
+like a swimlane? No; its side control stays read-only and the renderer continues
+to use the stencil's existing appearance. Can changing the side leave an extent
+larger than its new frame dimension? No; the draft clamps it using the active
+side's width or height. Can this silently modify the old pinned header stencil?
+No; only `header-frame-v2` declares the binding, preserving the legacy definition
+hash.
+
+**Remaining boundary:** this UI and its headless tests do not establish native
+or browser visual/accessibility acceptance. Draw.io side/orientation mapping,
+resize/drop policies, structural interchange fidelity and measured performance
+remain open; SC2/SC3 and the first-class editor release gates are still partial.
+
+## 22. Fill-last stack resizing
+
+The shared stack policy now offers opt-in `FillLast`: preserve every existing
+child size except the final child, which grows along the stack axis to the
+remaining body space. Cross-axis size and leading-edge alignment are unchanged.
+Overflow before the final child rejects the whole preview; neither shrinking the
+last child nor automatic parent growth is implied. The nested layout candidate
+applies explicit size changes as well as translations, so document validation
+and undo see the complete geometry transaction.
+
+**Rubber-duck questions:** Do old stack policies change behavior? No; absent
+resize data defaults to `Preserve`, which is omitted when serialized. Can a
+short parent silently shrink a manually sized last child? No; the preview rejects
+when the existing contents and gaps do not fit. Does this implement draw.io's
+full resize policy set? No; grow-parent, grow-only, distribute, nested minimum
+size, drop behavior and interchange mapping remain separate work. Can this
+resize a compact child while preserving an older expanded frame? No; the layout
+is refused until that child is expanded.
+
+Fill-last requires native format v31 and board clipboard v25; older formats
+reject it rather than lose the resize choice. Existing fixed-layout policies
+remain native v30 / clipboard v24. This is a bounded SC2 slice, not SC2
+acceptance: measured performance, draw.io round trips and live native/web
+visual/accessibility checks remain open.
+
+## 23. Parent-resize policies
+
+The shared stack policy distinguishes `GrowParent` (minimum bounds, but never
+shrink) from `FitParent` (set the frame to those minimum bounds, allowing
+shrink). Both preserve child sizes and compute nested container frames
+bottom-up, then place children top-down in one candidate edit. `FillLast` is
+mutually exclusive with either parent mode; a parent-resize mode therefore
+cannot silently also resize the final child.
+
+**Rubber-duck questions:** Can a fit policy unexpectedly shrink a nested frame?
+Yes, by design; the exact candidate is one undoable layout command and callers
+must validate it before commit. Can it resize a collapsed child or operate under
+a collapsed ancestor? No, the hierarchy preflight rejects the layout. Does this
+match draw.io geometry exactly? Not yet: mxStackLayout distinguishes
+`resizeParent` from `resizeParentMax` and explicitly ignores `resizeLast` when
+`resizeParent` is enabled ([source][mxstack]). Thinoda computes the minimum in
+both dimensions, so source-specific dimension mapping and round-trip fixtures
+remain open.
+
+Grow-parent requires native v32 / clipboard v26; fit-parent requires native v33
+/ clipboard v27. These gates preserve older readers' ability to reject rather
+than discard the selected policy. The focused tests cover minimum bounds,
+nested growth, frame shrink, UI selection and both old-envelope gates; they do
+not close SC2 or establish live draw.io/native/web parity.
+
+[mxstack]: https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/layout/mxStackLayout.js

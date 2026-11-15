@@ -2888,6 +2888,10 @@ impl Sheet {
             .scene
             .collapsed
             .retain(|id, _| !removed.contains(id));
+        self.canvas
+            .scene
+            .layout_policies
+            .retain(|id, _| !removed.contains(id));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
                 zone.objects.retain(|id| !removed.contains(id));
@@ -2939,29 +2943,47 @@ impl Sheet {
         ids: &HashSet<CanvasObjectId>,
         delta: Vec2,
     ) -> Result<(), String> {
-        for o in canvas.objects.iter_mut().filter(|o| ids.contains(&o.id)) {
-            o.rect = o.rect.translate(delta);
-            match &mut o.kind {
+        let deltas = ids.iter().map(|id| (*id, delta)).collect();
+        Self::translate_canvas_objects_by_delta(canvas, &deltas)
+    }
+
+    pub(crate) fn translate_canvas_objects_by_delta(
+        canvas: &mut CanvasLayer,
+        deltas: &HashMap<CanvasObjectId, Vec2>,
+    ) -> Result<(), String> {
+        if deltas.values().any(|delta| !valid_position(*delta)) {
+            return Err("movement out of range".into());
+        }
+        for object in &mut canvas.objects {
+            let Some(delta) = deltas.get(&object.id) else {
+                continue;
+            };
+            object.rect = object.rect.translate(*delta);
+            match &mut object.kind {
                 CanvasObjectKind::Ink(ink) => {
-                    ink.points = ink.points.iter().map(|p| *p + delta).collect();
+                    ink.points = ink.points.iter().map(|point| *point + *delta).collect();
                 }
-                CanvasObjectKind::Connector(c) => {
-                    for end in [&mut c.from, &mut c.to] {
-                        if let Endpoint::Point(p) = end {
-                            *p = *p + delta;
+                CanvasObjectKind::Connector(connector) => {
+                    for endpoint in [&mut connector.from, &mut connector.to] {
+                        if let Endpoint::Point(point) = endpoint {
+                            *point = *point + *delta;
                         }
                     }
-                    if !c.waypoints.is_empty() {
-                        c.waypoints = c.waypoints.iter().map(|point| *point + delta).collect();
+                    if !connector.waypoints.is_empty() {
+                        connector.waypoints = connector
+                            .waypoints
+                            .iter()
+                            .map(|point| *point + *delta)
+                            .collect();
                     }
                 }
                 CanvasObjectKind::Shape { .. } => {}
             }
-            validate_object(o)?;
+            validate_object(object)?;
         }
         for (id, expanded) in &mut canvas.scene.collapsed {
-            if ids.contains(id) {
-                *expanded = expanded.translate(delta);
+            if let Some(delta) = deltas.get(id) {
+                *expanded = expanded.translate(*delta);
             }
         }
         if !canvas.scene.collapsed.is_empty() {

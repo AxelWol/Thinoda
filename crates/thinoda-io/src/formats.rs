@@ -167,6 +167,26 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "standard draw.io rectangle rounding requires native format version 23".into(),
             ));
         }
+        if version < 31 && book.has_scene_fill_last_resize() {
+            return Err(IoError::NewerVersion(
+                "fill-last stack resizing requires native format version 31".into(),
+            ));
+        }
+        if version < 32 && book.has_scene_grow_parent_resize() {
+            return Err(IoError::NewerVersion(
+                "grow-parent stack resizing requires native format version 32".into(),
+            ));
+        }
+        if version < 33 && book.has_scene_fit_parent_resize() {
+            return Err(IoError::NewerVersion(
+                "fit-parent stack resizing requires native format version 33".into(),
+            ));
+        }
+        if version < 30 && book.has_scene_layout_policies() {
+            return Err(IoError::NewerVersion(
+                "scene layout policies require native format version 30".into(),
+            ));
+        }
         if version < 29 && book.has_scene_collapse() {
             return Err(IoError::NewerVersion(
                 "collapsed containers require native format version 29".into(),
