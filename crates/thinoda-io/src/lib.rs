@@ -406,7 +406,7 @@ pub enum ImportWarning {
     DrawioPlaceholdersUnsupported,
     /// draw.io container child-layout behavior is only partially represented.
     DrawioSceneLayoutNotPreserved,
-    /// draw.io collapsed containers are imported expanded.
+    /// draw.io collapsed containers without usable alternate bounds are imported expanded.
     DrawioCollapsedSceneExpanded,
     /// draw.io cards inside scene containers are imported without their containment.
     DrawioSceneCardContainmentNotPreserved,

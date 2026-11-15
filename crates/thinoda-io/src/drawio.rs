@@ -2304,6 +2304,14 @@ impl<'a> PageImport<'a> {
         } else {
             self.vertex_rect(cell, context)
         };
+        let compact_rect = if self.scene_container_cells.contains(&index)
+            && cell.collapsed
+            && cell.geometry.alternate_bounds.is_some()
+        {
+            self.vertex_rect(cell, context)
+        } else {
+            rect
+        };
         let mut child_context = Context {
             origin: rect.min,
             parent_size: rect.size,
@@ -2339,7 +2347,7 @@ impl<'a> PageImport<'a> {
             Kind::Container
                 if self.scene_container_cells.contains(&index) && context.bucket.is_none() =>
             {
-                if let Some(id) = self.scene_container(index, rect, context) {
+                if let Some(id) = self.scene_container(index, compact_rect, rect, context) {
                     self.sheet.canvas.scene.containers.insert(id);
                     child_context.zone = None;
                     child_context.bucket = None;
@@ -2400,12 +2408,28 @@ impl<'a> PageImport<'a> {
     fn scene_container(
         &mut self,
         index: usize,
-        rect: Rect,
+        compact_rect: Rect,
+        expanded_rect: Rect,
         context: Context,
     ) -> Option<CanvasObjectId> {
         let cell = &self.cells[index];
         let style = &cell.style;
-        if rect.size.x < MIN_ZONE_SIZE || rect.size.y < MIN_ZONE_SIZE || style.rotation() != 0.0 {
+        let can_preserve_collapse = cell.collapsed
+            && cell.geometry.alternate_bounds.is_some()
+            && expanded_rect.size.x >= MIN_ZONE_SIZE
+            && expanded_rect.size.y >= MIN_ZONE_SIZE
+            && style.rotation() == 0.0;
+        if cell.collapsed && !can_preserve_collapse {
+            log::warn!(
+                "draw.io collapsed scene state on cell {} has no usable alternate bounds",
+                cell.id
+            );
+            self.warn(ImportWarning::DrawioCollapsedSceneExpanded);
+        }
+        if expanded_rect.size.x < MIN_ZONE_SIZE
+            || expanded_rect.size.y < MIN_ZONE_SIZE
+            || style.rotation() != 0.0
+        {
             return None;
         }
         let mut header = thinoda_core::scene_layout::HeaderPolicy {
@@ -2414,7 +2438,7 @@ impl<'a> PageImport<'a> {
         };
 
         let label = self.label(cell);
-        let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect);
+        let mut object = CanvasObject::shape(ShapeKind::Rectangle, compact_rect);
         if let CanvasObjectKind::Shape {
             label: object_label,
             ..
@@ -2440,7 +2464,11 @@ impl<'a> PageImport<'a> {
             };
             let default_extent = 40.0;
             let source_extent = style.num("startSize").unwrap_or(default_extent);
-            let limit = if horizontal { rect.size.y } else { rect.size.x };
+            let limit = if horizontal {
+                compact_rect.size.y
+            } else {
+                compact_rect.size.x
+            };
             let extent = source_extent.clamp(0.0, limit);
             if (style.get("startSize").is_some() && style.num("startSize").is_none())
                 || extent != source_extent
@@ -2468,13 +2496,6 @@ impl<'a> PageImport<'a> {
         object.band = style.band();
         object.alt_text = cell.tooltip.clone().unwrap_or_default();
         let (layout_policy, unsupported_layout) = style.scene_layout_policy(header);
-        if cell.collapsed {
-            log::warn!(
-                "draw.io collapsed scene state on cell {} is imported expanded",
-                cell.id
-            );
-            self.warn(ImportWarning::DrawioCollapsedSceneExpanded);
-        }
         if unsupported_layout {
             log::warn!(
                 "draw.io child layout on cell {} is only partially represented",
@@ -2482,7 +2503,15 @@ impl<'a> PageImport<'a> {
             );
             self.warn(ImportWarning::DrawioSceneLayoutNotPreserved);
         }
-        let id = self.add_object(index, object, context)?;
+        let Some(id) = self.add_object(index, object, context) else {
+            if can_preserve_collapse {
+                self.warn(ImportWarning::DrawioCollapsedSceneExpanded);
+            }
+            return None;
+        };
+        if can_preserve_collapse {
+            self.sheet.canvas.scene.collapsed.insert(id, expanded_rect);
+        }
         if let Some(policy) = layout_policy {
             self.sheet.canvas.scene.layout_policies.insert(id, policy);
         }
@@ -4362,8 +4391,17 @@ impl<'a> PageWriter<'a> {
             let origin = self
                 .sheet
                 .canvas
-                .object(*parent)
-                .map_or(Vec2::ZERO, |object| object.rect.min);
+                .scene
+                .collapsed
+                .get(parent)
+                .map(|bounds| bounds.min)
+                .or_else(|| {
+                    self.sheet
+                        .canvas
+                        .object(*parent)
+                        .map(|object| object.rect.min)
+                })
+                .unwrap_or(Vec2::ZERO);
             return (format!("o{}", parent.0), origin);
         }
         if let Some(group) = self.member_group(member) {
@@ -4384,13 +4422,52 @@ impl<'a> PageWriter<'a> {
         rect: Rect,
         user: Option<(&str, &str)>,
     ) {
-        let geometry = format!(
-            "<mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>",
-            num(rect.min.x),
-            num(rect.min.y),
-            num(rect.size.x),
-            num(rect.size.y)
-        );
+        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, user);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn vertex_with_alternate_bounds(
+        &mut self,
+        id: &str,
+        label: &str,
+        style: &str,
+        parent: &str,
+        rect: Rect,
+        alternate_bounds: Option<Rect>,
+        user: Option<(&str, &str)>,
+    ) {
+        let collapsed = if alternate_bounds.is_some() {
+            " collapsed=\"1\""
+        } else {
+            ""
+        };
+        let geometry = match alternate_bounds {
+            Some(bounds) => format!(
+                "<mxRectangle x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"alternateBounds\"/>",
+                num(bounds.min.x),
+                num(bounds.min.y),
+                num(bounds.size.x),
+                num(bounds.size.y)
+            ),
+            None => String::new(),
+        };
+        let geometry = if alternate_bounds.is_some() {
+            format!(
+                "<mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\">{geometry}</mxGeometry>",
+                num(rect.min.x),
+                num(rect.min.y),
+                num(rect.size.x),
+                num(rect.size.y)
+            )
+        } else {
+            format!(
+                "<mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>",
+                num(rect.min.x),
+                num(rect.min.y),
+                num(rect.size.x),
+                num(rect.size.y)
+            )
+        };
         let label = esc(&html(label));
         let style = esc(style);
         match user {
@@ -4403,11 +4480,11 @@ impl<'a> PageWriter<'a> {
                     self.out.push_str(&format!(" link=\"{}\"", esc(link)));
                 }
                 self.out.push_str(&format!(
-                    "><mxCell style=\"{style}\" vertex=\"1\" parent=\"{parent}\">{geometry}</mxCell></UserObject>\n"
+                    "><mxCell style=\"{style}\" vertex=\"1\" parent=\"{parent}\"{collapsed}>{geometry}</mxCell></UserObject>\n"
                 ));
             }
             None => self.out.push_str(&format!(
-                "<mxCell id=\"{id}\" value=\"{label}\" style=\"{style}\" vertex=\"1\" parent=\"{parent}\">{geometry}</mxCell>\n"
+                "<mxCell id=\"{id}\" value=\"{label}\" style=\"{style}\" vertex=\"1\" parent=\"{parent}\"{collapsed}>{geometry}</mxCell>\n"
             )),
         }
     }
@@ -4575,6 +4652,7 @@ impl<'a> PageWriter<'a> {
                 let mut style = String::new();
                 let style_ref = &object.style;
                 let scene_container = self.sheet.canvas.scene.containers.contains(&id);
+                let collapsed_bounds = self.sheet.canvas.scene.collapsed.get(&id).copied();
                 let scene_header = object
                     .stencil
                     .as_ref()
@@ -4638,6 +4716,9 @@ impl<'a> PageWriter<'a> {
                     if is_isolated_scene_container(self.sheet, id) {
                         style.push_str("thinodaSceneContainer=1;");
                     }
+                    if collapsed_bounds.is_some() {
+                        style.push_str("collapsible=1;");
+                    }
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
                 let special_outline = object.rectangle_sides.is_some()
@@ -4670,12 +4751,13 @@ impl<'a> PageWriter<'a> {
                     object.band,
                 );
                 let user = (!object.alt_text.is_empty()).then_some((object.alt_text.as_str(), ""));
-                self.vertex(
+                self.vertex_with_alternate_bounds(
                     &cell_id,
                     label,
                     &style,
                     &parent,
                     object.rect.translate(Vec2::ZERO - origin),
+                    collapsed_bounds.map(|bounds| bounds.translate(Vec2::ZERO - origin)),
                     user,
                 );
             }
@@ -5207,11 +5289,6 @@ fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
     let scene = &sheet.canvas.scene;
     if scene.is_empty() {
         return Ok(());
-    }
-    if !scene.collapsed.is_empty() {
-        return Err(IoError::Invalid(
-            "draw.io export cannot preserve collapsed scene frames yet".into(),
-        ));
     }
     if !scene.layout_policies.is_empty() {
         return Err(IoError::Invalid(

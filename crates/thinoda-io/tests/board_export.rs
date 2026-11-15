@@ -810,10 +810,32 @@ fn collapsed_containers_round_trip_with_capability_gates_and_hide_visual_content
         assert!(!svg.contains(&svg_id));
         let pptx = export(&book, Format::PowerPoint);
         assert!(!all_text(&pptx).contains(&pptx_name));
-        assert!(
+        let drawio =
             export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true)
-                .is_err()
+                .unwrap();
+        let restored = import_bytes_with_report(Format::DrawIo, &drawio)
+            .unwrap()
+            .workbook;
+        let restored_sheet = &restored.sheets[0];
+        assert_eq!(
+            restored_sheet.canvas.scene.collapsed.len(),
+            book.active().canvas.scene.collapsed.len()
         );
+        assert_eq!(
+            restored_sheet.canvas.scene.parents.len(),
+            book.active().canvas.scene.parents.len()
+        );
+        let restored_child = restored_sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.label() == "HiddenStepForCollapse")
+            .unwrap();
+        assert_eq!(
+            restored_child.rect,
+            book.active().canvas.object(child).unwrap().rect
+        );
+        restored.validate().unwrap();
     }
 }
 

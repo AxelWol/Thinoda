@@ -67,19 +67,22 @@ object endpoints. Flat containers continue using Zones for compatibility.
 This is not full SC3 support. Only direct container-to-container nesting is
 promoted; nested containers under intervening non-container/group cells remain
 on the warned legacy path. Stack axis, spacing and uniform effective padding
-are imported as a warned partial policy; collapse state and stored layout
-policies are not yet exportable. Nested scene trees without those policies
-export parent-relative geometry and top/left headers. A Thinoda-specific marker
+are imported as a warned partial policy; stored layout policies are not yet
+exportable. Collapsed frames retain compact bounds and valid expanded
+`alternateBounds`, while children use the expanded coordinate context. Nested
+scene trees without stored layout policies export parent-relative geometry and
+top/left headers. A Thinoda-specific marker
 preserves one isolated scene container in a single-page file when it has no
 contained connectors; the remaining isolated-container combinations and other
 unsupported scene/header combinations are refused. Separate import warnings
-identify partial layout behavior, collapsed containers imported expanded using
-alternate bounds when available, and cards nested in scenes imported as
-standalone board cards. Clipboard paste reports both container ancestry and
-card containment losses. **Checkpoint critique:** marking every exported lane
-introduced formatting warnings on reimport, so the marker is limited to isolated
-frames; multi-page, multi-frame and connector-containing variants remain
-blocked until they pass the same scene-idempotence gate.
+identify partial layout behavior; collapsed containers are imported expanded
+with a warning when alternate bounds are absent or unusable. Cards nested in
+scenes are imported as standalone board cards. Clipboard paste reports both
+container ancestry and card containment losses. **Checkpoint critique:**
+marking every exported lane introduced formatting warnings on reimport, so the
+marker is limited to isolated frames; multi-page, multi-frame and
+connector-containing variants remain blocked until they pass the same
+scene-idempotence gate.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in
@@ -880,15 +883,20 @@ across the stack axis and defaults to resizing the parent, neither of which is
 represented by the imported `Preserve` resize mode, so stack imports warn.
 Unsupported/non-direct nesting remains warned. Collapsed scene containers use
 valid `alternateBounds` for their expanded frame and child coordinate context,
-but their collapsed state is not retained; missing or invalid alternate bounds
-fall back to the available frame geometry.
-For scenes with no stored layout or collapse state, the writer now emits
+and retain both compact and expanded bounds. Missing or invalid alternate bounds
+fall back to the available frame geometry and report the lost collapsed state.
+For scenes with no stored layout policy, the writer now emits
 parent-relative geometry, deterministic object IDs, container markers and
 top/left header styles; a pool/lane/task fixture round-trips ancestry,
 sheet-space geometry and object terminals. Export still refuses stored
-layout/collapse policies, right/bottom headers and scene objects that also
-belong to a group or Zone. Corpus cases that can be exported must preserve scene
-structure, geometry, object order and terminals across repeated round trips.
+layout policies, right/bottom headers and scene objects that also belong to a
+group or Zone. Collapsed frames export their compact geometry plus expanded
+`alternateBounds`, and children remain relative to the expanded parent origin.
+**Checkpoint critique:** valid bounds are required to preserve collapse state;
+missing or invalid source bounds stay expanded with an explicit warning rather
+than receiving invented geometry. Stored layout policies remain a SC3 blocker.
+Corpus cases that can be exported must preserve scene structure, geometry,
+object order and terminals across repeated round trips.
 Additional original-fixture assertions and browser-console validation remain
 open.
 
@@ -938,9 +946,8 @@ identity on reimport for a single isolated container in a single-page file
 without contained connectors. Multiple isolated containers, contained
 connectors in an isolated frame, isolated containers combined with other scene
 containers, and isolated containers in multi-page files remain refused. Export
-also refuses collapsed frames, stored layout policies, right/bottom headers,
-custom container stencils and group/Zone overlap rather than approximating
-them.
+also refuses stored layout policies, right/bottom headers, custom container
+stencils and group/Zone overlap rather than approximating them.
 
 The stack policy includes opt-in `FillLast`, `GrowParent` and `FitParent` modes.
 `FillLast` grows only the final child along the stack axis, preserving its

@@ -7740,7 +7740,7 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
 }
 
 #[test]
-fn collapsed_nested_swimlanes_expand_from_alternate_bounds() {
+fn collapsed_nested_swimlanes_preserve_alternate_bounds_on_round_trip() {
     let xml = page(
         r#"
         <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=1;" collapsed="1" vertex="1" parent="1"><mxGeometry x="100" y="80" width="160" height="120" as="geometry"><mxRectangle x="100" y="80" width="500" height="320" as="alternateBounds"/></mxGeometry></mxCell>
@@ -7750,7 +7750,7 @@ fn collapsed_nested_swimlanes_expand_from_alternate_bounds() {
     );
     let report = load(&xml);
     assert!(
-        report
+        !report
             .warnings
             .contains(&ImportWarning::DrawioCollapsedSceneExpanded),
         "{:?}",
@@ -7769,13 +7769,50 @@ fn collapsed_nested_swimlanes_expand_from_alternate_bounds() {
     let pool = object("Pool");
     let lane = object("Lane");
     let task = object("Task");
-    assert_eq!(pool.rect, rect(100.0, 80.0, 500.0, 320.0));
-    assert_eq!(lane.rect, rect(130.0, 120.0, 420.0, 240.0));
+    assert_eq!(pool.rect, rect(100.0, 80.0, 160.0, 120.0));
+    assert_eq!(lane.rect, rect(130.0, 120.0, 120.0, 100.0));
     assert_eq!(task.rect, rect(150.0, 150.0, 100.0, 50.0));
     assert_eq!(sheet.canvas.scene.parents.get(&lane.id), Some(&pool.id));
     assert_eq!(sheet.canvas.scene.parents.get(&task.id), Some(&lane.id));
-    assert!(sheet.canvas.scene.collapsed.is_empty());
+    assert_eq!(
+        sheet.canvas.scene.collapsed.get(&pool.id),
+        Some(&rect(100.0, 80.0, 500.0, 320.0))
+    );
+    assert_eq!(
+        sheet.canvas.scene.collapsed.get(&lane.id),
+        Some(&rect(130.0, 120.0, 420.0, 240.0))
+    );
     report.workbook.validate().unwrap();
+
+    let exported =
+        export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let exported = String::from_utf8(exported).unwrap();
+    assert!(exported.contains("collapsed=\"1\""));
+    assert!(exported.contains("as=\"alternateBounds\""));
+    let restored = load(&exported);
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    let restored_sheet = &restored.workbook.sheets[0];
+    assert_eq!(
+        restored_sheet.canvas.scene.collapsed,
+        sheet.canvas.scene.collapsed
+    );
+    assert_eq!(
+        restored_sheet.canvas.scene.parents,
+        sheet.canvas.scene.parents
+    );
+    for label in ["Pool", "Lane", "Task"] {
+        assert_eq!(
+            object(label).rect,
+            restored_sheet
+                .canvas
+                .objects
+                .iter()
+                .find(|item| item.label() == label)
+                .unwrap()
+                .rect
+        );
+    }
+    restored.workbook.validate().unwrap();
 }
 
 #[test]
