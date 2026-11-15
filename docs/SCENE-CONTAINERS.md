@@ -876,11 +876,12 @@ scene parent, parent-relative geometry conversion and the explicit warning and
 export refusal for its stored stack layout.
 
 The source import is no longer warned merely because a supported direct nested
-chain exists. `childLayout=stackLayout` imports its axis, spacing, and padding
-when the combined border and four margins are uniform. Asymmetric margins are
-not approximated. These are partial mappings: Graph.js also fills children
-across the stack axis and defaults to resizing the parent, neither of which is
-represented by the imported `Preserve` resize mode, so stack imports warn.
+chain exists. `childLayout=stackLayout` imports its axis, spacing, uniform
+effective padding, and resize mode when the combined border and four margins are
+uniform. Parent-resize flags map to `GrowParent` or `FitParent`; when parent
+resize is off, `resizeLast` maps to `FillLast` or `Preserve`. Asymmetric margins
+are not approximated. Stack imports still warn because Graph.js fills children
+across the stack axis, which Thinoda does not represent.
 Unsupported/non-direct nesting remains warned. Collapsed scene containers use
 valid `alternateBounds` for their expanded frame and child coordinate context,
 and retain both compact and expanded bounds. Missing or invalid alternate bounds
@@ -966,6 +967,23 @@ not fit, the layout is rejected rather than shrinking contents.
 grow-parent requires v32 / v26, and fit-parent requires v33 / v27. Older
 distributed-gap policies require native v34 / clipboard v28; older envelopes
 containing a non-default mode are rejected.
+
+### 5.14 Pinned draw.io stack resize mapping
+
+The draw.io importer now maps `resizeParent` and `resizeParentMax` to
+`GrowParent`/`FitParent`, and uses `resizeLast` as `FillLast` only when parent
+resize is disabled. This follows the pinned Graph.js defaults
+(`resizeParent=1`, `resizeParentMax=1`, `resizeLast=0`) and precedence; an
+invalid `horizontalStack` value is not guessed as vertical. Stack imports still
+require confirmation because Graph.js fills children across the stack axis,
+which the shared policy does not yet model. The export refusal for stored layout
+policies remains unchanged.
+
+**Checkpoint critique:** this maps the resize dimension of the source policy,
+not the complete layout behavior. Cross-axis fill, source layout execution,
+asymmetric margins, gap distribution and policy export remain open. The focused
+tests cover the pinned defaults, explicit fill-last/fit-parent/preserve modes
+and invalid axis values; they do not claim draw.io round-trip acceptance.
 
 ## 6. Adversarial acceptance and critique
 

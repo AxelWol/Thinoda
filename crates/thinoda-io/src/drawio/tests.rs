@@ -7723,7 +7723,7 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
                 axis: thinoda_core::scene_layout::StackAxis::Vertical,
                 spacing: 8.0,
                 padding: 11.0,
-                resize: thinoda_core::scene_layout::StackResizePolicy::Preserve,
+                resize: thinoda_core::scene_layout::StackResizePolicy::GrowParent,
             },
         })
     );
@@ -7736,6 +7736,47 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
     assert_eq!(
         crate::import_bytes(Format::Thinoda, &native).unwrap(),
         report.workbook
+    );
+}
+
+#[test]
+fn nested_stack_layout_maps_drawio_resize_flags() {
+    use thinoda_core::scene_layout::{ContainerLayout, StackResizePolicy};
+    let header = thinoda_core::scene_layout::HeaderPolicy {
+        side: thinoda_core::scene_layout::HeaderSide::Top,
+        extent: 24.0,
+    };
+    let layout = |style: &str| {
+        let (policy, unsupported) = Style::parse(style).scene_layout_policy(header);
+        assert!(unsupported);
+        match policy.unwrap().layout {
+            stack @ ContainerLayout::Stack { .. } => stack,
+            ContainerLayout::Free => unreachable!(),
+        }
+    };
+    let resize = |style: &str| match layout(style) {
+        ContainerLayout::Stack { resize, .. } => resize,
+        ContainerLayout::Free => unreachable!(),
+    };
+    assert_eq!(
+        resize("childLayout=stackLayout"),
+        StackResizePolicy::GrowParent
+    );
+    assert_eq!(
+        resize("childLayout=stackLayout;resizeParent=0;resizeLast=1"),
+        StackResizePolicy::FillLast
+    );
+    assert_eq!(
+        resize("childLayout=stackLayout;resizeParent=1;resizeParentMax=0"),
+        StackResizePolicy::FitParent
+    );
+    assert_eq!(
+        resize("childLayout=stackLayout;resizeParent=0;resizeLast=0"),
+        StackResizePolicy::Preserve
+    );
+    assert_eq!(
+        Style::parse("childLayout=stackLayout;horizontalStack=2").scene_layout_policy(header),
+        (None, true)
     );
 }
 

@@ -862,10 +862,10 @@ impl Style {
             return (None, self.get("childLayout").is_some());
         }
 
-        let axis = if self.get("horizontalStack").unwrap_or("1") == "1" {
-            StackAxis::Horizontal
-        } else {
-            StackAxis::Vertical
+        let axis = match self.get("horizontalStack").unwrap_or("1") {
+            "1" => StackAxis::Horizontal,
+            "0" => StackAxis::Vertical,
+            _ => return (None, true),
         };
         let number = |key: &str, default: f32| match self.get(key) {
             None => Some(default),
@@ -891,7 +891,20 @@ impl Style {
             return (None, true);
         }
 
-        // Graph's stack layout also fills cross-axis space and defaults to resizing its parent.
+        let resize_parent = self.get("resizeParent").unwrap_or("1") == "1";
+        let resize = if resize_parent {
+            if self.get("resizeParentMax").unwrap_or("1") == "1" {
+                StackResizePolicy::GrowParent
+            } else {
+                StackResizePolicy::FitParent
+            }
+        } else if self.get("resizeLast").unwrap_or("0") == "1" {
+            StackResizePolicy::FillLast
+        } else {
+            StackResizePolicy::Preserve
+        };
+
+        // Graph's stack layout also fills children across the stack axis.
         let unsupported = true;
 
         (
@@ -901,7 +914,7 @@ impl Style {
                     axis,
                     spacing,
                     padding: left,
-                    resize: StackResizePolicy::Preserve,
+                    resize,
                 },
             }),
             unsupported,
