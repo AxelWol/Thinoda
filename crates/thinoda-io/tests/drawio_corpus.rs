@@ -678,6 +678,45 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
 }
 
 #[test]
+fn supplied_uml_activity_nested_swimlane_import_preserves_structure_and_geometry() {
+    let bytes = include_bytes!("../../../docs/draw-io-examples/uml-activity-example.drawio");
+    let report = thinoda_io::import_bytes_with_report(Format::DrawIo, bytes).unwrap();
+    let sheet = &report.workbook.sheets[0];
+    let object = |label: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.label() == label)
+            .unwrap_or_else(|| panic!("missing supplied swimlane {label:?}"))
+    };
+    let actors = object("Actors");
+    let orders = object("Orders");
+
+    assert!(sheet.canvas.scene.containers.contains(&actors.id));
+    assert!(sheet.canvas.scene.containers.contains(&orders.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&orders.id), Some(&actors.id));
+    assert_eq!(
+        actors.rect,
+        Rect::from_min_size(Vec2::new(30.0, 20.0), Vec2::new(890.0, 510.0))
+    );
+    assert_eq!(
+        orders.rect,
+        Rect::from_min_size(Vec2::new(50.0, 20.0), Vec2::new(870.0, 270.0))
+    );
+    assert!(
+        report
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    assert!(matches!(
+        thinoda_io::export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("scene layout policies")
+    ));
+    report.workbook.validate().unwrap();
+}
+
+#[test]
 fn supplied_diagrams_follow_their_grid_and_snap_settings() {
     let Some(dir) = corpus_dir() else {
         return;

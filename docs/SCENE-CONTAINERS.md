@@ -79,8 +79,9 @@ Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in
 app.diagrams.net and visually confirmed with its top pool header, left lane
-header, task and connector. Targeted assertions for original nested source
-fixtures and browser-console validation remain open.
+header, task and connector. A supplied UML activity example now has explicit
+parent, geometry and partial-layout-warning assertions; additional original
+nested fixtures and browser-console validation remain open.
 
 ## 2. One engine, three responsibilities
 
@@ -862,6 +863,9 @@ fixture verifies parent IDs, coordinates, header extent/orientation, and a
 connector attached to the pool. Simple un-nested containers continue to import
 as Zones. The same fixture verifies native model validation and reports lost
 ancestry when preparing a board clipboard fragment.
+The supplied UML activity example also verifies an original Actors > Orders
+scene parent, parent-relative geometry conversion and the explicit warning and
+export refusal for its stored stack layout.
 
 The source import is no longer warned merely because a supported direct nested
 chain exists. `childLayout=stackLayout` imports its axis, spacing, and padding
@@ -877,7 +881,8 @@ sheet-space geometry and object terminals. Export still refuses stored
 layout/collapse policies, right/bottom headers and scene objects that also
 belong to a group or Zone. Corpus cases that can be exported must preserve scene
 structure, geometry, object order and terminals across repeated round trips.
-Original fixture coverage and draw.io UI verification remain open.
+Additional original-fixture assertions and browser-console validation remain
+open.
 
 ### 5.13 Bounded layout, persistence and undoable application
 
