@@ -7544,6 +7544,21 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
 }
 
 #[test]
+fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_unmapped() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;horizontalStack=0;childSpacing=8;resizeParent=1;resizeParentMax=1;margin=10;" collapsed="1" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="300" height="180" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Other));
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(sheet.canvas.scene.containers.len(), 2);
+    assert!(sheet.canvas.scene.layout_policies.is_empty());
+}
+
+#[test]
 fn notes_text_lines_directions_and_user_objects() {
     let xml = page(
         r#"

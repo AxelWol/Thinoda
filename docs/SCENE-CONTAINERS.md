@@ -63,10 +63,11 @@ object endpoints. Flat containers continue using Zones for compatibility.
 This is not full SC3 support. Only direct container-to-container nesting is
 promoted; nested containers under intervening non-container/group cells remain
 on the warned legacy path. Imported stack/resize/collapse policies are not
-mapped, draw.io export remains refused for scene hierarchies, and draw.io
-clipboard fragments report ancestry as a loss. Native save/reopen and visual
-export preserve the imported scene, but full draw.io structural round-trip,
-editing policy fidelity and normalized-idempotence remain open.
+mapped and now produce an unsupported-data warning. draw.io export remains
+refused for scene hierarchies, and draw.io clipboard fragments report ancestry
+as a loss. Native save/reopen and visual export preserve the imported scene, but
+full draw.io structural round-trip, editing policy fidelity and
+normalized-idempotence remain open.
 
 ## 2. One engine, three responsibilities
 
@@ -847,10 +848,11 @@ as Zones. The same fixture verifies native model validation and reports lost
 ancestry when preparing a board clipboard fragment.
 
 The source import is no longer warned merely because a supported direct nested
-chain exists. Unsupported/non-direct nesting still uses the legacy warned path.
-draw.io export remains refused for any scene hierarchy, because the writer
-does not yet reconstruct source parents, local geometry or supported policies;
-SC3 remains open until fixture round-trip and idempotence gates are met.
+chain exists. Unsupported/non-direct nesting and unmapped stack/resize/collapse
+settings use the warned path. draw.io export remains refused for any scene
+hierarchy, because the writer does not yet reconstruct source parents, local
+geometry or supported policies; SC3 remains open until fixture round-trip and
+idempotence gates are met.
 
 ### 5.13 Bounded layout, persistence and undoable application
 

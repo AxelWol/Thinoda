@@ -1268,6 +1268,7 @@ struct Cell {
     style: Style,
     vertex: bool,
     edge: bool,
+    collapsed: bool,
     source: Option<String>,
     target: Option<String>,
     visible: bool,
@@ -1350,6 +1351,14 @@ fn read_cell(
     warnings: &mut BTreeSet<ImportWarning>,
 ) -> Cell {
     let owned = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(str::to_owned);
+    let collapsed = match inner.attr("collapsed") {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(_) => {
+            warnings.insert(ImportWarning::Other);
+            false
+        }
+    };
     Cell {
         id: outer.attr("id").unwrap_or_default().to_owned(),
         parent: owned(inner.attr("parent")),
@@ -1362,6 +1371,7 @@ fn read_cell(
         style: Style::parse(inner.attr("style").unwrap_or_default()),
         vertex: inner.attr("vertex") == Some("1"),
         edge: inner.attr("edge") == Some("1"),
+        collapsed,
         source: owned(inner.attr("source")),
         target: owned(inner.attr("target")),
         visible: inner.attr("visible") != Some("0"),
@@ -2293,6 +2303,27 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         if rect.size.x < MIN_ZONE_SIZE || rect.size.y < MIN_ZONE_SIZE || style.rotation() != 0.0 {
             return None;
+        }
+        const LAYOUT_KEYS: [&str; 12] = [
+            "childLayout",
+            "horizontalStack",
+            "childSpacing",
+            "resizeParent",
+            "resizeParentMax",
+            "resizeLast",
+            "border",
+            "margin",
+            "marginLeft",
+            "marginRight",
+            "marginTop",
+            "marginBottom",
+        ];
+        if cell.collapsed || LAYOUT_KEYS.iter().any(|key| style.get(key).is_some()) {
+            log::warn!(
+                "draw.io scene layout or collapse state on cell {} is not preserved",
+                cell.id
+            );
+            self.warn(ImportWarning::Other);
         }
 
         let label = self.label(cell);
