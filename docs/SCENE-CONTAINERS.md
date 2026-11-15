@@ -71,7 +71,9 @@ policies are not yet exportable. Nested scene trees without those policies expor
 parent-relative geometry, container markers and top/left headers only when
 every scene container participates in direct container-to-container nesting.
 Isolated scene containers and other unsupported scene/header combinations
-remain refused, and draw.io clipboard fragments report ancestry as a loss.
+remain refused. Separate import warnings identify partial layout behavior and
+collapsed containers imported expanded; draw.io clipboard fragments report
+ancestry as a loss.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips. Broader fixture coverage and
 draw.io UI verification remain open.

@@ -2425,12 +2425,19 @@ impl<'a> PageImport<'a> {
         object.band = style.band();
         object.alt_text = cell.tooltip.clone().unwrap_or_default();
         let (layout_policy, unsupported_layout) = style.scene_layout_policy(header);
-        if cell.collapsed || unsupported_layout {
+        if cell.collapsed {
             log::warn!(
-                "draw.io scene layout or collapse state on cell {} is not fully preserved",
+                "draw.io collapsed scene state on cell {} is imported expanded",
                 cell.id
             );
-            self.warn(ImportWarning::Other);
+            self.warn(ImportWarning::DrawioCollapsedSceneExpanded);
+        }
+        if unsupported_layout {
+            log::warn!(
+                "draw.io child layout on cell {} is only partially represented",
+                cell.id
+            );
+            self.warn(ImportWarning::DrawioSceneLayoutNotPreserved);
         }
         let id = self.add_object(index, object, context)?;
         if let Some(policy) = layout_policy {

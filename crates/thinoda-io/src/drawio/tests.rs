@@ -7597,7 +7597,16 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
         "#,
     );
     let report = load(&xml);
-    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioCollapsedSceneExpanded)
+    );
     let sheet = &report.workbook.sheets[0];
     assert_eq!(sheet.canvas.scene.containers.len(), 2);
     let pool = sheet
@@ -7642,7 +7651,11 @@ fn nested_stack_layout_does_not_approximate_asymmetric_margins() {
         "#,
     );
     let report = load(&xml);
-    assert!(report.warnings.contains(&ImportWarning::Other));
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
     assert!(
         report.workbook.sheets[0]
             .canvas

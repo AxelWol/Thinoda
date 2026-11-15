@@ -404,6 +404,10 @@ pub enum ImportWarning {
     DrawioFoldedNotesApproximated,
     /// draw.io placeholder resolution and its metadata are not represented.
     DrawioPlaceholdersUnsupported,
+    /// draw.io container child-layout behavior is only partially represented.
+    DrawioSceneLayoutNotPreserved,
+    /// draw.io collapsed containers are imported expanded.
+    DrawioCollapsedSceneExpanded,
     Other,
 }
 

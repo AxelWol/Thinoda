@@ -133,6 +133,8 @@ pub(crate) const CLOUD_UI_KEYS: &[&str] = &[
     "OneDrive requires the drive ID and app-folder item ID for your registration.",
     "Open",
     "Open remote copy",
+    "draw.io container layout was only partially preserved; unsupported child-layout, margin, fill, or resize settings may change behavior",
+    "draw.io collapsed container state was not preserved; imported containers are expanded",
     "Other unsupported map data",
     "Parent folder",
     "Progress is indeterminate. Cancel cannot undo an upload already accepted by the provider.",

@@ -191,6 +191,12 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::DrawioPlaceholdersUnsupported => {
             "draw.io placeholders are not resolved and their data is not preserved"
         }
+        ImportWarning::DrawioSceneLayoutNotPreserved => {
+            "draw.io container layout was only partially preserved; unsupported child-layout, margin, fill, or resize settings may change behavior"
+        }
+        ImportWarning::DrawioCollapsedSceneExpanded => {
+            "draw.io collapsed container state was not preserved; imported containers are expanded"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -1514,6 +1520,14 @@ const DE: &[(&str, &str)] = &[
     (
         "draw.io placeholders are not resolved and their data is not preserved",
         "draw.io-Platzhalter werden nicht aufgelöst und ihre Daten nicht übernommen",
+    ),
+    (
+        "draw.io container layout was only partially preserved; unsupported child-layout, margin, fill, or resize settings may change behavior",
+        "Das Containerlayout von draw.io wurde nur teilweise übernommen; nicht unterstützte Einstellungen für Unterlayouts, Ränder, Füllung oder Größenänderung können das Verhalten verändern",
+    ),
+    (
+        "draw.io collapsed container state was not preserved; imported containers are expanded",
+        "Der eingeklappte Containerstatus von draw.io wurde nicht übernommen; importierte Container sind ausgeklappt",
     ),
     (
         "Other unsupported map data",
