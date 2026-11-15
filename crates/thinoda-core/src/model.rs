@@ -880,6 +880,18 @@ impl Sheet {
         })
     }
 
+    pub fn has_scene_distribute_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::Distribute,
+                    ..
+                }
+            )
+        })
+    }
+
     /// Whether any stencil instance pins a specific definition revision.
     pub fn has_stencil_definition_hashes(&self) -> bool {
         self.canvas.objects.iter().any(|object| {
@@ -2505,6 +2517,10 @@ impl Workbook {
 
     pub fn has_scene_fit_parent_resize(&self) -> bool {
         self.sheets.iter().any(Sheet::has_scene_fit_parent_resize)
+    }
+
+    pub fn has_scene_distribute_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_distribute_resize)
     }
 
     /// Whether any stencil instance pins a specific definition revision.

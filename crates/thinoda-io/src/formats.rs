@@ -182,6 +182,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "fit-parent stack resizing requires native format version 33".into(),
             ));
         }
+        if version < 34 && book.has_scene_distribute_resize() {
+            return Err(IoError::NewerVersion(
+                "distributed stack spacing requires native format version 34".into(),
+            ));
+        }
         if version < 30 && book.has_scene_layout_policies() {
             return Err(IoError::NewerVersion(
                 "scene layout policies require native format version 30".into(),

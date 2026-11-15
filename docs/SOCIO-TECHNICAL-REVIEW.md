@@ -910,3 +910,18 @@ nested growth, frame shrink, UI selection and both old-envelope gates; they do
 not close SC2 or establish live draw.io/native/web parity.
 
 [mxstack]: https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/layout/mxStackLayout.js
+
+## 24. Explicit stack-gap distribution
+
+`Distribute` keeps child extents and edge padding fixed, then allocates the
+remaining primary-axis slack equally across the gaps between siblings. It is
+deliberately not center-distribution of selected objects: a stack with zero or
+one child stays leading-aligned. If the children plus configured minimum gaps
+do not fit, the candidate is rejected instead of shrinking children.
+
+**Rubber-duck questions:** Does this mutate child sizes? No. Does it add
+unbounded work or recursive scaling? No; gap allocation is one bounded
+arithmetic pass after the existing layout limits. Is this a draw.io
+`resizeLast` behavior? No; it is a Thinoda-specific explicit arrangement
+policy, and interchange mapping remains open. Distributed spacing requires
+native v34 / board clipboard v28; older envelopes reject it.

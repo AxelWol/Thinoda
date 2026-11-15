@@ -39,6 +39,7 @@ pub enum StackResizePolicy {
     FillLast,
     GrowParent,
     FitParent,
+    Distribute,
 }
 
 impl StackResizePolicy {
@@ -91,9 +92,10 @@ pub enum SceneLayoutError {
 ///
 /// Stack layout aligns children to the leading cross-axis edge and rejects
 /// overflow instead of clipping. `FillLast` may grow only the final child's
-/// primary extent; `GrowParent` expands the parent while `FitParent` sizes it
-/// exactly to content. Both parent policies preserve child sizes. Free layout
-/// never changes child geometry. This primitive is intentionally
+/// primary extent; `Distribute` shares the available primary-axis space evenly
+/// across inter-child gaps. `GrowParent` expands the parent while `FitParent`
+/// sizes it exactly to content. Both parent policies preserve child sizes. Free
+/// layout never changes child geometry. This primitive is intentionally
 /// one-container-only: it neither mutates geometry nor routes connectors;
 /// policy persistence lives in the scene hierarchy.
 pub fn preview_child_layout(
@@ -139,7 +141,10 @@ pub fn preview_container_layout(
         } => fit_parent_to_contents(parent, policy.header, axis, spacing, padding, children)?,
         ContainerLayout::Free
         | ContainerLayout::Stack {
-            resize: StackResizePolicy::Preserve | StackResizePolicy::FillLast,
+            resize:
+                StackResizePolicy::Preserve
+                | StackResizePolicy::FillLast
+                | StackResizePolicy::Distribute,
             ..
         } => parent,
     };
@@ -192,10 +197,15 @@ pub fn preview_container_layout(
                 return Err(SceneLayoutError::ExceedsBody);
             };
             let gaps = children.len().saturating_sub(1);
-            let used_primary = used_primary + f64::from(spacing) * gaps as f64;
-            if used_primary > primary_extent {
+            let minimum_used_primary = used_primary + f64::from(spacing) * gaps as f64;
+            if minimum_used_primary > primary_extent {
                 return Err(SceneLayoutError::ExceedsBody);
             }
+            let primary_spacing = if resize == StackResizePolicy::Distribute && gaps > 0 {
+                (primary_extent - used_primary) / gaps as f64
+            } else {
+                f64::from(spacing)
+            };
 
             let mut cursor = match axis {
                 StackAxis::Horizontal => min_x,
@@ -223,7 +233,7 @@ pub fn preview_container_layout(
                 cursor += match axis {
                     StackAxis::Horizontal => f64::from(size.x),
                     StackAxis::Vertical => f64::from(size.y),
-                } + f64::from(spacing);
+                } + primary_spacing;
             }
             result
         }
@@ -519,6 +529,34 @@ mod tests {
         assert_eq!(
             preview.children,
             [rect(20.0, 10.0, 20.0, 10.0), rect(20.0, 25.0, 15.0, 15.0)]
+        );
+    }
+
+    #[test]
+    fn distribute_shares_surplus_space_between_children_without_resizing_them() {
+        let parent = rect(0.0, 0.0, 100.0, 60.0);
+        let children = [
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(0.0, 0.0, 10.0, 10.0),
+        ];
+        let mut distribute = policy(HeaderSide::Top, 10.0, StackAxis::Horizontal);
+        let ContainerLayout::Stack { resize, .. } = &mut distribute.layout else {
+            unreachable!();
+        };
+        *resize = StackResizePolicy::Distribute;
+
+        assert_eq!(
+            preview_child_layout(parent, distribute, &children).unwrap(),
+            [
+                rect(10.0, 20.0, 10.0, 10.0),
+                rect(45.0, 20.0, 10.0, 10.0),
+                rect(80.0, 20.0, 10.0, 10.0),
+            ]
+        );
+        assert_eq!(
+            preview_child_layout(parent, distribute, &children[..1]).unwrap(),
+            [rect(10.0, 20.0, 10.0, 10.0)]
         );
     }
 

@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 33;
+pub const NATIVE_FORMAT_VERSION: u64 = 34;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -28,10 +28,12 @@ pub const NATIVE_FORMAT_VERSION: u64 = 33;
 /// 26 data-defined stencil shapes, 27 scene ancestry and stencil definition
 /// hashes, 28 embedded stencil definition closures, 29 collapsed containers,
 /// 30 persistent scene layout policies, 31 fill-last stack resizing, and
-/// 32 grow-parent stack resizing and 33 fit-parent stack resizing.
+/// 32 grow-parent, 33 fit-parent, and 34 distribute stack resizing.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_scene_fit_parent_resize() {
+    if book.has_scene_distribute_resize() {
+        34
+    } else if book.has_scene_fit_parent_resize() {
         33
     } else if book.has_scene_grow_parent_resize() {
         32

@@ -44,6 +44,7 @@ Preserve child sizes|Conservar tamaños de los elementos|Conserver la taille des
 Fill last child|Ampliar el último elemento|Agrandir le dernier élément|Udvid sidste element|Laatste element vergroten|Expandir o último elemento|Espandi ultimo elemento|Rozciągnij ostatni element
 Grow parent to fit|Ampliar el contenedor para ajustar|Agrandir le conteneur pour tout ajuster|Udvid beholder, så indholdet passer|Container vergroten zodat inhoud past|Aumentar o contentor para ajustar|Espandi il contenitore per adattare|Powiększ kontener, aby dopasować
 Fit parent to contents|Ajustar el contenedor al contenido|Ajuster le conteneur au contenu|Tilpas beholder til indhold|Container aanpassen aan inhoud|Ajustar o contentor ao conteúdo|Adatta il contenitore al contenuto|Dopasuj kontener do zawartości
+Distribute gaps|Distribuir espacios|Répartir les espaces|Fordel mellemrum|Ruimtes verdelen|Distribuir os espaços|Distribuisci gli spazi|Rozłóż odstępy
 Header side|Lado del encabezado|Côté de l’en-tête|Overskriftsside|Kopzijde|Lado do cabeçalho|Lato dell’intestazione|Strona nagłówka
 Top|Arriba|Haut|Øverst|Boven|Superior|Alto|Góra
 Bottom|Abajo|Bas|Nederst|Onder|Inferior|Basso|Dół

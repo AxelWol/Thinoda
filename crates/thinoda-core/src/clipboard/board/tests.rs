@@ -1634,6 +1634,51 @@ fn fit_parent_stack_resize_uses_clipboard_v27_and_rejects_v26() {
 }
 
 #[test]
+fn distribute_stack_resize_uses_clipboard_v28_and_rejects_v27() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    resize: StackResizePolicy::Distribute,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(DISTRIBUTE_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        DISTRIBUTE_LAYOUT_BOARD_PREFIX,
+        FIT_PARENT_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("distributed stack spacing")
+    );
+}
+
+#[test]
 fn installed_builtin_stencils_are_pinned_by_hash_without_a_closure() {
     let package = crate::stencil_object::find_package("thinoda.general").unwrap();
     let definition = package.definition("folder").unwrap();

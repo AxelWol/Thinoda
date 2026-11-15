@@ -45,6 +45,7 @@ const LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-24\n";
 const FILL_LAST_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-25\n";
 const GROW_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-26\n";
 const FIT_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-27\n";
+const DISTRIBUTE_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-28\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -63,7 +64,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_scene_fit_parent_resize() {
+        if self.fragment.has_scene_distribute_resize() {
+            DISTRIBUTE_LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_fit_parent_resize() {
             FIT_PARENT_LAYOUT_BOARD_PREFIX
         } else if self.fragment.has_scene_grow_parent_resize() {
             GROW_PARENT_LAYOUT_BOARD_PREFIX
@@ -319,9 +322,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(FIT_PARENT_LAYOUT_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-27\r\n"))
-        .map(|json| (27, json))
+        .strip_prefix(DISTRIBUTE_LAYOUT_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-28\r\n"))
+        .map(|json| (28, json))
+        .or_else(|| {
+            text.strip_prefix(FIT_PARENT_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-27\r\n"))
+                .map(|json| (27, json))
+        })
         .or_else(|| {
             text.strip_prefix(GROW_PARENT_LAYOUT_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-26\r\n"))
@@ -464,6 +472,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     }
     if version < 27 && payload.fragment.has_scene_fit_parent_resize() {
         return Err("fit-parent stack resizing requires board clipboard version 27".into());
+    }
+    if version < 28 && payload.fragment.has_scene_distribute_resize() {
+        return Err("distributed stack spacing requires board clipboard version 28".into());
     }
     if version < 23 && payload.fragment.has_scene_collapse() {
         return Err("collapsed containers require board clipboard version 23".into());

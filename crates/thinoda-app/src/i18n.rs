@@ -4254,6 +4254,7 @@ const DE: &[(&str, &str)] = &[
         "Fit parent to contents",
         "Übergeordneten Container an Inhalt anpassen",
     ),
+    ("Distribute gaps", "Abstände verteilen"),
     ("Header side", "Kopfbereichseite"),
     ("Top", "Oben"),
     ("Bottom", "Unten"),

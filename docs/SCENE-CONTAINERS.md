@@ -143,7 +143,7 @@ policy operators. Format-specific names map at the adapter boundary.
 | Header | Independent side, extent, label direction, header/body fill and separator. Source direction/flip map explicitly; header side and stack axis are separate |
 | Layout | `Free`, `Stack(axis)` and later `Table(grid)`; nested layout runs in a bounded deterministic schedule, never until an unconstrained fixed point |
 | Stack | Sibling order plus extents, spacing, margins, cross-axis fill and minimum sizes; preserve manual extents unless the chosen resize policy changes them. `FillLast` grows only the final child along the stack axis; parent-resize policies preserve child sizes |
-| Resize | The shared policy supports preserve, fill-last, grow-only-parent and fit-parent. Parent sizes are computed bottom-up before deterministic top-down placement. Parent resize takes precedence over fill-last; explicit distribute and source-specific geometry mapping remain open. No recursive proportional scaling by default |
+| Resize | The shared policy supports preserve, fill-last, grow-only-parent, fit-parent and distributed gaps. Parent sizes are computed bottom-up before deterministic top-down placement. Parent resize takes precedence over fill-last; source-specific geometry mapping remains open. No recursive proportional scaling by default |
 | Auto-grow/drop | Plain swimlane defaults may grow; container-table cells default not to. Preserve supported imported flags; preview bound semantic reparent rather than making it a side effect of geometric overlap |
 | Collapse | Store expanded bounds separately; render header/compact frame and fold external connectors to the nearest visible ancestor boundary. Restore full contents/geometry on expand |
 | Clipping | Explicit body/content clipping, not implied by being a container. Headers and crossing external connectors must not disappear behind the body clip |
@@ -889,8 +889,8 @@ declares all four side choices; unsupported stencils show the stored side
 read-only. Draft initialization preserves a bound stencil's declared side and
 extent.
 
-This remains below SC2 acceptance: draw.io structural fidelity, explicit
-distribute resize, clipping, persistent routing policy, measured
+This remains below SC2 acceptance: draw.io structural fidelity, clipping,
+persistent routing policy, measured
 workload budgets and native/web visual/accessibility acceptance remain open.
 The header-side parameter is not mapped to draw.io interchange yet.
 
@@ -903,9 +903,14 @@ the frame. Both parent policies preserve child sizes and compute nested frames
 bottom-up before placing children top-down. Parent resizing and fill-last are
 mutually exclusive; choosing either parent mode never resizes the final child.
 Layout under a collapsed ancestor or resizing a collapsed child is refused.
+`Distribute` preserves child sizes and divides all available primary-axis slack
+equally among the gaps between siblings; padding stays fixed, and zero/one-child
+stacks remain leading-aligned. If the children plus configured minimum gaps do
+not fit, the layout is rejected rather than shrinking contents.
 `Preserve` remains the default. Fill-last requires native v31 / clipboard v25,
 grow-parent requires v32 / v26, and fit-parent requires v33 / v27. Older
-envelopes containing a non-default mode are rejected.
+distributed-gap policies require native v34 / clipboard v28; older envelopes
+containing a non-default mode are rejected.
 
 ## 6. Adversarial acceptance and critique
 
@@ -913,9 +918,10 @@ envelopes containing a non-default mode are rejected.
   and empty lanes preserve coordinates without accumulating header offsets.
 - Move/reparent a selected parent plus selected descendant and a crossing edge:
   exactly one translation and one undo; preserve an individually locked child.
-- Nested grow-only and fit-parent schedules terminate within the declared
+- Nested grow-only, fit-parent and distributed-gap schedules terminate within the declared
   budget. Parent resizing preserves child extents and takes precedence over
-  fill-last; table cells do not inherit swimlane auto-grow.
+  fill-last; distribution preserves child sizes, and table cells do not inherit
+  swimlane auto-grow.
 - Collapse one ancestor of an externally connected task, then a second:
   endpoint identity survives, the nearest visible projection changes, and
   expand restores both routing and geometry. Collapse never changes black-box state.

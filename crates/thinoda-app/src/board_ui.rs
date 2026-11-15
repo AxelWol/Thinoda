@@ -1920,6 +1920,7 @@ impl ThinodaApp {
                                 StackResizePolicy::FillLast => "Fill last child",
                                 StackResizePolicy::GrowParent => "Grow parent to fit",
                                 StackResizePolicy::FitParent => "Fit parent to contents",
+                                StackResizePolicy::Distribute => "Distribute gaps",
                             }))
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
@@ -1941,6 +1942,11 @@ impl ThinodaApp {
                                     &mut resize,
                                     StackResizePolicy::FitParent,
                                     t("Fit parent to contents"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::Distribute,
+                                    t("Distribute gaps"),
                                 );
                             })
                             .response
@@ -7484,6 +7490,61 @@ mod tests {
         assert_eq!(
             arranged.active().canvas.object(child).unwrap().rect,
             BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn distribute_stack_policy_shares_available_space_between_children() {
+        let (mut app, container, child) = container_app();
+        let second = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Add second stack child", |sheet| {
+                let second = sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        BoardRect::from_min_size(Vec2::new(25.0, 40.0), Vec2::new(120.0, 80.0)),
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .reparent_canvas_objects(&[second], Some(container))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok(second)
+            })
+            .unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child, second], false)
+            .unwrap();
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Distribute gaps").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 80.0))
+        );
+        assert_eq!(
+            arranged.active().canvas.object(second).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 350.0), Vec2::new(120.0, 80.0))
         );
     }
 
