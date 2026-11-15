@@ -68,14 +68,18 @@ This is not full SC3 support. Only direct container-to-container nesting is
 promoted; nested containers under intervening non-container/group cells remain
 on the warned legacy path. Stack axis, spacing and uniform effective padding
 are imported as a warned partial policy; collapse state and stored layout
-policies are not yet exportable. Nested scene trees without those policies export
-parent-relative geometry, container markers and top/left headers only when
-every scene container participates in direct container-to-container nesting.
-Isolated scene containers and other unsupported scene/header combinations
-remain refused. Separate import warnings identify partial layout behavior,
-collapsed containers imported expanded using alternate bounds when available,
-and cards nested in scenes imported as standalone board cards. Clipboard paste
-reports both container ancestry and card containment losses.
+policies are not yet exportable. Nested scene trees without those policies
+export parent-relative geometry and top/left headers. A Thinoda-specific marker
+preserves one isolated scene container in a single-page file when it has no
+contained connectors; the remaining isolated-container combinations and other
+unsupported scene/header combinations are refused. Separate import warnings
+identify partial layout behavior, collapsed containers imported expanded using
+alternate bounds when available, and cards nested in scenes imported as
+standalone board cards. Clipboard paste reports both container ancestry and
+card containment losses. **Checkpoint critique:** marking every exported lane
+introduced formatting warnings on reimport, so the marker is limited to isolated
+frames; multi-page, multi-frame and connector-containing variants remain
+blocked until they pass the same scene-idempotence gate.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in
