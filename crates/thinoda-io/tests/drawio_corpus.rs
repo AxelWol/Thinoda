@@ -400,15 +400,31 @@ fn check(path: &Path) -> Result<String, String> {
         .cloned()
         .collect();
     let strict = thinoda_io::export_bytes(&book, Format::DrawIo, &opts);
+    let consented_drawio = || -> Result<Option<Vec<u8>>, String> {
+        match thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(IoError::Invalid(message)) if message.contains("cannot preserve scene") => Ok(None),
+            Err(error) => Err(format!("consented draw.io export: {error}")),
+        }
+    };
     let drawio = match (has_scene_hierarchy, attachment_losses.as_slice(), strict) {
-        (true, _, Err(IoError::Invalid(message)))
-            if message.contains("cannot preserve scene hierarchy") =>
+        (true, [], Ok(bytes)) => Some(bytes),
+        (
+            true,
+            [ExportLoss::ConnectorAttachmentsDetached(expected)],
+            Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(actual)),
+        ) if expected == &actual => consented_drawio()?,
+        (true, expected, Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(actual)))
+            if expected == actual =>
         {
+            consented_drawio()?
+        }
+        (true, _, Err(IoError::Invalid(message))) if message.contains("cannot preserve scene") => {
             None
         }
         (true, _, result) => {
             return Err(format!(
-                "nested scene hierarchy was not refused by draw.io export: {result:?}"
+                "nested scene export returned an unexpected result: {result:?}"
             ));
         }
         (false, [], Ok(bytes)) => Some(bytes),

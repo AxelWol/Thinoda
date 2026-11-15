@@ -662,8 +662,12 @@ fn scene_hierarchy_requires_v27_and_preserves_native_and_private_xmind_data() {
 #[test]
 fn scene_editable_exports_and_drawio_clipboard_refuse_silent_flattening() {
     let book = scene_book();
+    assert!(matches!(
+        export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true),
+        Err(IoError::Invalid(message))
+            if message.contains("scene containers isolated from direct nesting")
+    ));
     for format in [
-        Format::DrawIo,
         Format::DrawIoSvg,
         Format::DrawIoPng,
         Format::FreeMind,

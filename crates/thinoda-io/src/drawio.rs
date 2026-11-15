@@ -4303,6 +4303,16 @@ impl<'a> PageWriter<'a> {
 
     /// Parent cell id and its absolute origin.
     fn parent(&self, member: BoardMember) -> (String, Vec2) {
+        if let BoardMember::Object(id) = member
+            && let Some(parent) = self.sheet.canvas.scene.parents.get(&id)
+        {
+            let origin = self
+                .sheet
+                .canvas
+                .object(*parent)
+                .map_or(Vec2::ZERO, |object| object.rect.min);
+            return (format!("o{}", parent.0), origin);
+        }
         if let Some(group) = self.member_group(member) {
             return (format!("g{}", group.0), self.groups[&group].1.min);
         }
@@ -4511,12 +4521,22 @@ impl<'a> PageWriter<'a> {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();
                 let style_ref = &object.style;
+                let scene_container = self.sheet.canvas.scene.containers.contains(&id);
+                let scene_header = object
+                    .stencil
+                    .as_ref()
+                    .filter(|stencil| scene_container && stencil.definition == "header-frame-v2");
                 let stencil_native = object
                     .stencil
                     .as_ref()
                     .and_then(crate::drawio_stencil::native_style);
-                if let Some(native) = &stencil_native {
-                    style.push_str(native);
+                if let Some(mut native) = stencil_native {
+                    if scene_header.and_then(|stencil| stencil.parameters.get("headerSide"))
+                        == Some(&3.0)
+                    {
+                        native = native.replace("horizontal=1;", "horizontal=0;");
+                    }
+                    style.push_str(&native);
                 } else if let Some(sides) = object.rectangle_sides {
                     style.push_str(&format!(
                         "shape=partialRectangle;top={};right={};bottom={};left={};",
@@ -4552,7 +4572,16 @@ impl<'a> PageWriter<'a> {
                     style.push_str(&format!("margin={};", num(margin)));
                 }
                 if let Some(stencil) = &object.stencil {
-                    style.push_str(&crate::drawio_stencil::reference_style(stencil));
+                    if let Some(scene_header) = scene_header {
+                        if let Some(extent) = scene_header.parameters.get("headerHeight") {
+                            style.push_str(&format!("startSize={};", num(*extent as f32)));
+                        }
+                    } else {
+                        style.push_str(&crate::drawio_stencil::reference_style(stencil));
+                    }
+                }
+                if scene_container {
+                    style.push_str("container=1;");
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
                 let special_outline = object.rectangle_sides.is_some()
@@ -5050,11 +5079,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
 fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<String, IoError> {
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
     for (index, sheet) in sheets.into_iter().enumerate() {
-        if sheet.has_scene_hierarchy() {
-            return Err(IoError::Invalid(
-                "draw.io export cannot preserve nested scene hierarchy yet".into(),
-            ));
-        }
+        validate_scene_export(sheet)?;
         let (grid, thinoda_grid) = match sheet.board.grid {
             GridKind::None => (0, "none"),
             GridKind::Dots => (1, "dots"),
@@ -5089,6 +5114,95 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
     }
     out.push_str("</mxfile>\n");
     Ok(out)
+}
+
+fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
+    let scene = &sheet.canvas.scene;
+    if scene.is_empty() {
+        return Ok(());
+    }
+    if !scene.collapsed.is_empty() {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve collapsed scene frames yet".into(),
+        ));
+    }
+    if !scene.layout_policies.is_empty() {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene layout policies yet".into(),
+        ));
+    }
+
+    let scene_objects: HashSet<_> = scene
+        .containers
+        .iter()
+        .copied()
+        .chain(scene.parents.keys().copied())
+        .chain(scene.parents.values().copied())
+        .collect();
+    let linked_containers: HashSet<_> = scene
+        .parents
+        .iter()
+        .flat_map(|(&child, &parent)| {
+            (scene.containers.contains(&child) && scene.containers.contains(&parent))
+                .then_some([child, parent])
+        })
+        .flatten()
+        .collect();
+    if scene
+        .containers
+        .iter()
+        .any(|id| !linked_containers.contains(id))
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene containers isolated from direct nesting yet"
+                .into(),
+        ));
+    }
+    if sheet
+        .canvas
+        .objects
+        .iter()
+        .any(|object| scene_objects.contains(&object.id) && object.group.is_some())
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene objects that also belong to a group".into(),
+        ));
+    }
+    if sheet
+        .zones
+        .iter()
+        .any(|zone| zone.objects.iter().any(|id| scene_objects.contains(id)))
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene objects that also belong to a zone".into(),
+        ));
+    }
+    for id in &scene.containers {
+        let object = sheet
+            .canvas
+            .object(*id)
+            .ok_or_else(|| IoError::Invalid("draw.io scene container was not found".into()))?;
+        if !matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve non-shape scene containers".into(),
+            ));
+        }
+        if let Some(stencil) = &object.stencil
+            && stencil.definition == "header-frame-v2"
+        {
+            let side = stencil.parameters.get("headerSide").copied().unwrap_or(0.0);
+            if side != 0.0 && side != 3.0 {
+                return Err(IoError::Invalid(
+                    "draw.io export cannot preserve right or bottom scene headers yet".into(),
+                ));
+            }
+        } else if object.stencil.is_some() {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve custom scene container stencils yet".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn valid_rendered_svg(svg: &str) -> bool {

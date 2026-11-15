@@ -7520,13 +7520,58 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
         crate::import_bytes(Format::Thinoda, &native).unwrap(),
         report.workbook
     );
+    let drawio = export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let round_trip = crate::import_bytes(Format::DrawIo, &drawio).unwrap();
+    let restored = &round_trip.sheets[0];
+    assert_eq!(
+        restored.canvas.scene.containers,
+        sheet.canvas.scene.containers
+    );
+    assert_eq!(restored.canvas.scene.parents, sheet.canvas.scene.parents);
+    assert_eq!(
+        restored
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>(),
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>()
+    );
+    let restored_lane = restored
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Lane")
+        .unwrap();
+    assert_eq!(
+        restored_lane
+            .stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerSide")),
+        Some(&3.0)
+    );
+    assert_eq!(connectors(restored)[0].from, connectors(sheet)[0].from);
+    assert_eq!(connectors(restored)[0].to, connectors(sheet)[0].to);
+    let mut right_header = report.workbook.clone();
+    right_header.sheets[0]
+        .canvas
+        .objects
+        .iter_mut()
+        .find(|object| object.id == lane.id)
+        .unwrap()
+        .stencil
+        .as_mut()
+        .unwrap()
+        .parameters
+        .insert("headerSide".into(), 1.0);
     assert!(matches!(
-        export_bytes(
-            &report.workbook,
-            Format::DrawIo,
-            &ExportOptions::default()
-        ),
-        Err(IoError::Invalid(message)) if message.contains("cannot preserve scene hierarchy")
+        export_bytes(&right_header, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("right or bottom scene headers")
     ));
 
     let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
@@ -7576,6 +7621,10 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
             },
         })
     );
+    assert!(matches!(
+        export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("scene layout policies")
+    ));
     let native =
         export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
     assert_eq!(

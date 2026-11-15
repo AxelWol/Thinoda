@@ -754,6 +754,7 @@ pub fn export_bytes_with_consent_and_visual_context(
         && !matches!(
             format,
             Format::Thinoda
+                | Format::DrawIo
                 | Format::XMind
                 | Format::Svg
                 | Format::Png

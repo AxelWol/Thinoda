@@ -1,8 +1,8 @@
 # Common nested containers and swimlanes
 
 Research and design: 2026-11-13. **Implementation in progress; SC0/SC1 remain
-partial, SC2 has partial layout-policy support, and SC3 has an initial nested
-ancestry-import slice; structural round-trip remains open.**
+partial, SC2 has partial layout-policy support, and SC3 has initial nested
+ancestry import/export; structural round-trip remains open.**
 This is the common structural contract for [draw.io support](DRAWIO.md) and
 [socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO.md section
 3.2.1, rather than introducing a second container implementation.
@@ -65,12 +65,14 @@ object endpoints. Flat containers continue using Zones for compatibility.
 
 This is not full SC3 support. Only direct container-to-container nesting is
 promoted; nested containers under intervening non-container/group cells remain
-on the warned legacy path. Imported stack/resize/collapse policies are not
-mapped and now produce an unsupported-data warning. draw.io export remains
-refused for scene hierarchies, and draw.io clipboard fragments report ancestry
-as a loss. Native save/reopen and visual export preserve the imported scene, but
-full draw.io structural round-trip, editing policy fidelity and
-normalized-idempotence remain open.
+on the warned legacy path. Stack axis, spacing and uniform effective padding
+are imported as a warned partial policy; collapse state and stored layout
+policies are not yet exportable. Nested scene trees without those policies export
+parent-relative geometry, container markers and top/left headers only when
+every scene container participates in direct container-to-container nesting.
+Isolated scene containers and other unsupported scene/header combinations
+remain refused, and draw.io clipboard fragments report ancestry as a loss.
+Full corpus coverage and normalized-idempotence remain open.
 
 ## 2. One engine, three responsibilities
 
@@ -857,9 +859,13 @@ not approximated. These are partial mappings: Graph.js also fills children
 across the stack axis and defaults to resizing the parent, neither of which is
 represented by the imported `Preserve` resize mode, so stack imports warn.
 Unsupported/non-direct nesting and collapsed state also use the warned path.
-draw.io export remains refused for any scene hierarchy, because the writer does
-not yet reconstruct source parents, local geometry or supported policies; SC3
-remains open until fixture round-trip and idempotence gates are met.
+For scenes with no stored layout or collapse state, the writer now emits
+parent-relative geometry, deterministic object IDs, container markers and
+top/left header styles; a pool/lane/task fixture round-trips ancestry,
+sheet-space geometry and object terminals. Export still refuses stored
+layout/collapse policies, right/bottom headers and scene objects that also
+belong to a group or Zone. Corpus-wide supported-case coverage and normalized
+idempotence remain open.
 
 ### 5.13 Bounded layout, persistence and undoable application
 
