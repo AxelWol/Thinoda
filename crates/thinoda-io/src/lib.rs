@@ -408,6 +408,8 @@ pub enum ImportWarning {
     DrawioSceneLayoutNotPreserved,
     /// draw.io collapsed containers are imported expanded.
     DrawioCollapsedSceneExpanded,
+    /// draw.io cards inside scene containers are imported without their containment.
+    DrawioSceneCardContainmentNotPreserved,
     Other,
 }
 

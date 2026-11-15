@@ -505,6 +505,7 @@ draw.io folded notes may be flattened or simplified|As notas dobradas do draw.io
 draw.io placeholders are not resolved and their data is not preserved|Os espaços reservados do draw.io não são resolvidos e seus dados não são preservados
 draw.io container layout was only partially preserved; unsupported child-layout, margin, fill, or resize settings may change behavior|O layout dos contêineres do draw.io foi preservado apenas parcialmente; configurações não suportadas de layout filho, margem, preenchimento ou redimensionamento podem alterar o comportamento
 draw.io collapsed container state was not preserved; imported containers are expanded|O estado recolhido dos contêineres do draw.io não foi preservado; os contêineres importados estão expandidos
+draw.io cards nested in a scene were imported as standalone board cards; their containment is not preserved|Os cartões do draw.io aninhados em uma cena foram importados como cartões independentes do quadro; seu aninhamento não é preservado
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão

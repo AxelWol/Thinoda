@@ -2076,7 +2076,7 @@ impl<'a> PageImport<'a> {
     fn register(&mut self, cell: usize, item: Item, context: Context, locked: bool) {
         self.items.insert(cell, item);
         if context.scene_parent.is_some() && matches!(item, Item::Card(_)) {
-            self.warn(ImportWarning::Other);
+            self.warn(ImportWarning::DrawioSceneCardContainmentNotPreserved);
         }
         let member = match item {
             Item::Object(id) => BoardMember::Object(id),

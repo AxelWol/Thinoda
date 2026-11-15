@@ -197,6 +197,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::DrawioCollapsedSceneExpanded => {
             "draw.io collapsed container state was not preserved; imported containers are expanded"
         }
+        ImportWarning::DrawioSceneCardContainmentNotPreserved => {
+            "draw.io cards nested in a scene were imported as standalone board cards; their containment is not preserved"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -1528,6 +1531,10 @@ const DE: &[(&str, &str)] = &[
     (
         "draw.io collapsed container state was not preserved; imported containers are expanded",
         "Der eingeklappte Containerstatus von draw.io wurde nicht übernommen; importierte Container sind ausgeklappt",
+    ),
+    (
+        "draw.io cards nested in a scene were imported as standalone board cards; their containment is not preserved",
+        "In einer Szene verschachtelte draw.io-Karten wurden als eigenständige Board-Karten importiert; ihre Einbettung bleibt nicht erhalten",
     ),
     (
         "Other unsupported map data",

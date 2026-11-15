@@ -7612,6 +7612,34 @@ fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
 }
 
 #[test]
+fn nested_drawio_cards_are_imported_with_a_specific_containment_warning() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="80" width="500" height="320" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell>
+        <mxCell id="note" value="Nested note" style="shape=note;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="160" height="100" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneCardContainmentNotPreserved)
+    );
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(sheet.canvas.scene.containers.len(), 2);
+    assert_eq!(sheet.canvas.scene.parents.len(), 1);
+    let note = sheet
+        .topics
+        .values()
+        .find(|topic| topic.title == "Nested note")
+        .unwrap();
+    assert_eq!(note.card.unwrap().kind, CardKind::Sticky);
+}
+
+#[test]
 fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
     let xml = page(
         r#"

@@ -72,9 +72,9 @@ policies are not yet exportable. Nested scene trees without those policies expor
 parent-relative geometry, container markers and top/left headers only when
 every scene container participates in direct container-to-container nesting.
 Isolated scene containers and other unsupported scene/header combinations
-remain refused. Separate import warnings identify partial layout behavior and
-collapsed containers imported expanded; draw.io clipboard fragments report
-ancestry as a loss.
+remain refused. Separate import warnings identify partial layout behavior,
+collapsed containers imported expanded, and cards nested in scenes imported as
+standalone board cards; draw.io clipboard fragments report ancestry as a loss.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in
@@ -139,9 +139,12 @@ draw.io shapes, even BPMN stencils, acquire no socio-technical meaning on open.
 - Existing flat `CanvasGroup` behavior and Zone membership remain unchanged.
   New nested grouping on draw.io and socio-technical sheets uses scene group
   containers. Do not combine a flat-group move and an ancestor move twice.
-  Keep legacy cards/topic trees intact; do not make a topic's mind-map parent
-  a container parent. Existing imported cards need a scene-occurrence adapter
-  or a consented representation change, decided in SC0, not silent flattening.
+  **SC0 decision:** scene ancestry and socio-technical occurrence bindings use
+  `CanvasObjectId` only. Board cards and topic trees remain outside scene
+  ancestry and semantic bindings in v1; use ordinary text/shape objects for
+  notes inside a scene. Do not convert cards implicitly on import, paste or
+  export. Any future card-occurrence adapter or explicit migration is separately
+  scoped and is not a v1 prerequisite.
 
 ### 3.2 Swimlane/container policies
 
@@ -975,9 +978,10 @@ but prevents inconsistent move/collapse/export behavior and a second hierarchy.
 Sheet-space geometry avoids a disruptive all-board coordinate migration, at
 the cost of transactional descendant updates. The supported layout subset is
 explicit because reproducing all draw.io editor behavior is not a small phase.
-The principal unresolved implementation risks are legacy card occurrence
-integration, text/binding integration and resize-policy interactions; SC0/STC0
-must stop or rescope if their spikes fail. See the
+The principal unresolved implementation risks are text/binding integration and
+resize-policy interactions; legacy card-occurrence integration is explicitly
+deferred by SC0. SC0/STC0 must stop or rescope if their remaining spikes fail.
+See the
 [full review and dispositions](SOCIO-TECHNICAL-REVIEW.md).
 
 ## Sources
