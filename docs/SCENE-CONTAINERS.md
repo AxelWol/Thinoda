@@ -72,7 +72,9 @@ parent-relative geometry, container markers and top/left headers only when
 every scene container participates in direct container-to-container nesting.
 Isolated scene containers and other unsupported scene/header combinations
 remain refused, and draw.io clipboard fragments report ancestry as a loss.
-Full corpus coverage and normalized-idempotence remain open.
+Supported scene exports in the corpus are checked for normalized scene
+idempotence across repeated round trips. Broader fixture coverage and
+draw.io UI verification remain open.
 
 ## 2. One engine, three responsibilities
 
@@ -864,8 +866,9 @@ parent-relative geometry, deterministic object IDs, container markers and
 top/left header styles; a pool/lane/task fixture round-trips ancestry,
 sheet-space geometry and object terminals. Export still refuses stored
 layout/collapse policies, right/bottom headers and scene objects that also
-belong to a group or Zone. Corpus-wide supported-case coverage and normalized
-idempotence remain open.
+belong to a group or Zone. Corpus cases that can be exported must preserve scene
+structure, geometry, object order and terminals across repeated round trips.
+Original fixture coverage and draw.io UI verification remain open.
 
 ### 5.13 Bounded layout, persistence and undoable application
 

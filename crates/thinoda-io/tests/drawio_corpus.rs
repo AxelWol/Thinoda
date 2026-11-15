@@ -478,6 +478,58 @@ fn check(path: &Path) -> Result<String, String> {
         if round_trip < count {
             return Err(format!("round trip lost items {count} -> {round_trip}"));
         }
+        let scene_state = |sheet: &Sheet| {
+            (
+                sheet.canvas.scene.clone(),
+                sheet
+                    .canvas
+                    .objects
+                    .iter()
+                    .map(|object| (object.id, object.rect))
+                    .collect::<Vec<_>>(),
+                sheet
+                    .canvas
+                    .objects
+                    .iter()
+                    .filter_map(|object| match &object.kind {
+                        CanvasObjectKind::Connector(connector) => {
+                            Some((object.id, connector.from, connector.to))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        if has_scene_hierarchy {
+            for (index, (original, restored)) in book.sheets.iter().zip(&again.sheets).enumerate() {
+                if scene_state(original) != scene_state(restored) {
+                    return Err(format!(
+                        "page {} changed scene structure, geometry, order or endpoints",
+                        index + 1
+                    ));
+                }
+            }
+            let repeated =
+                thinoda_io::export_bytes_with_consent(&again, Format::DrawIo, &opts, true)
+                    .map_err(|e| format!("repeated draw.io export: {e}"))?;
+            let repeated = thinoda_io::import_bytes(Format::DrawIo, &repeated)
+                .map_err(|e| format!("repeated draw.io re-import: {e}"))?;
+            if repeated.sheets.len() != again.sheets.len() {
+                return Err(format!(
+                    "repeated round trip pages {} -> {}",
+                    again.sheets.len(),
+                    repeated.sheets.len()
+                ));
+            }
+            for (index, (first, second)) in again.sheets.iter().zip(&repeated.sheets).enumerate() {
+                if scene_state(first) != scene_state(second) {
+                    return Err(format!(
+                        "page {} changed scene state on repeated round trip",
+                        index + 1
+                    ));
+                }
+            }
+        }
         check_waypoints(&book, &again)?;
         check_markers(&book, &again)?;
         check_partial_rectangles(&book, &again)?;
