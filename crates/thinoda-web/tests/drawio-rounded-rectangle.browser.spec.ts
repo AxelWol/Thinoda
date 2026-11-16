@@ -75,7 +75,7 @@ test("user can edit, undo and export an imported rounded rectangle", async ({ pa
     await page.mouse.move(915, 710);
     await page.mouse.wheel(0, 500);
     for (let i = 0; i < 5; i++) await frames(page);
-    await canvas.click({ position: { x: 738, y: 525 } });
+    await canvas.click({ position: { x: 738, y: 429 } });
     await frames(page);
     expect((await savedRounding(page, "rounded-absolute.thinoda")).rounding).toEqual({
         radius: 36, stencil: "standard", mode: "absolute-arc", rounded_perimeter: true,
@@ -91,7 +91,7 @@ test("user can edit, undo and export an imported rounded rectangle", async ({ pa
         radius: 36, stencil: "standard", mode: "absolute-arc", rounded_perimeter: true,
     });
 
-    await canvas.click({ position: { x: 960, y: 557 } });
+    await canvas.click({ position: { x: 960, y: 461 } });
     const input = page.locator("input[type='text']");
     await expect(input).toBeFocused();
     await input.press("Control+a");
