@@ -641,6 +641,12 @@ pub fn prepare_board_selection<'a>(
         return Err("FIM selections cannot be copied as board fragments".into());
     }
     sheet.validate()?;
+    if sheet.has_semantic_model() {
+        return Err(
+            "socio-technical sheets cannot be copied as board fragments until semantic references can be remapped"
+                .into(),
+        );
+    }
 
     let mut topics = Vec::new();
     let mut topic_set = HashSet::new();

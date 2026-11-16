@@ -2785,6 +2785,16 @@ impl Sheet {
         }
         .into_iter()
         .collect();
+        if self.semantic.as_ref().is_some_and(|semantic| {
+            semantic
+                .bindings
+                .keys()
+                .any(|object_id| removed.contains(object_id))
+        }) {
+            return Err(
+                "remove socio-technical bindings before deleting their canvas objects".into(),
+            );
+        }
         let referenced: HashSet<_> = self
             .canvas
             .objects
@@ -3272,12 +3282,13 @@ impl Sheet {
         if self.canvas.scene.contains(id) && object.band != original.band {
             return Err("changing paint bands of scene members is not supported yet".into());
         }
-        let reconnecting = !self.canvas.scene.is_empty()
-            && matches!((
-                &original.kind,
-                &object.kind,
-            ), (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after))
-                if before.from != after.from || before.to != after.to);
+        let reconnecting = matches!(
+            (&original.kind, &object.kind),
+            (
+                CanvasObjectKind::Connector(before),
+                CanvasObjectKind::Connector(after)
+            ) if before.from != after.from || before.to != after.to
+        );
         validate_object(&object)?;
         if let CanvasObjectKind::Connector(c) = &object.kind {
             let old_waypoints = match &self.canvas.object(id).expect("checked").kind {
@@ -3314,14 +3325,112 @@ impl Sheet {
             }
         }
         if reconnecting {
-            self.canvas = SceneHierarchy::from_canvas(&self.canvas)?
-                .preview_reconnect_with_validator(&object, |_| Ok(()))?;
+            let canvas = if self.canvas.scene.is_empty() {
+                let mut canvas = self.canvas.clone();
+                *canvas.object_mut(id).ok_or("canvas connector not found")? = object;
+                canvas
+            } else {
+                SceneHierarchy::from_canvas(&self.canvas)?
+                    .preview_reconnect_with_validator(&object, |_| Ok(()))?
+            };
+            let mut candidate = self.clone();
+            candidate.canvas = canvas;
+            if let Some(crate::semantic::SemanticBinding::Relation(relation_id)) = self
+                .semantic
+                .as_ref()
+                .and_then(|semantic| semantic.bindings.get(&id).copied())
+            {
+                let connector = candidate
+                    .canvas
+                    .object(id)
+                    .and_then(|object| match &object.kind {
+                        CanvasObjectKind::Connector(connector) => Some(connector.clone()),
+                        _ => None,
+                    })
+                    .ok_or("reconnected semantic object is not a connector")?;
+                let mut semantic = candidate
+                    .semantic
+                    .clone()
+                    .ok_or("semantic model not found")?;
+                let endpoints = match semantic.relations.get(&relation_id) {
+                    Some(crate::semantic::SemanticRelation::Sequence { .. }) => (
+                        semantic
+                            .step_for_endpoint(connector.from)
+                            .ok_or("sequence connectors must connect workflow steps")?,
+                        semantic
+                            .step_for_endpoint(connector.to)
+                            .ok_or("sequence connectors must connect workflow steps")?,
+                    ),
+                    Some(crate::semantic::SemanticRelation::Exchange { .. }) => (
+                        semantic
+                            .process_for_endpoint(&candidate, connector.from)
+                            .ok_or("exchange connectors must connect process scopes")?,
+                        semantic
+                            .process_for_endpoint(&candidate, connector.to)
+                            .ok_or("exchange connectors must connect process scopes")?,
+                    ),
+                    Some(_) => {
+                        return Err(
+                            "only sequence and exchange relations can bind to connectors".into(),
+                        );
+                    }
+                    None => return Err(format!("semantic relation {relation_id} not found")),
+                };
+                match semantic.relations.get_mut(&relation_id) {
+                    Some(crate::semantic::SemanticRelation::Sequence { from, to, .. }) => {
+                        *from = endpoints.0;
+                        *to = endpoints.1;
+                    }
+                    Some(crate::semantic::SemanticRelation::Exchange {
+                        from_process,
+                        to_process,
+                        ..
+                    }) => {
+                        *from_process = endpoints.0;
+                        *to_process = endpoints.1;
+                    }
+                    _ => return Err("semantic relation type changed during reconnection".into()),
+                }
+                candidate.semantic = Some(semantic);
+            }
+            if let Some(semantic) = candidate.semantic.as_ref() {
+                semantic.validate(&candidate)?;
+            }
+            crate::scene::validate_connector_cycles(&candidate)?;
+            self.canvas = candidate.canvas;
+            self.semantic = candidate.semantic;
             return Ok(());
         }
         let is_connector = object.is_connector();
+        let previous_semantic = self.semantic.clone();
         let previous = std::mem::replace(self.canvas.object_mut(id).expect("checked"), object);
+        if let Some(binding) = self
+            .semantic
+            .as_ref()
+            .and_then(|semantic| semantic.bindings.get(&id).copied())
+        {
+            let label = self.canvas.object(id).expect("checked").label().to_owned();
+            let mut semantic = self.semantic.clone().expect("binding has a semantic model");
+            let updated = match binding {
+                crate::semantic::SemanticBinding::Entity(entity_id) => {
+                    semantic.entities.get_mut(&entity_id).map(|entity| {
+                        entity.set_name(label);
+                    })
+                }
+                crate::semantic::SemanticBinding::Relation(relation_id) => semantic
+                    .relations
+                    .get_mut(&relation_id)
+                    .and_then(|relation| relation.set_display_label(label).then_some(())),
+            };
+            if updated.is_none() || semantic.validate(self).is_err() {
+                *self.canvas.object_mut(id).expect("checked") = previous;
+                return Err("canvas label change would invalidate socio-technical data".into());
+            }
+            self.semantic = Some(semantic);
+        }
         if is_connector && let Err(error) = crate::scene::validate_connector_cycles(self) {
             *self.canvas.object_mut(id).expect("checked") = previous;
+            self.semantic = previous_semantic;
             return Err(error);
         }
         Ok(())

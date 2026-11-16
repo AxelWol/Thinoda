@@ -48,6 +48,23 @@ accessibility or performance gate is closed by this review.
 These are **design dispositions**, not assertions that code now satisfies them.
 B1, B2, B3 and C3 remain high implementation risks with explicit spike gates.
 
+Implementation has since added selected-entity unbinding (retaining the
+semantic entity record), deletion of a single-occurrence entity only after its
+relationships are removed, removal of a bound connector relation, and a guard
+that refuses canvas deletion while an occurrence remains bound. This is safe
+basic lifecycle support, not completion of B2 or STC2: cascade/dependency
+handling, all generic mutation paths, copy/recovery acceptance and keyboard
+coverage remain open.
+
+The diagnostics implementation now includes bounded sequence-graph traversal
+for steps unreachable from a declared start and reachable steps without a path
+to an end, as well as checks for non-black-box processes with no steps or
+only one of a start/end event and steps outside a process scope. It treats a
+workflow with neither boundary event as a fragment and exempts black-box
+processes from internal-workflow warnings. It deliberately does not enumerate
+execution paths; broader cycle/SCC diagnostics and the remaining semantic model
+checks are still open.
+
 ## 3. Secondary critiques and decisions
 
 **N1 - Drafts versus invalid storage.** A sequence can have two valid live
@@ -101,9 +118,11 @@ not formal state-machine support; gated ArchiMate source access is not a
 validated version-4 implementation specification.
 
 **N8 - Documentation truth.** Corrected directly related stale overview claims:
-the JSON interpreter exists, but shared scene hierarchy remains planned.
-Definition metadata alone is not a semantic inspector. The common document
-owns structural refinements; DRAWIO and the socio-technical plan link to it.
+the JSON interpreter and a persisted shared scene hierarchy exist, though the
+broad SC0-SC3 acceptance remains open. Definition metadata alone is not a
+semantic inspector; the current semantic Data inspector is a separate, partial
+prototype. The common document owns structural refinements; DRAWIO and the
+socio-technical plan link to it.
 
 One reviewer shorthand described Zones as having "no members". Source
 inspection shows `Zone.roots` and `Zone.objects`; that shorthand was not
@@ -925,3 +944,66 @@ arithmetic pass after the existing layout limits. Is this a draw.io
 `resizeLast` behavior? No; it is a Thinoda-specific explicit arrangement
 policy, and interchange mapping remains open. Distributed spacing requires
 native v34 / board clipboard v28; older envelopes reject it.
+
+## 25. Semantic authoring and typed-example checkpoint
+
+**Implemented:** a sheet-scoped typed semantic model with feature-gated native,
+full-sheet clipboard, recovery and private XMind persistence; masking/history
+accounting and export-loss reporting; an initial Data inspector; and typed
+Software examples with nested semantic lanes, role-based accountability and a
+trust boundary. Shape promotion and connector sequence/exchange classification
+are explicit user actions. The inspector edits participant kind, process
+black-box state, step kind/automation, boundary kind, descriptions, use-case
+intent and decision rationale. It now creates and removes participant-role
+fulfillment, process ownership, lane performer, use-case step, boundary
+membership and accountability relations, and can change an unbound relation's
+target without replacing its record. Reconnecting a bound sequence or exchange
+connector now updates its semantic endpoints in the same validated transaction;
+incompatible endpoints leave both records unchanged. Link changes are
+transactional and undoable.
+The inspector also surfaces initial modeling warnings for unowned processes,
+unperformed lanes, incomplete decisions, cross-scope sequences, empty use cases
+and automated work without human accountability. New checks also flag empty
+non-black-box process scopes, one-sided start/end events and unallocated steps;
+black-box processes and workflow fragments with neither event remain valid
+without those completeness warnings.
+
+**Rubber-duck questions and dispositions:**
+
+- Can legacy formats silently drop the new model? Feature-aware versions reject
+  unsupported semantic data, and presentation exports report loss. Partial
+  semantic board clipboard remains refused rather than copying dangling IDs.
+- Does selecting a connector infer Sequence or Exchange from its appearance?
+  No. The user explicitly chooses a relation; available choices require typed
+  step endpoints or distinct bound process scopes. Same-owner process
+  exchanges are marked internal when ownership data establishes that fact.
+- Do names in the typed model silently diverge from canvas labels? Current
+  bound-label edits are synchronized and validated, but both copies are still
+  serialized. Search/import/other mutation paths need a complete authority
+  inventory before this can be treated as one authoritative value.
+- Does the inspector create all v1 meaning? No. Core ownership, performer, role
+  fulfillment, use-case, boundary and accountability links are now authorable,
+  their unbound targets can be changed, and they can be removed. Canvas
+  reconnection synchronizes the endpoint IDs of bound Sequence/Exchange
+  relations. Direct endpoint fields in the inspector, dependency previews,
+  reachability analysis, complete diagnostic coverage, comprehensive lifecycle
+  handling and keyboard and assistive-technology acceptance remain open.
+- Do the three starter examples satisfy the acceptance corpus? No. They now
+  contain explicit incomplete-request, approval/refusal, timeout/escalation,
+  and recovery retry/repeated-failure paths with decision rationale. Typed
+  tests check their step counts, branches and accountability. They still lack
+  broader expected-diagnostic fixtures, full save/reopen/clipboard/export
+  acceptance and native/web end-to-end coverage.
+- Do passing model tests prove first-class native and web UX? No. Targeted
+  headless UI tests cover shape/connector promotion, relationship creation,
+  target editing/removal, accountability authoring, and translation catalogs;
+  core tests cover atomic bound-connector reconnection. Browser/device,
+  accessibility, performance and release checklists remain open.
+
+**Critique:** this is a coherent persistence and authoring prototype, not
+STC2/STC3 completion or a first-class release. The main risks are no longer
+schema discovery; they are incomplete lifecycle and diagnostic coverage,
+duplicate label authority, partial-copy refusal, and unproven scenario/platform
+acceptance. The prototype should remain explicitly scoped until those gates
+close.
+This is an author critique, not another independent review or release approval.

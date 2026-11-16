@@ -1065,10 +1065,15 @@ checks.
 
 **Checkpoint critique:** these changes close the discovered policy-envelope
 and history-budget gaps, not SC1 or SC2 as whole phases. Generic mutation-path
-coverage, history/lifecycle behavior, source-fixture fidelity, full
-native/web acceptance and the measurable SC0 budgets remain open. Every future
-stored scene field must update all relevant feature gates and rejection tests;
-envelope versioning is not a substitute for complete lifecycle validation.
+scene edits now validate semantic occurrence constraints against their complete
+candidate canvas before commit. This prevents a bound process/lane from losing
+container status or a bound step from becoming a container, and a focused test
+proves rejection leaves the sheet unchanged. This does not preview the meaning
+of moving work between process scopes. Generic mutation-path coverage,
+history/lifecycle behavior, source-fixture fidelity, full native/web acceptance
+and the measurable SC0 budgets remain open. Every future stored scene field
+must update all relevant feature gates and rejection tests; envelope versioning
+is not a substitute for complete lifecycle validation.
 
 ## Sources
 

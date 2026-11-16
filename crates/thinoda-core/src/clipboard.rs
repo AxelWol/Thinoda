@@ -42,12 +42,15 @@ const STENCIL_SHEET_PREFIX: &str = "THINODA-SHEET-22\n";
 const SCENE_SHEET_PREFIX: &str = "THINODA-SHEET-23\n";
 const COLLAPSE_SHEET_PREFIX: &str = "THINODA-SHEET-24\n";
 const SCENE_LAYOUT_SHEET_PREFIX: &str = "THINODA-SHEET-25\n";
+const SEMANTIC_SHEET_PREFIX: &str = "THINODA-SHEET-26\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_scene_layout_policies() {
+    let prefix = if sheet.has_semantic_model() {
+        SEMANTIC_SHEET_PREFIX
+    } else if sheet.has_scene_layout_policies() {
         SCENE_LAYOUT_SHEET_PREFIX
     } else if sheet.has_scene_collapse() {
         COLLAPSE_SHEET_PREFIX
@@ -119,6 +122,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         .strip_prefix(SCENE_LAYOUT_SHEET_PREFIX)
         .or_else(|| text.strip_prefix("THINODA-SHEET-25\r\n"))
         .map(|json| (25, json))
+        .or_else(|| {
+            text.strip_prefix(SEMANTIC_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-26\r\n"))
+                .map(|json| (26, json))
+        })
         .or_else(|| {
             text.strip_prefix(COLLAPSE_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-24\r\n"))
@@ -241,6 +249,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 26 && sheet.has_semantic_model() {
+        return Err("socio-technical data requires sheet clipboard version 26".into());
+    }
     if version < 7 && sheet.has_connector_markers() {
         return Err("connector markers require sheet clipboard version 7".into());
     }
@@ -566,6 +577,31 @@ fn same_normalized(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socio_technical_sheet_clipboard_is_versioned_and_lossless() {
+        let mut sheet = Sheet::new("Workflow", "Root");
+        let mut model = crate::semantic::SemanticModel::default();
+        model.entities.insert(
+            crate::semantic::SemanticEntityId(2),
+            crate::semantic::SemanticEntity::Participant(crate::semantic::Participant {
+                kind: crate::semantic::ParticipantKind::Software,
+                name: "Order service".into(),
+                description: String::new(),
+            }),
+        );
+        sheet.semantic = Some(model);
+
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(SEMANTIC_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let legacy = encoded.replacen(SEMANTIC_SHEET_PREFIX, SCENE_LAYOUT_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&legacy)
+                .unwrap_err()
+                .contains("clipboard version 26")
+        );
+    }
 
     fn formatted_card_sheet(kind: crate::CardKind) -> Sheet {
         let mut sheet = Sheet::new("Board", "Root");

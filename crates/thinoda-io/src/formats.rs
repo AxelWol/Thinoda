@@ -53,6 +53,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
             crate::native_resources::validate_directory(&z, bytes)?;
         }
         let mut book: Workbook = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
+        if version < 36 && book.has_semantic_model() {
+            return Err(IoError::NewerVersion(
+                "socio-technical data requires native format version 36".into(),
+            ));
+        }
         if version >= 3 {
             crate::native_resources::hydrate(&mut z, &manifest_bytes, &mut book)?;
         } else if book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
@@ -236,6 +241,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_semantic_model() {
+            return Err(IoError::NewerVersion(
+                "socio-technical data requires a versioned native archive".into(),
+            ));
+        }
         if book.has_scene_hierarchy() {
             return Err(IoError::NewerVersion(
                 "scene hierarchy requires native format version 27".into(),

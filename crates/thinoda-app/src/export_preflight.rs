@@ -214,6 +214,10 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::SankeySemanticsDropped(count) => (
                     *count, "Editable Sankey weights and probability semantics are not preserved"
                 ),
+                ExportLoss::SocioTechnicalSemanticsDropped(count) => (
+                    *count,
+                    "Typed socio-technical meaning is not preserved",
+                ),
                 ExportLoss::SankeyInspectorLegend(count) => (
                     *count, "The color legend appears on the canvas and in visual exports. Draw.io uses approximate strokes, capped at its supported maximum."
                 ),

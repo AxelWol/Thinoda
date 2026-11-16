@@ -38,6 +38,7 @@ pub mod scene_hierarchy;
 pub mod scene_layout;
 pub mod schedule;
 pub mod search;
+pub mod semantic;
 pub mod stencil;
 pub mod stencil_object;
 pub mod templates;

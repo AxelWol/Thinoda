@@ -46,6 +46,19 @@ pub struct SceneStructure {
 }
 
 impl Sheet {
+    fn commit_scene_canvas(&mut self, candidate: CanvasLayer) -> Result<(), String> {
+        let previous = std::mem::replace(&mut self.canvas, candidate);
+        let semantic_error = self
+            .semantic
+            .as_ref()
+            .and_then(|semantic| semantic.validate(self).err());
+        if let Some(error) = semantic_error {
+            self.canvas = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Collapses to an explicit compact frame, or restores the saved expanded frame.
     /// Collapse changes presentation only; descendants and real endpoints stay put.
     pub fn set_canvas_container_collapsed(
@@ -79,8 +92,7 @@ impl Sheet {
             candidate.scene.collapsed.remove(&id);
         }
         SceneHierarchy::from_canvas(&candidate)?;
-        self.canvas = candidate;
-        Ok(())
+        self.commit_scene_canvas(candidate)
     }
 
     /// Marks an existing unrotated shape as a free container. Clearing a nonempty
@@ -112,8 +124,7 @@ impl Sheet {
             candidate.scene.layout_policies.remove(&id);
         }
         let candidate = SceneHierarchy::from_canvas(&candidate)?.stored_canvas();
-        self.canvas = candidate;
-        Ok(())
+        self.commit_scene_canvas(candidate)
     }
 
     /// Sets or clears a persistent header/layout policy on a free container.
@@ -132,8 +143,7 @@ impl Sheet {
             candidate.scene.layout_policies.remove(&id);
         }
         SceneHierarchy::from_canvas(&candidate)?;
-        self.canvas = candidate;
-        Ok(())
+        self.commit_scene_canvas(candidate)
     }
 
     pub fn reparent_canvas_objects(
@@ -154,8 +164,7 @@ impl Sheet {
         let candidate = hierarchy
             .preview_reparent_with_validator(ids, target, validate)?
             .stored_canvas();
-        self.canvas = candidate;
-        Ok(())
+        self.commit_scene_canvas(candidate)
     }
 
     pub fn reorder_canvas_objects_with_validator(
@@ -167,16 +176,14 @@ impl Sheet {
         let candidate = SceneHierarchy::from_canvas(&self.canvas)?
             .preview_reorder_with_validator(ids, order, validate)?
             .stored_canvas();
-        self.canvas = candidate;
-        Ok(())
+        self.commit_scene_canvas(candidate)
     }
 
     /// Applies stored policies for a container subtree as one sheet edit.
     pub fn layout_canvas_container(&mut self, id: CanvasObjectId) -> Result<(), String> {
         let candidate = SceneHierarchy::from_canvas(&self.canvas)?
             .preview_stored_layout_with_validator(id, |_| Ok(()))?;
-        self.canvas = candidate;
-        Ok(())
+        self.commit_scene_canvas(candidate)
     }
 }
 

@@ -44,6 +44,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
             sheet: 2,
             title: "title {sheet}\nnext".into(),
         },
+        ExportLoss::SocioTechnicalSemanticsDropped(1),
     ];
     let report = LossReport {
         losses: losses.clone(),
@@ -62,6 +63,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
             "missing count {count}: {lines:?}"
         );
     }
+    assert!(lines.iter().any(|line| line.starts_with("1 — ")));
     for (count, label) in [
         (11, "Summary topic trees omitted"),
         (12, "Relationships omitted"),
@@ -86,19 +88,26 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
-    let root = lines.last().unwrap();
+    let root = lines
+        .iter()
+        .find(|line| line.contains("title {sheet}"))
+        .unwrap();
     assert!(root.contains("3"));
     assert!(root.contains("title {sheet}\\nnext"), "{root}");
     let fim = loss_lines(&report, Format::FimXdf3);
     assert!(fim[3].contains(t("Card presentation omitted")));
+    let fim_root = fim
+        .iter()
+        .find(|line| line.contains(t("hidden root mode omitted.")))
+        .unwrap();
     assert!(
-        fim.last().unwrap().contains(
+        fim_root.contains(
             t("Sheet {sheet}: hidden root mode omitted.")
                 .replace("{sheet}", "3")
                 .as_str()
         )
     );
-    assert!(!fim.last().unwrap().contains("title {sheet}"));
+    assert!(!fim_root.contains("title {sheet}"));
 }
 
 #[test]

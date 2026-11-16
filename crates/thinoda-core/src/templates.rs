@@ -766,12 +766,229 @@ mod tests {
     #[test]
     fn software_examples_have_editable_nested_structure_and_clamped_json_headers() {
         use crate::{CanvasObjectKind, Rect, Vec2, stencil_object};
-        for id in ["software-handoff", "software-approval", "software-incident"] {
+        for (id, expected_steps, expected_decisions, expected_accountability) in [
+            ("software-handoff", 6, 1, 2),
+            ("software-approval", 11, 3, 3),
+            ("software-incident", 7, 1, 3),
+        ] {
             let mut workbook = instantiate_localized(id, &|text| format!("translated:{text}"));
             workbook.validate().unwrap();
             let sheet = workbook.active_mut();
+            let semantic = sheet.semantic.as_ref().unwrap();
+            assert!(
+                semantic.diagnostics(sheet).is_empty(),
+                "{id}: {:?}",
+                semantic.diagnostics(sheet)
+            );
+            let mut incomplete = sheet.clone();
+            incomplete
+                .semantic
+                .as_mut()
+                .unwrap()
+                .relations
+                .retain(|_, relation| {
+                    !matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Accountability { .. }
+                    )
+                });
+            incomplete.validate().unwrap();
+            assert!(
+                incomplete
+                    .semantic
+                    .as_ref()
+                    .unwrap()
+                    .diagnostics(&incomplete)
+                    .iter()
+                    .any(|diagnostic| {
+                        diagnostic.code == "automated_step_without_accountability"
+                    })
+            );
+            assert_eq!(
+                semantic
+                    .entities
+                    .values()
+                    .filter(|entity| matches!(entity, crate::semantic::SemanticEntity::Step(_)))
+                    .count(),
+                expected_steps
+            );
+            assert_eq!(
+                semantic
+                    .entities
+                    .values()
+                    .filter(|entity| matches!(
+                        entity,
+                        crate::semantic::SemanticEntity::Step(step)
+                            if step.kind == crate::semantic::StepKind::ExclusiveDecision
+                                && step.rationale.is_some()
+                    ))
+                    .count(),
+                expected_decisions
+            );
+            assert!(semantic.relations.values().any(|relation| {
+                matches!(relation, crate::semantic::SemanticRelation::Exchange { .. })
+            }));
+            assert!(semantic.relations.values().any(|relation| {
+                matches!(
+                    relation,
+                    crate::semantic::SemanticRelation::UseCaseStep { .. }
+                )
+            }));
+            assert!(semantic.relations.values().any(|relation| {
+                matches!(
+                    relation,
+                    crate::semantic::SemanticRelation::Accountability {
+                        accountable: crate::semantic::PerformerRef::Role(_),
+                        ..
+                    }
+                )
+            }));
             assert_eq!(sheet.root_mode, crate::SheetRootMode::Hidden);
-            assert_eq!(sheet.canvas.scene.containers.len(), 4);
+            let participant_count = match id {
+                "software-approval" => 4,
+                _ => 3,
+            };
+            assert_eq!(
+                sheet.canvas.scene.containers.len(),
+                1 + 2 * participant_count
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::LanePerformer { .. }
+                    ))
+                    .count(),
+                participant_count
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::BoundaryMembership { .. }
+                    ))
+                    .count(),
+                2 * if id == "software-incident" { 2 } else { 1 }
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::RoleFulfillment { .. }
+                    ))
+                    .count(),
+                if id == "software-approval" { 2 } else { 1 }
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Accountability { .. }
+                    ))
+                    .count(),
+                expected_accountability
+            );
+            match id {
+                "software-handoff" => assert!(semantic.relations.values().any(|relation| {
+                    matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Exchange { label, .. }
+                            if label == "translated:Additional information"
+                    )
+                })),
+                "software-approval" => {
+                    for expected in [
+                        "translated:Refuse",
+                        "translated:Timeout check",
+                        "translated:Escalation",
+                    ] {
+                        assert!(semantic.relations.values().any(|relation| matches!(
+                            relation,
+                            crate::semantic::SemanticRelation::Sequence { label, .. }
+                                | crate::semantic::SemanticRelation::Exchange { label, .. }
+                                if label == expected
+                        )));
+                    }
+                    let escalation_step = semantic.entities.iter().find_map(|(&id, entity)| {
+                        matches!(
+                            entity,
+                            crate::semantic::SemanticEntity::Step(step)
+                                if step.name == "translated:Escalate to support"
+                        )
+                        .then_some(id)
+                    });
+                    assert!(semantic.relations.values().any(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Accountability {
+                            target,
+                            accountable: crate::semantic::PerformerRef::Role(_)
+                        } if Some(*target) == escalation_step
+                    )));
+                }
+                "software-incident" => {
+                    for expected in ["translated:Retry", "translated:Repeated failure"] {
+                        assert!(semantic.relations.values().any(|relation| matches!(
+                            relation,
+                            crate::semantic::SemanticRelation::Sequence { label, .. }
+                                | crate::semantic::SemanticRelation::Exchange { label, .. }
+                                if label == expected
+                        )));
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let cross_scope_steps = {
+                let semantic = sheet.semantic.as_ref().unwrap();
+                let step_objects = semantic
+                    .bindings
+                    .iter()
+                    .filter_map(|(&object, binding)| match binding {
+                        crate::semantic::SemanticBinding::Entity(entity)
+                            if semantic.entities.get(entity).is_some_and(|entity| {
+                                entity.kind() == crate::semantic::SemanticEntityKind::Step
+                            }) =>
+                        {
+                            Some((*entity, object))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                step_objects.iter().find_map(|(from, from_object)| {
+                    let from_process = semantic
+                        .process_for_endpoint(sheet, crate::Endpoint::Object(*from_object))?;
+                    step_objects.iter().find_map(|(to, to_object)| {
+                        let to_process = semantic
+                            .process_for_endpoint(sheet, crate::Endpoint::Object(*to_object))?;
+                        (from_process != to_process).then_some((*from, *to))
+                    })
+                })
+            }
+            .expect("examples have steps in multiple process scopes");
+            sheet
+                .add_semantic_relation(crate::semantic::SemanticRelation::Sequence {
+                    from: cross_scope_steps.0,
+                    to: cross_scope_steps.1,
+                    label: "invalid cross-scope sequence".into(),
+                })
+                .unwrap();
+            sheet.validate().unwrap();
+            assert!(
+                sheet
+                    .semantic
+                    .as_ref()
+                    .unwrap()
+                    .diagnostics(sheet)
+                    .iter()
+                    .any(|diagnostic| { diagnostic.code == "sequence_crosses_process_scopes" })
+            );
             let root = *sheet.canvas.scene.containers.first().unwrap();
             let lane = sheet
                 .canvas
@@ -827,21 +1044,12 @@ mod tests {
                 }
             }));
             workbook.validate().unwrap();
-            let layout = crate::layout_sheet(workbook.active(), &crate::ApproxMeasure, false);
-            let payload =
-                crate::clipboard::copy_board_selection(workbook.active(), &layout, &[], &[root])
+            assert!(
+                crate::clipboard::prepare_board_selection(workbook.active(), &[], &[root])
+                    .err()
                     .unwrap()
-                    .unwrap();
-            let mut destination = Sheet::new("Copy", "");
-            crate::clipboard::paste_board_selection(
-                &mut destination,
-                &payload,
-                Vec2::new(120.0, 80.0),
-            )
-            .unwrap();
-            destination.validate().unwrap();
-            assert_eq!(destination.canvas.scene.containers.len(), 4);
-            assert_eq!(destination.canvas.scene.collapsed.len(), 1);
+                    .contains("semantic references")
+            );
         }
     }
 

@@ -1,25 +1,45 @@
 # Socio-technical diagrams: research, concept and phased execution
 
 Research date: 2026-11-13. Status: **approved for staged implementation**.
-The shared free-container/collapse foundation and explicitly unbound Software
-examples are implemented; typed semantic data, authoring and release acceptance
-are not.
+The shared free-container/collapse foundation, typed semantic persistence, and
+an initial semantic Data inspector are implemented. Core relationship creation
+and removal plus initial contextual modeling diagnostics are now available;
+lifecycle coverage, complete diagnostic coverage, typed example acceptance and
+release gates remain open.
 This document extends the [main plan](PLAN.md) and coordinates with the
 [draw.io plan](DRAWIO.md); it does not replace either. Each phase remains gated
 by its stated persistence, interoperability and acceptance criteria.
 
-**Current high-priority execution order (user-directed):**
+**Current high-priority work (user-directed; all three remain in progress):**
 
-1. Complete the immutable scene prototype's hierarchy-persistence gates across
-   native, clipboard, recovery, history, and interchange paths. Keep the
-   immutable hierarchy as the shared authority; do not expose stored semantics
-   through a path that can silently drop or ignore them.
-2. Complete shared scene authoring and the typed semantic lifecycle together:
-   commands, bindings, validation, diagnostics, undo/redo, keyboard/accessibility,
-   localization, and guarded persistence. Do not introduce a second lane tree.
-3. Complete the **typed** Software examples on top of those capabilities. The
-   current unbound structural starters remain useful prototypes, not completion
-   of this phase or evidence of semantic support.
+1. **Gate hierarchy persistence.** Version/capability gates exist for the
+   current scene fields across native, full-sheet/board clipboard, recovery,
+   private XMind snapshots, undo sizing, and interchange loss handling. Do not
+   call SC1 complete: finish the mutation-path and import/recovery lifecycle
+   audit, prove every persisted field is gated, and verify atomic rejection and
+   round trips across supported envelopes.
+2. **Complete shared and semantic authoring.** Keep one shared scene tree and
+   layout/lifecycle contract, with socio-technical meaning in typed semantic
+   records. The Data inspector already supports typed entities, sequence and
+   exchange relations, type-specific fields, and creation/removal of ownership,
+   performer, fulfillment, use-case, boundary-membership and accountability
+   relations. Continue richer relationship editing, mutation-impact previews,
+   lifecycle-safe reparent/delete/rename/import/undo/recovery, broader
+   diagnostics, and keyboard/accessibility acceptance. Do not introduce a
+   second lane tree.
+3. **Complete typed Software examples.** The three starter examples already
+   bind participants, processes, nested semantic lanes and performers, steps,
+   sequence/exchange connectors, use-case links, a trust boundary and
+   role-based accountability. Their explicit approval/error/retry/escalation
+   branches are implemented. Continue scenario and boundary coverage,
+   expected-diagnostic positive/negative fixtures, and save/reopen, recovery,
+   clipboard and presentation-export acceptance. This does not complete
+   STC3/STC4 or release gates.
+
+Semantic persistence is a gated prototype across native, full-sheet clipboard,
+recovery and private XMind, with masking, history sizing and export-loss
+reporting. Partial semantic clipboard operations remain explicitly refused;
+this does not pass STC2's full lifecycle gate.
 
 These are the next delivery priorities, not changes to the phase exit gates
 below. A failed gate keeps its phase open and blocks dependent work from being
@@ -171,7 +191,7 @@ generic ontology platform or put critical references into arbitrary JSON bags.
 The initial typed schema decision below narrows implementation choices; STC0
 remains open until the integration spikes and lifecycle inventory pass.
 
-**Initial v1 schema decision (not yet implemented or persisted):**
+**Initial v1 schema decision (implemented prototype; full lifecycle gate open):**
 
 | Record | Typed contents and identity |
 |---|---|
@@ -286,6 +306,29 @@ rewrites. Provide an accessible relationship list for keyboard editing without
 requiring drag/drop or relying on canvas color. Inspectors, palette, diagnostics,
 help and export notices use existing localization and Light/Dark/System behavior.
 
+**Implementation status:** the Data inspector currently promotes selected,
+labeled shapes to typed entities and connectors to explicitly chosen sequence
+or exchange relations. It edits participant kind, process black-box state,
+step kind/automation, boundary kind, descriptions, use-case intent and decision
+rationale. It also creates/removes ownership, lane performer, role fulfillment,
+use-case, boundary membership and accountability relations, and can change the
+target of an unbound entity-to-entity relation without replacing its record.
+Reconnecting a bound sequence/exchange connector updates its typed semantic
+endpoints atomically; incompatible endpoints or failed validation leave both
+the canvas and semantic record unchanged. Direct endpoint fields in the
+inspector, mutation-impact previews and keyboard/accessibility acceptance
+remain open. The inspector
+surfaces warnings for missing owners/performers, incomplete decisions,
+cross-scope sequences, empty use cases, unresolved references, automated steps
+without human accountability, non-black-box processes without workflow steps
+or with only one of a start/end event, unallocated steps, steps unreachable
+from a declared start, and reachable steps without a sequence path to an end.
+Black-box processes and workflow fragments with neither boundary event avoid
+false completeness warnings. Reachability uses bounded graph traversal and
+does not enumerate execution paths. STC3 remains open for progressive creation
+tools, broader modeling diagnostics, dependency previews, complete
+mutation-path safety and accessible keyboard relationship editing.
+
 **Validation has two levels:**
 
 - Structural safety errors (dangling live IDs, scene cycles, invalid enum/version,
@@ -379,7 +422,8 @@ expansion, do not fetch payload URLs, and do not execute API descriptions.
 
 ## 6. Phased execution and exit gates
 
-Shared scene foundations and unbound starter examples have started; the semantic
+Shared scene foundations, a typed semantic persistence prototype, an initial
+authoring inspector and typed starter examples have started; the semantic
 lifecycle and release gates below are **not complete**. Estimates are relative complexity, not
 delivery promises. Assign one accountable implementer per phase; use existing
 test/CI tooling. Every phase ends with evidence, a written critique and an
@@ -389,8 +433,8 @@ owned-path commit. Failure of an exit gate keeps that phase open.
 |---|---|---|---|
 | STC0 - Contract and integration spikes / M-L | None; coordinated with SC0 | Pin vocabulary/subset, original corpus, common hierarchy/binding design, reader/writer inventory, budgets, compatibility and keyboard interaction design; bounded spikes across core/canvas/IO/app | Demonstrate bound rename/reconnect across edit/search/export/copy/undo, one nested pool/lane move with exchange, and keyboard reparent. Freeze one contract with SC0. Stop/rescope if existing writers bypass authority or safe integration requires an unbounded editor rewrite |
 | STC1 - Consume the common scene milestone / L, shared not additive | STC0; SC0-SC3 | Use the single shared tree, nested stack swimlanes, collapse/routing/keyboard commands, connector styling and structural persistence delivered by SC0-SC3 | Pass the scene-only nested draw.io import/edit/export/reimport gate without any semantic model. No second lane engine, schema field or duplicated dash implementation |
-| STC2 - Semantic core and safe persistence / L | STC0, STC1 | Optional typed graph/bindings, accountable-owner relations, decision rationale, unresolved-reference drafts, transactions; native/transport gates, masking/history and loss guards | All lifecycle rows in section 5 have focused positive/negative tests against real nested containers; malformed/older envelopes reject without mutation; old plain-board fixtures unchanged. No palette exposes unsafely persisted semantics |
-| STC3 - Complete workflow authoring / L | STC2 | Progressive palette, nested lane/performer commands, Data inspector including accountability/rationale, keyboard relationship list, decision branches, exchange labels and diagnostics | Build all workflow reference scenarios without raw JSON; each semantic command undoable; distinguish sequence/exchange, actor/role, boundary/scope and collapsed/black-box; invalid drafts save and repair |
+| STC2 - Semantic core and safe persistence / L | STC0, STC1 | Implemented prototype: optional typed graph/bindings, selected transaction-safe relations, rationale, unresolved-reference drafts, native/transport gates, masking/history and export-loss guards. Partial clipboard remains refused | All lifecycle rows in section 5 have focused positive/negative tests against real nested containers; malformed/older envelopes reject without mutation; old plain-board fixtures unchanged. Partial-copy and mutation paths are dependency-safe |
+| STC3 - Complete workflow authoring / L | STC2 | Data inspector promotes shapes/connectors, edits typed fields, and creates/removes ownership, performer, role, use-case, boundary and accountability relations; complete diagnostics, lifecycle handling and keyboard acceptance | Build all workflow reference scenarios without raw JSON; each semantic command undoable; distinguish sequence/exchange, actor/role, boundary/scope and collapsed/black-box; invalid drafts save and repair |
 | STC4 - First-class v1 release / M-L | STC3 | Start-page **Software** template group with original socio-technical examples, help/legend, native/web end-to-end coverage, accessibility, localization, presentation output and performance | Pass the release checklist below on native and web; publish exact supported/unsupported features and known limitations; written critique has no unresolved data-loss or semantic-integrity blocker |
 | STC5 - Linked context view / M-L | STC4 | Second presentation, shared identity, independent layout and honest aggregation; persisted active view only if required | Rename reflects in both views; workflow conditions survive aggregation; layout/filter changes never mutate behavior; deleting an occurrence is distinct from deleting its entity; clipboard/export/view-state cases covered |
 | STC6 - Interoperability profile / L | STC4; relevant DRAWIO fidelity slice for draw.io extension | Decide demand first; bounded BPMN XML subset and/or conflict-safe draw.io semantic extension. These are independent adapters, not one mandatory bundled deliverable | External tool opens supported original fixtures; supported import/edit/export/reimport preserves meaning and DI; unsupported data produces exact blocking/loss diagnostics; edited extension baselines cannot resurrect stale semantics |
@@ -427,12 +471,17 @@ supported Thinoda profile rather than claiming BPMN conformance. Do not expose
 semantic examples before their data can be safely persisted.
 Do not advertise a context editor or BPMN compatibility before their gates pass.
 
-**Scheduling clarification:** the Software group and an explicitly unbound
-structural subset are now available earlier, using safely persisted free containers,
-connector endpoints and JSON header frames. A visible legend distinguishes them
-from the typed-semantic examples specified above. This does not complete STC3/STC4;
-typed versions, full lifecycle coverage and live native/web acceptance remain
-gated. Existing documents must not acquire bindings by interpreting these labels.
+**Scheduling clarification:** the Software group, structural subset and typed
+semantic versions are now available earlier. The examples use safely persisted
+free containers, connector endpoints and JSON header frames, with typed
+participants, process scopes, nested lanes and performers, steps,
+sequence/exchange relations, use-case links, a trust boundary and role-based
+accountability. They remain starter prototypes: full scenario depth, boundary
+variety, expected diagnostics, lifecycle coverage and live native/web
+acceptance remain gated. They now include explicit incomplete-request,
+approval/refusal, timeout/escalation and recovery retry/failure branches with
+decision rationale. Existing documents must not acquire bindings by
+interpreting labels.
 
 ### V1 release checklist
 

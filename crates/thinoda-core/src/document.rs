@@ -259,6 +259,10 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
         + sheet.canvas.scene.layout_policies.len()
             * (size_of::<CanvasObjectId>() + size_of::<ContainerLayoutPolicy>() + 48)
         + sheet
+            .semantic
+            .as_ref()
+            .map_or(0, crate::semantic::SemanticModel::estimated_heap_bytes)
+        + sheet
             .relationships
             .iter()
             .map(|relationship| size_of::<crate::model::Relationship>() + relationship.title.len())
@@ -513,6 +517,12 @@ impl Document {
                     return Err(EditError::Invalid(error));
                 }
                 if let Err(error) = crate::board::validate_board(sheet) {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
+                if let Some(semantic) = &sheet.semantic
+                    && let Err(error) = semantic.validate(sheet)
+                {
                     self.workbook.sheets[index] = before;
                     return Err(EditError::Invalid(error));
                 }
@@ -1596,6 +1606,29 @@ mod tests {
             std::mem::size_of::<CanvasObjectId>()
                 + std::mem::size_of::<ContainerLayoutPolicy>()
                 + 48
+        );
+    }
+
+    #[test]
+    fn socio_technical_model_is_counted_in_history_size() {
+        let mut sheet = Sheet::new("Semantic history", "Root");
+        let before = approx_sheet_bytes(&sheet);
+        let mut semantic = crate::semantic::SemanticModel::default();
+        semantic.entities.insert(
+            crate::semantic::SemanticEntityId(2),
+            crate::semantic::SemanticEntity::Participant(crate::semantic::Participant {
+                kind: crate::semantic::ParticipantKind::Human,
+                name: "Case worker".repeat(200),
+                description: "Reviews incoming requests".repeat(200),
+            }),
+        );
+        sheet.semantic = Some(semantic);
+
+        assert!(
+            approx_sheet_bytes(&sheet)
+                > before
+                    + "Case worker".repeat(200).len()
+                    + "Reviews incoming requests".repeat(200).len()
         );
     }
 

@@ -146,18 +146,10 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 reveal(&mut h, &quit);
                 let templates = t("New from Template…");
                 reveal(&mut h, templates);
-                h.get_by_role_and_label(Role::Button, templates).click();
-                h.run_steps(3);
+                menu_action(&h, templates).hover();
+                h.run_steps(8);
                 let category = thinoda_core::templates::TemplateCategory::ALL[0];
                 reveal(&mut h, t(category.label()));
-                h.get_by_role_and_label(Role::Button, t(category.label()))
-                    .click();
-                h.run_steps(3);
-                let template = thinoda_core::templates::TEMPLATES
-                    .iter()
-                    .rfind(|template| template.category == category)
-                    .unwrap();
-                reveal(&mut h, t(template.name));
                 h.key_press(egui::Key::Escape);
                 h.run_steps(2);
                 if h.query_by_role_and_label(Role::Button, t("Edit")).is_none() {

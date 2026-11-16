@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 35;
+pub const NATIVE_FORMAT_VERSION: u64 = 36;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -29,10 +29,12 @@ pub const NATIVE_FORMAT_VERSION: u64 = 35;
 /// hashes, 28 embedded stencil definition closures, 29 collapsed containers,
 /// 30 persistent scene layout policies, 31 fill-last stack resizing, and
 /// 32 grow-parent, 33 fit-parent, 34 distribute stack resizing, and
-/// 35 stack cross-axis fill.
+/// 35 stack cross-axis fill, and 36 typed socio-technical meaning.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_scene_cross_axis_fill() {
+    if book.has_semantic_model() {
+        36
+    } else if book.has_scene_cross_axis_fill() {
         35
     } else if book.has_scene_distribute_resize() {
         34
@@ -284,6 +286,8 @@ pub enum ExportLoss {
     DrawioCardAppearanceApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
+    /// Typed socio-technical meaning is not represented by the target format.
+    SocioTechnicalSemanticsDropped(usize),
     /// Presentation slides are not written.
     SlidesDropped(usize),
 }
@@ -336,6 +340,13 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
             sheets.iter().filter(|(_, s)| s.has_sankey()).count(),
         );
     }
+    push(
+        ExportLoss::SocioTechnicalSemanticsDropped,
+        sheets
+            .iter()
+            .filter(|(_, sheet)| sheet.has_semantic_model())
+            .count(),
+    );
     if matches!(
         format,
         Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
@@ -489,6 +500,7 @@ fn connector_label_compositing_differs(object: &CanvasObject) -> bool {
 /// structure is drawn but not editable as a map.
 fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportLoss> {
     let mut sankey = 0;
+    let mut semantic = 0;
     let mut flattened = 0;
     let mut details = 0;
     let mut slides = 0;
@@ -507,6 +519,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut card_appearance = 0;
     for sheet in sheets {
         sankey += usize::from(sheet.has_sankey());
+        semantic += usize::from(sheet.has_semantic_model());
         let flow_nodes = thinoda_core::sankey::evaluate(sheet)
             .unwrap_or_default()
             .nodes;
@@ -677,6 +690,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     }
     let mut out = Vec::new();
     for (loss, count) in [
+        (
+            ExportLoss::SocioTechnicalSemanticsDropped as fn(usize) -> ExportLoss,
+            semantic,
+        ),
         (
             ExportLoss::SankeyDrawioExtension as fn(usize) -> ExportLoss,
             sankey,

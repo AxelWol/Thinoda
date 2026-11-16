@@ -40,6 +40,7 @@ const COLLAPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-COLLAPSE-1";
 const SCENE_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-LAYOUT-1";
 const SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-STENCIL-LAYOUT-1";
 const COLLAPSE_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-COLLAPSE-LAYOUT-1";
+const SEMANTIC_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SEMANTIC-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -729,7 +730,9 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_scene_collapse() && book.has_scene_layout_policies() {
+    if book.has_semantic_model() {
+        Ok(serde_json::to_string(&(SEMANTIC_SNAPSHOT_VERSION, book))?)
+    } else if book.has_scene_collapse() && book.has_scene_layout_policies() {
         Ok(serde_json::to_string(&(
             COLLAPSE_LAYOUT_SNAPSHOT_VERSION,
             book,
@@ -869,6 +872,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == SCENE_LAYOUT_SNAPSHOT_VERSION
                 || version == SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
                 || version == COLLAPSE_LAYOUT_SNAPSHOT_VERSION
+                || version == SEMANTIC_SNAPSHOT_VERSION
         })
 }
 
@@ -961,10 +965,22 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != SCENE_LAYOUT_SNAPSHOT_VERSION
             && version != SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
             && version != COLLAPSE_LAYOUT_SNAPSHOT_VERSION
+            && version != SEMANTIC_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        let semantic_envelope = version == SEMANTIC_SNAPSHOT_VERSION;
+        if workbook.has_semantic_model() != semantic_envelope {
+            return Err(IoError::NewerVersion(
+                "socio-technical data requires a semantic-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if semantic_envelope {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        } else {
+            version
+        };
         if version != COLLAPSE_SNAPSHOT_VERSION
             && version != COLLAPSE_LAYOUT_SNAPSHOT_VERSION
             && workbook.has_scene_collapse()
@@ -1206,6 +1222,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_semantic_model() {
+            return Err(IoError::NewerVersion(
+                "socio-technical data requires a semantic-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_scene_hierarchy() {
             return Err(IoError::NewerVersion(
                 "scene hierarchy requires a scene-aware private XMind snapshot".into(),
@@ -2787,6 +2808,30 @@ mod tests {
                 Err(IoError::NewerVersion(_))
             ));
         }
+    }
+
+    #[test]
+    fn socio_technical_data_requires_aware_private_snapshot_envelopes() {
+        let mut book = Workbook::default();
+        let mut semantic = thinoda_core::semantic::SemanticModel::default();
+        semantic.entities.insert(
+            thinoda_core::semantic::SemanticEntityId(2),
+            thinoda_core::semantic::SemanticEntity::Participant(
+                thinoda_core::semantic::Participant {
+                    kind: thinoda_core::semantic::ParticipantKind::Human,
+                    name: "Case worker".into(),
+                    description: String::new(),
+                },
+            ),
+        );
+        book.active_mut().semantic = Some(semantic);
+
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        let older = serde_json::to_string(&(COLLAPSE_LAYOUT_SNAPSHOT_VERSION, &book)).unwrap();
+        assert!(read_private_snapshot(&older).is_err());
+        assert!(read_private_snapshot(&serde_json::to_string(&book).unwrap()).is_err());
     }
 
     #[test]
