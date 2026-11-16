@@ -72,17 +72,17 @@ exportable. Collapsed frames retain compact bounds and valid expanded
 `alternateBounds`, while children use the expanded coordinate context. Nested
 scene trees without stored layout policies export parent-relative geometry and
 top/left headers. A Thinoda-specific marker is emitted only for isolated scene
-roots; marking every lane introduced formatting warnings on reimport. One
-isolated root with shape children round-trips. Isolated roots with contained
-connectors, combined isolated/nested roots, and isolated roots across multiple
-pages remain refused. Separate import warnings identify partial layout
-behavior; collapsed containers are imported expanded with a warning when
-alternate bounds are absent or unusable. Cards nested in scenes are imported as
-standalone board cards. Clipboard paste reports both container ancestry and
-card containment losses. **Checkpoint critique:** keep the marker limited to
-isolated roots; broader multi-root and multi-page cases exposed geometry/order
-and formatting losses in the original corpus, so those combinations remain
-explicitly refused.
+roots; marking every lane introduced formatting warnings on reimport. Multiple
+isolated roots with shape-only children round-trip within one page. Isolated
+roots with contained connectors, mixed isolated/nested roots, and isolated
+roots across multiple pages remain refused. Separate import warnings identify
+partial layout behavior; collapsed containers are imported expanded with a
+warning when alternate bounds are absent or unusable. Cards nested in scenes
+are imported as standalone board cards. Clipboard paste reports both container
+ancestry and card containment losses. **Checkpoint critique:** keep the marker
+limited to isolated roots; prior multi-root and multi-page corpus cases exposed
+geometry/order and formatting losses, so only the isolated shape-only subset
+has been enabled.
 Supported scene exports in the corpus are checked for normalized scene
 idempotence across repeated round trips, and the included draw.io example
 corpus round-trip gate passes. A nested pool/lane/task export was opened in
@@ -945,12 +945,13 @@ workload budgets and native/web visual/accessibility acceptance remain open.
 Supported top/left headers, parent-relative geometry and nested source
 hierarchy are reconstructed on export and were visually checked in
 app.diagrams.net. A Thinoda-specific style marker preserves scene-container
-identity on reimport for a single isolated container in a single-page file
-without contained connectors. Multiple isolated containers, contained
-connectors in an isolated frame, isolated containers combined with other scene
-containers, and isolated containers in multi-page files remain refused. Export
-also refuses stored layout policies, right/bottom headers, custom container
-stencils and group/Zone overlap rather than approximating them.
+identity on reimport for isolated scene roots in a single-page file without
+contained connectors. Multiple isolated roots with shape children now pass a
+focused geometry/ancestry round trip; the corpus round-trip gate also passes.
+Contained connectors in isolated frames, isolated roots combined with nested
+scene containers, and isolated roots in multi-page files remain refused.
+Export also refuses stored layout policies, right/bottom headers, custom
+container stencils and group/Zone overlap rather than approximating them.
 
 The stack policy includes opt-in `FillLast`, `GrowParent` and `FitParent` modes.
 `FillLast` grows only the final child along the stack axis, preserving its

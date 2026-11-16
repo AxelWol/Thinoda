@@ -7658,6 +7658,71 @@ fn isolated_scene_container_with_shape_child_round_trips() {
 }
 
 #[test]
+fn multiple_isolated_scene_containers_with_shape_children_round_trip() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let first = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(40.0, 60.0, 300.0, 200.0),
+            "First pool",
+        ))
+        .unwrap();
+    let first_task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(70.0, 110.0, 100.0, 50.0),
+            "First task",
+        ))
+        .unwrap();
+    let second = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(420.0, 60.0, 300.0, 200.0),
+            "Second pool",
+        ))
+        .unwrap();
+    let second_task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(450.0, 110.0, 100.0, 50.0),
+            "Second task",
+        ))
+        .unwrap();
+    sheet.canvas.scene.containers.extend([first, second]);
+    sheet.canvas.scene.parents.insert(first_task, first);
+    sheet.canvas.scene.parents.insert(second_task, second);
+    let workbook = Workbook::new(sheet);
+
+    let exported = export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let imported = load(&String::from_utf8(exported).unwrap());
+    assert!(imported.warnings.is_empty(), "{:?}", imported.warnings);
+    let restored = &imported.workbook.sheets[0];
+    assert_eq!(
+        restored.canvas.scene.containers,
+        workbook.sheets[0].canvas.scene.containers
+    );
+    assert_eq!(
+        restored.canvas.scene.parents,
+        workbook.sheets[0].canvas.scene.parents
+    );
+    assert_eq!(
+        restored
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>(),
+        workbook.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn isolated_scene_container_with_connector_is_refused() {
     let mut sheet = Sheet::new("Board", "Root");
     sheet.root_mode = SheetRootMode::Hidden;

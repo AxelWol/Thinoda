@@ -5308,21 +5308,22 @@ fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
             "draw.io export cannot preserve scene layout policies yet".into(),
         ));
     }
-    if scene.containers.len() > 1 && has_isolated_scene_containers(sheet) {
+    let has_nested_scene_containers = scene.parents.iter().any(|(&child, &parent)| {
+        scene.containers.contains(&child) && scene.containers.contains(&parent)
+    });
+    if has_nested_scene_containers && has_isolated_scene_containers(sheet) {
         return Err(IoError::Invalid(
             "draw.io export cannot preserve scene containers when an isolated container is combined with other scene containers yet"
                 .into(),
         ));
     }
-    if let Some(&container) = scene
-        .containers
-        .iter()
-        .find(|&&id| is_isolated_scene_container(sheet, id))
-        && sheet.canvas.objects.iter().any(|object| {
-            scene.parents.get(&object.id) == Some(&container)
-                && matches!(object.kind, CanvasObjectKind::Connector(_))
-        })
-    {
+    if scene.containers.iter().any(|&container| {
+        is_isolated_scene_container(sheet, container)
+            && sheet.canvas.objects.iter().any(|object| {
+                scene.parents.get(&object.id) == Some(&container)
+                    && matches!(object.kind, CanvasObjectKind::Connector(_))
+            })
+    }) {
         return Err(IoError::Invalid(
             "draw.io export cannot preserve scene connectors inside isolated containers yet".into(),
         ));
