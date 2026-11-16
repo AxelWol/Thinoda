@@ -11,7 +11,7 @@ use thinoda_core::{
     },
     scene_layout::{
         ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
-        StackResizePolicy,
+        StackCrossAxisPolicy, StackResizePolicy,
     },
 };
 use thinoda_ui::{
@@ -1900,19 +1900,46 @@ impl ThinodaApp {
                         })
                         .response
                 });
-                let (spacing, padding, resize) = match layout_draft.policy.layout {
-                    ContainerLayout::Free => (5.0, 10.0, StackResizePolicy::Preserve),
+                let (spacing, padding, cross_axis, resize) = match layout_draft.policy.layout {
+                    ContainerLayout::Free => (
+                        5.0,
+                        10.0,
+                        StackCrossAxisPolicy::Preserve,
+                        StackResizePolicy::Preserve,
+                    ),
                     ContainerLayout::Stack {
                         spacing,
                         padding,
+                        cross_axis,
                         resize,
                         ..
-                    } => (spacing, padding, resize),
+                    } => (spacing, padding, cross_axis, resize),
                 };
                 let mut spacing = spacing;
                 let mut padding = padding;
+                let mut cross_axis = cross_axis;
                 let mut resize = resize;
                 if choice != ContainerLayoutChoice::Free {
+                    widgets::property_field(ui, t("Cross-axis sizing"), |ui| {
+                        egui::ComboBox::from_id_salt(("container_stack_cross_axis", &context.target))
+                            .selected_text(t(match cross_axis {
+                                StackCrossAxisPolicy::Preserve => "Preserve child cross-axis sizes",
+                                StackCrossAxisPolicy::Fill => "Fill container cross-axis",
+                            }))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut cross_axis,
+                                    StackCrossAxisPolicy::Preserve,
+                                    t("Preserve child cross-axis sizes"),
+                                );
+                                ui.selectable_value(
+                                    &mut cross_axis,
+                                    StackCrossAxisPolicy::Fill,
+                                    t("Fill container cross-axis"),
+                                );
+                            })
+                            .response
+                    });
                     widgets::property_field(ui, t("Stack resizing"), |ui| {
                         egui::ComboBox::from_id_salt(("container_stack_resize", &context.target))
                             .selected_text(t(match resize {
@@ -1972,12 +1999,14 @@ impl ThinodaApp {
                         axis: StackAxis::Horizontal,
                         spacing,
                         padding,
+                        cross_axis,
                         resize,
                     },
                     ContainerLayoutChoice::Vertical => ContainerLayout::Stack {
                         axis: StackAxis::Vertical,
                         spacing,
                         padding,
+                        cross_axis,
                         resize,
                     },
                 };
@@ -7297,6 +7326,11 @@ mod tests {
         h.run_steps(2);
         h.get_by_label("Vertical stack").click();
         h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Cross-axis sizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Fill container cross-axis").click();
+        h.run_steps(2);
         assert_eq!(
             h.state().doc().unwrap().doc.workbook(),
             &original,
@@ -7312,6 +7346,7 @@ mod tests {
                 axis: StackAxis::Vertical,
                 spacing: 5.0,
                 padding: 10.0,
+                cross_axis: StackCrossAxisPolicy::Fill,
                 resize: StackResizePolicy::Preserve,
             }
         ));
@@ -7338,7 +7373,10 @@ mod tests {
         let arranged = h.state().doc().unwrap().doc.workbook().clone();
         assert_eq!(
             arranged.active().canvas.object(child).unwrap().rect,
-            BoardRect::from_min_size(Vec2::new(35.0, 50.0), original_child.size)
+            BoardRect::from_min_size(
+                Vec2::new(35.0, 50.0),
+                Vec2::new(780.0, original_child.size.y)
+            )
         );
         assert!(h.state_mut().doc_mut().unwrap().doc.undo());
         assert_eq!(h.state().doc().unwrap().doc.workbook(), &saved);

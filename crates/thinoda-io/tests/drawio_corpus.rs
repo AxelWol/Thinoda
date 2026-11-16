@@ -3,10 +3,13 @@
 //! Uses the examples in `docs/draw-io-examples`, or a folder of `.drawio`/`.xml`
 //! files selected by `THINODA_DRAWIO_CORPUS`. The test skips when absent.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 use thinoda_core::{
     Color, ConnectorPort, Rect, RectangleSides, ShapeKind, Sheet, Vec2, Workbook,
-    board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute},
+    board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute, Endpoint},
 };
 use thinoda_io::{ExportLoss, ExportOptions, Format, IoError};
 
@@ -479,25 +482,125 @@ fn check(path: &Path) -> Result<String, String> {
             return Err(format!("round trip lost items {count} -> {round_trip}"));
         }
         let scene_state = |sheet: &Sheet| {
+            let coord = |value: f32| (value * 1000.0).round() as i64;
+            let rect_key = |rect: Rect| {
+                (
+                    coord(rect.min.x),
+                    coord(rect.min.y),
+                    coord(rect.size.x),
+                    coord(rect.size.y),
+                )
+            };
+            let object_key = |object: &thinoda_core::CanvasObject| {
+                let kind = match &object.kind {
+                    CanvasObjectKind::Shape { shape, .. } => format!("shape:{shape:?}"),
+                    CanvasObjectKind::Connector(_) => "connector".into(),
+                    CanvasObjectKind::Ink(_) => "ink".into(),
+                };
+                (
+                    kind,
+                    object.label().to_owned(),
+                    rect_key(object.rect),
+                    format!("{:?}", object.band),
+                )
+            };
+            let object_keys: HashMap<_, _> = sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| (object.id, object_key(object)))
+                .collect();
+            let mut objects: Vec<_> = object_keys.values().cloned().collect();
+            objects.sort();
+            let mut containers: Vec<_> = sheet
+                .canvas
+                .scene
+                .containers
+                .iter()
+                .filter_map(|id| object_keys.get(id).cloned())
+                .collect();
+            containers.sort();
+            let mut parents: Vec<_> = sheet
+                .canvas
+                .scene
+                .parents
+                .iter()
+                .filter_map(|(child, parent)| {
+                    Some((
+                        object_keys.get(child)?.clone(),
+                        object_keys.get(parent)?.clone(),
+                    ))
+                })
+                .collect();
+            parents.sort();
+            let mut child_order: Vec<_> = sheet
+                .canvas
+                .scene
+                .containers
+                .iter()
+                .filter_map(|parent| {
+                    let parent_key = object_keys.get(parent)?.clone();
+                    let children: Vec<_> = sheet
+                        .canvas
+                        .objects
+                        .iter()
+                        .filter(|object| sheet.canvas.scene.parents.get(&object.id) == Some(parent))
+                        .map(object_key)
+                        .collect();
+                    Some((parent_key, children))
+                })
+                .collect();
+            child_order.sort();
+            let mut collapsed: Vec<_> = sheet
+                .canvas
+                .scene
+                .collapsed
+                .iter()
+                .filter_map(|(id, rect)| Some((object_keys.get(id)?.clone(), rect_key(*rect))))
+                .collect();
+            collapsed.sort();
+            let mut policies: Vec<_> = sheet
+                .canvas
+                .scene
+                .layout_policies
+                .iter()
+                .filter_map(|(id, policy)| {
+                    Some((object_keys.get(id)?.clone(), format!("{policy:?}")))
+                })
+                .collect();
+            policies.sort();
+            let endpoint_key = |endpoint: Endpoint| match endpoint {
+                Endpoint::Object(id) => format!("object:{:?}", object_keys.get(&id)),
+                Endpoint::Topic(id) => format!(
+                    "topic:{}",
+                    sheet.topic(id).map_or("", |topic| topic.title.as_str())
+                ),
+                Endpoint::Point(point) => {
+                    format!("point:{},{}", coord(point.x), coord(point.y))
+                }
+            };
+            let mut endpoints: Vec<_> = sheet
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) => Some((
+                        object_key(object),
+                        endpoint_key(connector.from),
+                        endpoint_key(connector.to),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            endpoints.sort();
             (
-                sheet.canvas.scene.clone(),
-                sheet
-                    .canvas
-                    .objects
-                    .iter()
-                    .map(|object| (object.id, object.rect))
-                    .collect::<Vec<_>>(),
-                sheet
-                    .canvas
-                    .objects
-                    .iter()
-                    .filter_map(|object| match &object.kind {
-                        CanvasObjectKind::Connector(connector) => {
-                            Some((object.id, connector.from, connector.to))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>(),
+                objects,
+                containers,
+                parents,
+                child_order,
+                collapsed,
+                policies,
+                endpoints,
             )
         };
         if has_scene_hierarchy {
@@ -505,15 +608,26 @@ fn check(path: &Path) -> Result<String, String> {
                 if scene_state(original) != scene_state(restored) {
                     return Err(format!(
                         "page {} changed scene structure, geometry, order or endpoints",
-                        index + 1
+                        index + 1,
                     ));
                 }
             }
             let repeated =
                 thinoda_io::export_bytes_with_consent(&again, Format::DrawIo, &opts, true)
                     .map_err(|e| format!("repeated draw.io export: {e}"))?;
-            let repeated = thinoda_io::import_bytes(Format::DrawIo, &repeated)
+            let repeated_report = thinoda_io::import_bytes_with_report(Format::DrawIo, &repeated)
                 .map_err(|e| format!("repeated draw.io re-import: {e}"))?;
+            let introduced_warnings: Vec<_> = repeated_report
+                .warnings
+                .iter()
+                .filter(|warning| !report.warnings.contains(warning))
+                .collect();
+            if !introduced_warnings.is_empty() {
+                return Err(format!(
+                    "repeated round trip introduced import warnings {introduced_warnings:?}"
+                ));
+            }
+            let repeated = repeated_report.workbook;
             if repeated.sheets.len() != again.sheets.len() {
                 return Err(format!(
                     "repeated round trip pages {} -> {}",
@@ -705,13 +819,13 @@ fn supplied_uml_activity_nested_swimlane_import_preserves_structure_and_geometry
         Rect::from_min_size(Vec2::new(50.0, 20.0), Vec2::new(870.0, 270.0))
     );
     assert!(
-        report
+        !report
             .warnings
             .contains(&thinoda_io::ImportWarning::DrawioSceneLayoutNotPreserved)
     );
     assert!(matches!(
         thinoda_io::export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()),
-        Err(IoError::Invalid(message)) if message.contains("scene layout policies")
+        Err(IoError::Invalid(message)) if message.contains("isolated across multiple pages")
     ));
     report.workbook.validate().unwrap();
 }

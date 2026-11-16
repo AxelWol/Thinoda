@@ -37,6 +37,9 @@ const PINNED_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-2";
 const CLOSED_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-STENCIL-3";
 const SCENE_STENCIL_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-STENCIL-1";
 const COLLAPSE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-COLLAPSE-1";
+const SCENE_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-LAYOUT-1";
+const SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SCENE-STENCIL-LAYOUT-1";
+const COLLAPSE_LAYOUT_SNAPSHOT_VERSION: &str = "THINODA-XMIND-COLLAPSE-LAYOUT-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -726,8 +729,26 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_scene_collapse() {
+    if book.has_scene_collapse() && book.has_scene_layout_policies() {
+        Ok(serde_json::to_string(&(
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_scene_collapse() {
         Ok(serde_json::to_string(&(COLLAPSE_SNAPSHOT_VERSION, book))?)
+    } else if book.has_scene_hierarchy()
+        && book.has_scene_layout_policies()
+        && (book.has_stencil_definition_hashes() || book.has_stencil_definition_closures())
+    {
+        Ok(serde_json::to_string(&(
+            SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_scene_hierarchy() && book.has_scene_layout_policies() {
+        Ok(serde_json::to_string(&(
+            SCENE_LAYOUT_SNAPSHOT_VERSION,
+            book,
+        ))?)
     } else if book.has_scene_hierarchy()
         && (book.has_stencil_definition_hashes() || book.has_stencil_definition_closures())
     {
@@ -845,6 +866,9 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == CLOSED_STENCIL_SNAPSHOT_VERSION
                 || version == SCENE_STENCIL_SNAPSHOT_VERSION
                 || version == COLLAPSE_SNAPSHOT_VERSION
+                || version == SCENE_LAYOUT_SNAPSHOT_VERSION
+                || version == SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
+                || version == COLLAPSE_LAYOUT_SNAPSHOT_VERSION
         })
 }
 
@@ -934,11 +958,17 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != CLOSED_STENCIL_SNAPSHOT_VERSION
             && version != SCENE_STENCIL_SNAPSHOT_VERSION
             && version != COLLAPSE_SNAPSHOT_VERSION
+            && version != SCENE_LAYOUT_SNAPSHOT_VERSION
+            && version != SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
+            && version != COLLAPSE_LAYOUT_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
-        if version != COLLAPSE_SNAPSHOT_VERSION && workbook.has_scene_collapse() {
+        if version != COLLAPSE_SNAPSHOT_VERSION
+            && version != COLLAPSE_LAYOUT_SNAPSHOT_VERSION
+            && workbook.has_scene_collapse()
+        {
             return Err(IoError::NewerVersion(
                 "collapsed containers require a collapse-aware private XMind snapshot".into(),
             ));
@@ -946,20 +976,36 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         if version != SCENE_SNAPSHOT_VERSION
             && version != SCENE_STENCIL_SNAPSHOT_VERSION
             && version != COLLAPSE_SNAPSHOT_VERSION
+            && version != SCENE_LAYOUT_SNAPSHOT_VERSION
+            && version != SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
+            && version != COLLAPSE_LAYOUT_SNAPSHOT_VERSION
             && workbook.has_scene_hierarchy()
         {
             return Err(IoError::NewerVersion(
                 "scene hierarchy requires a scene-aware private XMind snapshot".into(),
             ));
         }
-        let version = if version == SCENE_SNAPSHOT_VERSION {
-            STENCIL_SNAPSHOT_VERSION.to_owned()
-        } else if version == SCENE_STENCIL_SNAPSHOT_VERSION || version == COLLAPSE_SNAPSHOT_VERSION
+        if version != SCENE_LAYOUT_SNAPSHOT_VERSION
+            && version != SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
+            && version != COLLAPSE_LAYOUT_SNAPSHOT_VERSION
+            && workbook.has_scene_layout_policies()
         {
-            CLOSED_STENCIL_SNAPSHOT_VERSION.to_owned()
-        } else {
-            version
-        };
+            return Err(IoError::NewerVersion(
+                "scene layout policies require a layout-aware private XMind snapshot".into(),
+            ));
+        }
+        let version =
+            if version == SCENE_SNAPSHOT_VERSION || version == SCENE_LAYOUT_SNAPSHOT_VERSION {
+                STENCIL_SNAPSHOT_VERSION.to_owned()
+            } else if version == SCENE_STENCIL_SNAPSHOT_VERSION
+                || version == COLLAPSE_SNAPSHOT_VERSION
+                || version == SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION
+                || version == COLLAPSE_LAYOUT_SNAPSHOT_VERSION
+            {
+                CLOSED_STENCIL_SNAPSHOT_VERSION.to_owned()
+            } else {
+                version
+            };
         if version != PINNED_STENCIL_SNAPSHOT_VERSION
             && version != CLOSED_STENCIL_SNAPSHOT_VERSION
             && workbook.has_stencil_definition_hashes()
@@ -2739,6 +2785,97 @@ mod tests {
             assert!(matches!(
                 import(&make_archive(&entries)),
                 Err(IoError::NewerVersion(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn scene_layout_policies_require_layout_aware_private_snapshots() {
+        use thinoda_core::{
+            CanvasObject, Rect, ShapeKind, Vec2,
+            scene_layout::{
+                ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+                StackCrossAxisPolicy, StackResizePolicy,
+            },
+            stencil_object::{find_package, new_object},
+        };
+
+        for (collapsed, with_stencil, expected_version, old_version) in [
+            (
+                false,
+                false,
+                SCENE_LAYOUT_SNAPSHOT_VERSION,
+                SCENE_SNAPSHOT_VERSION,
+            ),
+            (
+                false,
+                true,
+                SCENE_STENCIL_LAYOUT_SNAPSHOT_VERSION,
+                SCENE_STENCIL_SNAPSHOT_VERSION,
+            ),
+            (
+                true,
+                true,
+                COLLAPSE_LAYOUT_SNAPSHOT_VERSION,
+                COLLAPSE_SNAPSHOT_VERSION,
+            ),
+        ] {
+            let mut book = Workbook::default();
+            let pool = book
+                .active_mut()
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+                ))
+                .unwrap();
+            book.active_mut().set_canvas_container(pool, true).unwrap();
+            book.active_mut()
+                .set_canvas_container_layout_policy(
+                    pool,
+                    Some(ContainerLayoutPolicy {
+                        header: HeaderPolicy {
+                            side: HeaderSide::Top,
+                            extent: 24.0,
+                        },
+                        layout: ContainerLayout::Stack {
+                            axis: StackAxis::Vertical,
+                            spacing: 8.0,
+                            padding: 8.0,
+                            cross_axis: StackCrossAxisPolicy::Fill,
+                            resize: StackResizePolicy::Preserve,
+                        },
+                    }),
+                )
+                .unwrap();
+            if with_stencil {
+                let package = find_package("thinoda.general").unwrap();
+                book.active_mut()
+                    .add_canvas_object(new_object(
+                        package,
+                        package.definition("message").unwrap(),
+                        Vec2::new(250.0, 0.0),
+                    ))
+                    .unwrap();
+            }
+            if collapsed {
+                book.active_mut()
+                    .set_canvas_container_collapsed(
+                        pool,
+                        Some(Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 30.0))),
+                    )
+                    .unwrap();
+            }
+
+            let snapshot = private_snapshot(&book).unwrap();
+            assert!(snapshot.starts_with(&format!("[\"{expected_version}\"")));
+            assert!(strict_private_snapshot(&snapshot));
+            assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+            assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+
+            let old = serde_json::to_string(&(old_version, &book)).unwrap();
+            assert!(matches!(
+                read_private_snapshot(&old),
+                Err(IoError::NewerVersion(message)) if message.contains("layout policies")
             ));
         }
     }

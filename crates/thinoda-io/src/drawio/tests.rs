@@ -7864,7 +7864,7 @@ fn nested_drawio_cards_are_imported_with_a_specific_containment_warning() {
 }
 
 #[test]
-fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
+fn nested_swimlanes_preserve_mapped_layout_and_warn_for_missing_collapsed_bounds() {
     let xml = page(
         r#"
         <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;horizontalStack=0;stackSpacing=8;stackBorder=1;marginLeft=10;marginRight=10;marginTop=10;marginBottom=10;" collapsed="1" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
@@ -7873,7 +7873,7 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
     );
     let report = load(&xml);
     assert!(
-        report
+        !report
             .warnings
             .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
     );
@@ -7901,14 +7901,22 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
                 axis: thinoda_core::scene_layout::StackAxis::Vertical,
                 spacing: 8.0,
                 padding: 11.0,
+                cross_axis: thinoda_core::scene_layout::StackCrossAxisPolicy::Fill,
                 resize: thinoda_core::scene_layout::StackResizePolicy::GrowParent,
             },
         })
     );
-    assert!(matches!(
-        export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()),
-        Err(IoError::Invalid(message)) if message.contains("scene layout policies")
-    ));
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    let drawio = export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let round_trip = crate::import_bytes_with_report(Format::DrawIo, &drawio).unwrap();
+    assert_eq!(
+        round_trip.workbook.sheets[0].canvas.scene.layout_policies,
+        sheet.canvas.scene.layout_policies
+    );
     let native =
         export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
     assert_eq!(
@@ -7919,14 +7927,14 @@ fn nested_swimlanes_warn_when_layout_and_collapse_policies_are_partial() {
 
 #[test]
 fn nested_stack_layout_maps_drawio_resize_flags() {
-    use thinoda_core::scene_layout::{ContainerLayout, StackResizePolicy};
+    use thinoda_core::scene_layout::{ContainerLayout, StackCrossAxisPolicy, StackResizePolicy};
     let header = thinoda_core::scene_layout::HeaderPolicy {
         side: thinoda_core::scene_layout::HeaderSide::Top,
         extent: 24.0,
     };
     let layout = |style: &str| {
         let (policy, unsupported) = Style::parse(style).scene_layout_policy(header);
-        assert!(unsupported);
+        assert!(!unsupported);
         match policy.unwrap().layout {
             stack @ ContainerLayout::Stack { .. } => stack,
             ContainerLayout::Free => unreachable!(),
@@ -7953,9 +7961,102 @@ fn nested_stack_layout_maps_drawio_resize_flags() {
         StackResizePolicy::Preserve
     );
     assert_eq!(
+        match layout("childLayout=stackLayout;fill=0") {
+            ContainerLayout::Stack { cross_axis, .. } => cross_axis,
+            ContainerLayout::Free => unreachable!(),
+        },
+        StackCrossAxisPolicy::Preserve
+    );
+    assert_eq!(
+        match layout("childLayout=stackLayout") {
+            ContainerLayout::Stack { cross_axis, .. } => cross_axis,
+            ContainerLayout::Free => unreachable!(),
+        },
+        StackCrossAxisPolicy::Fill
+    );
+    assert!(
+        Style::parse("childLayout=stackLayout;allowGaps=1")
+            .scene_layout_policy(header)
+            .1
+    );
+    assert!(
+        Style::parse("childLayout=stackLayout;fill=invalid")
+            .scene_layout_policy(header)
+            .1
+    );
+    assert_eq!(
         Style::parse("childLayout=stackLayout;horizontalStack=2").scene_layout_policy(header),
         (None, true)
     );
+}
+
+#[test]
+fn drawio_export_refuses_unmapped_distributed_gap_layouts() {
+    use thinoda_core::scene_layout::{
+        ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+        StackCrossAxisPolicy, StackResizePolicy,
+    };
+
+    let mut sheet = Sheet::new("Board", "Root");
+    let container = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 300.0, 200.0),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(container, true).unwrap();
+    sheet
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 24.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: StackCrossAxisPolicy::Fill,
+                    resize: StackResizePolicy::Distribute,
+                },
+            }),
+        )
+        .unwrap();
+
+    let error = export_bytes(
+        &Workbook::new(sheet),
+        Format::DrawIo,
+        &ExportOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, IoError::Invalid(message) if message.contains("distributed stack spacing"))
+    );
+}
+
+#[test]
+fn nested_swimlanes_warn_and_drop_unmapped_gap_policy() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;allowGaps=1;" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="300" height="180" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    let sheet = &report.workbook.sheets[0];
+    let pool = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Pool")
+        .unwrap();
+    assert!(!sheet.canvas.scene.layout_policies.contains_key(&pool.id));
 }
 
 #[test]

@@ -41,12 +41,15 @@ const SANKEY_SHEET_PREFIX: &str = "THINODA-SHEET-21\n";
 const STENCIL_SHEET_PREFIX: &str = "THINODA-SHEET-22\n";
 const SCENE_SHEET_PREFIX: &str = "THINODA-SHEET-23\n";
 const COLLAPSE_SHEET_PREFIX: &str = "THINODA-SHEET-24\n";
+const SCENE_LAYOUT_SHEET_PREFIX: &str = "THINODA-SHEET-25\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_scene_collapse() {
+    let prefix = if sheet.has_scene_layout_policies() {
+        SCENE_LAYOUT_SHEET_PREFIX
+    } else if sheet.has_scene_collapse() {
         COLLAPSE_SHEET_PREFIX
     } else if sheet.has_scene_hierarchy() {
         SCENE_SHEET_PREFIX
@@ -113,9 +116,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(COLLAPSE_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-24\r\n"))
-        .map(|json| (24, json))
+        .strip_prefix(SCENE_LAYOUT_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-25\r\n"))
+        .map(|json| (25, json))
+        .or_else(|| {
+            text.strip_prefix(COLLAPSE_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-24\r\n"))
+                .map(|json| (24, json))
+        })
         .or_else(|| {
             text.strip_prefix(SCENE_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-23\r\n"))
@@ -273,6 +281,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         return Err(
             "standard draw.io rectangle rounding requires sheet clipboard version 19".into(),
         );
+    }
+    if version < 25 && sheet.has_scene_layout_policies() {
+        return Err("scene layout policies require sheet clipboard version 25".into());
     }
     if version < 24 && sheet.has_scene_collapse() {
         return Err("collapsed containers require sheet clipboard version 24".into());
@@ -1195,6 +1206,70 @@ mod tests {
                 let forged = format!("{DOUBLE_ELLIPSE_SHEET_PREFIX}{malformed}");
                 assert!(decode_sheet(&forged).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn scene_layout_policies_require_new_sheet_clipboard_version() {
+        use crate::scene_layout::{
+            ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+            StackCrossAxisPolicy, StackResizePolicy,
+        };
+        use crate::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        for collapsed in [false, true] {
+            let mut sheet = Sheet::new("Layout clipboard", "Root");
+            let container = sheet
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+                ))
+                .unwrap();
+            sheet.set_canvas_container(container, true).unwrap();
+            sheet
+                .set_canvas_container_layout_policy(
+                    container,
+                    Some(ContainerLayoutPolicy {
+                        header: HeaderPolicy {
+                            side: HeaderSide::Top,
+                            extent: 24.0,
+                        },
+                        layout: ContainerLayout::Stack {
+                            axis: StackAxis::Vertical,
+                            spacing: 8.0,
+                            padding: 8.0,
+                            cross_axis: StackCrossAxisPolicy::Fill,
+                            resize: StackResizePolicy::Preserve,
+                        },
+                    }),
+                )
+                .unwrap();
+            if collapsed {
+                sheet
+                    .set_canvas_container_collapsed(
+                        container,
+                        Some(Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 30.0))),
+                    )
+                    .unwrap();
+            }
+
+            let encoded = encode_sheet(&sheet).unwrap();
+            assert!(encoded.starts_with(SCENE_LAYOUT_SHEET_PREFIX));
+            assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+            assert_eq!(
+                decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+                sheet
+            );
+
+            let old = format!(
+                "{COLLAPSE_SHEET_PREFIX}{}",
+                serde_json::to_string(&sheet).unwrap()
+            );
+            assert!(
+                decode_sheet(&old)
+                    .unwrap_err()
+                    .contains("scene layout policies")
+            );
         }
     }
 

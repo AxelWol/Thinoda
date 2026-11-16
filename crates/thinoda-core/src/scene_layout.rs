@@ -15,6 +15,20 @@ pub enum StackAxis {
     Vertical,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StackCrossAxisPolicy {
+    #[default]
+    Preserve,
+    Fill,
+}
+
+impl StackCrossAxisPolicy {
+    fn is_preserve(&self) -> bool {
+        *self == Self::Preserve
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HeaderSide {
@@ -56,6 +70,8 @@ pub enum ContainerLayout {
         axis: StackAxis,
         spacing: f32,
         padding: f32,
+        #[serde(default, skip_serializing_if = "StackCrossAxisPolicy::is_preserve")]
+        cross_axis: StackCrossAxisPolicy,
         #[serde(default, skip_serializing_if = "StackResizePolicy::is_preserve")]
         resize: StackResizePolicy,
     },
@@ -94,10 +110,11 @@ pub enum SceneLayoutError {
 /// overflow instead of clipping. `FillLast` may grow only the final child's
 /// primary extent; `Distribute` shares the available primary-axis space evenly
 /// across inter-child gaps. `GrowParent` expands the parent while `FitParent`
-/// sizes it exactly to content. Both parent policies preserve child sizes. Free
-/// layout never changes child geometry. This primitive is intentionally
-/// one-container-only: it neither mutates geometry nor routes connectors;
-/// policy persistence lives in the scene hierarchy.
+/// sizes its primary axis to content. Their cross-axis size remains fixed when
+/// children fill that axis; otherwise child sizes are preserved. Free layout
+/// never changes child geometry. This primitive is intentionally one-container-
+/// only: it neither mutates geometry nor routes connectors; policy persistence
+/// lives in the scene hierarchy.
 pub fn preview_child_layout(
     parent: Rect,
     policy: ContainerLayoutPolicy,
@@ -131,14 +148,32 @@ pub fn preview_container_layout(
             axis,
             spacing,
             padding,
+            cross_axis,
             resize: StackResizePolicy::GrowParent,
-        } => grow_parent_to_fit(parent, policy.header, axis, spacing, padding, children)?,
+        } => grow_parent_to_fit(
+            parent,
+            policy.header,
+            axis,
+            spacing,
+            padding,
+            cross_axis,
+            children,
+        )?,
         ContainerLayout::Stack {
             axis,
             spacing,
             padding,
+            cross_axis,
             resize: StackResizePolicy::FitParent,
-        } => fit_parent_to_contents(parent, policy.header, axis, spacing, padding, children)?,
+        } => fit_parent_to_contents(
+            parent,
+            policy.header,
+            axis,
+            spacing,
+            padding,
+            cross_axis,
+            children,
+        )?,
         ContainerLayout::Free
         | ContainerLayout::Stack {
             resize:
@@ -156,6 +191,7 @@ pub fn preview_container_layout(
             axis,
             spacing,
             padding,
+            cross_axis,
             resize,
         } => {
             if !spacing.is_finite() || spacing < 0.0 || !padding.is_finite() || padding < 0.0 {
@@ -188,7 +224,7 @@ pub fn preview_container_layout(
                     StackAxis::Horizontal => child.size.y,
                     StackAxis::Vertical => child.size.x,
                 };
-                if f64::from(cross) > cross_extent {
+                if cross_axis == StackCrossAxisPolicy::Preserve && f64::from(cross) > cross_extent {
                     return None;
                 }
                 Some(used + f64::from(primary))
@@ -217,8 +253,27 @@ pub fn preview_container_layout(
                 let size = if resize == StackResizePolicy::FillLast && index + 1 == children.len() {
                     let remaining = primary_extent - (cursor - primary_start);
                     match axis {
-                        StackAxis::Horizontal => Vec2::new(remaining as f32, child.size.y),
-                        StackAxis::Vertical => Vec2::new(child.size.x, remaining as f32),
+                        StackAxis::Horizontal => Vec2::new(
+                            remaining as f32,
+                            if cross_axis == StackCrossAxisPolicy::Fill {
+                                cross_extent as f32
+                            } else {
+                                child.size.y
+                            },
+                        ),
+                        StackAxis::Vertical => Vec2::new(
+                            if cross_axis == StackCrossAxisPolicy::Fill {
+                                cross_extent as f32
+                            } else {
+                                child.size.x
+                            },
+                            remaining as f32,
+                        ),
+                    }
+                } else if cross_axis == StackCrossAxisPolicy::Fill {
+                    match axis {
+                        StackAxis::Horizontal => Vec2::new(child.size.x, cross_extent as f32),
+                        StackAxis::Vertical => Vec2::new(cross_extent as f32, child.size.y),
                     }
                 } else {
                     child.size
@@ -247,9 +302,11 @@ fn grow_parent_to_fit(
     axis: StackAxis,
     spacing: f32,
     padding: f32,
+    cross_axis: StackCrossAxisPolicy,
     children: &[Rect],
 ) -> Result<Rect, SceneLayoutError> {
-    let minimum = minimum_parent_size(header, axis, spacing, padding, children)?;
+    let minimum =
+        minimum_parent_size(parent, header, axis, spacing, padding, cross_axis, children)?;
     let grown = Rect::from_min_size(
         parent.min,
         Vec2::new(parent.size.x.max(minimum.x), parent.size.y.max(minimum.y)),
@@ -264,21 +321,24 @@ fn fit_parent_to_contents(
     axis: StackAxis,
     spacing: f32,
     padding: f32,
+    cross_axis: StackCrossAxisPolicy,
     children: &[Rect],
 ) -> Result<Rect, SceneLayoutError> {
     let fitted = Rect::from_min_size(
         parent.min,
-        minimum_parent_size(header, axis, spacing, padding, children)?,
+        minimum_parent_size(parent, header, axis, spacing, padding, cross_axis, children)?,
     );
     validate_rect(fitted)?;
     Ok(fitted)
 }
 
 fn minimum_parent_size(
+    parent: Rect,
     header: HeaderPolicy,
     axis: StackAxis,
     spacing: f32,
     padding: f32,
+    cross_axis: StackCrossAxisPolicy,
     children: &[Rect],
 ) -> Result<Vec2, SceneLayoutError> {
     if !spacing.is_finite() || spacing < 0.0 || !padding.is_finite() || padding < 0.0 {
@@ -304,6 +364,32 @@ fn minimum_parent_size(
             StackAxis::Vertical => child.size.x,
         })
         .fold(0.0_f32, f32::max);
+    if cross_axis == StackCrossAxisPolicy::Fill {
+        return Ok(match axis {
+            StackAxis::Horizontal => Vec2::new(
+                f32_at_least(
+                    total_primary
+                        + 2.0 * f64::from(padding)
+                        + match header.side {
+                            HeaderSide::Right | HeaderSide::Left => f64::from(header.extent),
+                            HeaderSide::Top | HeaderSide::Bottom => 0.0,
+                        },
+                ),
+                parent.size.y,
+            ),
+            StackAxis::Vertical => Vec2::new(
+                parent.size.x,
+                f32_at_least(
+                    total_primary
+                        + 2.0 * f64::from(padding)
+                        + match header.side {
+                            HeaderSide::Top | HeaderSide::Bottom => f64::from(header.extent),
+                            HeaderSide::Right | HeaderSide::Left => 0.0,
+                        },
+                ),
+            ),
+        });
+    }
     let (body_width, body_height) = match axis {
         StackAxis::Horizontal => (total_primary, f64::from(cross_extent)),
         StackAxis::Vertical => (f64::from(cross_extent), total_primary),
@@ -412,6 +498,7 @@ mod tests {
                 axis,
                 spacing: 5.0,
                 padding: 10.0,
+                cross_axis: StackCrossAxisPolicy::Preserve,
                 resize: StackResizePolicy::Preserve,
             },
         }
@@ -445,6 +532,94 @@ mod tests {
             horizontal_with_top_header[1],
             rect(155.0, 235.0, 50.0, 20.0)
         );
+    }
+
+    #[test]
+    fn cross_axis_fill_resizes_children_to_the_container_body() {
+        let parent = rect(100.0, 200.0, 300.0, 200.0);
+        let children = [rect(0.0, 0.0, 40.0, 30.0), rect(0.0, 0.0, 50.0, 20.0)];
+        let horizontal = preview_container_layout(
+            parent,
+            ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 25.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Horizontal,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: StackCrossAxisPolicy::Fill,
+                    resize: StackResizePolicy::Preserve,
+                },
+            },
+            &children,
+        )
+        .unwrap();
+        assert_eq!(
+            horizontal.children,
+            [
+                rect(110.0, 235.0, 40.0, 155.0),
+                rect(155.0, 235.0, 50.0, 155.0)
+            ]
+        );
+
+        let vertical = preview_container_layout(
+            parent,
+            ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Left,
+                    extent: 35.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: StackCrossAxisPolicy::Fill,
+                    resize: StackResizePolicy::Preserve,
+                },
+            },
+            &children,
+        )
+        .unwrap();
+        assert_eq!(
+            vertical.children,
+            [
+                rect(145.0, 210.0, 245.0, 30.0),
+                rect(145.0, 245.0, 245.0, 20.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn cross_axis_fill_parent_resize_preserves_the_cross_axis_frame() {
+        let parent = rect(10.0, 20.0, 100.0, 80.0);
+        let mut policy = ContainerLayoutPolicy {
+            header: HeaderPolicy {
+                side: HeaderSide::Top,
+                extent: 20.0,
+            },
+            layout: ContainerLayout::Stack {
+                axis: StackAxis::Horizontal,
+                spacing: 5.0,
+                padding: 10.0,
+                cross_axis: StackCrossAxisPolicy::Fill,
+                resize: StackResizePolicy::FitParent,
+            },
+        };
+        let preview =
+            preview_container_layout(parent, policy, &[rect(0.0, 0.0, 40.0, 200.0)]).unwrap();
+        assert_eq!(preview.parent, rect(10.0, 20.0, 60.0, 80.0));
+        assert_eq!(preview.children, [rect(20.0, 50.0, 40.0, 40.0)]);
+
+        let ContainerLayout::Stack { resize, .. } = &mut policy.layout else {
+            unreachable!();
+        };
+        *resize = StackResizePolicy::GrowParent;
+        let preview =
+            preview_container_layout(parent, policy, &[rect(0.0, 0.0, 120.0, 200.0)]).unwrap();
+        assert_eq!(preview.parent, rect(10.0, 20.0, 140.0, 80.0));
+        assert_eq!(preview.children, [rect(20.0, 50.0, 120.0, 40.0)]);
     }
 
     #[test]
@@ -653,14 +828,13 @@ mod tests {
                 axis: StackAxis::Vertical,
                 spacing: 5.0,
                 padding: 10.0,
+                cross_axis: StackCrossAxisPolicy::Preserve,
                 resize: StackResizePolicy::Preserve,
             }
         );
-        assert!(
-            serde_json::to_value(decoded).unwrap()["layout"]["stack"]
-                .get("resize")
-                .is_none()
-        );
+        let encoded = serde_json::to_value(decoded).unwrap();
+        assert!(encoded["layout"]["stack"].get("resize").is_none());
+        assert!(encoded["layout"]["stack"].get("crossAxis").is_none());
     }
 
     #[test]

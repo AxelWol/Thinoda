@@ -1524,6 +1524,7 @@ fn fill_last_stack_resize_uses_clipboard_v25_and_rejects_v24() {
                     axis: StackAxis::Vertical,
                     spacing: 5.0,
                     padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
                     resize: StackResizePolicy::FillLast,
                 },
             }),
@@ -1565,6 +1566,7 @@ fn grow_parent_stack_resize_uses_clipboard_v26_and_rejects_v25() {
                     axis: StackAxis::Vertical,
                     spacing: 5.0,
                     padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
                     resize: StackResizePolicy::GrowParent,
                 },
             }),
@@ -1610,6 +1612,7 @@ fn fit_parent_stack_resize_uses_clipboard_v27_and_rejects_v26() {
                     axis: StackAxis::Vertical,
                     spacing: 5.0,
                     padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
                     resize: StackResizePolicy::FitParent,
                 },
             }),
@@ -1655,6 +1658,7 @@ fn distribute_stack_resize_uses_clipboard_v28_and_rejects_v27() {
                     axis: StackAxis::Vertical,
                     spacing: 5.0,
                     padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
                     resize: StackResizePolicy::Distribute,
                 },
             }),
@@ -1675,6 +1679,52 @@ fn distribute_stack_resize_uses_clipboard_v28_and_rejects_v27() {
         decode_board_payload(&downgraded)
             .unwrap_err()
             .contains("distributed stack spacing")
+    );
+}
+
+#[test]
+fn cross_axis_fill_uses_clipboard_v29_and_rejects_v28() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Fill,
+                    resize: StackResizePolicy::Preserve,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX,
+        DISTRIBUTE_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("cross-axis stack fill")
     );
 }
 

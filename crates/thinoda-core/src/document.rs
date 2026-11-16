@@ -256,6 +256,8 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
         + sheet.canvas.scene.parents.len() * (2 * size_of::<CanvasObjectId>() + 48)
         + sheet.canvas.scene.collapsed.len()
             * (size_of::<CanvasObjectId>() + size_of::<Rect>() + 48)
+        + sheet.canvas.scene.layout_policies.len()
+            * (size_of::<CanvasObjectId>() + size_of::<ContainerLayoutPolicy>() + 48)
         + sheet
             .relationships
             .iter()
@@ -1561,6 +1563,40 @@ mod tests {
         d.edit_sheet("t", |s| s.set_title(root, "last")).unwrap();
         assert!(d.undo());
         assert!(!d.undo());
+    }
+
+    #[test]
+    fn scene_layout_policies_are_counted_in_history_size() {
+        use crate::scene_layout::{ContainerLayout, HeaderPolicy, HeaderSide};
+
+        let mut sheet = Sheet::new("Layout history", "Root");
+        let container = sheet
+            .add_canvas_object(CanvasObject::shape(
+                crate::board::ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+            ))
+            .unwrap();
+        sheet.set_canvas_container(container, true).unwrap();
+        let before = approx_sheet_bytes(&sheet);
+        sheet
+            .set_canvas_container_layout_policy(
+                container,
+                Some(ContainerLayoutPolicy {
+                    header: HeaderPolicy {
+                        side: HeaderSide::Top,
+                        extent: 24.0,
+                    },
+                    layout: ContainerLayout::Free,
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            approx_sheet_bytes(&sheet) - before,
+            std::mem::size_of::<CanvasObjectId>()
+                + std::mem::size_of::<ContainerLayoutPolicy>()
+                + 48
+        );
     }
 
     #[test]

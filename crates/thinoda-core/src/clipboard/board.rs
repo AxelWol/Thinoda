@@ -46,6 +46,7 @@ const FILL_LAST_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-25\n";
 const GROW_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-26\n";
 const FIT_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-27\n";
 const DISTRIBUTE_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-28\n";
+const CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-29\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -64,7 +65,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_scene_distribute_resize() {
+        if self.fragment.has_scene_cross_axis_fill() {
+            CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_distribute_resize() {
             DISTRIBUTE_LAYOUT_BOARD_PREFIX
         } else if self.fragment.has_scene_fit_parent_resize() {
             FIT_PARENT_LAYOUT_BOARD_PREFIX
@@ -322,9 +325,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(DISTRIBUTE_LAYOUT_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-28\r\n"))
-        .map(|json| (28, json))
+        .strip_prefix(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-29\r\n"))
+        .map(|json| (29, json))
+        .or_else(|| {
+            text.strip_prefix(DISTRIBUTE_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-28\r\n"))
+                .map(|json| (28, json))
+        })
         .or_else(|| {
             text.strip_prefix(FIT_PARENT_LAYOUT_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-27\r\n"))
@@ -475,6 +483,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     }
     if version < 28 && payload.fragment.has_scene_distribute_resize() {
         return Err("distributed stack spacing requires board clipboard version 28".into());
+    }
+    if version < 29 && payload.fragment.has_scene_cross_axis_fill() {
+        return Err("cross-axis stack fill requires board clipboard version 29".into());
     }
     if version < 23 && payload.fragment.has_scene_collapse() {
         return Err("collapsed containers require board clipboard version 23".into());

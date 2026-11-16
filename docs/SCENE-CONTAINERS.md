@@ -66,9 +66,10 @@ object endpoints. Flat containers continue using Zones for compatibility.
 
 This is not full SC3 support. Only direct container-to-container nesting is
 promoted; nested containers under intervening non-container/group cells remain
-on the warned legacy path. Stack axis, spacing and uniform effective padding
-are imported as a warned partial policy; stored layout policies are not yet
-exportable. Collapsed frames retain compact bounds and valid expanded
+on the warned legacy path. The representable stack subset imports and exports
+axis, spacing, uniform effective padding, cross-axis fill and resize mode;
+unsupported gap behavior remains warned and is not stored. Collapsed frames
+retain compact bounds and valid expanded
 `alternateBounds`, while children use the expanded coordinate context. Nested
 scene trees without stored layout policies export parent-relative geometry and
 top/left headers. A Thinoda-specific marker is emitted only for isolated scene
@@ -165,8 +166,8 @@ policy operators. Format-specific names map at the adapter boundary.
 |---|---|
 | Header | Independent side, extent, label direction, header/body fill and separator. Source direction/flip map explicitly; header side and stack axis are separate |
 | Layout | `Free`, `Stack(axis)` and later `Table(grid)`; nested layout runs in a bounded deterministic schedule, never until an unconstrained fixed point |
-| Stack | Sibling order plus extents, spacing, margins, cross-axis fill and minimum sizes; preserve manual extents unless the chosen resize policy changes them. `FillLast` grows only the final child along the stack axis; parent-resize policies preserve child sizes |
-| Resize | The shared policy supports preserve, fill-last, grow-only-parent, fit-parent and distributed gaps. Parent sizes are computed bottom-up before deterministic top-down placement. Parent resize takes precedence over fill-last; source-specific geometry mapping remains open. No recursive proportional scaling by default |
+| Stack | Sibling order plus extents, spacing, margins, cross-axis fill and minimum sizes; preserve manual extents unless the chosen resize policy changes them. `FillLast` grows only the final child along the stack axis; cross-axis fill is independently selectable |
+| Resize | The shared policy supports preserve, fill-last, grow-only-parent, fit-parent and distributed gaps. Parent sizes are computed bottom-up before deterministic top-down placement. Parent resize takes precedence over fill-last; no recursive proportional scaling by default |
 | Auto-grow/drop | Plain swimlane defaults may grow; container-table cells default not to. Preserve supported imported flags; preview bound semantic reparent rather than making it a side effect of geometric overlap |
 | Collapse | Store expanded bounds separately; render header/compact frame and fold external connectors to the nearest visible ancestor boundary. Restore full contents/geometry on expand |
 | Clipping | Explicit body/content clipping, not implied by being a container. Headers and crossing external connectors must not disappear behind the body clip |
@@ -265,7 +266,7 @@ capabilities. A plain scene-only document must not need the semantic capability.
 | Capability / phase owner | Required coverage |
 |---|---|
 | Scene ancestry, nested containers, collapse / SC1 | Native gate, clipboard/recovery/private snapshot gates, validation, history accounting, sheet duplicate/merge and masking |
-| Header/layout policies, shared dash style / SC2 | Policy-aware versions and old-envelope rejection; all scene consumers resolve identical geometry/style |
+| Header/layout policies, shared dash style / SC2 | Native/clipboard format gates plus recovery and private-XMind envelope versions; reject old envelopes that would drop stored policies; all scene consumers resolve identical geometry/style |
 | Table reflow / SC4 | Gate only if introducing stored data not already retained safely; retain unsupported source styles honestly |
 | Semantic graph and bindings / STC2 | Independent native/transport gates, structural validation, draft diagnostics and explicit non-native loss preflight |
 | Pinned JSON definitions / SC2 | One immutable-resolution mechanism across save/reopen/copy and missing-definition diagnostics. STC2 consumes it for notation packages; semantic compatibility is separate from visual fallback |
@@ -872,32 +873,33 @@ connector attached to the pool. Simple un-nested containers continue to import
 as Zones. The same fixture verifies native model validation and reports lost
 ancestry when preparing a board clipboard fragment.
 The supplied UML activity example also verifies an original Actors > Orders
-scene parent, parent-relative geometry conversion and the explicit warning and
-export refusal for its stored stack layout.
+scene parent, parent-relative geometry conversion and stored stack-layout
+round-trip through draw.io.
 
 The source import is no longer warned merely because a supported direct nested
-chain exists. `childLayout=stackLayout` imports its axis, spacing, uniform
-effective padding, and resize mode when the combined border and four margins are
+chain exists. `childLayout=stackLayout` imports its axis, spacing, uniform effective padding,
+cross-axis fill and resize mode when the combined border and four margins are
 uniform. Parent-resize flags map to `GrowParent` or `FitParent`; when parent
 resize is off, `resizeLast` maps to `FillLast` or `Preserve`. Asymmetric margins
-are not approximated. Stack imports still warn because Graph.js fills children
-across the stack axis, which Thinoda does not represent.
+and `allowGaps=1` are not approximated; unsupported layouts remain warned and
+are not stored as editable stack policies.
 Unsupported/non-direct nesting remains warned. Collapsed scene containers use
 valid `alternateBounds` for their expanded frame and child coordinate context,
 and retain both compact and expanded bounds. Missing or invalid alternate bounds
 fall back to the available frame geometry and report the lost collapsed state.
-For scenes with no stored layout policy, the writer now emits
-parent-relative geometry, deterministic object IDs, container markers and
-top/left header styles; pool/lane/task and single isolated-container fixtures
-round-trip ancestry, sheet-space geometry and object terminals. Export still
-refuses isolated roots containing connectors, isolated roots combined with
-other scene containers or spread across multiple pages, stored layout policies,
+The writer emits parent-relative geometry, deterministic object IDs, container
+markers, top/left header styles and representable stack-policy styles;
+pool/lane/task and single isolated-container fixtures round-trip ancestry,
+sheet-space geometry, policies and object terminals. Export still refuses
+isolated roots containing connectors, isolated roots combined with other scene
+containers or spread across multiple pages, distributed-gap policies,
 right/bottom headers and scene objects that also belong to a group or Zone.
 Collapsed frames export their compact geometry plus expanded `alternateBounds`,
 and children remain relative to the expanded parent origin.
 **Checkpoint critique:** valid bounds are required to preserve collapse state;
 missing or invalid source bounds stay expanded with an explicit warning rather
-than receiving invented geometry. Stored layout policies remain a SC3 blocker.
+than receiving invented geometry. Distributed-gap behavior remains a precise
+SC3 refusal rather than being approximated.
 Corpus cases that can be exported must preserve scene structure, geometry,
 object order and terminals across repeated round trips.
 Additional original-fixture assertions and browser-console validation remain
@@ -907,8 +909,8 @@ open.
 
 The core has a pure, one-container preview primitive for free and horizontal
 or vertical stack layouts. Header side and stack axis are independent. Stack
-previews preserve child sizes and sibling order, align to the leading cross-axis
-edge, and reject overflow rather than clipping or resizing the parent. Inputs
+previews preserve child sizes by default, optionally fill the cross axis, keep
+sibling order, and reject overflow rather than clipping. Inputs
 are bounded by the canvas object limit and board coordinate range. A shared
 scene preview schedules nested policies in parent-first scene order,
 composes net child/subtree translations, and applies each object's geometry
@@ -925,9 +927,10 @@ stored-policy preview can apply a container subtree's nested policies through
 one undoable document edit.
 
 The native/web property panel can now draft, save and clear a container's free,
-horizontal-stack or vertical-stack policy, and separately arrange its contents.
-Policy edits and geometry application are separate undo steps. Spacing, padding
-and header extent are editable; the header side is shown but retained unchanged.
+horizontal-stack or vertical-stack policy, choose whether children preserve or
+fill the cross axis, and separately arrange contents. Policy edits and geometry
+application are separate undo steps. Spacing, padding and header extent are
+editable; the header side is shown but retained unchanged.
 Scene construction now resolves a declared `thinoda.containerHeader` stencil
 binding once and carries its render data to canvas paint, label placement,
 outline/detail hit geometry and SVG/PDF export. The new JSON
@@ -950,17 +953,18 @@ contained connectors. Multiple isolated roots with shape children now pass a
 focused geometry/ancestry round trip; the corpus round-trip gate also passes.
 Contained connectors in isolated frames, isolated roots combined with nested
 scene containers, and isolated roots in multi-page files remain refused.
-Export also refuses stored layout policies, right/bottom headers, custom
-container stencils and group/Zone overlap rather than approximating them.
+Export maps supported stack policies, including cross-axis fill, and refuses
+distributed-gap policies, right/bottom headers, custom container stencils and
+group/Zone overlap rather than approximating them.
 
 The stack policy includes opt-in `FillLast`, `GrowParent` and `FitParent` modes.
-`FillLast` grows only the final child along the stack axis, preserving its
-cross-axis size and all other children. `GrowParent` computes minimum parent
-bounds from child extents, spacing, padding and header side/extent, then grows
-without shrinking. `FitParent` uses those exact bounds, so it may grow or shrink
-the frame. Both parent policies preserve child sizes and compute nested frames
-bottom-up before placing children top-down. Parent resizing and fill-last are
-mutually exclusive; choosing either parent mode never resizes the final child.
+`FillLast` grows only the final child along the stack axis, preserving other
+children. Cross-axis `Fill` resizes every child across the body extent, while
+`Preserve` retains each cross-axis size. `GrowParent` and `FitParent` resize
+only the primary-axis frame extent; with cross-axis `Fill`, children adapt to
+the unchanged cross-axis frame. `GrowParent` never shrinks and `FitParent` may
+grow or shrink the primary extent. Parent resizing and fill-last are mutually
+exclusive; choosing either parent mode never resizes the final child.
 Layout under a collapsed ancestor or resizing a collapsed child is refused.
 `Distribute` preserves child sizes and divides all available primary-axis slack
 equally among the gaps between siblings; padding stays fixed, and zero/one-child
@@ -968,25 +972,26 @@ stacks remain leading-aligned. If the children plus configured minimum gaps do
 not fit, the layout is rejected rather than shrinking contents.
 `Preserve` remains the default. Fill-last requires native v31 / clipboard v25,
 grow-parent requires v32 / v26, and fit-parent requires v33 / v27. Older
-distributed-gap policies require native v34 / clipboard v28; older envelopes
-containing a non-default mode are rejected.
+distributed-gap policies require native v34 / clipboard v28. Cross-axis fill
+requires native v35 / clipboard v29; older envelopes containing these
+non-default modes are rejected.
 
 ### 5.14 Pinned draw.io stack resize mapping
 
-The draw.io importer now maps `resizeParent` and `resizeParentMax` to
-`GrowParent`/`FitParent`, and uses `resizeLast` as `FillLast` only when parent
-resize is disabled. This follows the pinned Graph.js defaults
-(`resizeParent=1`, `resizeParentMax=1`, `resizeLast=0`) and precedence; an
-invalid `horizontalStack` value is not guessed as vertical. Stack imports still
-require confirmation because Graph.js fills children across the stack axis,
-which the shared policy does not yet model. The export refusal for stored layout
-policies remains unchanged.
+The draw.io importer maps `fill=1` to cross-axis fill (the Graph.js default) and
+`fill=0` to preserving child cross-axis sizes. It maps `resizeParent` and
+`resizeParentMax` to `GrowParent`/`FitParent`, and uses `resizeLast` as
+`FillLast` only when parent resize is disabled. This follows the pinned Graph.js
+defaults (`resizeParent=1`, `resizeParentMax=1`, `resizeLast=0`) and precedence;
+an invalid `horizontalStack` value is not guessed as vertical. Symmetric
+margins and `stackBorder` map to one effective padding; `allowGaps=1` remains
+unsupported and requires confirmation. Export emits mapped policy fields and
+refuses distributed-gap mode rather than translating it to `allowGaps`.
 
-**Checkpoint critique:** this maps the resize dimension of the source policy,
-not the complete layout behavior. Cross-axis fill, source layout execution,
-asymmetric margins, gap distribution and policy export remain open. The focused
-tests cover the pinned defaults, explicit fill-last/fit-parent/preserve modes
-and invalid axis values; they do not claim draw.io round-trip acceptance.
+**Checkpoint critique:** this maps the representable subset of the source
+policy; it does not claim source-editor parity for `allowGaps`, asymmetric
+margins or every layout timing behavior. Focused tests cover cross-axis fill,
+resize modes and invalid flags; corpus round trips remain the acceptance gate.
 
 ### 5.15 Isolated-container export boundaries
 
@@ -1001,8 +1006,8 @@ geometry/order changes in `home-lab-example.drawio` and
 **Checkpoint critique:** the synthetic connector fixture is not sufficient
 evidence to relax a loss guard. Preserve these refusals until the original
 fixtures and draw.io browser behavior round-trip without warnings or geometry
-drift. Layout policies, custom/right/bottom headers, group/Zone overlap and
-indirect nesting remain open.
+drift. Distributed-gap policies, custom/right/bottom headers, group/Zone overlap
+and indirect nesting remain open.
 
 ## 6. Adversarial acceptance and critique
 
@@ -1045,6 +1050,25 @@ resize-policy interactions; legacy card-occurrence integration is explicitly
 deferred by SC0. SC0/STC0 must stop or rescope if their remaining spikes fail.
 See the
 [full review and dispositions](SOCIO-TECHNICAL-REVIEW.md).
+
+### 5.16 Layout-policy persistence gate checkpoint
+
+Scene layout policies now have explicit old-envelope rejection in recovery and
+the private XMind snapshot, including scene-plus-stencil and collapsed-scene
+variants. Native and board-clipboard gates remain feature-based; undo-history
+and full-sheet clipboard gates remain feature-based; undo-history size
+accounting now includes each stored layout-policy entry. Tests exercise
+stack cross-axis fill through snapshot round trips and prove that prior scene,
+scene/stencil and collapse envelopes reject policy-bearing workbooks. The
+Draw.io corpus gate also passes with normalized identities and no-new-warning
+checks.
+
+**Checkpoint critique:** these changes close the discovered policy-envelope
+and history-budget gaps, not SC1 or SC2 as whole phases. Generic mutation-path
+coverage, history/lifecycle behavior, source-fixture fidelity, full
+native/web acceptance and the measurable SC0 budgets remain open. Every future
+stored scene field must update all relevant feature gates and rejection tests;
+envelope versioning is not a substitute for complete lifecycle validation.
 
 ## Sources
 

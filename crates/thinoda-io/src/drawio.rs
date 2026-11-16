@@ -855,7 +855,8 @@ impl Style {
         bool,
     ) {
         use thinoda_core::scene_layout::{
-            ContainerLayout, ContainerLayoutPolicy, StackAxis, StackResizePolicy,
+            ContainerLayout, ContainerLayoutPolicy, StackAxis, StackCrossAxisPolicy,
+            StackResizePolicy,
         };
 
         if self.get("childLayout") != Some("stackLayout") {
@@ -881,6 +882,28 @@ impl Style {
         ) else {
             return (None, true);
         };
+        let flag = |key: &str, default: bool| match self.get(key) {
+            None => Some(default),
+            Some("1") => Some(true),
+            Some("0") => Some(false),
+            Some(_) => None,
+        };
+        let (
+            Some(fill),
+            Some(resize_parent),
+            Some(resize_parent_max),
+            Some(resize_last),
+            Some(allow_gaps),
+        ) = (
+            flag("fill", true),
+            flag("resizeParent", true),
+            flag("resizeParentMax", true),
+            flag("resizeLast", false),
+            flag("allowGaps", false),
+        )
+        else {
+            return (None, true);
+        };
 
         let [left, right, top, bottom] =
             [border + left, border + right, border + top, border + bottom];
@@ -891,21 +914,21 @@ impl Style {
             return (None, true);
         }
 
-        let resize_parent = self.get("resizeParent").unwrap_or("1") == "1";
         let resize = if resize_parent {
-            if self.get("resizeParentMax").unwrap_or("1") == "1" {
+            if resize_parent_max {
                 StackResizePolicy::GrowParent
             } else {
                 StackResizePolicy::FitParent
             }
-        } else if self.get("resizeLast").unwrap_or("0") == "1" {
+        } else if resize_last {
             StackResizePolicy::FillLast
         } else {
             StackResizePolicy::Preserve
         };
 
-        // Graph's stack layout also fills children across the stack axis.
-        let unsupported = true;
+        if allow_gaps {
+            return (None, true);
+        }
 
         (
             Some(ContainerLayoutPolicy {
@@ -914,10 +937,15 @@ impl Style {
                     axis,
                     spacing,
                     padding: left,
+                    cross_axis: if fill {
+                        StackCrossAxisPolicy::Fill
+                    } else {
+                        StackCrossAxisPolicy::Preserve
+                    },
                     resize,
                 },
             }),
-            unsupported,
+            false,
         )
     }
 
@@ -4732,6 +4760,16 @@ impl<'a> PageWriter<'a> {
                     if collapsed_bounds.is_some() {
                         style.push_str("collapsible=1;");
                     }
+                    if let Some(stack_style) = self
+                        .sheet
+                        .canvas
+                        .scene
+                        .layout_policies
+                        .get(&id)
+                        .and_then(scene_stack_style)
+                    {
+                        style.push_str(&stack_style);
+                    }
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
                 let special_outline = object.rectangle_sides.is_some()
@@ -5298,15 +5336,60 @@ fn is_isolated_scene_container(sheet: &Sheet, id: CanvasObjectId) -> bool {
     })
 }
 
+fn scene_stack_style(policy: &thinoda_core::scene_layout::ContainerLayoutPolicy) -> Option<String> {
+    use thinoda_core::scene_layout::{ContainerLayout, StackCrossAxisPolicy, StackResizePolicy};
+
+    let ContainerLayout::Stack {
+        axis,
+        spacing,
+        padding,
+        cross_axis,
+        resize,
+    } = policy.layout
+    else {
+        return Some(String::new());
+    };
+    if resize == StackResizePolicy::Distribute {
+        return None;
+    }
+
+    let mut style = format!(
+        "childLayout=stackLayout;horizontalStack={};stackSpacing={};stackBorder={};fill={};",
+        if axis == thinoda_core::scene_layout::StackAxis::Horizontal {
+            1
+        } else {
+            0
+        },
+        num(spacing),
+        num(padding),
+        u8::from(cross_axis == StackCrossAxisPolicy::Fill),
+    );
+    match resize {
+        StackResizePolicy::Preserve => style.push_str("resizeParent=0;resizeLast=0;"),
+        StackResizePolicy::FillLast => style.push_str("resizeParent=0;resizeLast=1;"),
+        StackResizePolicy::GrowParent => style.push_str("resizeParent=1;resizeParentMax=1;"),
+        StackResizePolicy::FitParent => style.push_str("resizeParent=1;resizeParentMax=0;"),
+        StackResizePolicy::Distribute => return None,
+    }
+    Some(style)
+}
+
 fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
     let scene = &sheet.canvas.scene;
     if scene.is_empty() {
         return Ok(());
     }
-    if !scene.layout_policies.is_empty() {
-        return Err(IoError::Invalid(
-            "draw.io export cannot preserve scene layout policies yet".into(),
-        ));
+    for (&id, policy) in &scene.layout_policies {
+        if !scene.containers.contains(&id) {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve layout policies on non-container objects".into(),
+            ));
+        }
+        if scene_stack_style(policy).is_none() {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve distributed stack spacing yet".into(),
+            ));
+        }
     }
     let has_nested_scene_containers = scene.parents.iter().any(|(&child, &parent)| {
         scene.containers.contains(&child) && scene.containers.contains(&parent)

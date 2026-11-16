@@ -892,6 +892,18 @@ impl Sheet {
         })
     }
 
+    pub fn has_scene_cross_axis_fill(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Fill,
+                    ..
+                }
+            )
+        })
+    }
+
     /// Whether any stencil instance pins a specific definition revision.
     pub fn has_stencil_definition_hashes(&self) -> bool {
         self.canvas.objects.iter().any(|object| {
@@ -2521,6 +2533,10 @@ impl Workbook {
 
     pub fn has_scene_distribute_resize(&self) -> bool {
         self.sheets.iter().any(Sheet::has_scene_distribute_resize)
+    }
+
+    pub fn has_scene_cross_axis_fill(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_cross_axis_fill)
     }
 
     /// Whether any stencil instance pins a specific definition revision.

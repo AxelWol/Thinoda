@@ -4267,6 +4267,15 @@ const DE: &[(&str, &str)] = &[
     ("Vertical stack", "Vertikal stapeln"),
     ("Stack spacing", "Stapelabstand"),
     ("Stack padding", "Innenabstand"),
+    ("Cross-axis sizing", "Querachsenanpassung"),
+    (
+        "Preserve child cross-axis sizes",
+        "Querachsgrößen der Elemente beibehalten",
+    ),
+    (
+        "Fill container cross-axis",
+        "Querachse des Containers ausfüllen",
+    ),
     ("Stack resizing", "Stapelgrößen"),
     ("Preserve child sizes", "Größen der Elemente beibehalten"),
     ("Fill last child", "Letztes Element ausfüllen"),

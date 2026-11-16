@@ -8,6 +8,23 @@ This document extends the [main plan](PLAN.md) and coordinates with the
 [draw.io plan](DRAWIO.md); it does not replace either. Each phase remains gated
 by its stated persistence, interoperability and acceptance criteria.
 
+**Current high-priority execution order (user-directed):**
+
+1. Complete the immutable scene prototype's hierarchy-persistence gates across
+   native, clipboard, recovery, history, and interchange paths. Keep the
+   immutable hierarchy as the shared authority; do not expose stored semantics
+   through a path that can silently drop or ignore them.
+2. Complete shared scene authoring and the typed semantic lifecycle together:
+   commands, bindings, validation, diagnostics, undo/redo, keyboard/accessibility,
+   localization, and guarded persistence. Do not introduce a second lane tree.
+3. Complete the **typed** Software examples on top of those capabilities. The
+   current unbound structural starters remain useful prototypes, not completion
+   of this phase or evidence of semantic support.
+
+These are the next delivery priorities, not changes to the phase exit gates
+below. A failed gate keeps its phase open and blocks dependent work from being
+marked complete.
+
 **Nested-swimlane clarification:** [SCENE-CONTAINERS.md](SCENE-CONTAINERS.md)
 is the common structural solution for draw.io and this editor: one scene
 hierarchy, one layout/resize/collapse engine, one command/lifecycle contract.
@@ -92,8 +109,10 @@ is explicitly selected, implemented and verified.
 
 The current checkout is the implementation baseline. The JSON interpreter and
 a bounded, persisted object-only scene tree with collapse and partial authoring
-exist; shared header/stack layout and structural draw.io round trips remain
-open. This plan does not treat the whole draw.io roadmap as delivered.
+exist, including shared header/stack layout and a bounded nested draw.io
+import/export slice. Full SC0-SC3 acceptance, original-fixture fidelity and
+editable-export loss coverage remain open. This plan does not treat the whole
+draw.io roadmap as delivered.
 
 | Existing mechanism / evidence | Reuse | Gap |
 |---|---|---|
@@ -103,7 +122,7 @@ open. This plan does not treat the whole draw.io roadmap as delivered.
 | `thinoda-core/src/board.rs:1217-1258,1299-1345` | Endpoint identities, fixed ports, routes, waypoints, connector labels/markers | No process/message/dependency edge types; current connector model has no general dash field |
 | `thinoda-core/src/model.rs:487-510,668-714` | Zones, hidden-root sheets, canvas, optional domain data | Zones are visual frames, not process ownership or overlapping trust-domain membership |
 | `thinoda-core/src/document.rs:447,505,696-751` | Transactional sheet/workbook edits, undo and sheet lifecycle | Semantic references must participate in every mutation and lifecycle path |
-| `thinoda-io/src/board_export.rs:15-32` | Content-dependent native version selection; current maximum is 29, including scene collapse | Semantic data requires its own native and transport capability gates, not an arbitrary hardcoded next version in this plan |
+| `thinoda-io/src/board_export.rs:15-32` | Content-dependent native version selection; current maximum is 35, including scene ancestry, collapse and stack policies | Semantic data requires its own native and transport capability gates, not an arbitrary hardcoded next version in this plan |
 | `thinoda-core/src/clipboard/board.rs:39-57,137-156` | Bounded, versioned mixed-board payloads | Copy scope, semantic dependency closure and reference remapping need explicit rules |
 
 Paths in this table are relative to `crates/`. Also reuse existing canvas and

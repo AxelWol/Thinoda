@@ -187,6 +187,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "distributed stack spacing requires native format version 34".into(),
             ));
         }
+        if version < 35 && book.has_scene_cross_axis_fill() {
+            return Err(IoError::NewerVersion(
+                "cross-axis stack fill requires native format version 35".into(),
+            ));
+        }
         if version < 30 && book.has_scene_layout_policies() {
             return Err(IoError::NewerVersion(
                 "scene layout policies require native format version 30".into(),
