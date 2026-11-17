@@ -84,7 +84,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Connectors | libavoid and other routers | Approx. (elbow, warns) | D7 |
 | Connectors | 34 markers | 30 native; sysMLReqInt, sysMLProvInt and mermaid markers approximate | D7 |
 | Connectors | Line jumps | Native (arc, gap, sharp, line, size); `noJump` and `jumpLayers` warn | D7 |
-| Connectors | Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire | Approx. (line) | D7 |
+| Connectors | Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire | Native (D7) | D7 |
 | Connectors | Fixed ports, waypoints, floating ends | Native | — |
 | Connectors | Multiple labels per edge | Approx. (merged) | D7 |
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
@@ -222,7 +222,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Line jumps (arc, gap, sharp, line)
 - [x] Routes elbowEdgeStyle (horizontal and vertical), entityRelation, sideToSide, topToBottom as editable routes
 - [x] Routes segment, isometric, loop as editable routes
-- [ ] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
+- [x] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
 - [ ] Multiple connector labels
 - [ ] Object links (URL, page), tooltips, custom properties, placeholders and tags, editable in the inspector
 
@@ -275,6 +275,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D7 edge shapes | flexArrow, taperedArrow, link, pipe, filledEdge and wire bodies port mxArrowConnector and Shapes.js; canvas, export, hits, bounds and lasso share them; inspector "Line shape" with widths and fill, style copy; native v42, board clipboard v35, sheet clipboard v31, new XMind and recovery envelopes |
 | 2026-11-17 | D7 segment, isometric, loop | Segmented (every waypoint fixes the next segment) and horizontal/vertical isometric routes port draw.io's SegmentConnector and IsometricConnector; floating self-loops route like draw.io's Loop on every route; route menu shows eleven routes; native v41, board clipboard v34, sheet clipboard v30, new XMind and recovery envelopes |
 | 2026-11-17 | D7 edge routes | Horizontal and vertical elbow, side-to-side, top-to-bottom and entity-relation routes follow draw.io's routers and orthogonal rectangle perimeter; first waypoint is the routing hint; route menu and inspector show all eight routes; native v40, board clipboard v33, sheet clipboard v29, new XMind and recovery envelopes |
 | 2026-11-17 | D7 line jumps | Connectors jump earlier-painted straight and elbow connectors with draw.io's arc, gap, sharp and line geometry and size; inspector and style copy; native v39, board clipboard v32, sheet clipboard v28, new XMind and recovery envelopes |
@@ -475,6 +476,28 @@ route label is "Segmented" because "Segment" reads the same in several
 locales. A segment route offers one insert handle until it has a waypoint;
 further segments are added by dragging waypoints, not by draw.io's
 per-segment handles. New routes need native v41.
+
+**D7 edge shapes.** The body geometry lives in `scene/edge_shape.rs` and is
+derived once, so the canvas, SVG/PDF export, hit testing, bounds and the lasso
+agree. flexArrow and link port mxArrowConnector's side and arrow-head
+construction, including link's second rail running end to start; tapered
+arrows merge classic and block heads into the outline like draw.io and draw
+other markers separately. The corpus (requirements-flow, home-lab and
+sankey-diagrams) imports 18 edge shapes and round-trips them. Known
+approximations:
+
+- Markers on pipe, filledEdge and wire are stroked at the casing width, as in
+  draw.io's pipe; other line-shape marker widths were not compared.
+- Separate tapered-arrow markers use the stroke colour, and diamond and box
+  heads are not merged into the outline.
+- `rounded=1` does not round arrow-band joins, and curve routes trim markers
+  along the polyline instead of the curve.
+- Sankey connectors keep and export `shape` but paint their ribbon.
+- A dashed wire is a dashed overpaint in draw.io; Thinoda has no dashes yet
+  (D8), so the inner line is solid.
+- Line jumps draw only for wire and filledEdge, like draw.io; the inspector
+  says so instead of hiding the setting.
+- The inspector edits one connector; multi-selection uses style copy.
 
 ## 5. Rubber-duck findings
 

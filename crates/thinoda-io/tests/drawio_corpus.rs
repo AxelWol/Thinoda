@@ -949,6 +949,61 @@ fn supplied_requirements_flow_keeps_its_annotation_brackets() {
 }
 
 #[test]
+fn supplied_edge_shapes_import_and_round_trip() {
+    use thinoda_core::board::EdgeShapeKind;
+
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    for (name, kind, expected) in [
+        ("requirements-flow.drawio", EdgeShapeKind::FlexArrow, 8),
+        ("home-lab-example.drawio", EdgeShapeKind::Link, 2),
+        ("sankey-diagrams.drawio", EdgeShapeKind::FilledEdge, 8),
+    ] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let count = |book: &Workbook| {
+            book.sheets
+                .iter()
+                .flat_map(|sheet| &sheet.canvas.objects)
+                .filter(|object| {
+                    matches!(
+                        &object.kind,
+                        CanvasObjectKind::Connector(connector)
+                            if connector.edge_shape.is_some_and(|shape| shape.kind == kind)
+                    )
+                })
+                .count()
+        };
+        let bytes = std::fs::read(path).unwrap();
+        let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
+        assert_eq!(count(&report.workbook), expected, "{name}");
+        report.workbook.validate().unwrap();
+        // Pages export one at a time because isolated scene containers
+        // across pages are not exportable yet; attachment approximations
+        // unrelated to edge shapes need consent.
+        let mut round_tripped = 0;
+        for sheet in &report.workbook.sheets {
+            let mut book = report.workbook.clone();
+            book.sheets = vec![sheet.clone()];
+            let exported = thinoda_io::export_bytes_with_consent(
+                &book,
+                Format::DrawIo,
+                &ExportOptions::default(),
+                true,
+            )
+            .unwrap();
+            let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported).unwrap();
+            assert_eq!(count(&reopened.workbook), count(&book), "{name}");
+            round_tripped += count(&reopened.workbook);
+        }
+        assert_eq!(round_tripped, expected, "{name}");
+    }
+}
+
+#[test]
 fn supplied_gantt_processes_remain_editable_with_a_warning() {
     let Some(dir) = corpus_dir() else {
         return;

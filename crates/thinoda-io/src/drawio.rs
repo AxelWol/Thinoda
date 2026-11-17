@@ -29,11 +29,12 @@ use thinoda_core::{
         Band, BoardMember, CANVAS_LABEL_FONT_SIZE, CanvasConnector, CanvasGroupId, CanvasObject,
         CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
         ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE,
-        DrawioRectangleStencil, Endpoint, GridKind, InkStroke, InkTool, LineJumpStyle, LineJumps,
-        MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE,
-        MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, RectangleSides, ShapeKind, ShapeRounding,
-        ShapeRoundingMode, SheetRootMode, normalize_rotation, rotate_around, valid_board_position,
-        valid_connector_marker_size, valid_line_jump_size,
+        DrawioRectangleStencil, EdgeShape, EdgeShapeKind, Endpoint, GridKind, InkStroke, InkTool,
+        LineJumpStyle, LineJumps, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE,
+        MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle,
+        RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode, SheetRootMode,
+        normalize_rotation, rotate_around, valid_board_position, valid_connector_marker_size,
+        valid_edge_shape_width, valid_line_jump_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -130,6 +131,10 @@ const OWNED_STYLE_KEYS: &[&str] = &[
     "top",
     "whiteSpace",
 ];
+
+/// Edge-shape parameters Thinoda owns on connectors; vertices keep them as
+/// passthrough because stencils may bind them.
+const EDGE_SHAPE_STYLE_KEYS: &[&str] = &["width", "startWidth", "endWidth"];
 
 /// Passthrough keys that only mean something next to another key; dropped on
 /// export when that key is absent, so an edit cannot leave an orphan behind.
@@ -1420,6 +1425,39 @@ impl Style {
 }
 
 impl Style {
+    /// The edge `shape` with its parameters, and whether any part of it is
+    /// lost: an unknown shape, or a width Thinoda cannot represent.
+    fn edge_shape(&self) -> (Option<EdgeShape>, bool) {
+        let Some(name) = self.get("shape").filter(|name| !name.is_empty()) else {
+            return (None, false);
+        };
+        if name == "connector" {
+            return (None, false);
+        }
+        let Some(kind) = EdgeShapeKind::from_drawio(name) else {
+            return (None, true);
+        };
+        let mut loss = false;
+        let mut width = |key: &str, allowed: bool| {
+            if !allowed || self.get(key).is_none() {
+                return None;
+            }
+            let value = self.num(key).filter(|value| valid_edge_shape_width(*value));
+            loss |= value.is_none();
+            value
+        };
+        let mut shape = EdgeShape::new(kind);
+        shape.width = width("width", kind.has_width());
+        shape.start_width = width("startWidth", kind.has_end_widths());
+        shape.end_width = width("endWidth", kind.has_end_widths());
+        shape.fill = kind
+            .has_fill()
+            .then(|| self.color("fillColor", "fillOpacity"))
+            .flatten()
+            .filter(|fill| fill.a > 0);
+        (Some(shape), loss)
+    }
+
     fn line_jumps(&self) -> Option<LineJumps> {
         let style = match self.get("jumpStyle")? {
             "arc" => LineJumpStyle::Arc,
@@ -2267,6 +2305,7 @@ impl<'a> PageImport<'a> {
             .map(crate::drawio_stencil::bound_style_keys)
             .unwrap_or_default();
         let sankey = source.style.flag("thinodaSankeyEdge");
+        let edge = matches!(object.kind, CanvasObjectKind::Connector(_));
         let style = source
             .style
             .order
@@ -2276,6 +2315,7 @@ impl<'a> PageImport<'a> {
                     && !key.starts_with("thinoda")
                     && !bound.contains(key.as_str())
                     && !(sankey && key.as_str() == "dashed")
+                    && !(edge && EDGE_SHAPE_STYLE_KEYS.contains(&key.as_str()))
             })
             .filter_map(|key| {
                 let value = source.style.get(key)?;
@@ -3615,11 +3655,13 @@ impl<'a> PageImport<'a> {
                 || style
                     .get("segment")
                     .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(10.0)));
+        let (edge_shape, edge_shape_loss) = style.edge_shape();
         if style.formatting_loss(true, false)
             || routed_hints
             || approximated_router
             || custom_segment
             || custom_loop
+            || edge_shape_loss
         {
             self.warn(ImportWarning::Formatting);
         }
@@ -3665,6 +3707,7 @@ impl<'a> PageImport<'a> {
         connector.start_marker_unfilled = style.marker_unfilled("startArrow", "startFill");
         connector.end_marker_unfilled = style.marker_unfilled("endArrow", "endFill");
         connector.line_jumps = style.line_jumps();
+        connector.edge_shape = edge_shape;
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
@@ -5463,6 +5506,23 @@ impl<'a> PageWriter<'a> {
                 }
                 if connector.end_marker_unfilled {
                     style.push_str("endFill=0;");
+                }
+                if let Some(shape) = connector.edge_shape {
+                    style.push_str("shape=");
+                    style.push_str(shape.kind.drawio_name());
+                    style.push(';');
+                    for (key, value) in [
+                        ("width", shape.width),
+                        ("startWidth", shape.start_width),
+                        ("endWidth", shape.end_width),
+                    ] {
+                        if let Some(value) = value {
+                            style.push_str(&format!("{key}={};", num(value)));
+                        }
+                    }
+                    if shape.fill.is_some() {
+                        color_keys(&mut style, "fillColor", "fillOpacity", shape.fill);
+                    }
                 }
                 if let Some(jumps) = connector.line_jumps {
                     style.push_str("jumpStyle=");

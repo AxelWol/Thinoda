@@ -2292,6 +2292,7 @@ fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
             label_bounds: None,
             color: None,
             jumps: None,
+            body: None,
         }
     );
 
@@ -3004,4 +3005,205 @@ fn self_loops_route_like_drawio_loop() {
     let (path, _) = looped(ConnectorRoute::Curve, &[]);
     assert!(path.len() > 4);
     assert!(path.iter().all(|p| p.x >= 99.0));
+}
+
+fn edge_shape_scene(
+    kind: crate::board::EdgeShapeKind,
+    configure: impl FnOnce(&mut CanvasConnector),
+) -> (Scene, CanvasObjectId) {
+    let mut sheet = Sheet::new("Edge shapes", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(20.0, 80.0)),
+        Endpoint::Point(Vec2::new(220.0, 80.0)),
+    );
+    connector.width = 1.0;
+    connector.edge_shape = Some(crate::board::EdgeShape::new(kind));
+    configure(&mut connector);
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    (scene(&sheet).1, id)
+}
+
+fn edge_body_of(scene: &Scene, id: CanvasObjectId) -> Option<EdgeBody> {
+    let SceneGeometry::Polyline { body, .. } = &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        panic!("expected connector");
+    };
+    body.as_deref().cloned()
+}
+
+fn assert_points(actual: &[Vec2], expected: &[(f32, f32)]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?}");
+    for (point, (x, y)) in actual.iter().zip(expected) {
+        assert!(
+            (point.x - x).abs() < 0.01 && (point.y - y).abs() < 0.01,
+            "{actual:?} != {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn flex_arrow_and_link_bodies_match_published_drawio() {
+    use crate::board::EdgeShapeKind;
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::FlexArrow, |c| c.arrow_end = true);
+    let Some(EdgeBody::Band { outline, fill }) = edge_body_of(&scene, id) else {
+        panic!("expected band");
+    };
+    assert_eq!(fill, None);
+    assert_points(
+        &outline,
+        &[
+            (20.5, 75.0),
+            (200.5, 75.0),
+            (200.5, 64.5),
+            (219.5, 80.0),
+            (200.5, 95.5),
+            (200.5, 85.0),
+            (20.5, 85.0),
+        ],
+    );
+    let item = scene.item(SceneId::Object(id)).unwrap();
+    assert!(item.bounds.contains(Vec2::new(205.0, 65.0)));
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(100.0, 83.0), 0.0),
+        Some(SceneHit::Object(id))
+    );
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::Link, |c| c.arrow_end = true);
+    let Some(EdgeBody::Rails(rails)) = edge_body_of(&scene, id) else {
+        panic!("expected rails");
+    };
+    assert_points(&rails[0], &[(20.0, 78.0), (220.0, 78.0)]);
+    assert_points(&rails[1], &[(220.0, 82.0), (20.0, 82.0)]);
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(100.0, 80.0), 0.0), None);
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(100.0, 82.0), 0.0),
+        Some(SceneHit::Object(id))
+    );
+}
+
+#[test]
+fn tapered_arrow_merges_classic_heads_like_drawio() {
+    use crate::board::{ConnectorMarker, ConnectorMarkerKind, EdgeShapeKind};
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::TaperedArrow, |c| {
+        c.arrow_end = true;
+        c.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+    });
+    let Some(EdgeBody::Band { outline, .. }) = edge_body_of(&scene, id) else {
+        panic!("expected band");
+    };
+    assert_points(
+        &outline,
+        &[
+            (20.0, 86.0),
+            (212.13, 81.0),
+            (209.88, 84.5),
+            (218.88, 80.0),
+            (209.88, 75.5),
+            (212.13, 79.0),
+            (20.0, 74.0),
+        ],
+    );
+    let SceneGeometry::Polyline { markers, .. } =
+        &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        unreachable!();
+    };
+    assert_eq!(**markers, [None, None]);
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::TaperedArrow, |c| {
+        c.arrow_end = true;
+        c.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Oval,
+        });
+    });
+    let SceneGeometry::Polyline { markers, .. } =
+        &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        unreachable!();
+    };
+    assert!(markers[1].is_some());
+    assert!(matches!(
+        edge_body_of(&scene, id),
+        Some(EdgeBody::Band { .. })
+    ));
+}
+
+#[test]
+fn line_edge_shapes_paint_casings_and_fills() {
+    use crate::board::EdgeShapeKind;
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::Pipe, |_| {});
+    assert_eq!(
+        edge_body_of(&scene, id),
+        Some(EdgeBody::Lines {
+            casing: 6.0,
+            inner: None
+        })
+    );
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(100.0, 82.5), 0.0),
+        Some(SceneHit::Object(id))
+    );
+
+    let (scene, id) = edge_shape_scene(EdgeShapeKind::FilledEdge, |c| {
+        c.width = 6.0;
+        c.edge_shape.as_mut().unwrap().fill = Some(Color::WHITE);
+    });
+    assert_eq!(
+        edge_body_of(&scene, id),
+        Some(EdgeBody::Lines {
+            casing: 6.0,
+            inner: Some((4.0, Color::WHITE))
+        })
+    );
+
+    for kind in [EdgeShapeKind::FilledEdge, EdgeShapeKind::Wire] {
+        let (scene, id) = edge_shape_scene(kind, |c| c.width = 6.0);
+        assert_eq!(edge_body_of(&scene, id), None, "{kind:?}");
+    }
+}
+
+#[test]
+fn only_wire_and_filled_edges_draw_line_jumps() {
+    use crate::board::{EdgeShape, EdgeShapeKind, LineJumpStyle, LineJumps};
+
+    for (kind, jumps) in [
+        (None, true),
+        (Some(EdgeShapeKind::Wire), true),
+        (Some(EdgeShapeKind::FilledEdge), true),
+        (Some(EdgeShapeKind::Pipe), false),
+        (Some(EdgeShapeKind::FlexArrow), false),
+    ] {
+        let mut sheet = Sheet::new("Jumps", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+                Endpoint::Point(Vec2::new(100.0, 200.0)),
+            )))
+            .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(0.0, 100.0)),
+            Endpoint::Point(Vec2::new(200.0, 100.0)),
+        );
+        connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Arc));
+        connector.edge_shape = kind.map(EdgeShape::new);
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let (_, scene) = scene(&sheet);
+        let SceneGeometry::Polyline { jumps: found, .. } =
+            &scene.item(SceneId::Object(id)).unwrap().geometry
+        else {
+            unreachable!();
+        };
+        assert_eq!(found.is_some(), jumps, "{kind:?}");
+    }
 }

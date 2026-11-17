@@ -9,7 +9,9 @@ use thinoda_core::{
         CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath, ShapeKind,
         rectangle_side_paths, rotate_around,
     },
-    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_paths},
+    scene::{
+        EdgeBody, Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_paths,
+    },
 };
 
 use crate::VisualExportContext;
@@ -424,6 +426,7 @@ pub(crate) fn object_prims(
                 markers,
                 color,
                 jumps,
+                body,
                 ..
             },
         ) => {
@@ -434,21 +437,62 @@ pub(crate) fn object_prims(
                     .unwrap_or(automatic_stroke),
                 opacity,
             );
-            let width = width.max(0.1);
+            let body = body.as_deref();
+            let width = body
+                .map_or(*width, |body| body.stroke_width(*width))
+                .max(0.1);
+            let replaced = body.is_some_and(EdgeBody::replaces_stroke);
             let unset = connector.sankey.is_some_and(|f| f.weight.is_none());
             let paths = if unset {
                 thinoda_core::sankey::dash_segments(points)
             } else {
-                connector_stroke_paths(points, markers, jumps.as_deref())
+                match body {
+                    Some(EdgeBody::Rails(rails)) => rails.clone(),
+                    Some(EdgeBody::Band { .. }) => Vec::new(),
+                    _ => connector_stroke_paths(points, markers, jumps.as_deref()),
+                }
+            };
+            if let Some(EdgeBody::Band { outline, fill }) = body {
+                out.push(Prim::Path {
+                    points: outline.clone(),
+                    closed: true,
+                    fill: fill.map(|fill| faded(fill, opacity)),
+                    stroke: Some((color, width)),
+                    round: false,
+                });
+            }
+            let inner = match body {
+                Some(EdgeBody::Lines {
+                    inner: Some((inner, fill)),
+                    ..
+                }) => Some((faded(*fill, opacity), inner.max(0.1))),
+                _ => None,
             };
             for path in paths {
-                out.push(Prim::Path {
-                    points: path,
-                    closed: false,
-                    fill: None,
-                    stroke: Some((color, width)),
-                    round: true,
-                });
+                if let Some(inner) = inner {
+                    out.push(Prim::Path {
+                        points: path.clone(),
+                        closed: false,
+                        fill: None,
+                        stroke: Some((color, width)),
+                        round: true,
+                    });
+                    out.push(Prim::Path {
+                        points: path,
+                        closed: false,
+                        fill: None,
+                        stroke: Some(inner),
+                        round: true,
+                    });
+                } else {
+                    out.push(Prim::Path {
+                        points: path,
+                        closed: false,
+                        fill: None,
+                        stroke: Some((color, width)),
+                        round: true,
+                    });
+                }
             }
             let n = points.len();
             if connector.arrow_end && n >= 2 {
@@ -458,7 +502,7 @@ pub(crate) fn object_prims(
                             .parts()
                             .map(|part| marker_primitive(part, width, color)),
                     );
-                } else if connector.end_marker.is_none() {
+                } else if connector.end_marker.is_none() && !replaced {
                     out.push(arrowhead(points[n - 2], points[n - 1], width, color));
                 }
             }
@@ -469,7 +513,7 @@ pub(crate) fn object_prims(
                             .parts()
                             .map(|part| marker_primitive(part, width, color)),
                     );
-                } else if connector.start_marker.is_none() {
+                } else if connector.start_marker.is_none() && !replaced {
                     out.push(arrowhead(points[1], points[0], width, color));
                 }
             }

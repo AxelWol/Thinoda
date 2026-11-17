@@ -49,9 +49,9 @@ pub mod todo;
 pub use board::{
     Band, BoardSettings, CanvasConnector, CanvasGroup, CanvasGroupId, CanvasLayer, CanvasObject,
     CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
-    ConnectorPort, ConnectorRoute, DrawioRectangleStencil, Endpoint, GridKind, InkStroke, InkTool,
-    LineJumpStyle, LineJumps, ObjectStyle, RectangleSides, RootProjection, ShapeKind,
-    ShapeRounding, ShapeRoundingMode, SheetRootMode, ZOrder,
+    ConnectorPort, ConnectorRoute, DrawioRectangleStencil, EdgeShape, EdgeShapeKind, Endpoint,
+    GridKind, InkStroke, InkTool, LineJumpStyle, LineJumps, ObjectStyle, RectangleSides,
+    RootProjection, ShapeKind, ShapeRounding, ShapeRoundingMode, SheetRootMode, ZOrder,
 };
 pub use document::Document;
 pub use edit::{EditError, EditResult};

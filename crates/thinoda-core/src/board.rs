@@ -337,6 +337,13 @@ impl CanvasLayer {
         })
     }
 
+    /// Whether this layer needs connector edge-shape-aware persistence.
+    pub fn has_connector_edge_shapes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.edge_shape.is_some())
+        })
+    }
+
     /// Whether this layer needs draw.io segment-route-aware persistence.
     pub fn has_drawio_segment_routes(&self) -> bool {
         self.objects.iter().any(|object| {
@@ -1552,6 +1559,163 @@ pub fn valid_line_jump_size(size: f32) -> bool {
     size.is_finite() && (0.0..=MAX_LINE_JUMP_SIZE).contains(&size)
 }
 
+/// draw.io connector body shapes (`shape=` on an edge).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EdgeShapeKind {
+    /// Line painted again in the fill colour.
+    Wire,
+    /// Casing line around an inner line in the fill colour.
+    Pipe,
+    /// Line painted again 2 units thinner in the fill colour.
+    FilledEdge,
+    /// Two parallel open rails without markers.
+    Link,
+    /// Closed band with arrow heads, filled and outlined.
+    FlexArrow,
+    /// Band tapering from its start to its end width.
+    TaperedArrow,
+}
+
+impl EdgeShapeKind {
+    pub const ALL: [Self; 6] = [
+        Self::FlexArrow,
+        Self::TaperedArrow,
+        Self::Link,
+        Self::Pipe,
+        Self::FilledEdge,
+        Self::Wire,
+    ];
+
+    /// draw.io's `shape` style value.
+    pub fn drawio_name(self) -> &'static str {
+        match self {
+            Self::Wire => "wire",
+            Self::Pipe => "pipe",
+            Self::FilledEdge => "filledEdge",
+            Self::Link => "link",
+            Self::FlexArrow => "flexArrow",
+            Self::TaperedArrow => "taperedArrow",
+        }
+    }
+
+    pub fn from_drawio(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.drawio_name() == name)
+    }
+
+    /// Whether the shape has a body `width`.
+    pub fn has_width(self) -> bool {
+        matches!(self, Self::Pipe | Self::Link | Self::FlexArrow)
+    }
+
+    /// Whether the shape has `startWidth` and `endWidth`.
+    pub fn has_end_widths(self) -> bool {
+        matches!(self, Self::FlexArrow | Self::TaperedArrow)
+    }
+
+    /// Whether the shape paints a fill colour; link only strokes.
+    pub fn has_fill(self) -> bool {
+        self != Self::Link
+    }
+
+    /// Whether draw.io draws line jumps for this shape.
+    pub fn supports_line_jumps(self) -> bool {
+        matches!(self, Self::Wire | Self::FilledEdge)
+    }
+
+    /// draw.io's default `width`.
+    pub fn default_width(self) -> f32 {
+        match self {
+            Self::FlexArrow => 10.0,
+            Self::Pipe | Self::Link => 4.0,
+            _ => 0.0,
+        }
+    }
+
+    /// draw.io's default `startWidth` or `endWidth`.
+    pub fn default_end_width(self, start: bool) -> f32 {
+        match (self, start) {
+            (Self::FlexArrow, _) => 20.0,
+            (Self::TaperedArrow, true) => 12.0,
+            (Self::TaperedArrow, false) => 2.0,
+            _ => 0.0,
+        }
+    }
+}
+
+pub const MAX_EDGE_SHAPE_WIDTH: f32 = 999.0;
+
+/// A draw.io connector body shape with its optional parameters; `None`
+/// parameters use draw.io's defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeShape {
+    pub kind: EdgeShapeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_width: Option<f32>,
+    /// draw.io `fillColor`; unset paints no fill, like draw.io.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Color>,
+}
+
+impl EdgeShape {
+    pub fn new(kind: EdgeShapeKind) -> Self {
+        Self {
+            kind,
+            width: None,
+            start_width: None,
+            end_width: None,
+            fill: None,
+        }
+    }
+
+    /// Whether every parameter applies to the kind and is in range.
+    pub fn is_valid(self) -> bool {
+        let valid = |value: Option<f32>, allowed: bool| {
+            value.is_none_or(|value| allowed && valid_edge_shape_width(value))
+        };
+        valid(self.width, self.kind.has_width())
+            && valid(self.start_width, self.kind.has_end_widths())
+            && valid(self.end_width, self.kind.has_end_widths())
+            && (self.fill.is_none() || self.kind.has_fill())
+    }
+
+    pub fn resolved_width(self) -> f32 {
+        self.width.unwrap_or(self.kind.default_width())
+    }
+
+    pub fn resolved_end_width(self, start: bool) -> f32 {
+        if start {
+            self.start_width
+        } else {
+            self.end_width
+        }
+        .unwrap_or(self.kind.default_end_width(start))
+    }
+
+    /// The same shape keeping only the parameters `kind` accepts.
+    pub fn with_kind(self, kind: EdgeShapeKind) -> Self {
+        Self {
+            kind,
+            width: self.width.filter(|_| kind.has_width()),
+            start_width: self.start_width.filter(|_| kind.has_end_widths()),
+            end_width: self.end_width.filter(|_| kind.has_end_widths()),
+            fill: self.fill.filter(|_| kind.has_fill()),
+        }
+    }
+}
+
+/// Whether a draw.io edge-shape width can be represented safely.
+pub fn valid_edge_shape_width(width: f32) -> bool {
+    width.is_finite() && (0.0..=MAX_EDGE_SHAPE_WIDTH).contains(&width)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanvasConnector {
     /// Explicit semantic flow; ordinary stroke widths never imply a weight.
@@ -1589,6 +1753,9 @@ pub struct CanvasConnector {
     /// Curved routes never jump, matching draw.io.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_jumps: Option<LineJumps>,
+    /// draw.io body shape; Sankey flows ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_shape: Option<EdgeShape>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1630,6 +1797,8 @@ struct StoredCanvasConnector {
     #[serde(default)]
     line_jumps: Option<LineJumps>,
     #[serde(default)]
+    edge_shape: Option<EdgeShape>,
+    #[serde(default)]
     label: String,
     #[serde(default)]
     color: Option<Color>,
@@ -1663,6 +1832,9 @@ impl<'de> Deserialize<'de> for CanvasConnector {
         if stored.line_jumps.is_some_and(|jumps| !jumps.is_valid()) {
             return Err(serde::de::Error::custom("invalid connector line jump size"));
         }
+        if stored.edge_shape.is_some_and(|shape| !shape.is_valid()) {
+            return Err(serde::de::Error::custom("invalid connector edge shape"));
+        }
         if !valid_connector_port(stored.from, stored.from_port)
             || !valid_connector_port(stored.to, stored.to_port)
         {
@@ -1685,6 +1857,7 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             start_marker_unfilled: stored.start_marker_unfilled,
             end_marker_unfilled: stored.end_marker_unfilled,
             line_jumps: stored.line_jumps,
+            edge_shape: stored.edge_shape,
             label: stored.label,
             color: stored.color,
             width: stored.width,
@@ -1723,6 +1896,7 @@ impl CanvasConnector {
             start_marker_unfilled: false,
             end_marker_unfilled: false,
             line_jumps: None,
+            edge_shape: None,
             label: String::new(),
             color: None,
             width: default_connector_width(),
@@ -2108,6 +2282,9 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             }
             if c.line_jumps.is_some_and(|jumps| !jumps.is_valid()) {
                 return Err(format!("connector {id} has an invalid line jump size"));
+            }
+            if c.edge_shape.is_some_and(|shape| !shape.is_valid()) {
+                return Err(format!("connector {id} has an invalid edge shape"));
             }
             if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
                 return Err(format!(

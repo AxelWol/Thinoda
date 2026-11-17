@@ -14,7 +14,9 @@ use thinoda_core::board::{
     MAX_TOTAL_INK_POINTS, MIN_STROKE_WIDTH, distance_to_segment, point_in_polygon, rotate_around,
     rotated_corners, validate_object,
 };
-use thinoda_core::scene::{ConnectorMarkerGeometry, SceneGeometry, connector_stroke_path};
+use thinoda_core::scene::{
+    ConnectorMarkerGeometry, EdgeBody, SceneGeometry, connector_stroke_path,
+};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, InkStroke, InkTool, Rect, Scene,
     SceneHit, SceneId, SceneItem, Vec2,
@@ -862,23 +864,61 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                 width,
                 markers,
                 label_bounds,
+                body,
                 ..
             } => {
-                let trimmed;
-                let stroke = if markers.iter().any(Option::is_some) {
-                    trimmed = connector_stroke_path(points, markers);
-                    trimmed.as_slice()
-                } else {
-                    points.as_slice()
+                let width = &body
+                    .as_ref()
+                    .map_or(*width, |body| body.stroke_width(*width));
+                let radius = f64::from(*width) / 2.0;
+                let mut intersects = match body.as_deref() {
+                    Some(EdgeBody::Rails(rails)) => {
+                        let mut touches = false;
+                        for rail in rails {
+                            if touches {
+                                break;
+                            }
+                            touches = path_touches_lasso(
+                                rail,
+                                false,
+                                |point| point,
+                                radius,
+                                polygon,
+                                &mut budget,
+                            )?;
+                        }
+                        touches
+                    }
+                    Some(EdgeBody::Band { outline, .. }) => {
+                        budget.charge(outline.len())?;
+                        (!outline.is_empty() && point_in_polygon(polygon[0], outline))
+                            || path_touches_lasso(
+                                outline,
+                                true,
+                                |point| point,
+                                radius,
+                                polygon,
+                                &mut budget,
+                            )?
+                    }
+                    _ => {
+                        let trimmed;
+                        let stroke = if markers.iter().any(Option::is_some) {
+                            trimmed = connector_stroke_path(points, markers);
+                            trimmed.as_slice()
+                        } else {
+                            points.as_slice()
+                        };
+                        path_touches_lasso(
+                            stroke,
+                            false,
+                            |point| point,
+                            radius,
+                            polygon,
+                            &mut budget,
+                        )?
+                    }
                 };
-                let mut intersects = path_touches_lasso(
-                    stroke,
-                    false,
-                    |point| point,
-                    f64::from(*width) / 2.0,
-                    polygon,
-                    &mut budget,
-                )?;
                 if let Some(rect) = label_bounds {
                     intersects |=
                         polygon_touches_lasso(&rotated_corners(*rect, 0.0), polygon, &mut budget)?;
@@ -1060,6 +1100,7 @@ fn validate_scene_geometry(
             points,
             width,
             markers,
+            body,
             ..
         } => {
             if points.is_empty() || points.len() > MAX_INPUT_SAMPLES || !valid_width(*width) {
@@ -1068,6 +1109,35 @@ fn validate_scene_geometry(
             budget.charge(points.len())?;
             if points.iter().any(|&point| !finite_point(point)) {
                 return Err(invalid());
+            }
+            match body.as_deref() {
+                Some(EdgeBody::Lines { casing, inner }) => {
+                    if !casing.is_finite()
+                        || *casing < 0.0
+                        || inner.is_some_and(|(inner, _)| !inner.is_finite() || inner < 0.0)
+                    {
+                        return Err(invalid());
+                    }
+                }
+                Some(EdgeBody::Rails(rails)) => {
+                    for rail in rails {
+                        budget.charge(rail.len())?;
+                        if rail.len() > MAX_INPUT_SAMPLES
+                            || rail.iter().any(|&point| !finite_point(point))
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                }
+                Some(EdgeBody::Band { outline, .. }) => {
+                    budget.charge(outline.len())?;
+                    if outline.len() > MAX_INPUT_SAMPLES
+                        || outline.iter().any(|&point| !finite_point(point))
+                    {
+                        return Err(invalid());
+                    }
+                }
+                None => {}
             }
             for geometry in markers.iter().flatten() {
                 if !geometry.line_inset.is_finite() || geometry.line_inset < 0.0 {
@@ -2659,6 +2729,42 @@ mod tests {
             lasso_hits(&scene, &rectangle(89.0, 3.5, 1.5, 1.5)).unwrap(),
             vec![SceneHit::Object(id)]
         );
+    }
+
+    #[test]
+    fn lasso_selects_edge_shape_bodies_away_from_the_centre_line() {
+        use thinoda_core::{EdgeShape, EdgeShapeKind, SheetRootMode};
+
+        for (kind, lasso) in [
+            (EdgeShapeKind::FlexArrow, rectangle(50.0, 5.5, 0.5, 0.5)),
+            (EdgeShapeKind::FlexArrow, rectangle(50.0, 3.5, 0.5, 0.5)),
+            (EdgeShapeKind::Link, rectangle(50.0, 2.5, 0.5, 0.5)),
+            (EdgeShapeKind::Pipe, rectangle(50.0, 2.5, 0.5, 0.5)),
+        ] {
+            let mut sheet = Sheet::new("Edge shapes", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            let plain = scene(&{
+                let mut sheet = sheet.clone();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(connector.clone()))
+                    .unwrap();
+                sheet
+            });
+            assert!(lasso_hits(&plain, &lasso).unwrap().is_empty(), "{kind:?}");
+            connector.edge_shape = Some(EdgeShape::new(kind));
+            let id = sheet
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            assert_eq!(
+                lasso_hits(&scene(&sheet), &lasso).unwrap(),
+                vec![SceneHit::Object(id)],
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]

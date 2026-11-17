@@ -10095,3 +10095,89 @@ fn line_jumps_round_trip_and_warn_for_unmodelled_jump_options() {
         );
     }
 }
+
+#[test]
+fn edge_shapes_round_trip_and_warn_for_unrepresentable_parameters() {
+    use thinoda_core::board::{EdgeShape, EdgeShapeKind};
+
+    let edge = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="endArrow=classic;{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    let shape = |kind| Some(EdgeShape::new(kind));
+    for (style, expected) in [
+        ("shape=flexArrow;", shape(EdgeShapeKind::FlexArrow)),
+        (
+            "shape=flexArrow;width=14;endWidth=8.5;fillColor=#00994D;",
+            Some(EdgeShape {
+                width: Some(14.0),
+                end_width: Some(8.5),
+                fill: Some(Color::rgb(0x00, 0x99, 0x4d)),
+                ..EdgeShape::new(EdgeShapeKind::FlexArrow)
+            }),
+        ),
+        (
+            "shape=taperedArrow;startWidth=20;endWidth=0;",
+            Some(EdgeShape {
+                start_width: Some(20.0),
+                end_width: Some(0.0),
+                ..EdgeShape::new(EdgeShapeKind::TaperedArrow)
+            }),
+        ),
+        (
+            "shape=link;width=6;fillColor=#FF0000;",
+            Some(EdgeShape {
+                width: Some(6.0),
+                ..EdgeShape::new(EdgeShapeKind::Link)
+            }),
+        ),
+        (
+            "shape=pipe;fillColor=#FFFFFF;",
+            Some(EdgeShape {
+                fill: Some(Color::WHITE),
+                ..EdgeShape::new(EdgeShapeKind::Pipe)
+            }),
+        ),
+        (
+            "shape=filledEdge;fillColor=none;",
+            shape(EdgeShapeKind::FilledEdge),
+        ),
+        ("shape=wire;width=9;", shape(EdgeShapeKind::Wire)),
+        ("shape=connector;", None),
+    ] {
+        let report = load(&edge(style));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.edge_shape, expected, "{style}");
+        if expected.is_some() {
+            assert_eq!(feature_version(&report.workbook), 42, "{style}");
+        }
+        let exported = export(&report.workbook).unwrap();
+        let xml = String::from_utf8(exported.clone()).unwrap();
+        assert!(!xml.contains("width=9"), "{style}: {xml}");
+        let restored = import(&exported).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+        assert_eq!(
+            connectors(&restored.workbook.sheets[0])[0].edge_shape,
+            expected,
+            "{style}"
+        );
+    }
+    for style in [
+        "shape=arrow;",
+        "shape=flexArrow;width=1000;",
+        "shape=taperedArrow;endWidth=wide;",
+    ] {
+        let report = load(&edge(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+}

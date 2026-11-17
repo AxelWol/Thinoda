@@ -45,6 +45,7 @@ const MARKER_LIBRARY_SNAPSHOT_VERSION: &str = "THINODA-XMIND-MARKER-LIBRARY-1";
 const LINE_JUMPS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LINE-JUMPS-1";
 const EDGE_ROUTES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-EDGE-ROUTES-1";
 const SEGMENT_ROUTES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SEGMENT-ROUTES-1";
+const EDGE_SHAPES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-EDGE-SHAPES-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -734,7 +735,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_drawio_segment_routes() {
+    if book.has_connector_edge_shapes() {
+        Ok(serde_json::to_string(&(
+            EDGE_SHAPES_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_drawio_segment_routes() {
         Ok(serde_json::to_string(&(
             SEGMENT_ROUTES_SNAPSHOT_VERSION,
             book,
@@ -898,6 +904,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == LINE_JUMPS_SNAPSHOT_VERSION
                 || version == EDGE_ROUTES_SNAPSHOT_VERSION
                 || version == SEGMENT_ROUTES_SNAPSHOT_VERSION
+                || version == EDGE_SHAPES_SNAPSHOT_VERSION
         })
 }
 
@@ -959,6 +966,7 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                             || connector.contains_key("from_port")
                             || connector.contains_key("to_port")
                             || connector.contains_key("line_jumps")
+                            || connector.contains_key("edge_shape")
                             || matches!(
                                 connector.get("route").and_then(Value::as_str),
                                 Some(
@@ -1009,10 +1017,32 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != LINE_JUMPS_SNAPSHOT_VERSION
             && version != EDGE_ROUTES_SNAPSHOT_VERSION
             && version != SEGMENT_ROUTES_SNAPSHOT_VERSION
+            && version != EDGE_SHAPES_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        let edge_shapes_envelope = version == EDGE_SHAPES_SNAPSHOT_VERSION;
+        if workbook.has_connector_edge_shapes() != edge_shapes_envelope {
+            return Err(IoError::NewerVersion(
+                "connector edge shapes require an edge-shape-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !edge_shapes_envelope {
+            version
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
         let segment_routes_envelope = version == SEGMENT_ROUTES_SNAPSHOT_VERSION;
         if workbook.has_drawio_segment_routes() != segment_routes_envelope {
             return Err(IoError::NewerVersion(
@@ -1331,6 +1361,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_connector_edge_shapes() {
+            return Err(IoError::NewerVersion(
+                "connector edge shapes require an edge-shape-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_drawio_segment_routes() {
             return Err(IoError::NewerVersion(
                 "draw.io segment routes require a segment-route-aware private XMind snapshot"
@@ -2789,6 +2824,53 @@ mod tests {
                     import(&make_archive(&entries)),
                     Err(IoError::NewerVersion(_))
                 ));
+            }
+        }
+    }
+
+    #[test]
+    fn edge_shapes_require_matching_private_snapshot_envelope() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorRoute, EdgeShape, EdgeShapeKind, Endpoint, Vec2,
+        };
+
+        for segment_route in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::Link));
+            if segment_route {
+                connector.route = ConnectorRoute::Segment;
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(SEGMENT_ROUTES_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(EDGE_SHAPES_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
             }
         }
     }

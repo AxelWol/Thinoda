@@ -830,6 +830,11 @@ impl Sheet {
         self.canvas.has_drawio_edge_routes()
     }
 
+    /// Whether the sheet needs connector edge-shape-aware persistence.
+    pub fn has_connector_edge_shapes(&self) -> bool {
+        self.canvas.has_connector_edge_shapes()
+    }
+
     /// Whether the sheet needs draw.io segment-route-aware persistence.
     pub fn has_drawio_segment_routes(&self) -> bool {
         self.canvas.has_drawio_segment_routes()
@@ -2632,6 +2637,11 @@ impl Workbook {
     /// Whether any sheet needs draw.io edge-route-aware persistence.
     pub fn has_drawio_edge_routes(&self) -> bool {
         self.sheets.iter().any(Sheet::has_drawio_edge_routes)
+    }
+
+    /// Whether any sheet needs connector edge-shape-aware persistence.
+    pub fn has_connector_edge_shapes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_edge_shapes)
     }
 
     /// Whether any sheet needs draw.io segment-route-aware persistence.

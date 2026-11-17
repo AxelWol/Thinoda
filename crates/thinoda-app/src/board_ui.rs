@@ -6,9 +6,9 @@ use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
     ConnectorRoute, InkTool, ObjectStyle, ShapeKind, ShapeRoundingMode, TopicId,
     board::{
-        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, LineJumpStyle,
-        LineJumps, MAX_BOARD_COORDINATE, MAX_CONNECTOR_MARKER_SIZE, MAX_LINE_JUMP_SIZE,
-        MIN_CARD_SIZE,
+        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, EdgeShape,
+        EdgeShapeKind, LineJumpStyle, LineJumps, MAX_BOARD_COORDINATE, MAX_CONNECTOR_MARKER_SIZE,
+        MAX_EDGE_SHAPE_WIDTH, MAX_LINE_JUMP_SIZE, MIN_CARD_SIZE,
     },
     scene_layout::{
         ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
@@ -705,6 +705,7 @@ pub(crate) enum BoardStyleClipboard {
         start_marker_unfilled: bool,
         end_marker_unfilled: bool,
         line_jumps: Option<LineJumps>,
+        edge_shape: Option<EdgeShape>,
     },
     Ink {
         style: ObjectStyle,
@@ -732,6 +733,7 @@ impl BoardStyleClipboard {
                 start_marker_unfilled: connector.start_marker_unfilled,
                 end_marker_unfilled: connector.end_marker_unfilled,
                 line_jumps: connector.line_jumps,
+                edge_shape: connector.edge_shape,
             },
             CanvasObjectKind::Ink(ink) => Self::Ink {
                 style: object.style,
@@ -769,6 +771,7 @@ impl BoardStyleClipboard {
                     start_marker_unfilled,
                     end_marker_unfilled,
                     line_jumps,
+                    edge_shape,
                 },
                 CanvasObjectKind::Connector(connector),
             ) => {
@@ -785,6 +788,7 @@ impl BoardStyleClipboard {
                 connector.start_marker_unfilled = start_marker_unfilled;
                 connector.end_marker_unfilled = end_marker_unfilled;
                 connector.line_jumps = line_jumps;
+                connector.edge_shape = edge_shape;
             }
             (
                 Self::Ink {
@@ -3702,6 +3706,7 @@ impl ThinodaApp {
                         widgets::caption(ui, t("This route uses only the first waypoint as its routing hint; later waypoints are kept but ignored."));
                     }
                     line_jump_fields(ui, id, connector.route, &mut connector.line_jumps);
+                    edge_shape_fields(ui, id, connector.line_jumps.is_some(), &mut connector.edge_shape);
                     clear_waypoints = ui
                         .push_id(("clear-connector-waypoints", inspector_owner), |ui| {
                             ui.add_enabled(
@@ -3893,6 +3898,7 @@ impl ThinodaApp {
                                 current.start_marker_unfilled = value.start_marker_unfilled;
                                 current.end_marker_unfilled = value.end_marker_unfilled;
                                 current.line_jumps = value.line_jumps;
+                                current.edge_shape = value.edge_shape;
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -5142,6 +5148,85 @@ fn marker_field(
     if marker.is_none() {
         *size = None;
         *unfilled = false;
+    }
+}
+
+fn edge_shape_name(kind: Option<EdgeShapeKind>) -> &'static str {
+    match kind {
+        None => "Plain line",
+        Some(EdgeShapeKind::FlexArrow) => "Flexible arrow",
+        Some(EdgeShapeKind::TaperedArrow) => "Tapered arrow",
+        Some(EdgeShapeKind::Link) => "Double line",
+        Some(EdgeShapeKind::Pipe) => "Pipe",
+        Some(EdgeShapeKind::FilledEdge) => "Filled line",
+        Some(EdgeShapeKind::Wire) => "Wire",
+    }
+}
+
+fn edge_shape_width_field(ui: &mut Ui, label: &'static str, value: &mut Option<f32>, default: f32) {
+    let mut width = value.unwrap_or(default);
+    let changed = widgets::property_field(ui, t(label), |ui| {
+        ui.add(
+            egui::DragValue::new(&mut width)
+                .range(0.0..=MAX_EDGE_SHAPE_WIDTH)
+                .speed(0.5),
+        )
+    })
+    .changed();
+    if changed {
+        *value = (width != default).then_some(width);
+    }
+}
+
+fn edge_shape_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    line_jumps: bool,
+    shape: &mut Option<EdgeShape>,
+) {
+    let mut kind = shape.map(|shape| shape.kind);
+    widgets::property_field(ui, t("Line shape"), |ui| {
+        egui::ComboBox::from_id_salt(("board_connector_edge_shape", id))
+            .selected_text(t(edge_shape_name(kind)))
+            .show_ui(ui, |ui| {
+                for option in std::iter::once(None).chain(EdgeShapeKind::ALL.map(Some)) {
+                    ui.selectable_value(&mut kind, option, t(edge_shape_name(option)));
+                }
+            })
+            .response
+    });
+    *shape = kind.map(|kind| shape.map_or(EdgeShape::new(kind), |shape| shape.with_kind(kind)));
+    let Some(shape) = shape else { return };
+    if shape.kind.has_width() {
+        edge_shape_width_field(
+            ui,
+            "Line shape width",
+            &mut shape.width,
+            shape.kind.default_width(),
+        );
+    }
+    if shape.kind.has_end_widths() {
+        edge_shape_width_field(
+            ui,
+            "Start width",
+            &mut shape.start_width,
+            shape.kind.default_end_width(true),
+        );
+        edge_shape_width_field(
+            ui,
+            "End width",
+            &mut shape.end_width,
+            shape.kind.default_end_width(false),
+        );
+    }
+    if shape.kind.has_fill() {
+        optional_color(ui, "Line shape fill", &mut shape.fill, Color::WHITE);
+    }
+    if line_jumps && !shape.kind.supports_line_jumps() {
+        widgets::caption(
+            ui,
+            t("This line shape keeps line jumps but does not draw them."),
+        );
     }
 }
 
@@ -11209,6 +11294,101 @@ mod tests {
         assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
         harness.run_steps(3);
         assert_eq!(jumps(harness.state(), id), expected);
+    }
+
+    #[test]
+    fn connector_edge_shape_inspector_switches_parameters_and_is_copyable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector.clone()))
+            .unwrap();
+        let other = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 900.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let shape = |app: &ThinodaApp, id| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.edge_shape
+        };
+        assert!(harness.query_by_label("Start width").is_none());
+        harness.get_by_label("Line shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Flexible arrow").click();
+        harness.run_steps(3);
+        assert_eq!(
+            shape(harness.state(), id),
+            Some(EdgeShape::new(EdgeShapeKind::FlexArrow))
+        );
+        harness.get_by_label("Start width").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Start width").type_text("30");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(shape(harness.state(), id).unwrap().start_width, Some(30.0));
+        // Switching to a kind without end widths drops them.
+        harness.get_by_label("Line shape").click();
+        harness.run_steps(3);
+        harness.get_by_label("Pipe").click();
+        harness.run_steps(3);
+        assert_eq!(
+            shape(harness.state(), id),
+            Some(EdgeShape::new(EdgeShapeKind::Pipe))
+        );
+        assert!(harness.query_by_label("Start width").is_none());
+        assert!(harness.query_by_label("Line shape width").is_some());
+        let style = {
+            let doc = harness.state().doc().unwrap();
+            BoardStyleClipboard::from_object(doc.doc.sheet().canvas.object(id).unwrap())
+        };
+        let mut pasted = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(other)
+            .unwrap()
+            .clone();
+        style.apply(&mut pasted);
+        let CanvasObjectKind::Connector(pasted) = pasted.kind else {
+            panic!("expected connector");
+        };
+        assert_eq!(pasted.edge_shape, Some(EdgeShape::new(EdgeShapeKind::Pipe)));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(
+            shape(harness.state(), id).unwrap().kind,
+            EdgeShapeKind::FlexArrow
+        );
     }
 
     #[test]

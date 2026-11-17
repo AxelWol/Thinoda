@@ -219,6 +219,17 @@ Each newer envelope maps down to the next older one its content selects, so
 older checks still run. Segment routes use every waypoint. Self-loops are
 derived, not persisted: `routed_path` checks `is_drawio_loop` first.
 
+**As implemented in D7 (edge shapes):** `CanvasConnector.edge_shape:
+Option<EdgeShape { kind, width, start_width, end_width, fill }>` (widths 0-999,
+`None` uses draw.io's defaults) needs native v42, board clipboard v35 and sheet
+clipboard v31. Private XMind snapshots use `THINODA-XMIND-EDGE-SHAPES-1`, and
+recovery uses `THINODA-RECOVERY-EDGE-SHAPES-1`
+(`THINODA-RECOVERY-INK-EDGE-SHAPES-1` with pending ink). The scene derives an
+`EdgeBody` (`Lines`, `Rails` or `Band`) on `SceneGeometry::Polyline::body`
+after markers are computed; bands and rails replace the stroke and merged
+heads. Both renderers, hit testing, bounds and the lasso read that body;
+sankey connectors ignore it.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

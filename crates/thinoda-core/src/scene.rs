@@ -662,7 +662,20 @@ pub fn connector_stroke_path(
     points: &[Vec2],
     markers: &[Option<ConnectorMarkerGeometry>; 2],
 ) -> Vec<Vec2> {
-    if markers.iter().all(Option::is_none) || points.len() < 2 {
+    if markers.iter().all(Option::is_none) {
+        return points.to_vec();
+    }
+    trim_path(
+        points,
+        markers[0].map_or(0.0, |marker| marker.line_inset),
+        markers[1].map_or(0.0, |marker| marker.line_inset),
+    )
+}
+
+/// Shorten a path by `start` and `end` along its length; overlapping trims on
+/// a short path collapse it to a point.
+fn trim_path(points: &[Vec2], mut start: f32, mut end: f32) -> Vec<Vec2> {
+    if points.len() < 2 || (start <= 0.0 && end <= 0.0) {
         return points.to_vec();
     }
     let total: f32 = points
@@ -672,8 +685,6 @@ pub fn connector_stroke_path(
     if total <= f32::EPSILON {
         return points.to_vec();
     }
-    let mut start = markers[0].map_or(0.0, |marker| marker.line_inset);
-    let mut end = markers[1].map_or(0.0, |marker| marker.line_inset);
     if start + end > total {
         let scale = total / (start + end);
         start *= scale;
@@ -984,6 +995,8 @@ pub enum SceneGeometry {
         label_bounds: Option<Rect>,
         /// draw.io line jumps over connectors painted earlier.
         jumps: Option<Box<LineJumpGeometry>>,
+        /// draw.io body shape replacing or overpainting the plain stroke.
+        body: Option<Box<EdgeBody>>,
     },
 }
 
@@ -1023,15 +1036,38 @@ impl SceneGeometry {
                 width,
                 markers,
                 label_bounds,
+                body,
                 ..
             } => {
-                let radius = width / 2.0 + tolerance;
-                let stroke_hit = if markers.iter().any(Option::is_some) {
+                let radius = body
+                    .as_ref()
+                    .map_or(*width, |body| body.stroke_width(*width))
+                    / 2.0
+                    + tolerance;
+                let label_hit = label_bounds.is_some_and(|r| r.expand(tolerance).contains(p));
+                match body.as_deref() {
+                    Some(EdgeBody::Rails(rails)) => {
+                        return label_hit
+                            || rails
+                                .iter()
+                                .any(|rail| distance_to_polyline(p, rail) <= radius);
+                    }
+                    Some(EdgeBody::Band { outline, .. })
+                        if point_in_polygon(p, outline)
+                            || distance_to_outline(p, outline) <= radius =>
+                    {
+                        return true;
+                    }
+                    _ => {}
+                }
+                let stroke_hit = if body.as_ref().is_some_and(|body| body.replaces_stroke()) {
+                    false
+                } else if markers.iter().any(Option::is_some) {
                     distance_to_polyline(p, &connector_stroke_path(points, markers)) <= radius
                 } else {
                     distance_to_polyline(p, points) <= radius
                 };
-                label_bounds.is_some_and(|r| r.expand(tolerance).contains(p))
+                label_hit
                     || stroke_hit
                     || markers
                         .iter()
@@ -1343,7 +1379,11 @@ fn build_scene_with_collapse<'a>(
                         (&object.kind, &item.geometry)
                         && c.route != ConnectorRoute::Curve
                     {
-                        jumpers.push((items.len(), c.line_jumps, c.width));
+                        let jumps = c.line_jumps.filter(|_| {
+                            c.edge_shape
+                                .is_none_or(|shape| shape.kind.supports_line_jumps())
+                        });
+                        jumpers.push((items.len(), jumps, c.width));
                     }
                     items.push(item);
                 }
@@ -1418,6 +1458,29 @@ fn object_item(
             if points.len() < 2 {
                 return None;
             }
+            let mut markers = Box::new([
+                c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
+                    connector_marker_geometry(
+                        &points,
+                        true,
+                        marker.kind,
+                        c.width,
+                        c.start_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                        !c.start_marker_unfilled,
+                    )
+                }),
+                c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
+                    connector_marker_geometry(
+                        &points,
+                        false,
+                        marker.kind,
+                        c.width,
+                        c.end_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
+                        !c.end_marker_unfilled,
+                    )
+                }),
+            ]);
+            let body = edge_shape::edge_body(c, &points, &mut markers);
             SceneGeometry::Polyline {
                 color: (c.sankey.is_some() && sheet.sankey.as_ref().is_some_and(|s| s.color_scale))
                     .then(|| crate::sankey::weight_color(0.0)),
@@ -1427,29 +1490,9 @@ fn object_item(
                         &crate::sankey::flow_label(c, 0.0),
                     )
                 }),
-                markers: Box::new([
-                    c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
-                        connector_marker_geometry(
-                            &points,
-                            true,
-                            marker.kind,
-                            c.width,
-                            c.start_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
-                            !c.start_marker_unfilled,
-                        )
-                    }),
-                    c.end_marker.filter(|_| c.arrow_end).and_then(|marker| {
-                        connector_marker_geometry(
-                            &points,
-                            false,
-                            marker.kind,
-                            c.width,
-                            c.end_marker_size.unwrap_or(DEFAULT_CONNECTOR_MARKER_SIZE),
-                            !c.end_marker_unfilled,
-                        )
-                    }),
-                ]),
+                markers,
                 jumps: None,
+                body,
                 points,
                 width: c.width,
             }
@@ -1571,9 +1614,28 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
             markers,
             label_bounds,
             jumps,
+            body,
             ..
         } => {
+            let width = &body
+                .as_ref()
+                .map_or(*width, |body| body.stroke_width(*width));
             let mut bounds = points_bounds(points)?.expand(width / 2.0);
+            match body.as_deref() {
+                Some(EdgeBody::Rails(rails)) => {
+                    for rail in rails {
+                        if let Some(rail_bounds) = points_bounds(rail) {
+                            bounds = bounds.union(&rail_bounds.expand(width / 2.0));
+                        }
+                    }
+                }
+                Some(EdgeBody::Band { outline, .. }) => {
+                    if let Some(outline_bounds) = points_bounds(outline) {
+                        bounds = bounds.union(&outline_bounds.expand(width / 2.0));
+                    }
+                }
+                _ => {}
+            }
             if let Some(label_bounds) = label_bounds {
                 bounds = bounds.union(label_bounds);
             }
@@ -3124,3 +3186,6 @@ pub fn connector_insert_handles(
 
 #[cfg(test)]
 mod tests;
+
+mod edge_shape;
+pub use edge_shape::EdgeBody;

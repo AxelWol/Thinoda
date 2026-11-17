@@ -2467,6 +2467,31 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn edge_shape_board_clipboard_requires_version_thirty_five() {
+    use crate::board::{CanvasConnector, EdgeShape, EdgeShapeKind, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 40.0)),
+    );
+    connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::Pipe));
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(EDGE_SHAPES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(EDGE_SHAPES_BOARD_PREFIX, SEGMENT_ROUTES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("edge shapes require board clipboard version 35")
+    );
+}
+
+#[test]
 fn segment_route_board_clipboard_requires_version_thirty_four() {
     use crate::board::{CanvasConnector, ConnectorRoute, Endpoint};
 

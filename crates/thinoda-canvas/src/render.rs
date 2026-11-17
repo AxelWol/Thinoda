@@ -20,7 +20,7 @@ use thinoda_core::{
     },
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
-    scene::{Scene, SceneGeometry, build_scene, connector_stroke_paths, topic_clip_zone},
+    scene::{EdgeBody, Scene, SceneGeometry, build_scene, connector_stroke_paths, topic_clip_zone},
     theme::Theme,
 };
 
@@ -1771,6 +1771,7 @@ fn paint_canvas_object(
                 markers,
                 color,
                 jumps,
+                body,
                 ..
             },
         ) => {
@@ -1781,7 +1782,11 @@ fn paint_canvas_object(
                 .unwrap_or_else(|| default_object_stroke(opts));
             let color = opacity_color(color, object.style.opacity);
             let label_center = polyline_midpoint(points);
-            let stroke = Stroke::new((connector.width * z).max(0.5), color);
+            let body = body.as_deref();
+            let stroke_width =
+                body.map_or(connector.width, |body| body.stroke_width(connector.width));
+            let stroke = Stroke::new((stroke_width * z).max(0.5), color);
+            let replaced = body.is_some_and(EdgeBody::replaces_stroke);
             let lines: Vec<Vec<_>> = connector_stroke_paths(points, markers, jumps.as_deref())
                 .into_iter()
                 .map(|path| path.into_iter().map(|point| xf.pos(point)).collect())
@@ -1795,15 +1800,60 @@ fn paint_canvas_object(
                     ));
                 }
             } else {
-                for line in lines {
-                    painter.add(Shape::line(line, stroke));
+                match body {
+                    Some(EdgeBody::Rails(rails)) => {
+                        for rail in rails {
+                            painter.add(Shape::line(
+                                rail.iter().map(|point| xf.pos(*point)).collect(),
+                                stroke,
+                            ));
+                        }
+                    }
+                    Some(EdgeBody::Band { outline, fill }) => {
+                        let outline: Vec<_> = outline.iter().map(|point| xf.pos(*point)).collect();
+                        if let Some(fill) = fill {
+                            let coordinates: Vec<f64> = outline
+                                .iter()
+                                .flat_map(|p| [f64::from(p.x), f64::from(p.y)])
+                                .collect();
+                            if let Ok(indices) = earcutr::earcut(&coordinates, &[], 2) {
+                                let fill = opacity_color(color32(*fill), object.style.opacity);
+                                let mut mesh = egui::Mesh::default();
+                                for p in &outline {
+                                    mesh.colored_vertex(*p, fill);
+                                }
+                                mesh.indices = indices.into_iter().map(|i| i as u32).collect();
+                                painter.add(Shape::mesh(mesh));
+                            }
+                        }
+                        painter.add(Shape::closed_line(outline, stroke));
+                    }
+                    Some(EdgeBody::Lines { inner, .. }) => {
+                        for line in &lines {
+                            painter.add(Shape::line(line.clone(), stroke));
+                        }
+                        if let Some((width, fill)) = inner {
+                            let inner = Stroke::new(
+                                (width * z).max(0.5),
+                                opacity_color(color32(*fill), object.style.opacity),
+                            );
+                            for line in lines {
+                                painter.add(Shape::line(line, inner));
+                            }
+                        }
+                    }
+                    None => {
+                        for line in lines {
+                            painter.add(Shape::line(line, stroke));
+                        }
+                    }
                 }
             }
             if points.len() >= 2 {
                 if connector.arrow_start {
                     if let Some(marker) = markers[0] {
                         paint_connector_marker(painter, marker, xf, color, stroke);
-                    } else if connector.start_marker.is_none() {
+                    } else if connector.start_marker.is_none() && !replaced {
                         arrow_head(
                             painter,
                             xf.pos(points[1]),
@@ -1817,7 +1867,7 @@ fn paint_canvas_object(
                     let n = points.len();
                     if let Some(marker) = markers[1] {
                         paint_connector_marker(painter, marker, xf, color, stroke);
-                    } else if connector.end_marker.is_none() {
+                    } else if connector.end_marker.is_none() && !replaced {
                         arrow_head(
                             painter,
                             xf.pos(points[n - 2]),
