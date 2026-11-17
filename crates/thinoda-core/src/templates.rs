@@ -4,12 +4,14 @@ use crate::model::{Sheet, Structure, Workbook};
 
 mod boards;
 mod sankey;
+mod software;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateCategory {
     Basic,
     /// Free-form boards: hidden central topic, frames, cards, shapes, several roots.
     Boards,
+    Software,
     Sankey,
     Knowledge,
     Meeting,
@@ -21,9 +23,10 @@ pub enum TemplateCategory {
 }
 
 impl TemplateCategory {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Basic,
         Self::Boards,
+        Self::Software,
         Self::Sankey,
         Self::Knowledge,
         Self::Meeting,
@@ -38,6 +41,7 @@ impl TemplateCategory {
         match self {
             Self::Basic => "Basic",
             Self::Boards => "Boards",
+            Self::Software => "Software",
             Self::Sankey => "Sankey diagrams",
             Self::Knowledge => "Knowledge management",
             Self::Meeting => "Meeting and planning",
@@ -64,6 +68,24 @@ pub const TEMPLATES: &[TemplateInfo] = &[
         id: "mind-map",
         category: TemplateCategory::Basic,
         name: "Mind Map",
+        structure: Structure::MapClockwise,
+    },
+    TemplateInfo {
+        id: "software-handoff",
+        category: TemplateCategory::Software,
+        name: "Human/service handoff",
+        structure: Structure::MapClockwise,
+    },
+    TemplateInfo {
+        id: "software-approval",
+        category: TemplateCategory::Software,
+        name: "Approval workflow",
+        structure: Structure::MapClockwise,
+    },
+    TemplateInfo {
+        id: "software-incident",
+        category: TemplateCategory::Software,
+        name: "Incident response",
         structure: Structure::MapClockwise,
     },
     sankey_info("sankey-blank", "Blank Sankey"),
@@ -318,6 +340,7 @@ const fn sankey_info(id: &'static str, name: &'static str) -> TemplateInfo {
 pub fn board_strings() -> Vec<&'static str> {
     let mut strings = boards::board_strings();
     strings.extend(sankey::strings());
+    strings.extend(software::strings());
     strings
 }
 
@@ -345,6 +368,9 @@ pub fn instantiate_localized(id: &str, tr: &dyn Fn(&'static str) -> String) -> W
         .unwrap_or(TEMPLATES[0]);
     if info.category == TemplateCategory::Sankey {
         return sankey::build(info.id, &tr(info.name), tr);
+    }
+    if info.category == TemplateCategory::Software {
+        return software::build(info.id, &tr(info.name), tr);
     }
     if let Some(board) = boards::find(info.id) {
         let mut wb = boards::build(board, &tr(info.name), tr);
@@ -733,6 +759,296 @@ mod tests {
                 TEMPLATES
                     .iter()
                     .any(|template| template.category == category)
+            );
+        }
+    }
+
+    #[test]
+    fn software_examples_have_editable_nested_structure_and_clamped_json_headers() {
+        use crate::{CanvasObjectKind, Rect, Vec2, stencil_object};
+        for (id, expected_steps, expected_decisions, expected_accountability) in [
+            ("software-handoff", 6, 1, 2),
+            ("software-approval", 11, 3, 3),
+            ("software-incident", 7, 1, 3),
+        ] {
+            let mut workbook = instantiate_localized(id, &|text| format!("translated:{text}"));
+            workbook.validate().unwrap();
+            let sheet = workbook.active_mut();
+            let semantic = sheet.semantic.as_ref().unwrap();
+            assert!(
+                semantic.diagnostics(sheet).is_empty(),
+                "{id}: {:?}",
+                semantic.diagnostics(sheet)
+            );
+            let mut incomplete = sheet.clone();
+            incomplete
+                .semantic
+                .as_mut()
+                .unwrap()
+                .relations
+                .retain(|_, relation| {
+                    !matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Accountability { .. }
+                    )
+                });
+            incomplete.validate().unwrap();
+            assert!(
+                incomplete
+                    .semantic
+                    .as_ref()
+                    .unwrap()
+                    .diagnostics(&incomplete)
+                    .iter()
+                    .any(|diagnostic| {
+                        diagnostic.code == "automated_step_without_accountability"
+                    })
+            );
+            assert_eq!(
+                semantic
+                    .entities
+                    .values()
+                    .filter(|entity| matches!(entity, crate::semantic::SemanticEntity::Step(_)))
+                    .count(),
+                expected_steps
+            );
+            assert_eq!(
+                semantic
+                    .entities
+                    .values()
+                    .filter(|entity| matches!(
+                        entity,
+                        crate::semantic::SemanticEntity::Step(step)
+                            if step.kind == crate::semantic::StepKind::ExclusiveDecision
+                                && step.rationale.is_some()
+                    ))
+                    .count(),
+                expected_decisions
+            );
+            assert!(semantic.relations.values().any(|relation| {
+                matches!(relation, crate::semantic::SemanticRelation::Exchange { .. })
+            }));
+            assert!(semantic.relations.values().any(|relation| {
+                matches!(
+                    relation,
+                    crate::semantic::SemanticRelation::UseCaseStep { .. }
+                )
+            }));
+            assert!(semantic.relations.values().any(|relation| {
+                matches!(
+                    relation,
+                    crate::semantic::SemanticRelation::Accountability {
+                        accountable: crate::semantic::PerformerRef::Role(_),
+                        ..
+                    }
+                )
+            }));
+            assert_eq!(sheet.root_mode, crate::SheetRootMode::Hidden);
+            let participant_count = match id {
+                "software-approval" => 4,
+                _ => 3,
+            };
+            assert_eq!(
+                sheet.canvas.scene.containers.len(),
+                1 + 2 * participant_count
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::LanePerformer { .. }
+                    ))
+                    .count(),
+                participant_count
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::BoundaryMembership { .. }
+                    ))
+                    .count(),
+                2 * if id == "software-incident" { 2 } else { 1 }
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::RoleFulfillment { .. }
+                    ))
+                    .count(),
+                if id == "software-approval" { 2 } else { 1 }
+            );
+            assert_eq!(
+                semantic
+                    .relations
+                    .values()
+                    .filter(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Accountability { .. }
+                    ))
+                    .count(),
+                expected_accountability
+            );
+            match id {
+                "software-handoff" => assert!(semantic.relations.values().any(|relation| {
+                    matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Exchange { label, .. }
+                            if label == "translated:Additional information"
+                    )
+                })),
+                "software-approval" => {
+                    for expected in [
+                        "translated:Refuse",
+                        "translated:Timeout check",
+                        "translated:Escalation",
+                    ] {
+                        assert!(semantic.relations.values().any(|relation| matches!(
+                            relation,
+                            crate::semantic::SemanticRelation::Sequence { label, .. }
+                                | crate::semantic::SemanticRelation::Exchange { label, .. }
+                                if label == expected
+                        )));
+                    }
+                    let escalation_step = semantic.entities.iter().find_map(|(&id, entity)| {
+                        matches!(
+                            entity,
+                            crate::semantic::SemanticEntity::Step(step)
+                                if step.name == "translated:Escalate to support"
+                        )
+                        .then_some(id)
+                    });
+                    assert!(semantic.relations.values().any(|relation| matches!(
+                        relation,
+                        crate::semantic::SemanticRelation::Accountability {
+                            target,
+                            accountable: crate::semantic::PerformerRef::Role(_)
+                        } if Some(*target) == escalation_step
+                    )));
+                }
+                "software-incident" => {
+                    for expected in ["translated:Retry", "translated:Repeated failure"] {
+                        assert!(semantic.relations.values().any(|relation| matches!(
+                            relation,
+                            crate::semantic::SemanticRelation::Sequence { label, .. }
+                                | crate::semantic::SemanticRelation::Exchange { label, .. }
+                                if label == expected
+                        )));
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let cross_scope_steps = {
+                let semantic = sheet.semantic.as_ref().unwrap();
+                let step_objects = semantic
+                    .bindings
+                    .iter()
+                    .filter_map(|(&object, binding)| match binding {
+                        crate::semantic::SemanticBinding::Entity(entity)
+                            if semantic.entities.get(entity).is_some_and(|entity| {
+                                entity.kind() == crate::semantic::SemanticEntityKind::Step
+                            }) =>
+                        {
+                            Some((*entity, object))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                step_objects.iter().find_map(|(from, from_object)| {
+                    let from_process = semantic
+                        .process_for_endpoint(sheet, crate::Endpoint::Object(*from_object))?;
+                    step_objects.iter().find_map(|(to, to_object)| {
+                        let to_process = semantic
+                            .process_for_endpoint(sheet, crate::Endpoint::Object(*to_object))?;
+                        (from_process != to_process).then_some((*from, *to))
+                    })
+                })
+            }
+            .expect("examples have steps in multiple process scopes");
+            sheet
+                .add_semantic_relation(crate::semantic::SemanticRelation::Sequence {
+                    from: cross_scope_steps.0,
+                    to: cross_scope_steps.1,
+                    label: "invalid cross-scope sequence".into(),
+                })
+                .unwrap();
+            sheet.validate().unwrap();
+            assert!(
+                sheet
+                    .semantic
+                    .as_ref()
+                    .unwrap()
+                    .diagnostics(sheet)
+                    .iter()
+                    .any(|diagnostic| { diagnostic.code == "sequence_crosses_process_scopes" })
+            );
+            let root = *sheet.canvas.scene.containers.first().unwrap();
+            let lane = sheet
+                .canvas
+                .scene
+                .parents
+                .iter()
+                .find_map(|(&child, &parent)| {
+                    (parent == root && sheet.canvas.scene.containers.contains(&child))
+                        .then_some(child)
+                })
+                .unwrap();
+            let child = sheet
+                .canvas
+                .scene
+                .parents
+                .iter()
+                .find_map(|(&child, &parent)| (parent == lane).then_some(child))
+                .unwrap();
+            let before = sheet.canvas.object(child).unwrap().clone();
+            let frame = sheet.canvas.object(lane).unwrap().rect;
+            let object = sheet.canvas.object_mut(lane).unwrap();
+            object
+                .stencil
+                .as_mut()
+                .unwrap()
+                .parameters
+                .insert("headerHeight".into(), 500.0);
+            let render = stencil_object::render(object).unwrap();
+            assert_eq!(
+                stencil_object::label_rect(object, &render).size.y,
+                frame.size.y
+            );
+            sheet
+                .set_canvas_container_collapsed(
+                    lane,
+                    Some(Rect::from_min_size(
+                        frame.min,
+                        Vec2::new(frame.size.x, 40.0),
+                    )),
+                )
+                .unwrap();
+            let object = sheet.canvas.object(lane).unwrap();
+            let render = stencil_object::render(object).unwrap();
+            assert_eq!(stencil_object::label_rect(object, &render).size.y, 40.0);
+            assert_eq!(sheet.canvas.object(child).unwrap(), &before);
+            assert!(sheet.canvas.objects.iter().all(|object| {
+                match &object.kind {
+                    CanvasObjectKind::Shape { label, .. } => label.starts_with("translated:"),
+                    CanvasObjectKind::Connector(connector) => {
+                        connector.label.is_empty() || connector.label.starts_with("translated:")
+                    }
+                    CanvasObjectKind::Ink(_) => false,
+                }
+            }));
+            workbook.validate().unwrap();
+            assert!(
+                crate::clipboard::prepare_board_selection(workbook.active(), &[], &[root])
+                    .err()
+                    .unwrap()
+                    .contains("semantic references")
             );
         }
     }

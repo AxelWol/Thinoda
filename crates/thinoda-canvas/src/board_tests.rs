@@ -145,6 +145,122 @@ fn shape(sheet: &mut Sheet, x: f32, y: f32, label: &str) -> CanvasObjectId {
 }
 
 #[test]
+fn stencil_handle_drag_updates_its_parameter_and_is_undoable() {
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let object =
+        thinoda_core::stencil_object::new_object(package, definition, Vec2::new(100.0, 100.0));
+    let render = thinoda_core::stencil_object::render(&object).unwrap();
+    let start = render.to_sheet(render.handles[0].at, object.rect, object.rotation);
+    let end = start + Vec2::new(12.0, 0.0);
+    let mut sheet = board();
+    let id = sheet.add_canvas_object(object).unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(2);
+
+    let start = point(&h, start);
+    let end = point(&h, end);
+    drag(&mut h, start, end);
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .is_empty()
+    );
+    assert_eq!(
+        crate::view::board_input::stencil_handle_preview(&h.state().view)
+            .unwrap()
+            .stencil
+            .unwrap()
+            .parameters
+            .get("tabWidth"),
+        Some(&52.0)
+    );
+    finish_drag(&mut h, end);
+
+    let stencil = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(id)
+        .unwrap()
+        .stencil
+        .as_ref()
+        .unwrap();
+    assert_eq!(stencil.parameters.get("tabWidth"), Some(&52.0));
+    assert!(h.state_mut().doc.undo());
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .is_empty()
+    );
+}
+
+#[test]
+fn stencil_handle_can_be_adjusted_with_the_keyboard() {
+    let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let object =
+        thinoda_core::stencil_object::new_object(package, definition, Vec2::new(100.0, 100.0));
+    let mut sheet = board();
+    let id = sheet.add_canvas_object(object).unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(id);
+    h.run_steps(2);
+
+    h.get_by_label("Tab width").click();
+    h.run_steps(2);
+    h.key_press(Key::ArrowRight);
+    h.run_steps(2);
+
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .get("tabWidth"),
+        Some(&41.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .stencil
+            .as_ref()
+            .unwrap()
+            .parameters
+            .is_empty()
+    );
+}
+
+#[test]
 fn deep_board_duplication_fails_before_layout_and_preserves_history() {
     let mut sheet = board();
     let card = sheet
@@ -2841,6 +2957,410 @@ fn scene_selection_multiselect_lock_z_order_and_undo() {
 }
 
 #[test]
+fn hierarchy_keyboard_delete_surfaces_document_policy_rejection_without_partial_edits() {
+    use thinoda_core::document::{DocumentEditContext, DocumentEditValidator};
+    #[derive(Debug)]
+    struct KeepObjects;
+    impl DocumentEditValidator for KeepObjects {
+        fn validate(&self, context: DocumentEditContext<'_>) -> thinoda_core::EditResult<()> {
+            let DocumentEditContext::Sheet { before, after, .. } = context else {
+                return Err(thinoda_core::EditError::Invalid(
+                    "Workbook edit refused".into(),
+                ));
+            };
+            if after.canvas.objects.len() < before.canvas.objects.len() {
+                Err(thinoda_core::EditError::Invalid(
+                    "Bound objects must be retained".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let (sheet, [_, _, _, first, _, _, _]) = containment_board();
+    let mut h = harness(sheet);
+    h.state_mut()
+        .doc
+        .set_edit_validator(Some(std::sync::Arc::new(KeepObjects)));
+    h.get_by_label("Rectangle: First").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert_eq!(h.state().errors.len(), 1);
+    assert!(
+        h.state().errors[0]
+            .to_string()
+            .contains("Bound objects must be retained")
+    );
+}
+
+#[test]
+fn hierarchy_keyboard_navigation_selects_reveals_and_focuses_without_editing_history() {
+    let (mut sheet, [pool, lane, sublane, first, second, outside, empty]) = containment_board();
+    sheet.canvas.object_mut(pool).unwrap().locked = true;
+    let mut h = harness(sheet);
+    h.state_mut()
+        .doc
+        .edit_sheet("Future edit", |sheet| {
+            sheet.canvas.objects[0].alt_text = "Future".into();
+            Ok(())
+        })
+        .unwrap();
+    assert!(h.state_mut().doc.undo());
+    h.run_steps(2);
+    h.get_by_label("Container: Pool, Locked").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    let state_id = h.state().doc.state_id();
+    let siblings = Modifiers::ALT.plus(Modifiers::SHIFT);
+    for (modifiers, key, expected, label) in [
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            pool,
+            "Container: Pool, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            lane,
+            "Container: Lane, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageUp,
+            lane,
+            "Container: Lane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            sublane,
+            "Container: Sublane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageUp,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageDown,
+            second,
+            "Rectangle: Second, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageDown,
+            second,
+            "Rectangle: Second, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageUp,
+            first,
+            "Rectangle: First, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            sublane,
+            "Container: Sublane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            lane,
+            "Container: Lane, Selected, Locked",
+        ),
+        (
+            Modifiers::ALT,
+            Key::PageUp,
+            pool,
+            "Container: Pool, Selected, Locked",
+        ),
+        (
+            siblings,
+            Key::PageDown,
+            outside,
+            "Rectangle: Outside, Selected",
+        ),
+        (siblings, Key::PageDown, empty, "Container: Empty, Selected"),
+        (
+            Modifiers::ALT,
+            Key::PageDown,
+            empty,
+            "Container: Empty, Selected",
+        ),
+        (siblings, Key::PageDown, empty, "Container: Empty, Selected"),
+    ] {
+        h.key_press_modifiers(modifiers, key);
+        h.run_steps(3);
+        assert_eq!(h.state().view.board_selection, vec![expected], "{label}");
+        let node = h.get_by_label(label);
+        assert!(node.is_focused(), "{label}");
+        assert!(
+            node.rect().intersects(h.state().view.canvas_rect),
+            "{label}"
+        );
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert_eq!(h.state().doc.state_id(), state_id);
+        assert!(!h.state().doc.is_dirty());
+        assert!(!h.state().doc.can_undo());
+        assert!(h.state().doc.can_redo());
+    }
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.sheet().canvas.objects[0].alt_text, "Future");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn stored_collapse_hides_accessible_descendants_and_keeps_navigation_on_visible_frames() {
+    let (mut sheet, [pool, lane, _, first, _, _, _]) = containment_board();
+    let frame = sheet.canvas.object(pool).unwrap().rect;
+    sheet
+        .set_canvas_container_collapsed(
+            pool,
+            Some(thinoda_core::Rect::from_min_size(
+                frame.min,
+                Vec2::new(frame.size.x, 30.0),
+            )),
+        )
+        .unwrap();
+    let mut h = harness(sheet);
+    h.run_steps(2);
+    assert!(h.query_by_label("Container: Lane").is_none());
+    assert!(h.query_by_label("Rectangle: First").is_none());
+    let layout =
+        thinoda_core::layout_sheet(h.state().doc.sheet(), &thinoda_core::ApproxMeasure, false);
+    let scene = build_scene(h.state().doc.sheet(), &layout);
+    assert!(scene.item(SceneId::Object(pool)).is_some());
+    assert!(scene.item(SceneId::Object(lane)).is_none());
+    assert!(scene.item(SceneId::Object(first)).is_none());
+    h.get_by_label("Container: Pool").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::PageDown);
+    h.run_steps(3);
+    assert_eq!(h.state().view.board_selection, vec![pool]);
+    assert!(h.get_by_label("Container: Pool, Selected").is_focused());
+    assert!(
+        h.get_by_label("Container: Pool, Selected")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Collapsed")
+    );
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn empty_container_controls_only_offer_supported_transforms() {
+    let (mut sheet, [_, _, _, _, _, _, empty]) = containment_board();
+    let mut h = harness(sheet.clone());
+    h.state_mut().view.select_board_object(empty);
+    h.run_steps(3);
+    assert!(h.query_by_label("Resize board item").is_some());
+    assert!(h.query_by_label("Rotate board item").is_none());
+    let original = sheet.canvas.object(empty).unwrap().rect;
+    sheet
+        .set_canvas_container_collapsed(
+            empty,
+            Some(thinoda_core::Rect::from_min_size(
+                original.min,
+                Vec2::new(100.0, 30.0),
+            )),
+        )
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_board_object(empty);
+    h.run_steps(3);
+    assert!(h.query_by_label("Resize board item").is_none());
+    assert!(h.query_by_label("Rotate board item").is_none());
+}
+
+fn containment_board() -> (Sheet, [CanvasObjectId; 7]) {
+    let mut sheet = board();
+    let pool = shape(&mut sheet, -200.0, 0.0, "Pool");
+    let lane = shape(&mut sheet, -100.0, 0.0, "Lane");
+    let sublane = shape(&mut sheet, 0.0, 0.0, "Sublane");
+    let first = shape(&mut sheet, 200.0, 0.0, "First");
+    let second = shape(&mut sheet, -3500.0, 0.0, "Second");
+    let outside = shape(&mut sheet, 400.0, 0.0, "Outside");
+    let empty = shape(&mut sheet, 600.0, 0.0, "Empty");
+    for container in [pool, lane, sublane, empty] {
+        sheet.set_canvas_container(container, true).unwrap();
+    }
+    sheet.reparent_canvas_objects(&[lane], Some(pool)).unwrap();
+    sheet
+        .reparent_canvas_objects(&[sublane], Some(lane))
+        .unwrap();
+    sheet
+        .reparent_canvas_objects(&[first, second], Some(sublane))
+        .unwrap();
+    (sheet, [pool, lane, sublane, first, second, outside, empty])
+}
+
+#[test]
+fn hierarchy_accessibility_describes_containment_and_inherited_locks_with_localized_labels() {
+    let (mut sheet, [pool, _, _, first, second, _, _]) = containment_board();
+    sheet.canvas.object_mut(pool).unwrap().locked = true;
+    let mut h = harness(sheet);
+    let labels = &mut h.state_mut().view.board_labels;
+    labels.container = "Box".into();
+    labels.parent_container = "Within".into();
+    labels.contained_objects = "Members".into();
+    labels.containment_hint = "Navigation help".into();
+    h.run_steps(2);
+    let sublane = h.get_by_label("Box: Sublane, Locked");
+    let description = sublane.accesskit_node().description().unwrap();
+    assert!(description.contains("Within: Lane"));
+    assert!(description.contains("Members: 2"));
+    assert_eq!(
+        h.get_by_label("Box: Empty").accesskit_node().description(),
+        Some("Expanded. Members: 0".into())
+    );
+    h.get_by_label("Rectangle: First, Locked").focus();
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    let selected = h.get_by_label("Rectangle: First, Selected, Locked");
+    let description = selected.accesskit_node().description().unwrap();
+    assert!(description.contains("Within: Sublane"));
+    assert!(description.contains("Navigation help"));
+    assert!(h.query_by_label("Resize board item").is_none());
+    h.state_mut().view.board_selection = vec![first, second];
+    h.run_steps(2);
+    assert!(
+        !h.get_by_label("Rectangle: First, Selected, Locked")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Navigation help")
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn flat_boards_do_not_activate_containment_shortcuts() {
+    let mut sheet = board();
+    let first = shape(&mut sheet, 0.0, 0.0, "First");
+    shape(&mut sheet, 200.0, 0.0, "Second");
+    let mut h = harness(sheet);
+    h.get_by_label("Rectangle: First").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    for modifiers in [Modifiers::ALT, Modifiers::ALT.plus(Modifiers::SHIFT)] {
+        for key in [Key::PageUp, Key::PageDown] {
+            h.key_press_modifiers(modifiers, key);
+            h.run_steps(2);
+            assert_eq!(h.state().view.board_selection, vec![first]);
+            assert!(h.get_by_label("Rectangle: First, Selected").is_focused());
+            assert_eq!(h.state().doc.workbook(), &before);
+        }
+    }
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn hierarchy_navigation_does_not_steal_controls_text_editing_or_multi_selection() {
+    let (sheet, [_, _, _, first, second, _, _]) = containment_board();
+    let mut h = harness(sheet);
+    h.get_by_label("Rectangle: First").focus();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    h.get_by_label("Resize board item").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT, Key::PageUp);
+    h.run_steps(2);
+    assert!(h.get_by_label("Resize board item").is_focused());
+    assert_eq!(h.state().view.board_selection, vec![first]);
+
+    h.get_by_label("Rectangle: First, Selected").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT.plus(Modifiers::COMMAND), Key::PageUp);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    h.state_mut().view.board_selection = vec![first, second];
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::ALT, Key::PageUp);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first, second]);
+
+    h.state_mut().view.board_selection = vec![first];
+    h.run_steps(2);
+    h.key_press(Key::F2);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(first));
+    h.key_press_modifiers(Modifiers::ALT, Key::PageUp);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(first));
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn hierarchy_paint_action_updates_hit_order_inside_a_container_and_undoes_once() {
+    let mut sheet = board();
+    let pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(700.0, 300.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(pool, true).unwrap();
+    let bottom = shape(&mut sheet, -100.0, 0.0, "Bottom");
+    let top = shape(&mut sheet, -100.0, 0.0, "Top");
+    sheet
+        .reparent_canvas_objects(&[bottom, top], Some(pool))
+        .unwrap();
+    let mut h = harness(sheet);
+    let overlap = point(&h, Vec2::new(-100.0, 0.0));
+    click(&mut h, overlap, Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![top]);
+    let before = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        apply_board_action(
+            &mut state.doc,
+            &mut state.view,
+            BoardAction::ZOrder(ZOrder::Back),
+        )
+        .unwrap();
+    }
+    h.run_steps(2);
+    click(&mut h, overlap, Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![bottom]);
+    assert_eq!(h.state().doc.sheet().canvas.scene.parents[&top], pool);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn fixed_connector_attachment_shift_drag_uses_release_modifiers_and_undo() {
     let mut sheet = board();
     let target = shape(&mut sheet, 300.0, 120.0, "Target");
@@ -3480,6 +4000,82 @@ fn connection_points_reconnect_existing_endpoints_and_support_keyboard_cycles() 
     h.key_press(Key::End);
     h.run_steps(3);
     assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn hierarchy_endpoint_drag_reconciles_cross_container_dependents_and_undoes_once() {
+    let mut sheet = board();
+    let pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(-200.0, 0.0), Vec2::new(480.0, 300.0)),
+        ))
+        .unwrap();
+    let destination_pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(200.0, 0.0), Vec2::new(240.0, 180.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(pool, true).unwrap();
+    sheet.set_canvas_container(destination_pool, true).unwrap();
+    let source = shape(&mut sheet, -200.0, 0.0, "Source");
+    let original_target = shape(&mut sheet, -40.0, 0.0, "Original");
+    let target = shape(&mut sheet, 200.0, 0.0, "Target");
+    sheet
+        .reparent_canvas_objects(&[source, original_target], Some(pool))
+        .unwrap();
+    sheet
+        .reparent_canvas_objects(&[target], Some(destination_pool))
+        .unwrap();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(source),
+            Endpoint::Object(original_target),
+        )))
+        .unwrap();
+    let dependent = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(edge),
+            Endpoint::Object(source),
+        )))
+        .unwrap();
+    assert_eq!(sheet.canvas.scene.parents[&edge], pool);
+    assert_eq!(sheet.canvas.scene.parents[&dependent], pool);
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![edge];
+    h.run_steps(3);
+    let before = h.state().doc.workbook().clone();
+    let handle = h.get_by_label("Connector To").rect().center();
+    let cross = point(&h, Vec2::new(140.0, 0.0));
+    drag(&mut h, handle, cross);
+    finish_drag(&mut h, cross);
+    assert_eq!(connector(&h, edge).to, Endpoint::Object(target));
+    assert_eq!(connector(&h, edge).to_port, default_port(0.0, 0.5));
+    assert!(
+        !h.state()
+            .doc
+            .sheet()
+            .canvas
+            .scene
+            .parents
+            .contains_key(&edge)
+    );
+    assert!(
+        !h.state()
+            .doc
+            .sheet()
+            .canvas
+            .scene
+            .parents
+            .contains_key(&dependent)
+    );
+    let after = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &after);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 

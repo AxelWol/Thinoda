@@ -4,7 +4,9 @@
 //! its parent and the ordered list of its children. Concepts and identifiers mirror XMind so
 //! that `.xmind` files can be imported and exported with high fidelity.
 
+use crate::board::CanvasObjectId;
 use crate::geometry::{Color, Rect, Vec2};
+use crate::scene_layout::{ContainerLayout, StackResizePolicy};
 use crate::schedule::{SchedulingData, Task, TaskDependency};
 use crate::theme::ThemeSettings;
 use serde::{Deserialize, Serialize};
@@ -670,6 +672,8 @@ pub struct Sheet {
     pub sankey: Option<crate::sankey::SankeySettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fim: Option<crate::fim::FimDocument>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<crate::semantic::SemanticModel>,
     pub title: String,
     pub root: TopicId,
     pub topics: BTreeMap<TopicId, Topic>,
@@ -717,6 +721,10 @@ impl Sheet {
         crate::sankey::has_sankey(self)
     }
 
+    pub fn has_semantic_model(&self) -> bool {
+        self.semantic.is_some()
+    }
+
     /// Creates a sheet containing only a central topic.
     pub fn new(title: impl Into<String>, root_title: impl Into<String>) -> Self {
         let root = TopicId(1);
@@ -725,6 +733,7 @@ impl Sheet {
         Self {
             sankey: None,
             fim: None,
+            semantic: None,
             title: title.into(),
             root,
             topics,
@@ -831,6 +840,109 @@ impl Sheet {
         self.canvas.has_stencils()
     }
 
+    pub fn has_scene_hierarchy(&self) -> bool {
+        !self.canvas.scene.is_empty()
+    }
+
+    pub fn has_scene_collapse(&self) -> bool {
+        !self.canvas.scene.collapsed.is_empty()
+    }
+
+    pub fn has_scene_layout_policies(&self) -> bool {
+        !self.canvas.scene.layout_policies.is_empty()
+    }
+
+    pub fn has_scene_fill_last_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::FillLast,
+                    ..
+                }
+            )
+        })
+    }
+
+    pub fn has_scene_grow_parent_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::GrowParent,
+                    ..
+                }
+            )
+        })
+    }
+
+    pub fn has_scene_fit_parent_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::FitParent,
+                    ..
+                }
+            )
+        })
+    }
+
+    pub fn has_scene_distribute_resize(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    resize: StackResizePolicy::Distribute,
+                    ..
+                }
+            )
+        })
+    }
+
+    pub fn has_scene_cross_axis_fill(&self) -> bool {
+        self.canvas.scene.layout_policies.values().any(|policy| {
+            matches!(
+                policy.layout,
+                ContainerLayout::Stack {
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Fill,
+                    ..
+                }
+            )
+        })
+    }
+
+    /// Whether any stencil instance pins a specific definition revision.
+    pub fn has_stencil_definition_hashes(&self) -> bool {
+        self.canvas.objects.iter().any(|object| {
+            object
+                .stencil
+                .as_ref()
+                .is_some_and(|stencil| stencil.definition_hash.is_some())
+        })
+    }
+
+    /// Whether a stencil instance carries an embedded definition closure.
+    pub fn has_stencil_definition_closures(&self) -> bool {
+        self.canvas.objects.iter().any(|object| {
+            object
+                .stencil
+                .as_ref()
+                .is_some_and(|stencil| stencil.package_resource.is_some())
+        })
+    }
+
+    /// Resolves embedded stencil package closures after loading persisted data.
+    pub fn hydrate_stencil_packages(&mut self) -> Result<(), String> {
+        let resources = &self.resources;
+        for object in &mut self.canvas.objects {
+            if let Some(stencil) = &mut object.stencil {
+                stencil.hydrate_package(resources)?;
+            }
+        }
+        Ok(())
+    }
+
     fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.topics
             .keys()
@@ -842,6 +954,16 @@ impl Sheet {
             .chain(self.canvas.objects.iter().map(|o| o.id.0))
             .chain(self.canvas.groups.iter().map(|g| g.id.0))
             .chain(self.presentation.slides.iter().map(|s| s.id.0))
+            .chain(
+                self.semantic
+                    .iter()
+                    .flat_map(|model| model.entities.keys().map(|id| id.0)),
+            )
+            .chain(
+                self.semantic
+                    .iter()
+                    .flat_map(|model| model.relations.keys().map(|id| id.0)),
+            )
     }
 
     fn bump_next_id(&mut self) {
@@ -883,6 +1005,103 @@ impl Sheet {
 
     pub fn alloc_zone_id(&mut self) -> ZoneId {
         ZoneId(self.alloc())
+    }
+
+    pub fn alloc_semantic_entity_id(&mut self) -> crate::semantic::SemanticEntityId {
+        crate::semantic::SemanticEntityId(self.alloc())
+    }
+
+    pub fn alloc_semantic_relation_id(&mut self) -> crate::semantic::SemanticRelationId {
+        crate::semantic::SemanticRelationId(self.alloc())
+    }
+
+    pub fn add_semantic_entity(
+        &mut self,
+        entity: crate::semantic::SemanticEntity,
+    ) -> Result<crate::semantic::SemanticEntityId, String> {
+        let id = self.alloc_semantic_entity_id();
+        let mut candidate = self.semantic.clone().unwrap_or_default();
+        candidate.entities.insert(id, entity);
+        candidate.validate(self)?;
+        self.semantic = Some(candidate);
+        Ok(id)
+    }
+
+    pub fn add_semantic_relation(
+        &mut self,
+        relation: crate::semantic::SemanticRelation,
+    ) -> Result<crate::semantic::SemanticRelationId, String> {
+        let id = self.alloc_semantic_relation_id();
+        let mut candidate = self.semantic.clone().unwrap_or_default();
+        candidate.relations.insert(id, relation);
+        candidate.validate(self)?;
+        self.semantic = Some(candidate);
+        Ok(id)
+    }
+
+    pub fn update_semantic_relation(
+        &mut self,
+        id: crate::semantic::SemanticRelationId,
+        relation: crate::semantic::SemanticRelation,
+    ) -> Result<(), String> {
+        let mut candidate = self.semantic.clone().ok_or("semantic model not found")?;
+        if !candidate.relations.contains_key(&id) {
+            return Err(format!("semantic relation {id} not found"));
+        }
+        candidate.relations.insert(id, relation);
+        candidate.validate(self)?;
+        self.semantic = Some(candidate);
+        Ok(())
+    }
+
+    pub fn bind_semantic_occurrence(
+        &mut self,
+        object: CanvasObjectId,
+        binding: crate::semantic::SemanticBinding,
+    ) -> Result<(), String> {
+        let mut candidate = self.semantic.clone().unwrap_or_default();
+        candidate.bindings.insert(object, binding);
+        candidate.validate(self)?;
+        self.semantic = Some(candidate);
+        Ok(())
+    }
+
+    pub fn remove_semantic_entity(
+        &mut self,
+        id: crate::semantic::SemanticEntityId,
+    ) -> Result<(), String> {
+        let mut candidate = self.semantic.clone().ok_or("semantic model not found")?;
+        if candidate.entities.remove(&id).is_none() {
+            return Err(format!("semantic entity {id} not found"));
+        }
+        candidate.validate(self)?;
+        self.semantic = Some(candidate);
+        Ok(())
+    }
+
+    pub fn remove_semantic_relation(
+        &mut self,
+        id: crate::semantic::SemanticRelationId,
+    ) -> Result<(), String> {
+        let mut candidate = self.semantic.clone().ok_or("semantic model not found")?;
+        if candidate.relations.remove(&id).is_none() {
+            return Err(format!("semantic relation {id} not found"));
+        }
+        candidate.validate(self)?;
+        self.semantic = Some(candidate);
+        Ok(())
+    }
+
+    pub fn remove_semantic_binding(&mut self, object: CanvasObjectId) -> Result<(), String> {
+        let mut candidate = self.semantic.clone().ok_or("semantic model not found")?;
+        if candidate.bindings.remove(&object).is_none() {
+            return Err(format!(
+                "semantic binding for canvas object {object} not found"
+            ));
+        }
+        candidate.validate(self)?;
+        self.semantic = Some(candidate);
+        Ok(())
     }
 
     pub fn topic(&self, id: TopicId) -> Option<&Topic> {
@@ -1303,6 +1522,15 @@ impl Sheet {
                 self.resources.get(reference)?;
             }
         }
+        for object in &self.canvas.objects {
+            if let Some(stencil) = &object.stencil {
+                stencil.validate()?;
+                if stencil.package_resource.is_some() {
+                    let mut stencil = stencil.clone();
+                    stencil.hydrate_package(&self.resources)?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1482,6 +1710,9 @@ impl Sheet {
             .validate(self)
             .map_err(|error| error.to_string())?;
         crate::board::validate_board(self)?;
+        if let Some(semantic) = &self.semantic {
+            semantic.validate(self)?;
+        }
         Ok(())
     }
 }
@@ -2394,6 +2625,62 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_stencils)
     }
 
+    pub fn has_scene_hierarchy(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_hierarchy)
+    }
+
+    pub fn has_scene_collapse(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_collapse)
+    }
+
+    pub fn has_scene_layout_policies(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_layout_policies)
+    }
+
+    pub fn has_scene_fill_last_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_fill_last_resize)
+    }
+
+    pub fn has_scene_grow_parent_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_grow_parent_resize)
+    }
+
+    pub fn has_scene_fit_parent_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_fit_parent_resize)
+    }
+
+    pub fn has_scene_distribute_resize(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_distribute_resize)
+    }
+
+    pub fn has_scene_cross_axis_fill(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_scene_cross_axis_fill)
+    }
+
+    pub fn has_semantic_model(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_semantic_model)
+    }
+
+    /// Whether any stencil instance pins a specific definition revision.
+    pub fn has_stencil_definition_hashes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_stencil_definition_hashes)
+    }
+
+    /// Whether any stencil instance carries an embedded definition closure.
+    pub fn has_stencil_definition_closures(&self) -> bool {
+        self.sheets
+            .iter()
+            .any(Sheet::has_stencil_definition_closures)
+    }
+
+    /// Resolves embedded stencil package closures after loading persisted data.
+    pub fn hydrate_stencil_packages(&mut self) -> Result<(), String> {
+        for sheet in &mut self.sheets {
+            sheet.hydrate_stencil_packages()?;
+        }
+        Ok(())
+    }
+
     pub fn active(&self) -> &Sheet {
         &self.sheets[self.active_sheet.min(self.sheets.len() - 1)]
     }
@@ -2462,6 +2749,78 @@ impl Workbook {
                 slide.title = format!("Slide {}", index + 1);
             }
             crate::board::mask_canvas(sheet);
+            if let Some(semantic) = &mut sheet.semantic {
+                for (id, entity) in &mut semantic.entities {
+                    entity.set_name(format!("Entity {id}"));
+                    match entity {
+                        crate::semantic::SemanticEntity::Participant(value) => {
+                            value.description.clear()
+                        }
+                        crate::semantic::SemanticEntity::Role(value) => value.description.clear(),
+                        crate::semantic::SemanticEntity::Process(value) => {
+                            value.description.clear()
+                        }
+                        crate::semantic::SemanticEntity::Lane(value) => value.description.clear(),
+                        crate::semantic::SemanticEntity::Step(value) => {
+                            value.description.clear();
+                            value.rationale = None;
+                        }
+                        crate::semantic::SemanticEntity::UseCase(value) => {
+                            value.intent.clear();
+                            value.description.clear();
+                        }
+                        crate::semantic::SemanticEntity::Boundary(value) => {
+                            value.description.clear()
+                        }
+                    }
+                }
+                for (id, relation) in &mut semantic.relations {
+                    match relation {
+                        crate::semantic::SemanticRelation::Sequence { label, .. } => {
+                            if !label.is_empty() {
+                                *label = format!("Relation {id}");
+                            }
+                        }
+                        crate::semantic::SemanticRelation::Exchange {
+                            label,
+                            payload_description,
+                            ..
+                        } => {
+                            if !label.is_empty() {
+                                *label = format!("Relation {id}");
+                            }
+                            payload_description.clear();
+                        }
+                        _ => {}
+                    }
+                }
+                for draft in &mut semantic.unresolved {
+                    draft.reference_text = "Unresolved reference".into();
+                }
+                let bindings: Vec<_> = semantic
+                    .bindings
+                    .iter()
+                    .map(|(object, binding)| (*object, *binding))
+                    .collect();
+                for (object_id, binding) in bindings {
+                    let Some(object) = sheet.canvas.object(object_id) else {
+                        continue;
+                    };
+                    let label = object.label().to_owned();
+                    match binding {
+                        crate::semantic::SemanticBinding::Entity(entity_id) => {
+                            if let Some(entity) = semantic.entities.get_mut(&entity_id) {
+                                entity.set_name(label);
+                            }
+                        }
+                        crate::semantic::SemanticBinding::Relation(relation_id) => {
+                            if let Some(relation) = semantic.relations.get_mut(&relation_id) {
+                                relation.set_display_label(label);
+                            }
+                        }
+                    }
+                }
+            }
         }
         copy
     }
@@ -2513,6 +2872,71 @@ impl Default for Workbook {
 mod tests {
     use super::*;
 
+    #[test]
+    fn update_semantic_relation_validates_before_replacing_the_record() {
+        use crate::semantic::{
+            Participant, ParticipantKind, PerformerRef, Role, SemanticEntity, SemanticEntityId,
+            SemanticRelation,
+        };
+
+        let mut sheet = Sheet::new("S", "Root");
+        let participant_a = sheet
+            .add_semantic_entity(SemanticEntity::Participant(Participant {
+                kind: ParticipantKind::Human,
+                name: "A".into(),
+                description: String::new(),
+            }))
+            .unwrap();
+        let participant_b = sheet
+            .add_semantic_entity(SemanticEntity::Participant(Participant {
+                kind: ParticipantKind::Human,
+                name: "B".into(),
+                description: String::new(),
+            }))
+            .unwrap();
+        let role = sheet
+            .add_semantic_entity(SemanticEntity::Role(Role {
+                name: "Reviewer".into(),
+                description: String::new(),
+            }))
+            .unwrap();
+        let relation_id = sheet
+            .add_semantic_relation(SemanticRelation::RoleFulfillment {
+                participant: participant_a,
+                role,
+            })
+            .unwrap();
+
+        sheet
+            .update_semantic_relation(
+                relation_id,
+                SemanticRelation::RoleFulfillment {
+                    participant: participant_b,
+                    role,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            sheet.semantic.as_ref().unwrap().relations.get(&relation_id),
+            Some(SemanticRelation::RoleFulfillment { participant, role: actual_role })
+                if *participant == participant_b && *actual_role == role
+        ));
+
+        let previous = sheet.semantic.clone().unwrap();
+        assert!(
+            sheet
+                .update_semantic_relation(
+                    relation_id,
+                    SemanticRelation::Accountability {
+                        target: participant_a,
+                        accountable: PerformerRef::Role(SemanticEntityId(u64::MAX)),
+                    },
+                )
+                .is_err()
+        );
+        assert_eq!(sheet.semantic.as_ref().unwrap(), &previous);
+    }
+
     fn sample() -> (Sheet, TopicId, TopicId, TopicId) {
         let mut s = Sheet::new("S", "Root");
         let a = s.add_child(s.root, None, "A");
@@ -2543,6 +2967,43 @@ mod tests {
             topic.style.font_family = Some("SECRET topic font".into());
             topic.todo = Some(true);
         }
+        let mut semantic_shape = crate::board::CanvasObject::shape(
+            crate::board::ShapeKind::Rectangle,
+            crate::geometry::Rect::from_min_size(
+                crate::geometry::Vec2::ZERO,
+                crate::geometry::Vec2::new(80.0, 40.0),
+            ),
+        );
+        if let crate::board::CanvasObjectKind::Shape { label, .. } = &mut semantic_shape.kind {
+            *label = "SECRET semantic task".into();
+        }
+        let semantic_object = s.add_canvas_object(semantic_shape).unwrap();
+        let step = s
+            .add_semantic_entity(crate::semantic::SemanticEntity::Step(
+                crate::semantic::Step {
+                    kind: crate::semantic::StepKind::Task,
+                    automation: crate::semantic::AutomationMode::Manual,
+                    name: "SECRET semantic task".into(),
+                    description: "SECRET semantic description".into(),
+                    rationale: Some("SECRET rationale".into()),
+                },
+            ))
+            .unwrap();
+        s.bind_semantic_occurrence(
+            semantic_object,
+            crate::semantic::SemanticBinding::Entity(step),
+        )
+        .unwrap();
+        s.semantic
+            .as_mut()
+            .unwrap()
+            .unresolved
+            .push(crate::semantic::UnresolvedReferenceDraft {
+                relation: None,
+                slot: crate::semantic::SemanticReferenceSlot::From,
+                expected: crate::semantic::SemanticEntityKind::Step,
+                reference_text: "SECRET unresolved source".into(),
+            });
         let mut book = Workbook::new(s);
         book.metadata.creator = "SECRET creator".into();
         book.metadata.description = Some("SECRET description".into());
@@ -2599,9 +3060,52 @@ mod tests {
         }
         shape.alt_text = "SECRET alt".into();
         sheet.add_canvas_object(shape).unwrap();
-        let masked = Workbook::new(sheet).masked_copy();
+        let mut container = crate::CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(300.0, 0.0), Vec2::new(200.0, 200.0)),
+        );
+        if let crate::CanvasObjectKind::Shape { label, .. } = &mut container.kind {
+            *label = "SECRET container".into();
+        }
+        let container_id = sheet.add_canvas_object(container).unwrap();
+        sheet.canvas.scene.containers.insert(container_id);
+        let mut child = crate::CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(320.0, 40.0), Vec2::new(80.0, 40.0)),
+        );
+        if let crate::CanvasObjectKind::Shape { label, .. } = &mut child.kind {
+            *label = "SECRET child".into();
+        }
+        let child_id = sheet.add_canvas_object(child).unwrap();
+        sheet.canvas.scene.parents.insert(child_id, container_id);
+        sheet
+            .set_canvas_container_collapsed(
+                container_id,
+                Some(Rect::from_min_size(
+                    Vec2::new(300.0, 0.0),
+                    Vec2::new(200.0, 40.0),
+                )),
+            )
+            .unwrap();
+        let mut package = crate::stencil_object::find_package("thinoda.general")
+            .unwrap()
+            .clone();
+        package.id = "SECRET.package".into();
+        package.title = "SECRET library".into();
+        let stencil = crate::stencil_object::new_object(
+            &package,
+            package.definition("message").unwrap(),
+            Vec2::new(100.0, 100.0),
+        );
+        sheet.add_canvas_object(stencil).unwrap();
+        let source = Workbook::new(sheet);
+        let scene = source.active().canvas.scene.clone();
+        let masked = source.masked_copy();
         masked.validate().unwrap();
         assert!(!serde_json::to_string(&masked).unwrap().contains("SECRET"));
+        assert_eq!(masked.active().canvas.scene, scene);
+        assert!(masked.active().resources.is_empty());
+        assert!(!masked.has_stencils());
         assert!(masked.active().root_topic().title.is_empty());
         assert_eq!(masked.active().zones[0].name, "Frame 1");
         assert_eq!(masked.active().presentation.slides[0].title, "Slide 1");

@@ -675,27 +675,42 @@ impl StencilPackage {
         Ok(())
     }
 
-    fn check_include_cycles(&self) -> Result<(), StencilError> {
-        fn includes<'a>(ops: &'a [Op], out: &mut Vec<&'a str>) {
-            for op in ops {
-                match op {
-                    Op::Include { definition, .. } => out.push(definition),
-                    Op::If {
-                        then, otherwise, ..
-                    } => {
-                        includes(then, out);
-                        includes(otherwise, out);
-                    }
-                    _ => {}
-                }
+    /// Returns a validated package containing roots and their transitive
+    /// same-package `include` dependencies, preserving package metadata.
+    pub fn definition_closure(&self, roots: &[&str]) -> Result<Self, StencilError> {
+        self.validate(&Limits::DEFAULT)?;
+        let mut selected = BTreeSet::new();
+        let mut pending = roots
+            .iter()
+            .map(|root| (*root).to_owned())
+            .collect::<Vec<_>>();
+        while let Some(id) = pending.pop() {
+            let definition = self
+                .definition(&id)
+                .ok_or_else(|| StencilError::UnknownDefinition(id.clone()))?;
+            if !selected.insert(id) {
+                continue;
             }
+            let mut dependencies = Vec::new();
+            collect_includes(&definition.foreground, &mut dependencies);
+            pending.extend(dependencies.into_iter().map(str::to_owned));
         }
+
+        let mut closure = self.clone();
+        closure
+            .definitions
+            .retain(|definition| selected.contains(&definition.id));
+        closure.validate(&Limits::DEFAULT)?;
+        Ok(closure)
+    }
+
+    fn check_include_cycles(&self) -> Result<(), StencilError> {
         let edges: BTreeMap<&str, Vec<&str>> = self
             .definitions
             .iter()
             .map(|d| {
                 let mut out = Vec::new();
-                includes(&d.foreground, &mut out);
+                collect_includes(&d.foreground, &mut out);
                 (d.id.as_str(), out)
             })
             .collect();
@@ -739,6 +754,21 @@ impl StencilPackage {
         let bytes = serde_json::to_vec(definition).unwrap_or_default();
         let digest = Sha256::digest(&bytes);
         digest.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+fn collect_includes<'a>(ops: &'a [Op], out: &mut Vec<&'a str>) {
+    for op in ops {
+        match op {
+            Op::Include { definition, .. } => out.push(definition),
+            Op::If {
+                then, otherwise, ..
+            } => {
+                collect_includes(then, out);
+                collect_includes(otherwise, out);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -2231,7 +2261,10 @@ impl StencilPackage {
 // ---------------------------------------------------------------------------------------
 // Built-in data-only libraries
 
-const BUILTIN_SOURCES: &[&str] = &[include_str!("../stencils/thinoda-general.json")];
+const BUILTIN_SOURCES: &[&str] = &[
+    include_str!("../stencils/thinoda-general.json"),
+    include_str!("../stencils/drawio-shapes.json"),
+];
 
 /// Built-in packages shipped as JSON data. Invalid sources are rejected by
 /// tests; at runtime they are skipped rather than crashing the editor.

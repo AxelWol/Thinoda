@@ -1,9 +1,10 @@
 //! draw.io / diagrams.net documents and embedded SVG, PNG and HTML diagrams.
 //!
 //! Import converts every page into a Freeform board sheet: vertices become shapes,
-//! notes become cards, swimlanes and containers become Zones, groups become board
-//! groups and edges become free connectors. Content without a native equivalent is
-//! approximated and reported through [`ImportWarning`] categories.
+//! notes become cards, flat swimlanes and containers become Zones, nested
+//! containers become scene frames, groups become board groups and edges become
+//! free connectors. Content without a native equivalent is approximated and
+//! reported through [`ImportWarning`] categories.
 //!
 //! Export writes one uncompressed page per sheet. Board content maps back to the
 //! same draw.io cells; ordinary mind-map topics, branches and annotations are
@@ -811,11 +812,21 @@ impl Style {
         self.map.get(key).map(String::as_str)
     }
 
-    /// A Thinoda stencil reference stored in the style, if any.
+    /// A stencil reference: an explicit Thinoda reference, otherwise a plain
+    /// draw.io shape that no native kind draws exactly but a built-in stencil
+    /// package (or the cell's inline `stencil(...)`) defines as data.
     fn stencil(&self) -> Option<thinoda_core::stencil_object::StencilRef> {
-        self.get(crate::drawio_stencil::STYLE_PACKAGE_KEY)?;
-        crate::drawio_stencil::reference_from_style(
+        let explicit = self.get(crate::drawio_stencil::STYLE_PACKAGE_KEY).is_some();
+        let implicit = !explicit
+            && crate::drawio_stencil::maps_drawio_shape(self.shape())
+            && matches!(classify_native(self), Kind::Approx(..) | Kind::Unknown);
+        if !explicit && !implicit {
+            return None;
+        }
+        crate::drawio_stencil::style_reference(
             self.map.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+            self.shape(),
+            implicit,
         )
     }
 
@@ -834,6 +845,108 @@ impl Style {
         self.get(key)
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite())
+    }
+
+    fn scene_layout_policy(
+        &self,
+        header: thinoda_core::scene_layout::HeaderPolicy,
+    ) -> (
+        Option<thinoda_core::scene_layout::ContainerLayoutPolicy>,
+        bool,
+    ) {
+        use thinoda_core::scene_layout::{
+            ContainerLayout, ContainerLayoutPolicy, StackAxis, StackCrossAxisPolicy,
+            StackResizePolicy,
+        };
+
+        if self.get("childLayout") != Some("stackLayout") {
+            return (None, self.get("childLayout").is_some());
+        }
+
+        let axis = match self.get("horizontalStack").unwrap_or("1") {
+            "1" => StackAxis::Horizontal,
+            "0" => StackAxis::Vertical,
+            _ => return (None, true),
+        };
+        let number = |key: &str, default: f32| match self.get(key) {
+            None => Some(default),
+            Some(_) => self.num(key).filter(|value| *value >= 0.0),
+        };
+        let (Some(spacing), Some(border), Some(left), Some(right), Some(top), Some(bottom)) = (
+            number("stackSpacing", 0.0),
+            number("stackBorder", 0.0),
+            number("marginLeft", 0.0),
+            number("marginRight", 0.0),
+            number("marginTop", 0.0),
+            number("marginBottom", 0.0),
+        ) else {
+            return (None, true);
+        };
+        let flag = |key: &str, default: bool| match self.get(key) {
+            None => Some(default),
+            Some("1") => Some(true),
+            Some("0") => Some(false),
+            Some(_) => None,
+        };
+        let (
+            Some(fill),
+            Some(resize_parent),
+            Some(resize_parent_max),
+            Some(resize_last),
+            Some(allow_gaps),
+        ) = (
+            flag("fill", true),
+            flag("resizeParent", true),
+            flag("resizeParentMax", true),
+            flag("resizeLast", false),
+            flag("allowGaps", false),
+        )
+        else {
+            return (None, true);
+        };
+
+        let [left, right, top, bottom] =
+            [border + left, border + right, border + top, border + bottom];
+        if ![left, top, right, bottom]
+            .iter()
+            .all(|value| *value == left)
+        {
+            return (None, true);
+        }
+
+        let resize = if resize_parent {
+            if resize_parent_max {
+                StackResizePolicy::GrowParent
+            } else {
+                StackResizePolicy::FitParent
+            }
+        } else if resize_last {
+            StackResizePolicy::FillLast
+        } else {
+            StackResizePolicy::Preserve
+        };
+
+        if allow_gaps {
+            return (None, true);
+        }
+
+        (
+            Some(ContainerLayoutPolicy {
+                header,
+                layout: ContainerLayout::Stack {
+                    axis,
+                    spacing,
+                    padding: left,
+                    cross_axis: if fill {
+                        StackCrossAxisPolicy::Fill
+                    } else {
+                        StackCrossAxisPolicy::Preserve
+                    },
+                    resize,
+                },
+            }),
+            false,
+        )
     }
 
     fn connector_port(&self, source: bool) -> Result<Option<ConnectorPort>, ()> {
@@ -1243,6 +1356,7 @@ struct Geometry {
     height: f32,
     invalid_frame: bool,
     relative: bool,
+    alternate_bounds: Option<Rect>,
     source: Option<Vec2>,
     target: Option<Vec2>,
     offset: Option<Vec2>,
@@ -1257,6 +1371,7 @@ struct Cell {
     style: Style,
     vertex: bool,
     edge: bool,
+    collapsed: bool,
     source: Option<String>,
     target: Option<String>,
     visible: bool,
@@ -1318,6 +1433,26 @@ fn read_geometry(element: Option<&Element>, warnings: &mut BTreeSet<ImportWarnin
             ("mxPoint", Some("sourcePoint")) => geometry.source = point(child, warnings),
             ("mxPoint", Some("targetPoint")) => geometry.target = point(child, warnings),
             ("mxPoint", Some("offset")) => geometry.offset = point(child, warnings),
+            ("mxRectangle", Some("alternateBounds")) => {
+                match (
+                    number(child, "x"),
+                    number(child, "y"),
+                    number(child, "width"),
+                    number(child, "height"),
+                ) {
+                    (Some(x), Some(y), Some(width), Some(height))
+                        if width >= 0.0 && height >= 0.0 =>
+                    {
+                        geometry.alternate_bounds = Some(Rect::from_min_size(
+                            Vec2::new(x, y),
+                            Vec2::new(width, height),
+                        ));
+                    }
+                    _ => {
+                        warnings.insert(ImportWarning::Other);
+                    }
+                }
+            }
             ("Array", Some("points")) => {
                 geometry.points = child
                     .children
@@ -1339,6 +1474,14 @@ fn read_cell(
     warnings: &mut BTreeSet<ImportWarning>,
 ) -> Cell {
     let owned = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(str::to_owned);
+    let collapsed = match inner.attr("collapsed") {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(_) => {
+            warnings.insert(ImportWarning::Other);
+            false
+        }
+    };
     Cell {
         id: outer.attr("id").unwrap_or_default().to_owned(),
         parent: owned(inner.attr("parent")),
@@ -1351,6 +1494,7 @@ fn read_cell(
         style: Style::parse(inner.attr("style").unwrap_or_default()),
         vertex: inner.attr("vertex") == Some("1"),
         edge: inner.attr("edge") == Some("1"),
+        collapsed,
         source: owned(inner.attr("source")),
         target: owned(inner.attr("target")),
         visible: inner.attr("visible") != Some("0"),
@@ -1917,6 +2061,7 @@ enum Item {
     Card(TopicId),
     /// Groups and Zones: edges attached to them end at the centre.
     Area(Rect),
+    Container(CanvasObjectId),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1927,6 +2072,7 @@ struct Context {
     parent_is_vertex: bool,
     zone: Option<usize>,
     bucket: Option<usize>,
+    scene_parent: Option<CanvasObjectId>,
 }
 
 enum End {
@@ -1939,6 +2085,7 @@ struct PageImport<'a> {
     cells: &'a [Cell],
     index: HashMap<&'a str, usize>,
     children: Vec<Vec<usize>>,
+    scene_container_cells: HashSet<usize>,
     sheet: Sheet,
     warnings: &'a mut BTreeSet<ImportWarning>,
     items: HashMap<usize, Item>,
@@ -1950,6 +2097,12 @@ struct PageImport<'a> {
     locked: Vec<BoardMember>,
     deferred: Vec<(usize, Context)>,
     adaptive_fixed_colors: bool,
+    inline_stencils: Option<
+        Option<(
+            std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+            String,
+        )>,
+    >,
 }
 
 impl<'a> PageImport<'a> {
@@ -1984,10 +2137,13 @@ impl<'a> PageImport<'a> {
 
     fn register(&mut self, cell: usize, item: Item, context: Context, locked: bool) {
         self.items.insert(cell, item);
+        if context.scene_parent.is_some() && matches!(item, Item::Card(_)) {
+            self.warn(ImportWarning::DrawioSceneCardContainmentNotPreserved);
+        }
         let member = match item {
             Item::Object(id) => BoardMember::Object(id),
             Item::Card(id) => BoardMember::Card(id),
-            Item::Area(_) => return,
+            Item::Area(_) | Item::Container(_) => return,
         };
         if let Some(zone) = context.zone {
             match member {
@@ -2003,12 +2159,48 @@ impl<'a> PageImport<'a> {
         }
     }
 
+    /// The page's inline stencils, embedded once as a single closure resource.
+    fn inline_stencils(
+        &mut self,
+    ) -> Option<(
+        std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+        String,
+    )> {
+        if self.inline_stencils.is_none() {
+            let cells = self.cells;
+            let bundle =
+                crate::drawio_stencil::inline_bundle(cells.iter().map(|cell| cell.style.shape()))
+                    .and_then(|package| {
+                        let bytes = serde_json::to_vec(package.as_ref()).ok()?;
+                        let resource = thinoda_core::resources::Resource::new(
+                            "stencil-package.json",
+                            "application/json",
+                            bytes,
+                        )
+                        .ok()?;
+                        let reference = self.sheet.resources.insert(resource).ok()?;
+                        Some((package, reference))
+                    });
+            self.inline_stencils = Some(bundle);
+        }
+        self.inline_stencils.clone().flatten()
+    }
+
     fn add_object(
         &mut self,
         cell: usize,
-        object: CanvasObject,
+        mut object: CanvasObject,
         context: Context,
     ) -> Option<CanvasObjectId> {
+        if let Some(stencil) = &object.stencil
+            && stencil.package == crate::drawio_stencil::INLINE_PACKAGE_ID
+            && stencil.package_resource.is_none()
+            && let Some((package, reference)) = self.inline_stencils()
+            && package.definition(&stencil.definition).is_some()
+            && let Some(stencil) = &mut object.stencil
+        {
+            stencil.embed_package(package, reference);
+        }
         let shape = match &object.kind {
             CanvasObjectKind::Shape { shape, .. } => Some(*shape),
             _ => None,
@@ -2017,6 +2209,9 @@ impl<'a> PageImport<'a> {
             Ok(id) => {
                 if let Some(shape) = shape {
                     self.shapes.insert(id, shape);
+                }
+                if let Some(parent) = context.scene_parent {
+                    self.sheet.canvas.scene.parents.insert(id, parent);
                 }
                 let locked = self.cells[cell].style.flag("locked");
                 self.register(cell, Item::Object(id), context, locked);
@@ -2030,22 +2225,37 @@ impl<'a> PageImport<'a> {
         }
     }
 
-    fn vertex_rect(&self, cell: &Cell, context: Context) -> Rect {
-        let g = &cell.geometry;
-        let mut min = if g.relative && context.parent_is_vertex {
+    fn vertex_rect_from_bounds(&self, cell: &Cell, context: Context, bounds: Rect) -> Rect {
+        let geometry = &cell.geometry;
+        let mut min = if geometry.relative && context.parent_is_vertex {
             Vec2::new(
-                context.origin.x + g.x * context.parent_size.x,
-                context.origin.y + g.y * context.parent_size.y,
+                context.origin.x + bounds.min.x * context.parent_size.x,
+                context.origin.y + bounds.min.y * context.parent_size.y,
             )
         } else {
-            Vec2::new(context.origin.x + g.x, context.origin.y + g.y)
+            Vec2::new(
+                context.origin.x + bounds.min.x,
+                context.origin.y + bounds.min.y,
+            )
         };
-        if g.relative
-            && let Some(offset) = g.offset
+        if geometry.relative
+            && let Some(offset) = geometry.offset
         {
             min = min + offset;
         }
-        Rect::from_min_size(min, Vec2::new(g.width, g.height))
+        Rect::from_min_size(min, bounds.size)
+    }
+
+    fn vertex_rect(&self, cell: &Cell, context: Context) -> Rect {
+        let geometry = &cell.geometry;
+        self.vertex_rect_from_bounds(
+            cell,
+            context,
+            Rect::from_min_size(
+                Vec2::new(geometry.x, geometry.y),
+                Vec2::new(geometry.width, geometry.height),
+            ),
+        )
     }
 
     fn run(&mut self) {
@@ -2127,7 +2337,22 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Other);
             return;
         }
-        let rect = self.vertex_rect(cell, context);
+        let rect = if self.scene_container_cells.contains(&index) && cell.collapsed {
+            cell.geometry
+                .alternate_bounds
+                .map(|bounds| self.vertex_rect_from_bounds(cell, context, bounds))
+                .unwrap_or_else(|| self.vertex_rect(cell, context))
+        } else {
+            self.vertex_rect(cell, context)
+        };
+        let compact_rect = if self.scene_container_cells.contains(&index)
+            && cell.collapsed
+            && cell.geometry.alternate_bounds.is_some()
+        {
+            self.vertex_rect(cell, context)
+        } else {
+            rect
+        };
         let mut child_context = Context {
             origin: rect.min,
             parent_size: rect.size,
@@ -2147,6 +2372,9 @@ impl<'a> PageImport<'a> {
         }
         match kind {
             Kind::Group => {
+                if context.scene_parent.is_some() {
+                    self.warn(ImportWarning::Other);
+                }
                 let bucket = context.bucket.unwrap_or_else(|| {
                     self.buckets.push((Vec::new(), false));
                     self.buckets.len() - 1
@@ -2157,7 +2385,43 @@ impl<'a> PageImport<'a> {
                 child_context.bucket = Some(bucket);
                 self.items.insert(index, Item::Area(rect));
             }
-            Kind::Container if let Some(zone) = self.zone(cell, rect) => {
+            Kind::Container
+                if self.scene_container_cells.contains(&index) && context.bucket.is_none() =>
+            {
+                if let Some(id) = self.scene_container(index, compact_rect, rect, context) {
+                    self.sheet.canvas.scene.containers.insert(id);
+                    child_context.zone = None;
+                    child_context.bucket = None;
+                    child_context.scene_parent = Some(id);
+                    self.items.insert(index, Item::Container(id));
+                } else {
+                    self.warn(ImportWarning::Other);
+                    let drawn = self.draw(
+                        index,
+                        Kind::Shape(ShapeKind::Rectangle, 0.0, true),
+                        rect,
+                        context,
+                    );
+                    if has_children {
+                        let bucket = match context.bucket {
+                            Some(bucket) => bucket,
+                            None => {
+                                let members = drawn.into_iter().collect();
+                                self.buckets.push((members, false));
+                                self.buckets.len() - 1
+                            }
+                        };
+                        child_context.bucket = Some(bucket);
+                    }
+                }
+            }
+            Kind::Container
+                if let Some(zone) = self.zone(
+                    cell,
+                    rect,
+                    context.zone.is_some() || context.bucket.is_some(),
+                ) =>
+            {
                 child_context.zone = Some(zone);
                 child_context.bucket = None;
                 self.items.insert(index, Item::Area(rect));
@@ -2182,8 +2446,124 @@ impl<'a> PageImport<'a> {
         }
     }
 
+    fn scene_container(
+        &mut self,
+        index: usize,
+        compact_rect: Rect,
+        expanded_rect: Rect,
+        context: Context,
+    ) -> Option<CanvasObjectId> {
+        let cell = &self.cells[index];
+        let style = &cell.style;
+        let can_preserve_collapse = cell.collapsed
+            && cell.geometry.alternate_bounds.is_some()
+            && expanded_rect.size.x >= MIN_ZONE_SIZE
+            && expanded_rect.size.y >= MIN_ZONE_SIZE
+            && style.rotation() == 0.0;
+        if cell.collapsed && !can_preserve_collapse {
+            log::warn!(
+                "draw.io collapsed scene state on cell {} has no usable alternate bounds",
+                cell.id
+            );
+            self.warn(ImportWarning::DrawioCollapsedSceneExpanded);
+        }
+        if expanded_rect.size.x < MIN_ZONE_SIZE
+            || expanded_rect.size.y < MIN_ZONE_SIZE
+            || style.rotation() != 0.0
+        {
+            return None;
+        }
+        let mut header = thinoda_core::scene_layout::HeaderPolicy {
+            side: thinoda_core::scene_layout::HeaderSide::Top,
+            extent: 0.0,
+        };
+
+        let label = self.label(cell);
+        let mut object = CanvasObject::shape(ShapeKind::Rectangle, compact_rect);
+        if let CanvasObjectKind::Shape {
+            label: object_label,
+            ..
+        } = &mut object.kind
+        {
+            *object_label = label;
+        }
+        object.style = object_style(style);
+        if style.shape() == "swimlane" {
+            if style.get("swimlaneFillColor").is_some() || style.get("fillColor").is_some() {
+                self.warn(ImportWarning::Formatting);
+            }
+            if let Some(fill) = style.color("swimlaneFillColor", "fillOpacity") {
+                object.style.fill = Some(fill);
+            }
+            let horizontal = match style.get("horizontal") {
+                None | Some("1") => true,
+                Some("0") => false,
+                Some(_) => {
+                    self.warn(ImportWarning::Formatting);
+                    true
+                }
+            };
+            let default_extent = 40.0;
+            let source_extent = style.num("startSize").unwrap_or(default_extent);
+            let limit = if horizontal {
+                compact_rect.size.y
+            } else {
+                compact_rect.size.x
+            };
+            let extent = source_extent.clamp(0.0, limit);
+            if (style.get("startSize").is_some() && style.num("startSize").is_none())
+                || extent != source_extent
+            {
+                self.warn(ImportWarning::Formatting);
+            }
+            header = thinoda_core::scene_layout::HeaderPolicy {
+                side: if horizontal {
+                    thinoda_core::scene_layout::HeaderSide::Top
+                } else {
+                    thinoda_core::scene_layout::HeaderSide::Left
+                },
+                extent,
+            };
+            let mut stencil =
+                thinoda_core::stencil_object::StencilRef::new("thinoda.general", "header-frame-v2");
+            stencil
+                .parameters
+                .insert("headerSide".into(), if horizontal { 0.0 } else { 3.0 });
+            stencil
+                .parameters
+                .insert("headerHeight".into(), f64::from(extent));
+            object.stencil = Some(stencil);
+        }
+        object.band = style.band();
+        object.alt_text = cell.tooltip.clone().unwrap_or_default();
+        let (layout_policy, unsupported_layout) = style.scene_layout_policy(header);
+        if unsupported_layout {
+            log::warn!(
+                "draw.io child layout on cell {} is only partially represented",
+                cell.id
+            );
+            self.warn(ImportWarning::DrawioSceneLayoutNotPreserved);
+        }
+        let Some(id) = self.add_object(index, object, context) else {
+            if can_preserve_collapse {
+                self.warn(ImportWarning::DrawioCollapsedSceneExpanded);
+            }
+            return None;
+        };
+        if can_preserve_collapse {
+            self.sheet.canvas.scene.collapsed.insert(id, expanded_rect);
+        }
+        if let Some(policy) = layout_policy {
+            self.sheet.canvas.scene.layout_policies.insert(id, policy);
+        }
+        Some(id)
+    }
+
     /// A container frame, unless it cannot be a valid Zone.
-    fn zone(&mut self, cell: &Cell, rect: Rect) -> Option<usize> {
+    fn zone(&mut self, cell: &Cell, rect: Rect, nested: bool) -> Option<usize> {
+        if nested {
+            self.warn(ImportWarning::Other);
+        }
         if self.sheet.zones.len() >= MAX_ZONES
             || rect.size.x < MIN_ZONE_SIZE
             || rect.size.y < MIN_ZONE_SIZE
@@ -2648,6 +3028,12 @@ impl<'a> PageImport<'a> {
                         None => End::Missing,
                     };
                 }
+                Some(Item::Container(id)) => {
+                    return End::Ready {
+                        endpoint: Endpoint::Object(*id),
+                        detached: false,
+                    };
+                }
                 None if !last_pass && !self.visited[index] => return End::Pending,
                 None => {}
             }
@@ -2996,7 +3382,7 @@ impl<'a> PageImport<'a> {
             .iter()
             .enumerate()
             .filter_map(|(rank, cell)| match self.items.get(cell) {
-                Some(Item::Object(id)) => Some((*id, rank)),
+                Some(Item::Object(id) | Item::Container(id)) => Some((*id, rank)),
                 _ => None,
             })
             .collect();
@@ -3370,10 +3756,30 @@ fn import_page(
             children[parent].push(i);
         }
     }
+    let container_cells: Vec<_> = cells
+        .iter()
+        .map(|cell| classify(&cell.style) == Kind::Container)
+        .collect();
+    let mut scene_container_cells = HashSet::new();
+    for (child, cell) in cells.iter().enumerate() {
+        if !container_cells[child] {
+            continue;
+        }
+        if cell.style.flag("thinodaSceneContainer") {
+            scene_container_cells.insert(child);
+        }
+        if let Some(parent) = cell.parent.as_deref().and_then(|id| index.get(id))
+            && container_cells[*parent]
+        {
+            scene_container_cells.insert(child);
+            scene_container_cells.insert(*parent);
+        }
+    }
     let mut import = PageImport {
         cells: &cells,
         index,
         children,
+        scene_container_cells,
         sheet,
         warnings,
         items: HashMap::new(),
@@ -3385,6 +3791,7 @@ fn import_page(
         locked: Vec::new(),
         deferred: Vec::new(),
         adaptive_fixed_colors: !matches!(model.attr("adaptiveColors"), Some("simple" | "none")),
+        inline_stencils: None,
     };
     import.run();
     if let Some(extension) = model.attr("thinodaSankey") {
@@ -4019,6 +4426,25 @@ impl<'a> PageWriter<'a> {
 
     /// Parent cell id and its absolute origin.
     fn parent(&self, member: BoardMember) -> (String, Vec2) {
+        if let BoardMember::Object(id) = member
+            && let Some(parent) = self.sheet.canvas.scene.parents.get(&id)
+        {
+            let origin = self
+                .sheet
+                .canvas
+                .scene
+                .collapsed
+                .get(parent)
+                .map(|bounds| bounds.min)
+                .or_else(|| {
+                    self.sheet
+                        .canvas
+                        .object(*parent)
+                        .map(|object| object.rect.min)
+                })
+                .unwrap_or(Vec2::ZERO);
+            return (format!("o{}", parent.0), origin);
+        }
         if let Some(group) = self.member_group(member) {
             return (format!("g{}", group.0), self.groups[&group].1.min);
         }
@@ -4037,13 +4463,52 @@ impl<'a> PageWriter<'a> {
         rect: Rect,
         user: Option<(&str, &str)>,
     ) {
-        let geometry = format!(
-            "<mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>",
-            num(rect.min.x),
-            num(rect.min.y),
-            num(rect.size.x),
-            num(rect.size.y)
-        );
+        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, user);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn vertex_with_alternate_bounds(
+        &mut self,
+        id: &str,
+        label: &str,
+        style: &str,
+        parent: &str,
+        rect: Rect,
+        alternate_bounds: Option<Rect>,
+        user: Option<(&str, &str)>,
+    ) {
+        let collapsed = if alternate_bounds.is_some() {
+            " collapsed=\"1\""
+        } else {
+            ""
+        };
+        let geometry = match alternate_bounds {
+            Some(bounds) => format!(
+                "<mxRectangle x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"alternateBounds\"/>",
+                num(bounds.min.x),
+                num(bounds.min.y),
+                num(bounds.size.x),
+                num(bounds.size.y)
+            ),
+            None => String::new(),
+        };
+        let geometry = if alternate_bounds.is_some() {
+            format!(
+                "<mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\">{geometry}</mxGeometry>",
+                num(rect.min.x),
+                num(rect.min.y),
+                num(rect.size.x),
+                num(rect.size.y)
+            )
+        } else {
+            format!(
+                "<mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>",
+                num(rect.min.x),
+                num(rect.min.y),
+                num(rect.size.x),
+                num(rect.size.y)
+            )
+        };
         let label = esc(&html(label));
         let style = esc(style);
         match user {
@@ -4056,11 +4521,11 @@ impl<'a> PageWriter<'a> {
                     self.out.push_str(&format!(" link=\"{}\"", esc(link)));
                 }
                 self.out.push_str(&format!(
-                    "><mxCell style=\"{style}\" vertex=\"1\" parent=\"{parent}\">{geometry}</mxCell></UserObject>\n"
+                    "><mxCell style=\"{style}\" vertex=\"1\" parent=\"{parent}\"{collapsed}>{geometry}</mxCell></UserObject>\n"
                 ));
             }
             None => self.out.push_str(&format!(
-                "<mxCell id=\"{id}\" value=\"{label}\" style=\"{style}\" vertex=\"1\" parent=\"{parent}\">{geometry}</mxCell>\n"
+                "<mxCell id=\"{id}\" value=\"{label}\" style=\"{style}\" vertex=\"1\" parent=\"{parent}\"{collapsed}>{geometry}</mxCell>\n"
             )),
         }
     }
@@ -4227,12 +4692,23 @@ impl<'a> PageWriter<'a> {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();
                 let style_ref = &object.style;
+                let scene_container = self.sheet.canvas.scene.containers.contains(&id);
+                let collapsed_bounds = self.sheet.canvas.scene.collapsed.get(&id).copied();
+                let scene_header = object
+                    .stencil
+                    .as_ref()
+                    .filter(|stencil| scene_container && stencil.definition == "header-frame-v2");
                 let stencil_native = object
                     .stencil
                     .as_ref()
                     .and_then(crate::drawio_stencil::native_style);
-                if let Some(native) = &stencil_native {
-                    style.push_str(native);
+                if let Some(mut native) = stencil_native {
+                    if scene_header.and_then(|stencil| stencil.parameters.get("headerSide"))
+                        == Some(&3.0)
+                    {
+                        native = native.replace("horizontal=1;", "horizontal=0;");
+                    }
+                    style.push_str(&native);
                 } else if let Some(sides) = object.rectangle_sides {
                     style.push_str(&format!(
                         "shape=partialRectangle;top={};right={};bottom={};left={};",
@@ -4268,7 +4744,32 @@ impl<'a> PageWriter<'a> {
                     style.push_str(&format!("margin={};", num(margin)));
                 }
                 if let Some(stencil) = &object.stencil {
-                    style.push_str(&crate::drawio_stencil::reference_style(stencil));
+                    if let Some(scene_header) = scene_header {
+                        if let Some(extent) = scene_header.parameters.get("headerHeight") {
+                            style.push_str(&format!("startSize={};", num(*extent as f32)));
+                        }
+                    } else {
+                        style.push_str(&crate::drawio_stencil::reference_style(stencil));
+                    }
+                }
+                if scene_container {
+                    style.push_str("container=1;");
+                    if is_isolated_scene_container(self.sheet, id) {
+                        style.push_str("thinodaSceneContainer=1;");
+                    }
+                    if collapsed_bounds.is_some() {
+                        style.push_str("collapsible=1;");
+                    }
+                    if let Some(stack_style) = self
+                        .sheet
+                        .canvas
+                        .scene
+                        .layout_policies
+                        .get(&id)
+                        .and_then(scene_stack_style)
+                    {
+                        style.push_str(&stack_style);
+                    }
                 }
                 style.push_str("whiteSpace=wrap;html=1;");
                 let special_outline = object.rectangle_sides.is_some()
@@ -4301,12 +4802,13 @@ impl<'a> PageWriter<'a> {
                     object.band,
                 );
                 let user = (!object.alt_text.is_empty()).then_some((object.alt_text.as_str(), ""));
-                self.vertex(
+                self.vertex_with_alternate_bounds(
                     &cell_id,
                     label,
                     &style,
                     &parent,
                     object.rect.translate(Vec2::ZERO - origin),
+                    collapsed_bounds.map(|bounds| bounds.translate(Vec2::ZERO - origin)),
                     user,
                 );
             }
@@ -4764,6 +5266,20 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
 }
 
 fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<String, IoError> {
+    let sheets: Vec<_> = sheets.into_iter().collect();
+    for sheet in &sheets {
+        validate_scene_export(sheet)?;
+    }
+    if sheets.len() > 1
+        && sheets
+            .iter()
+            .any(|sheet| has_isolated_scene_containers(sheet))
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene containers isolated across multiple pages yet"
+                .into(),
+        ));
+    }
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
     for (index, sheet) in sheets.into_iter().enumerate() {
         let (grid, thinoda_grid) = match sheet.board.grid {
@@ -4800,6 +5316,154 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
     }
     out.push_str("</mxfile>\n");
     Ok(out)
+}
+
+fn has_isolated_scene_containers(sheet: &Sheet) -> bool {
+    sheet
+        .canvas
+        .scene
+        .containers
+        .iter()
+        .any(|id| is_isolated_scene_container(sheet, *id))
+}
+
+fn is_isolated_scene_container(sheet: &Sheet, id: CanvasObjectId) -> bool {
+    let scene = &sheet.canvas.scene;
+    !scene.parents.iter().any(|(&child, &parent)| {
+        (child == id || parent == id)
+            && scene.containers.contains(&child)
+            && scene.containers.contains(&parent)
+    })
+}
+
+fn scene_stack_style(policy: &thinoda_core::scene_layout::ContainerLayoutPolicy) -> Option<String> {
+    use thinoda_core::scene_layout::{ContainerLayout, StackCrossAxisPolicy, StackResizePolicy};
+
+    let ContainerLayout::Stack {
+        axis,
+        spacing,
+        padding,
+        cross_axis,
+        resize,
+    } = policy.layout
+    else {
+        return Some(String::new());
+    };
+    if resize == StackResizePolicy::Distribute {
+        return None;
+    }
+
+    let mut style = format!(
+        "childLayout=stackLayout;horizontalStack={};stackSpacing={};stackBorder={};fill={};",
+        if axis == thinoda_core::scene_layout::StackAxis::Horizontal {
+            1
+        } else {
+            0
+        },
+        num(spacing),
+        num(padding),
+        u8::from(cross_axis == StackCrossAxisPolicy::Fill),
+    );
+    match resize {
+        StackResizePolicy::Preserve => style.push_str("resizeParent=0;resizeLast=0;"),
+        StackResizePolicy::FillLast => style.push_str("resizeParent=0;resizeLast=1;"),
+        StackResizePolicy::GrowParent => style.push_str("resizeParent=1;resizeParentMax=1;"),
+        StackResizePolicy::FitParent => style.push_str("resizeParent=1;resizeParentMax=0;"),
+        StackResizePolicy::Distribute => return None,
+    }
+    Some(style)
+}
+
+fn validate_scene_export(sheet: &Sheet) -> Result<(), IoError> {
+    let scene = &sheet.canvas.scene;
+    if scene.is_empty() {
+        return Ok(());
+    }
+    for (&id, policy) in &scene.layout_policies {
+        if !scene.containers.contains(&id) {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve layout policies on non-container objects".into(),
+            ));
+        }
+        if scene_stack_style(policy).is_none() {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve distributed stack spacing yet".into(),
+            ));
+        }
+    }
+    let has_nested_scene_containers = scene.parents.iter().any(|(&child, &parent)| {
+        scene.containers.contains(&child) && scene.containers.contains(&parent)
+    });
+    if has_nested_scene_containers && has_isolated_scene_containers(sheet) {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene containers when an isolated container is combined with other scene containers yet"
+                .into(),
+        ));
+    }
+    if scene.containers.iter().any(|&container| {
+        is_isolated_scene_container(sheet, container)
+            && sheet.canvas.objects.iter().any(|object| {
+                scene.parents.get(&object.id) == Some(&container)
+                    && matches!(object.kind, CanvasObjectKind::Connector(_))
+            })
+    }) {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene connectors inside isolated containers yet".into(),
+        ));
+    }
+
+    let scene_objects: HashSet<_> = scene
+        .containers
+        .iter()
+        .copied()
+        .chain(scene.parents.keys().copied())
+        .chain(scene.parents.values().copied())
+        .collect();
+    if sheet
+        .canvas
+        .objects
+        .iter()
+        .any(|object| scene_objects.contains(&object.id) && object.group.is_some())
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene objects that also belong to a group".into(),
+        ));
+    }
+    if sheet
+        .zones
+        .iter()
+        .any(|zone| zone.objects.iter().any(|id| scene_objects.contains(id)))
+    {
+        return Err(IoError::Invalid(
+            "draw.io export cannot preserve scene objects that also belong to a zone".into(),
+        ));
+    }
+    for id in &scene.containers {
+        let object = sheet
+            .canvas
+            .object(*id)
+            .ok_or_else(|| IoError::Invalid("draw.io scene container was not found".into()))?;
+        if !matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve non-shape scene containers".into(),
+            ));
+        }
+        if let Some(stencil) = &object.stencil
+            && stencil.definition == "header-frame-v2"
+        {
+            let side = stencil.parameters.get("headerSide").copied().unwrap_or(0.0);
+            if side != 0.0 && side != 3.0 {
+                return Err(IoError::Invalid(
+                    "draw.io export cannot preserve right or bottom scene headers yet".into(),
+                ));
+            }
+        } else if object.stencil.is_some() {
+            return Err(IoError::Invalid(
+                "draw.io export cannot preserve custom scene container stencils yet".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn valid_rendered_svg(svg: &str) -> bool {

@@ -7,6 +7,7 @@
 
 use crate::geometry::{Color, Rect, Vec2};
 use crate::model::{PresentationSource, Sheet, Topic, TopicId, ZoneId, id_type, valid_position};
+use crate::scene_hierarchy::{SceneHierarchy, SceneStructure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -122,11 +123,16 @@ pub struct CanvasLayer {
     /// Only cards with a group or a direct lock need an entry.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub card_states: Vec<CanvasCardState>,
+    #[serde(skip_serializing_if = "SceneStructure::is_empty")]
+    pub scene: SceneStructure,
 }
 
 impl CanvasLayer {
     pub fn is_empty(&self) -> bool {
-        self.objects.is_empty() && self.groups.is_empty() && self.card_states.is_empty()
+        self.objects.is_empty()
+            && self.groups.is_empty()
+            && self.card_states.is_empty()
+            && self.scene.is_empty()
     }
 
     pub fn object(&self, id: CanvasObjectId) -> Option<&CanvasObject> {
@@ -172,14 +178,27 @@ impl CanvasLayer {
             .collect()
     }
 
-    /// An object is locked directly or through its group.
+    /// An object is locked directly, through its group, or through scene ancestry.
     pub fn is_locked(&self, id: CanvasObjectId) -> bool {
-        self.object(id).is_some_and(|o| {
-            o.locked
-                || o.group
-                    .and_then(|g| self.group(g))
-                    .is_some_and(|g| g.locked)
-        })
+        let mut cursor = Some(id);
+        for _ in 0..=crate::scene_hierarchy::MAX_SCENE_DEPTH {
+            let Some(id) = cursor else {
+                return false;
+            };
+            let Some(object) = self.object(id) else {
+                return false;
+            };
+            if object.locked
+                || object
+                    .group
+                    .and_then(|group| self.group(group))
+                    .is_some_and(|group| group.locked)
+            {
+                return true;
+            }
+            cursor = self.scene.parents.get(&id).copied();
+        }
+        true
     }
 
     /// Total number of stored ink points.
@@ -1897,6 +1916,12 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
         }
     }
     let canvas = &sheet.canvas;
+    if !canvas.scene.is_empty() {
+        SceneHierarchy::from_canvas(canvas)?;
+    }
+    if sheet.has_scene_collapse() && sheet.has_sankey() {
+        return Err("collapse does not support Sankey sheets".into());
+    }
     if canvas.objects.len() > MAX_CANVAS_OBJECTS {
         return Err(format!("canvas exceeds {MAX_CANVAS_OBJECTS} objects"));
     }
@@ -2084,6 +2109,8 @@ fn anchor_content(sheet: &Sheet, include_title: bool) -> Option<&'static str> {
 pub(crate) fn mask_canvas(sheet: &mut Sheet) {
     for (index, object) in sheet.canvas.objects.iter_mut().enumerate() {
         object.alt_text.clear();
+        // Package programs and metadata can contain private text; use the legacy fallback.
+        object.stencil = None;
         match &mut object.kind {
             CanvasObjectKind::Shape { label, .. } if !label.is_empty() => {
                 *label = format!("Shape {}", index + 1);
@@ -2490,8 +2517,20 @@ impl Sheet {
             .filter(|group| group.locked)
             .map(|group| group.id)
             .collect();
+        let scene_objects: Vec<_> = members
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Object(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        if !self.canvas.scene.is_empty() && !scene_objects.is_empty() {
+            SceneHierarchy::from_canvas(&self.canvas)?
+                .require_unlocked_selection(&scene_objects)?;
+        }
         for object in &self.canvas.objects {
             if selected.contains(&BoardMember::Object(object.id))
+                && self.canvas.scene.is_empty()
                 && (object.locked
                     || object
                         .group
@@ -2517,7 +2556,7 @@ impl Sheet {
         &self,
         members: &[BoardMember],
     ) -> Result<(), String> {
-        if self.canvas.groups.is_empty() {
+        if self.canvas.groups.is_empty() && self.canvas.scene.is_empty() {
             if members.is_empty() {
                 return Err("nothing selected".into());
             }
@@ -2596,6 +2635,27 @@ impl Sheet {
         if self.canvas.objects.len() >= MAX_CANVAS_OBJECTS {
             return Err(format!("canvas exceeds {MAX_CANVAS_OBJECTS} objects"));
         }
+        let mut resources = self.resources.clone();
+        if let Some(stencil) = &mut object.stencil {
+            if stencil.package_resource.is_some() {
+                stencil.hydrate_package(&resources)?;
+            } else if !stencil.is_installed_builtin()
+                && let Some(package) = stencil.resolved_package().cloned()
+            {
+                let closure = package
+                    .definition_closure(&[&stencil.definition])
+                    .map_err(|error| error.to_string())?;
+                let bytes = serde_json::to_vec(&closure).map_err(|error| error.to_string())?;
+                let resource = crate::resources::Resource::new(
+                    "stencil-package.json",
+                    "application/json",
+                    bytes,
+                )?;
+                let reference = resources.insert(resource)?;
+                stencil.package_resource = Some(reference.clone());
+                stencil.set_embedded_package(std::sync::Arc::new(closure), reference);
+            }
+        }
         if !object.rotation.is_finite() {
             return Err("rotation must be finite".into());
         }
@@ -2632,7 +2692,30 @@ impl Sheet {
             }
         }
         let id = object.id;
-        self.canvas.objects.push(object);
+        if self.canvas.scene.is_empty() {
+            self.canvas.objects.push(object);
+        } else {
+            let hierarchy = SceneHierarchy::from_canvas(&self.canvas)?;
+            let parent = match &object.kind {
+                CanvasObjectKind::Connector(connector) => match (connector.from, connector.to) {
+                    (Endpoint::Object(from), Endpoint::Object(to)) => {
+                        hierarchy.nearest_common_container(from, to)?
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(parent) = parent {
+                hierarchy.require_unlocked_selection(&[parent])?;
+            }
+            let mut candidate = self.canvas.clone();
+            candidate.objects.push(object);
+            if let Some(parent) = parent {
+                candidate.scene.parents.insert(id, parent);
+            }
+            self.canvas = SceneHierarchy::from_canvas(&candidate)?.stored_canvas();
+        }
+        self.resources = resources;
         Ok(id)
     }
 
@@ -2667,6 +2750,11 @@ impl Sheet {
     }
 
     fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
+        if !self.canvas.scene.is_empty() && !ids.is_empty() {
+            SceneHierarchy::from_canvas(&self.canvas)?.require_unlocked_selection(ids)?;
+            let members: Vec<_> = ids.iter().copied().map(BoardMember::Object).collect();
+            return self.require_unlocked_board_selection(&members);
+        }
         for id in ids {
             if self.canvas.object(*id).is_none() {
                 return Err(format!("canvas object {id} not found"));
@@ -2690,7 +2778,23 @@ impl Sheet {
             return Err("nothing selected".into());
         }
         self.require_unlocked(ids)?;
-        let removed: HashSet<_> = ids.iter().copied().collect();
+        let removed: HashSet<_> = if self.canvas.scene.is_empty() {
+            ids.to_vec()
+        } else {
+            SceneHierarchy::from_canvas(&self.canvas)?.descendant_closure(ids)?
+        }
+        .into_iter()
+        .collect();
+        if self.semantic.as_ref().is_some_and(|semantic| {
+            semantic
+                .bindings
+                .keys()
+                .any(|object_id| removed.contains(object_id))
+        }) {
+            return Err(
+                "remove socio-technical bindings before deleting their canvas objects".into(),
+            );
+        }
         let referenced: HashSet<_> = self
             .canvas
             .objects
@@ -2782,6 +2886,22 @@ impl Sheet {
             }
         }
         self.canvas.objects.retain(|o| !removed.contains(&o.id));
+        self.canvas
+            .scene
+            .containers
+            .retain(|id| !removed.contains(id));
+        self.canvas
+            .scene
+            .parents
+            .retain(|child, parent| !removed.contains(child) && !removed.contains(parent));
+        self.canvas
+            .scene
+            .collapsed
+            .retain(|id, _| !removed.contains(id));
+        self.canvas
+            .scene
+            .layout_policies
+            .retain(|id, _| !removed.contains(id));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
                 zone.objects.retain(|id| !removed.contains(id));
@@ -2815,6 +2935,11 @@ impl Sheet {
         if !valid_position(delta) {
             return Err("movement out of range".into());
         }
+        if !self.canvas.scene.is_empty() && !ids.is_empty() {
+            self.canvas =
+                SceneHierarchy::from_canvas(&self.canvas)?.preview_translation(ids, delta)?;
+            return Ok(());
+        }
         self.require_unlocked(ids)?;
         let set: HashSet<_> = ids.iter().copied().collect();
         let mut candidate = self.canvas.clone();
@@ -2823,30 +2948,56 @@ impl Sheet {
         Ok(())
     }
 
-    fn translate_canvas_objects(
+    pub(crate) fn translate_canvas_objects(
         canvas: &mut CanvasLayer,
         ids: &HashSet<CanvasObjectId>,
         delta: Vec2,
     ) -> Result<(), String> {
-        for o in canvas.objects.iter_mut().filter(|o| ids.contains(&o.id)) {
-            o.rect = o.rect.translate(delta);
-            match &mut o.kind {
+        let deltas = ids.iter().map(|id| (*id, delta)).collect();
+        Self::translate_canvas_objects_by_delta(canvas, &deltas)
+    }
+
+    pub(crate) fn translate_canvas_objects_by_delta(
+        canvas: &mut CanvasLayer,
+        deltas: &HashMap<CanvasObjectId, Vec2>,
+    ) -> Result<(), String> {
+        if deltas.values().any(|delta| !valid_position(*delta)) {
+            return Err("movement out of range".into());
+        }
+        for object in &mut canvas.objects {
+            let Some(delta) = deltas.get(&object.id) else {
+                continue;
+            };
+            object.rect = object.rect.translate(*delta);
+            match &mut object.kind {
                 CanvasObjectKind::Ink(ink) => {
-                    ink.points = ink.points.iter().map(|p| *p + delta).collect();
+                    ink.points = ink.points.iter().map(|point| *point + *delta).collect();
                 }
-                CanvasObjectKind::Connector(c) => {
-                    for end in [&mut c.from, &mut c.to] {
-                        if let Endpoint::Point(p) = end {
-                            *p = *p + delta;
+                CanvasObjectKind::Connector(connector) => {
+                    for endpoint in [&mut connector.from, &mut connector.to] {
+                        if let Endpoint::Point(point) = endpoint {
+                            *point = *point + *delta;
                         }
                     }
-                    if !c.waypoints.is_empty() {
-                        c.waypoints = c.waypoints.iter().map(|point| *point + delta).collect();
+                    if !connector.waypoints.is_empty() {
+                        connector.waypoints = connector
+                            .waypoints
+                            .iter()
+                            .map(|point| *point + *delta)
+                            .collect();
                     }
                 }
                 CanvasObjectKind::Shape { .. } => {}
             }
-            validate_object(o)?;
+            validate_object(object)?;
+        }
+        for (id, expanded) in &mut canvas.scene.collapsed {
+            if let Some(delta) = deltas.get(id) {
+                *expanded = expanded.translate(*delta);
+            }
+        }
+        if !canvas.scene.collapsed.is_empty() {
+            SceneHierarchy::from_canvas(canvas)?;
         }
         Ok(())
     }
@@ -2888,7 +3039,18 @@ impl Sheet {
             }
         }
         let mut canvas = self.canvas.clone();
-        Self::translate_canvas_objects(&mut canvas, &objects, delta)?;
+        if !canvas.scene.is_empty() && !objects.is_empty() {
+            let ids: Vec<_> = objects.iter().copied().collect();
+            let cards = positions.iter().map(|(id, _)| *id).collect();
+            canvas = SceneHierarchy::from_canvas(&canvas)?.preview_translation_with_cards(
+                &ids,
+                &cards,
+                delta,
+                |_| Ok(()),
+            )?;
+        } else {
+            Self::translate_canvas_objects(&mut canvas, &objects, delta)?;
+        }
         self.canvas = canvas;
         for (id, position) in positions {
             self.topic_mut(id).expect("selection validated").position = Some(position);
@@ -2915,6 +3077,9 @@ impl Sheet {
             return Err("rotation must be finite".into());
         }
         let members = self.expand_board_selection(members)?;
+        if members.iter().any(|member| matches!(member, BoardMember::Object(id) if self.canvas.scene.containers.contains(id))) {
+            return Err("scene containers do not support rotation yet".into());
+        }
         self.require_board_members_unlocked(&members)?;
         // Keep the sign for the transform: mapping a tiny negative angle into
         // [0, 360) can round it to a full turn and silently discard it.
@@ -3030,6 +3195,9 @@ impl Sheet {
     /// Sets the unrotated frame; ink points are scaled with it.
     pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> Result<(), String> {
         self.require_unlocked(&[id])?;
+        if self.canvas.scene.collapsed.contains_key(&id) {
+            return Err("expand the container before resizing".into());
+        }
         if !valid_rect(rect) {
             return Err("object frame out of range".into());
         }
@@ -3063,6 +3231,9 @@ impl Sheet {
     /// Sets the absolute rotation in degrees (normalised). Connectors cannot rotate.
     pub fn rotate_canvas_object(&mut self, id: CanvasObjectId, degrees: f32) -> Result<(), String> {
         self.require_unlocked(&[id])?;
+        if self.canvas.scene.containers.contains(&id) {
+            return Err("scene containers do not support rotation yet".into());
+        }
         if !degrees.is_finite() {
             return Err("rotation must be finite".into());
         }
@@ -3082,11 +3253,11 @@ impl Sheet {
         f: impl FnOnce(&mut CanvasObject),
     ) -> Result<(), String> {
         self.require_unlocked(&[id])?;
-        let mut object = self
+        let original = self
             .canvas
             .object(id)
-            .cloned()
             .ok_or_else(|| format!("canvas object {id} not found"))?;
+        let mut object = original.clone();
         let (group, locked) = (object.group, object.locked);
         f(&mut object);
         object.id = id;
@@ -3096,6 +3267,28 @@ impl Sheet {
             return Err("rotation must be finite".into());
         }
         object.rotation = normalize_rotation(object.rotation);
+        if !self.canvas.scene.is_empty()
+            && std::mem::discriminant(&object.kind) != std::mem::discriminant(&original.kind)
+        {
+            return Err("changing object categories in nested scenes is not supported yet".into());
+        }
+        if self.canvas.scene.containers.contains(&id)
+            && (object.rect != original.rect
+                || object.rotation != original.rotation
+                || !matches!(object.kind, CanvasObjectKind::Shape { .. }))
+        {
+            return Err("use the scene move or resize command to change container geometry".into());
+        }
+        if self.canvas.scene.contains(id) && object.band != original.band {
+            return Err("changing paint bands of scene members is not supported yet".into());
+        }
+        let reconnecting = matches!(
+            (&original.kind, &object.kind),
+            (
+                CanvasObjectKind::Connector(before),
+                CanvasObjectKind::Connector(after)
+            ) if before.from != after.from || before.to != after.to
+        );
         validate_object(&object)?;
         if let CanvasObjectKind::Connector(c) = &object.kind {
             let old_waypoints = match &self.canvas.object(id).expect("checked").kind {
@@ -3131,10 +3324,113 @@ impl Sheet {
                 ));
             }
         }
+        if reconnecting {
+            let canvas = if self.canvas.scene.is_empty() {
+                let mut canvas = self.canvas.clone();
+                *canvas.object_mut(id).ok_or("canvas connector not found")? = object;
+                canvas
+            } else {
+                SceneHierarchy::from_canvas(&self.canvas)?
+                    .preview_reconnect_with_validator(&object, |_| Ok(()))?
+            };
+            let mut candidate = self.clone();
+            candidate.canvas = canvas;
+            if let Some(crate::semantic::SemanticBinding::Relation(relation_id)) = self
+                .semantic
+                .as_ref()
+                .and_then(|semantic| semantic.bindings.get(&id).copied())
+            {
+                let connector = candidate
+                    .canvas
+                    .object(id)
+                    .and_then(|object| match &object.kind {
+                        CanvasObjectKind::Connector(connector) => Some(connector.clone()),
+                        _ => None,
+                    })
+                    .ok_or("reconnected semantic object is not a connector")?;
+                let mut semantic = candidate
+                    .semantic
+                    .clone()
+                    .ok_or("semantic model not found")?;
+                let endpoints = match semantic.relations.get(&relation_id) {
+                    Some(crate::semantic::SemanticRelation::Sequence { .. }) => (
+                        semantic
+                            .step_for_endpoint(connector.from)
+                            .ok_or("sequence connectors must connect workflow steps")?,
+                        semantic
+                            .step_for_endpoint(connector.to)
+                            .ok_or("sequence connectors must connect workflow steps")?,
+                    ),
+                    Some(crate::semantic::SemanticRelation::Exchange { .. }) => (
+                        semantic
+                            .process_for_endpoint(&candidate, connector.from)
+                            .ok_or("exchange connectors must connect process scopes")?,
+                        semantic
+                            .process_for_endpoint(&candidate, connector.to)
+                            .ok_or("exchange connectors must connect process scopes")?,
+                    ),
+                    Some(_) => {
+                        return Err(
+                            "only sequence and exchange relations can bind to connectors".into(),
+                        );
+                    }
+                    None => return Err(format!("semantic relation {relation_id} not found")),
+                };
+                match semantic.relations.get_mut(&relation_id) {
+                    Some(crate::semantic::SemanticRelation::Sequence { from, to, .. }) => {
+                        *from = endpoints.0;
+                        *to = endpoints.1;
+                    }
+                    Some(crate::semantic::SemanticRelation::Exchange {
+                        from_process,
+                        to_process,
+                        ..
+                    }) => {
+                        *from_process = endpoints.0;
+                        *to_process = endpoints.1;
+                    }
+                    _ => return Err("semantic relation type changed during reconnection".into()),
+                }
+                candidate.semantic = Some(semantic);
+            }
+            if let Some(semantic) = candidate.semantic.as_ref() {
+                semantic.validate(&candidate)?;
+            }
+            crate::scene::validate_connector_cycles(&candidate)?;
+            self.canvas = candidate.canvas;
+            self.semantic = candidate.semantic;
+            return Ok(());
+        }
         let is_connector = object.is_connector();
+        let previous_semantic = self.semantic.clone();
         let previous = std::mem::replace(self.canvas.object_mut(id).expect("checked"), object);
+        if let Some(binding) = self
+            .semantic
+            .as_ref()
+            .and_then(|semantic| semantic.bindings.get(&id).copied())
+        {
+            let label = self.canvas.object(id).expect("checked").label().to_owned();
+            let mut semantic = self.semantic.clone().expect("binding has a semantic model");
+            let updated = match binding {
+                crate::semantic::SemanticBinding::Entity(entity_id) => {
+                    semantic.entities.get_mut(&entity_id).map(|entity| {
+                        entity.set_name(label);
+                    })
+                }
+                crate::semantic::SemanticBinding::Relation(relation_id) => semantic
+                    .relations
+                    .get_mut(&relation_id)
+                    .and_then(|relation| relation.set_display_label(label).then_some(())),
+            };
+            if updated.is_none() || semantic.validate(self).is_err() {
+                *self.canvas.object_mut(id).expect("checked") = previous;
+                return Err("canvas label change would invalidate socio-technical data".into());
+            }
+            self.semantic = Some(semantic);
+        }
         if is_connector && let Err(error) = crate::scene::validate_connector_cycles(self) {
             *self.canvas.object_mut(id).expect("checked") = previous;
+            self.semantic = previous_semantic;
             return Err(error);
         }
         Ok(())
@@ -3146,6 +3442,9 @@ impl Sheet {
         ids: &[CanvasObjectId],
         order: ZOrder,
     ) -> Result<(), String> {
+        if !self.canvas.scene.is_empty() {
+            return self.reorder_canvas_objects_with_validator(ids, order, |_| Ok(()));
+        }
         let set: HashSet<_> = ids.iter().copied().collect();
         if set.is_empty() {
             return Err("canvas object not found".into());
@@ -3201,6 +3500,9 @@ impl Sheet {
     /// Moves objects to another band, next to the map: on top of `Below` or at the
     /// bottom of `Above`.
     pub fn set_canvas_band(&mut self, ids: &[CanvasObjectId], band: Band) -> Result<(), String> {
+        if ids.iter().any(|id| self.canvas.scene.contains(*id)) {
+            return Err("changing paint bands of scene members is not supported yet".into());
+        }
         let set: HashSet<_> = ids.iter().copied().collect();
         if set.is_empty() {
             return Err("canvas object not found".into());
@@ -3226,6 +3528,11 @@ impl Sheet {
         members: &[BoardMember],
     ) -> Result<CanvasGroupId, String> {
         let selected = self.validate_board_selection(members)?;
+        if selected.iter().any(
+            |member| matches!(member, BoardMember::Object(id) if self.canvas.scene.contains(*id)),
+        ) {
+            return Err("scene members cannot belong to legacy flat groups".into());
+        }
         if selected.len() < 2 {
             return Err("select at least two board members to group".into());
         }

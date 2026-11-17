@@ -6,13 +6,15 @@
 //! refuses to render with an explicit diagnostic instead of drawing silently
 //! wrong geometry.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use thinoda_core::stencil::{
     Aspect, Connection, DSL_VERSION, Expr, Frame, LineCap, LineJoin, Op, PACKAGE_SCHEMA, PathCmd,
     SCHEMA_VERSION, StencilDefinition, StencilPackage, StrokeKeyword, StrokeWidthPolicy, TextAlign,
-    TextVAlign,
+    TextVAlign, builtin_packages,
 };
 use thinoda_core::stencil_object::StencilRef;
 
@@ -602,6 +604,9 @@ pub(crate) fn native_style(stencil: &StencilRef) -> Option<String> {
     Some(out)
 }
 
+/// Package of stencils converted from cells' inline `shape=stencil(...)`.
+pub(crate) const INLINE_PACKAGE_ID: &str = "drawio.inline";
+
 /// draw.io keys for bound parameters plus the lossless reference keys.
 pub(crate) fn reference_style(stencil: &StencilRef) -> String {
     let mut out = String::new();
@@ -642,17 +647,20 @@ pub(crate) fn reference_style(stencil: &StencilRef) -> String {
     out
 }
 
-/// Reads a stencil reference from cell style entries. A draw.io-edited bound
-/// parameter wins over the stored override, so edits made in draw.io survive.
-pub(crate) fn reference_from_style<'a>(
-    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> Option<StencilRef> {
-    let entries: BTreeMap<&str, &str> = entries.into_iter().collect();
+/// Reads an explicit stencil reference from cell style entries. A draw.io-edited
+/// bound parameter wins over the stored override, so edits made in draw.io survive.
+fn explicit_reference(entries: &BTreeMap<&str, &str>) -> Option<StencilRef> {
     let mut stencil = StencilRef::new(
         *entries.get(STYLE_PACKAGE_KEY)?,
         *entries.get(STYLE_DEFINITION_KEY)?,
     );
-    for (key, value) in &entries {
+    read_parameter_overrides(&mut stencil, entries);
+    apply_bound_parameters(&mut stencil, entries, None);
+    stencil.validate().ok().map(|()| stencil)
+}
+
+fn read_parameter_overrides(stencil: &mut StencilRef, entries: &BTreeMap<&str, &str>) {
+    for (key, value) in entries {
         if let Some(name) = key.strip_prefix(STYLE_PARAMETER_PREFIX)
             && let Ok(value) = value.parse::<f64>()
             && value.is_finite()
@@ -660,43 +668,273 @@ pub(crate) fn reference_from_style<'a>(
             stencil.parameters.insert(name.to_owned(), value);
         }
     }
-    if let Some((_, definition)) = stencil.resolve()
-        && let Some(bindings) = drawio_binding(definition)
-            .and_then(|binding| binding.get("parameters"))
-            .and_then(Value::as_object)
-    {
-        for (name, binding) in bindings {
-            let Some(parameter) = definition.parameters.get(name) else {
+}
+
+/// Reads the definition's draw.io-bound parameters from `entries`. A key the
+/// cell omits takes its `absent` value, which is the default draw.io itself
+/// draws (it may differ from the definition default, or depend on other keys).
+fn apply_bound_parameters(
+    stencil: &mut StencilRef,
+    entries: &BTreeMap<&str, &str>,
+    absent: Option<&serde_json::Map<String, Value>>,
+) {
+    let parameter_updates = stencil
+        .resolve()
+        .and_then(|(_, definition)| {
+            let bindings = drawio_binding(definition)
+                .and_then(|binding| binding.get("parameters"))
+                .and_then(Value::as_object)?;
+            Some(
+                bindings
+                    .iter()
+                    .filter_map(|(name, binding)| {
+                        let parameter = definition.parameters.get(name)?;
+                        let value = match binding {
+                            Value::String(key) => entries
+                                .get(key.as_str())
+                                .and_then(|value| value.parse::<f64>().ok()),
+                            Value::Object(choice) => choice
+                                .get("style")
+                                .and_then(Value::as_str)
+                                .and_then(|key| entries.get(key))
+                                .and_then(|selected| {
+                                    choice
+                                        .get("values")
+                                        .and_then(Value::as_array)?
+                                        .iter()
+                                        .position(|option| option.as_str() == Some(selected))
+                                        .map(|index| index as f64)
+                                }),
+                            _ => None,
+                        };
+                        let value = value
+                            .filter(|value| value.is_finite())
+                            .or_else(|| absent_value(absent?.get(name)?, entries))?;
+                        let value = parameter.clamp(value);
+                        (stencil.parameters.contains_key(name) || value != parameter.default)
+                            .then(|| (name.clone(), value))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default();
+    for (name, value) in parameter_updates {
+        stencil.parameters.insert(name, value);
+    }
+}
+
+/// `absent` is a number or a list of `{"if": {key: value}, "value": n}` rules;
+/// the first rule whose keys all match the cell style wins.
+fn absent_value(rule: &Value, entries: &BTreeMap<&str, &str>) -> Option<f64> {
+    match rule {
+        Value::Number(number) => number.as_f64(),
+        Value::Array(rules) => rules.iter().find_map(|rule| {
+            let matches = rule
+                .get("if")
+                .and_then(Value::as_object)
+                .is_none_or(|conditions| {
+                    conditions.iter().all(|(key, expected)| {
+                        let actual = entries.get(key.as_str()).copied();
+                        match expected {
+                            Value::String(expected) => actual == Some(expected.as_str()),
+                            Value::Number(expected) => actual
+                                .and_then(|actual| actual.parse::<f64>().ok())
+                                .is_some_and(|actual| Some(actual) == expected.as_f64()),
+                            Value::Null => actual.is_none(),
+                            _ => false,
+                        }
+                    })
+                });
+            matches.then(|| rule.get("value")?.as_f64()).flatten()
+        }),
+        _ => None,
+    }
+    .filter(|value| value.is_finite())
+}
+
+/// Package extension mapping draw.io shape names to definitions, so plain
+/// draw.io cells resolve to data-defined stencils without per-shape code:
+/// `{"folder": "folder"}` or `{"folder": {"definition": "folder", "absent": {...}}}`.
+pub const IMPORT_EXTENSION: &str = "drawio.import";
+
+struct ImportTarget {
+    package: Arc<StencilPackage>,
+    definition: String,
+    absent: Option<&'static serde_json::Map<String, Value>>,
+}
+
+fn import_index() -> &'static HashMap<String, ImportTarget> {
+    static INDEX: OnceLock<HashMap<String, ImportTarget>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = HashMap::new();
+        for package in builtin_packages() {
+            let Some(map) = package
+                .extensions
+                .get(IMPORT_EXTENSION)
+                .and_then(Value::as_object)
+            else {
                 continue;
             };
-            let value = match binding {
-                Value::String(key) => entries
-                    .get(key.as_str())
-                    .and_then(|value| value.parse::<f64>().ok()),
-                Value::Object(choice) => choice
-                    .get("style")
-                    .and_then(Value::as_str)
-                    .and_then(|key| entries.get(key))
-                    .and_then(|selected| {
-                        choice
-                            .get("values")
-                            .and_then(Value::as_array)?
-                            .iter()
-                            .position(|option| option.as_str() == Some(selected))
-                            .map(|index| index as f64)
-                    }),
-                _ => None,
-            };
-            let Some(value) = value.filter(|value| value.is_finite()) else {
+            let Some(shared) = thinoda_core::stencil_object::installed_package(&package.id) else {
                 continue;
             };
-            let value = parameter.clamp(value);
-            if stencil.parameters.contains_key(name) || value != parameter.default {
-                stencil.parameters.insert(name.clone(), value);
+            for (shape, target) in map {
+                let (definition, absent) = match target {
+                    Value::String(definition) => (definition.as_str(), None),
+                    Value::Object(target) => match target.get("definition").and_then(Value::as_str)
+                    {
+                        Some(definition) => {
+                            (definition, target.get("absent").and_then(Value::as_object))
+                        }
+                        None => continue,
+                    },
+                    _ => continue,
+                };
+                if package.definition(definition).is_none() {
+                    continue;
+                }
+                // Earlier packages win, so a later library cannot hijack a name.
+                index.entry(shape.clone()).or_insert_with(|| ImportTarget {
+                    package: Arc::clone(&shared),
+                    definition: definition.to_owned(),
+                    absent,
+                });
             }
         }
+        index
+    })
+}
+
+/// Whether a built-in package maps the draw.io shape name to a definition.
+pub fn maps_drawio_shape(shape: &str) -> bool {
+    import_index().contains_key(shape) || inline_payload(shape).is_some()
+}
+
+fn inline_payload(shape: &str) -> Option<&str> {
+    shape
+        .strip_prefix("stencil(")?
+        .strip_suffix(')')
+        .filter(|payload| !payload.is_empty())
+}
+
+const MAX_INLINE_CACHE: usize = 256;
+/// Longest inline payload copied into the definition's draw.io style, so the
+/// definition re-exports as the same inline stencil.
+const MAX_INLINE_STYLE_BYTES: usize = 64 * 1024;
+
+/// Converts an inline `stencil(...)` payload once. Inline stencils share one
+/// package whose definition ids are derived from the payload, so equal
+/// stencils share a definition and a page can embed all of them in one closure.
+fn inline_package(shape: &str) -> Option<Arc<StencilPackage>> {
+    type Cache = Mutex<HashMap<String, Option<Arc<StencilPackage>>>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let payload = inline_payload(shape)?;
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(cached) = cache.lock().ok()?.get(payload) {
+        return cached.clone();
     }
-    stencil.validate().ok().map(|()| stencil)
+    let digest = Sha256::digest(payload.as_bytes());
+    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    let converted = import_drawio_stencils(payload, INLINE_PACKAGE_ID, "Inline")
+        .ok()
+        .and_then(|import| {
+            let mut package = import.package;
+            package.definitions.truncate(1);
+            let definition = package.definitions.first_mut()?;
+            definition.id = format!("stencil-{hex}");
+            if payload.len() <= MAX_INLINE_STYLE_BYTES {
+                let binding = definition
+                    .interchange
+                    .entry("drawio".into())
+                    .or_insert_with(|| Value::Object(Default::default()));
+                if let Value::Object(binding) = binding {
+                    binding.insert("style".into(), Value::String(format!("shape={shape};")));
+                }
+            }
+            package
+                .validate(&thinoda_core::stencil::Limits::DEFAULT)
+                .ok()?;
+            Some(Arc::new(package))
+        });
+    let mut cache = cache.lock().ok()?;
+    if cache.len() >= MAX_INLINE_CACHE {
+        cache.clear();
+    }
+    cache.insert(payload.to_owned(), converted.clone());
+    converted
+}
+
+/// One package with every inline stencil among `shapes`, so a page embeds a
+/// single closure resource however many inline stencils it draws.
+pub(crate) fn inline_bundle<'a>(
+    shapes: impl IntoIterator<Item = &'a str>,
+) -> Option<Arc<StencilPackage>> {
+    let mut template = None;
+    let mut definitions = BTreeMap::new();
+    for shape in shapes {
+        let Some(package) = inline_package(shape) else {
+            continue;
+        };
+        for definition in &package.definitions {
+            definitions
+                .entry(definition.id.clone())
+                .or_insert_with(|| definition.clone());
+        }
+        template.get_or_insert(package);
+    }
+    let template: Arc<StencilPackage> = template?;
+    let mut bundle = StencilPackage::clone(&template);
+    bundle.definitions = definitions.into_values().collect();
+    bundle
+        .validate(&thinoda_core::stencil::Limits::DEFAULT)
+        .ok()?;
+    Some(Arc::new(bundle))
+}
+
+/// Resolves a cell style to a stencil reference. An explicit Thinoda reference
+/// wins; when its package is not installed, a matching inline stencil in the
+/// same style draws it. With `implicit`, a plain draw.io shape name resolves
+/// through the built-in `drawio.import` maps or its inline stencil payload.
+pub(crate) fn style_reference<'a>(
+    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    shape: &str,
+    implicit: bool,
+) -> Option<StencilRef> {
+    let entries: BTreeMap<&str, &str> = entries.into_iter().collect();
+    if entries.contains_key(STYLE_PACKAGE_KEY) {
+        let explicit = explicit_reference(&entries)?;
+        if explicit.resolve().is_some() {
+            return Some(explicit);
+        }
+        if let Some(package) = inline_package(shape)
+            && package.id == explicit.package
+            && package.definition(&explicit.definition).is_some()
+        {
+            let mut stencil = StencilRef::with_package(package, explicit.definition.clone());
+            stencil.parameters = explicit.parameters.clone();
+            apply_bound_parameters(&mut stencil, &entries, None);
+            if stencil.resolve().is_some() && stencil.validate().is_ok() {
+                return Some(stencil);
+            }
+        }
+        return Some(explicit);
+    }
+    if !implicit {
+        return None;
+    }
+    let stencil = if let Some(package) = inline_package(shape) {
+        let definition = package.definitions.first()?.id.clone();
+        StencilRef::with_package(package, definition)
+    } else {
+        let target = import_index().get(shape)?;
+        let mut stencil =
+            StencilRef::with_package(Arc::clone(&target.package), target.definition.clone());
+        apply_bound_parameters(&mut stencil, &entries, target.absent);
+        stencil
+    };
+    stencil.validate().ok()?;
+    stencil.resolve()?;
+    Some(stencil)
 }
 
 #[cfg(test)]

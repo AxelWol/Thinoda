@@ -36,6 +36,17 @@ const DRAWIO_ROUNDING_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-16\n";
 const FINAL_STATE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-17\n";
 const SANKEY_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-18\n";
 const STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-19\n";
+const SCENE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-20\n";
+const PINNED_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-20\n";
+const CLOSED_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-21\n";
+const SCENE_STENCIL_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-22\n";
+const COLLAPSE_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-23\n";
+const LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-24\n";
+const FILL_LAST_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-25\n";
+const GROW_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-26\n";
+const FIT_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-27\n";
+const DISTRIBUTE_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-28\n";
+const CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-29\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -54,7 +65,32 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_stencils() {
+        if self.fragment.has_scene_cross_axis_fill() {
+            CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_distribute_resize() {
+            DISTRIBUTE_LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_fit_parent_resize() {
+            FIT_PARENT_LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_grow_parent_resize() {
+            GROW_PARENT_LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_fill_last_resize() {
+            FILL_LAST_LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_layout_policies() {
+            LAYOUT_BOARD_PREFIX
+        } else if self.fragment.has_scene_collapse() {
+            COLLAPSE_BOARD_PREFIX
+        } else if self.fragment.has_scene_hierarchy()
+            && (self.fragment.has_stencil_definition_hashes()
+                || self.fragment.has_stencil_definition_closures())
+        {
+            SCENE_STENCIL_BOARD_PREFIX
+        } else if self.fragment.has_scene_hierarchy() {
+            SCENE_BOARD_PREFIX
+        } else if self.fragment.has_stencil_definition_closures() {
+            CLOSED_STENCIL_BOARD_PREFIX
+        } else if self.fragment.has_stencil_definition_hashes() {
+            PINNED_STENCIL_BOARD_PREFIX
+        } else if self.fragment.has_stencils() {
             STENCIL_BOARD_PREFIX
         } else if self.fragment.has_sankey() {
             SANKEY_BOARD_PREFIX
@@ -289,9 +325,60 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(STENCIL_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-19\r\n"))
-        .map(|json| (19, json))
+        .strip_prefix(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-29\r\n"))
+        .map(|json| (29, json))
+        .or_else(|| {
+            text.strip_prefix(DISTRIBUTE_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-28\r\n"))
+                .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(FIT_PARENT_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-27\r\n"))
+                .map(|json| (27, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(GROW_PARENT_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-26\r\n"))
+                .map(|json| (26, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(FILL_LAST_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-25\r\n"))
+                .map(|json| (25, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-24\r\n"))
+                .map(|json| (24, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(COLLAPSE_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-23\r\n"))
+                .map(|json| (23, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SCENE_STENCIL_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-22\r\n"))
+                .map(|json| (22, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(CLOSED_STENCIL_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-21\r\n"))
+                .map(|json| (21, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SCENE_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix(PINNED_STENCIL_BOARD_PREFIX))
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-20\r\n"))
+                .map(|json| (20, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(STENCIL_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-19\r\n"))
+                .map(|json| (19, json))
+        })
         .or_else(|| {
             text.strip_prefix(SANKEY_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-18\r\n"))
@@ -383,8 +470,32 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
                 .map(|json| (1, json))
         })
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
-    let payload: BoardClipboardPayload =
+    let mut payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 25 && payload.fragment.has_scene_fill_last_resize() {
+        return Err("fill-last stack resizing requires board clipboard version 25".into());
+    }
+    if version < 26 && payload.fragment.has_scene_grow_parent_resize() {
+        return Err("grow-parent stack resizing requires board clipboard version 26".into());
+    }
+    if version < 27 && payload.fragment.has_scene_fit_parent_resize() {
+        return Err("fit-parent stack resizing requires board clipboard version 27".into());
+    }
+    if version < 28 && payload.fragment.has_scene_distribute_resize() {
+        return Err("distributed stack spacing requires board clipboard version 28".into());
+    }
+    if version < 29 && payload.fragment.has_scene_cross_axis_fill() {
+        return Err("cross-axis stack fill requires board clipboard version 29".into());
+    }
+    if version < 23 && payload.fragment.has_scene_collapse() {
+        return Err("collapsed containers require board clipboard version 23".into());
+    }
+    if version < 21 && payload.fragment.has_stencil_definition_closures() {
+        return Err("stencil definition closures require board clipboard version 21".into());
+    }
+    if version < 20 && payload.fragment.has_stencil_definition_hashes() {
+        return Err("pinned stencil definitions require board clipboard version 20".into());
+    }
     if version < 4 && payload.fragment.has_connector_markers() {
         return Err("connector markers require board clipboard version 4".into());
     }
@@ -426,6 +537,12 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
             "standard draw.io rectangle rounding requires board clipboard version 16".into(),
         );
     }
+    if version < 20 && payload.fragment.has_scene_hierarchy() {
+        return Err("scene hierarchy requires board clipboard version 20".into());
+    }
+    if version < 24 && payload.fragment.has_scene_layout_policies() {
+        return Err("scene layout policies require board clipboard version 24".into());
+    }
     if version < 19 && payload.fragment.has_stencils() {
         return Err("stencil shapes require board clipboard version 19".into());
     }
@@ -441,6 +558,7 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
     if version < 2 && payload.fragment.has_inline_text() {
         return Err("inline card text requires board clipboard version 2".into());
     }
+    payload.fragment.hydrate_stencil_packages()?;
     payload.validate()?;
     Ok(payload)
 }
@@ -523,6 +641,12 @@ pub fn prepare_board_selection<'a>(
         return Err("FIM selections cannot be copied as board fragments".into());
     }
     sheet.validate()?;
+    if sheet.has_semantic_model() {
+        return Err(
+            "socio-technical sheets cannot be copied as board fragments until semantic references can be remapped"
+                .into(),
+        );
+    }
 
     let mut topics = Vec::new();
     let mut topic_set = HashSet::new();
@@ -565,6 +689,12 @@ pub fn prepare_board_selection<'a>(
     }
     if topics.is_empty() && objects.is_empty() {
         return Ok(None);
+    }
+    if !objects.is_empty() && sheet.has_scene_hierarchy() {
+        objects = crate::scene_hierarchy::SceneHierarchy::from_canvas(&sheet.canvas)?
+            .copy_closure(&objects.iter().copied().collect::<Vec<_>>())?
+            .into_iter()
+            .collect();
     }
 
     let mut summary_owner = HashMap::new();
@@ -809,6 +939,22 @@ fn copy_prepared_board_selection(
         .filter(|object| objects.contains(&object.id))
         .cloned()
         .collect();
+    for object in &copied_objects {
+        if let Some(reference) = object
+            .stencil
+            .as_ref()
+            .and_then(|stencil| stencil.package_resource.as_deref())
+        {
+            let resource = sheet.resources.get(reference)?;
+            let id = reference
+                .strip_prefix(crate::resources::RESOURCE_PREFIX)
+                .ok_or("invalid stencil package resource reference")?;
+            fragment
+                .resources
+                .entries
+                .insert(id.to_owned(), resource.clone());
+        }
+    }
     let requires_detachment = copied_objects.iter().any(|object| {
         if let CanvasObjectKind::Connector(connector) = &object.kind {
             [connector.from, connector.to]
@@ -834,6 +980,38 @@ fn copy_prepared_board_selection(
     } else {
         HashMap::new()
     };
+    fragment.canvas.scene.containers = sheet
+        .canvas
+        .scene
+        .containers
+        .iter()
+        .filter(|id| objects.contains(id))
+        .copied()
+        .collect();
+    fragment.canvas.scene.parents = sheet
+        .canvas
+        .scene
+        .parents
+        .iter()
+        .filter(|(child, parent)| objects.contains(child) && objects.contains(parent))
+        .map(|(child, parent)| (*child, *parent))
+        .collect();
+    fragment.canvas.scene.collapsed = sheet
+        .canvas
+        .scene
+        .collapsed
+        .iter()
+        .filter(|(id, _)| objects.contains(id))
+        .map(|(id, rect)| (*id, *rect))
+        .collect();
+    fragment.canvas.scene.layout_policies = sheet
+        .canvas
+        .scene
+        .layout_policies
+        .iter()
+        .filter(|(id, _)| objects.contains(id))
+        .map(|(id, policy)| (*id, *policy))
+        .collect();
     for mut object in copied_objects {
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             let from_external = is_external(connector.from, &owned, &objects);
@@ -1326,6 +1504,30 @@ pub fn paste_board_selection(
         candidate.canvas.card_states.push(state);
     }
     let mut pasted_objects = Vec::new();
+    for id in &source.canvas.scene.containers {
+        candidate.canvas.scene.containers.insert(map_object(*id)?);
+    }
+    for (child, parent) in &source.canvas.scene.parents {
+        candidate
+            .canvas
+            .scene
+            .parents
+            .insert(map_object(*child)?, map_object(*parent)?);
+    }
+    for (id, expanded) in &source.canvas.scene.collapsed {
+        candidate
+            .canvas
+            .scene
+            .collapsed
+            .insert(map_object(*id)?, expanded.translate(delta));
+    }
+    for (id, policy) in &source.canvas.scene.layout_policies {
+        candidate
+            .canvas
+            .scene
+            .layout_policies
+            .insert(map_object(*id)?, *policy);
+    }
     for original in &source.canvas.objects {
         let mut object = original.clone();
         object.id = map_object(original.id)?;
@@ -1364,6 +1566,7 @@ pub fn paste_board_selection(
         pasted_objects.push(object.id);
         candidate.canvas.objects.push(object);
     }
+    candidate.hydrate_stencil_packages()?;
     candidate.validate()?;
     *sheet = candidate;
     Ok(BoardPasteResult {

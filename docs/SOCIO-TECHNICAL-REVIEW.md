@@ -1,0 +1,1009 @@
+# Rubber-duck review: socio-technical concept and common swimlanes
+
+Date: 2026-11-13. Scope: [concept and phases](SOCIO-TECHNICAL.md),
+[common structural solution](SCENE-CONTAINERS.md) and their integration with
+the [draw.io plan](DRAWIO.md). This is a design review, not runtime acceptance.
+
+An independent rubber-duck reviewer challenged the first concept, then added
+a structural review following the user's nested-swimlane clarification. The
+author investigated draw.io documentation/source and the existing example
+corpus, and revised the plans. Findings and dispositions below distinguish
+resolved design contradictions from still-unproven implementation decisions.
+
+## 1. Verdict and strongest objection
+
+**Recommended direction: workflow-first semantics on one common nested scene
+engine, with no standards-conformance claim.**
+
+The initial draft was **not ready for execution**. Its largest problems were
+underestimating shared container foundations and text/endpoint integration,
+duplicating scope ownership implicitly, and treating the social dimension as
+an optional bag of metadata.
+
+The revised design makes those investments explicit. It is not a cheap shape
+palette task. SC0/STC0 must prove the command and representation contracts
+before feature implementation is authorized. No release, compatibility,
+accessibility or performance gate is closed by this review.
+
+## 2. Ranked findings and dispositions
+
+| ID / severity | Challenge | Disposition in revised plan |
+|---|---|---|
+| B1 / blocker | Semantic labels would conflict with existing `CanvasObjectKind::Shape.label`, connector labels and their many writers | Bound occurrences have a separate generic semantic reference and no independently stored semantic text. Shared read/write resolution and revision-owned drafts are explicit; STC0 inventories inline editing, search/replace, import, clipboard, accessibility and undo. Stop/rescope if this cannot be integrated safely |
+| B2 / blocker | Relation endpoints and connector endpoints had no declared authority; deleting/reconnecting a view could corrupt the model | Relation owns semantic endpoints; ports/routes/occurrence resolution are presentation data. Reconnect is one command. V1 Delete removes the sole workflow relation with dependency preview; hiding is distinct. STC5 adds multiple-view deletion gates |
+| B3 / blocker | "Reuse the draw.io hierarchy" concealed a substantial unimplemented prerequisite | Replaced by a named common milestone SC0-SC3 with draw.io-only acceptance, consumed by STC1, not duplicated. It includes safe persistence, selection/hit-testing, policies, collapse, routing, native/web authoring and interchange |
+| B4 / blocker | Complete ownership conflicted with unallocated drafts; exchanges referenced unsupported message events; same-owner messages and lane ownership were ambiguous | At most one derived scope; no scope is an explicit draft. V1 exchanges attach to tasks or black-box scopes, not unimplemented event types. Lanes partition the owner's process; independent collaborators use pools. Same-owner cross-process communication stays visibly Thinoda-specific |
+| B5 / blocker | One future format bump was implicitly covering several independent features | Common capability table separates ancestry, layout/dashes, semantic graph and pinned definitions across native, recovery, clipboard and private snapshots. Assign actual versions only when implementing; older envelopes must not silently accept new data |
+| B6 / blocker | "Socio-technical" risked becoming BPMN-lite with human icons | Accountable-owner references and decision rationale are explicit v1 data/UI/gates. Software-only/missing accountability on automation is diagnosed; roles require human/team fulfillment to resolve it. Broader authority/risk/dependency formalisms are deferred |
+| B7 / blocker | STC0 fixed invariants but left entity/relation identity, bindings and partial-copy semantics underspecified | Initial sheet-scoped typed maps and generic occurrence bindings are selected; strong IDs stay sheet-local, partial copy remaps internal references and retains missing dependencies as drafts. This is a schema decision only; STC0 remains open pending identity, text and transport spikes, and STC2 stays gated on SC3 |
+| C1-C2 / blocker | Visual containment and semantic membership were insufficiently separated, with two implied parent trees | Only `SceneParent` defines structural ancestry. Optional bound process/lane ancestors give that ancestry semantic meaning in the canonical workflow. Participant ownership and overlapping boundary memberships are independent properties, not another tree |
+| C3 / blocker | Header orientation, nested layout, resizing, auto-grow, collapse and clipping were underdefined | Shared contract separates header side from stack axis, free/stack/table policies and source-specific growth. It defines bounded layout scheduling, expanded bounds and fold routing. Collapse is explicitly not black-box |
+| C4 / blocker | Edge moves across multiple selected containers could apply twice or lose attachments | One deduplicated transaction updates edges; cross-container edge parent uses the nearest common ancestor/layer. Actual terminals survive collapse. Manual controls translate once when both endpoints move; moving one endpoint preserves unrelated controls |
+| C5 / blocker | draw.io swimlanes or BPMN-looking symbols might accidentally become process semantics or lose nested ownership without notice | Import is unbound scene data; the initial direct-nesting slice now retains scene ancestry, while unsupported nesting and unmapped layout/collapse settings warn and scene export remains guarded. Explicit promotion maps containers/performers/edge meanings with preview. Full draw.io structural round trip is accepted independently of semantic code |
+| C6-C7 / important | Dash fields and phase ownership could be implemented twice | Shared scene milestone owns connector styling; STC1 consumes it. One scene/schema owner and an adapter owner are assigned at SC0; semantic lifecycle completion waits for the common milestone |
+| C8 / important | Flat groups, Zones and mind-map parents could become a third hierarchy | Preserve their existing meanings. New nested grouping uses scene containers. Zones retain current explicit membership fields; their existing members are not erased or reinterpreted as nested parents |
+| C9 / release blocker | Older readers, partial clipboard selection and recovery might discard hierarchy | Structural capability gates precede shared authoring. Container copy includes descendants; a child alone becomes layer-level. Semantic partial paste uses explicit unallocated/unresolved drafts. Budget overflow rejects, never truncates |
+| C10 / important | Container keyboard access was deferred to the semantic editor | Containment navigation and keyboard reparent live in SC1/SC2 for draw.io too; STC0 spikes accessible editing and STC3 adds semantic relationships |
+
+These are **design dispositions**, not assertions that code now satisfies them.
+B1, B2, B3 and C3 remain high implementation risks with explicit spike gates.
+
+Implementation has since added selected-entity unbinding (retaining the
+semantic entity record), deletion of a single-occurrence entity only after its
+relationships are removed, removal of a bound connector relation, and a guard
+that refuses canvas deletion while an occurrence remains bound. This is safe
+basic lifecycle support, not completion of B2 or STC2: cascade/dependency
+handling, all generic mutation paths, copy/recovery acceptance and keyboard
+coverage remain open.
+
+The diagnostics implementation now includes bounded sequence-graph traversal
+for steps unreachable from a declared start and reachable steps without a path
+to an end, as well as checks for non-black-box processes with no steps or
+only one of a start/end event and steps outside a process scope. It treats a
+workflow with neither boundary event as a fragment and exempts black-box
+processes from internal-workflow warnings. It deliberately does not enumerate
+execution paths; broader cycle/SCC diagnostics and the remaining semantic model
+checks are still open.
+
+## 3. Secondary critiques and decisions
+
+**N1 - Drafts versus invalid storage.** A sequence can have two valid live
+endpoints yet violate the same-scope rule; store it and diagnose its modeled
+meaning. Missing endpoints instead have a typed unresolved draft reference.
+Scene cycles/dangling live IDs reject structurally. Reachability/SCC analysis
+is bounded; a warning about an endless loop is not a verified deadlock proof.
+For unknown semantic versions, refuse writable open. Presentation-only
+conversion requires a bounded safe reader and loss consent; do not promise
+recovery from every corrupt/unknown source.
+
+**N2 - Partial edits and identity.** Copying one lane without its process is
+an unallocated draft, not an invented process. Closure expansion is previewed
+and bounded. There is no name deduplication or automatic destination linking.
+Deleting a participant defaults to preserving affected work using draft
+references, with explicit cascade as another choice. Rich "merge into existing
+participant" UX is not required for v1.
+
+**N3 - Masking.** The release gate searches decoded native/clipboard data and
+extracted SVG/PDF text/metadata for distinctive fixture strings. The check
+includes hidden data, accessibility titles and retained source properties.
+Raw binary grep alone is insufficient because compression can conceal text.
+The current masked-copy fixture also verifies scene ancestry and collapsed
+restore frames survive while labels, alt text and stencil resources are removed;
+it does not replace the broader interchange/output masking matrix.
+
+**N4 - Accessibility and scale.** Spike keyboard target selection/reparenting
+before building the palette. Keep actual assistive-technology/platform checks
+and the proposed latency fixture, plus a 10x stress point. Named hardware,
+browser, viewport and measurements are still required; no synthetic probe or
+diagram size establishes runtime quality.
+
+**N5 - Phase dependencies.** The original suggestion that semantic persistence
+could finish independently of hierarchy was rejected. Prototype work can
+overlap; full STC2 lifecycle acceptance depends on the SC0-SC3 milestone.
+SC1 structural persistence cannot expose writable nested authoring before
+its own safe version/undo/load paths work.
+
+**N6 - Minimum coherent release.** Kept boundaries and outcome links because
+the user explicitly needs them, but narrowed them to categorized membership
+and name/intent links. Deferred structured pre/postconditions, exchange
+correlation IDs and broader social reasoning. Native/web parity remains an
+explicit cost and gate, not a casual promise. Linked context view and foreign
+semantic formats are optional after v1.
+
+**N7 - Standards.** Keep BPMN sequence/message distinctions without claiming a
+new hybrid is standard BPMN. Nested lanes are not pools. A lane-to-performer
+constraint is Thinoda's interpretation, not a universal BPMN requirement.
+Same-owner internal communication is visibly non-BPMN. S-BPM inspiration is
+not formal state-machine support; gated ArchiMate source access is not a
+validated version-4 implementation specification.
+
+**N8 - Documentation truth.** Corrected directly related stale overview claims:
+the JSON interpreter and a persisted shared scene hierarchy exist, though the
+broad SC0-SC3 acceptance remains open. Definition metadata alone is not a
+semantic inspector; the current semantic Data inspector is a separate, partial
+prototype. The common document owns structural refinements; DRAWIO and the
+socio-technical plan link to it.
+
+One reviewer shorthand described Zones as having "no members". Source
+inspection shows `Zone.roots` and `Zone.objects`; that shorthand was not
+adopted. The invariant is **no nested scene-parent ownership inferred from
+Zones**, not removal of existing Zone functionality.
+
+## 4. Adversarial walkthrough
+
+| Scenario | Required outcome / acceptance owner |
+|---|---|
+| Inspector rename while an older inline text draft is open | Revision-owned semantic command refuses the stale write, retains the draft and keeps one authority; STC0/STC2 |
+| Two participants both named Admin, one human and one API | IDs remain distinct through search, import, paste and sheet duplication; STC2 |
+| Ordinary draw.io pool > lane > sub-lane, no promotion | Preserve scene hierarchy/layout and show no socio-technical diagnostics; SC3 |
+| Same shape drawn over a lane using overlap mode | Not a scene child and therefore not a member; geometry never assigns ownership; SC2 |
+| Header on left but children stacked vertically, or mixed axes at next depth | Separate header and stack policies, no swapped axes or repeated header offsets; SC2/SC3 |
+| Swimlane drop grows its parent, table-cell drop does not | Policy-specific behavior, not a global auto-grow heuristic; SC2/SC4 |
+| Select pool, nested lane, child and crossing edge, then move | Each descendant/control translates at most once; one undo restores all geometry; SC1/SC2 |
+| Reparent task changes the meaning of its existing sequence/exchange | Preview the change, preserve edge types and produce modeling diagnostics or cancel; never auto-convert; STC3 |
+| Ungroup bound pool through a generic drawing command | Require target reparent or consented unallocation; no unguarded orphaning; STC3 |
+| Collapse a scope whose task has an external exchange | Keep actual task endpoint, project visible routing to ancestor boundary; expand restores attachment; no conversion to black-box; SC2/STC3 |
+| Copy task/exchange without target scope or participant | Bounded dependency closure, remapped IDs and typed unresolved/unallocated drafts; no dangling live IDs or guessed owner; STC2 |
+| Software chosen as sole accountable owner of an automated policy step | Actionable diagnostic, not silent acceptance as human accountability; role fulfillment checked; STC3 |
+| Hide a trust boundary, then export/share the source | Hidden data is still data; loss/redaction notices and masking remain explicit; STC2/STC4 |
+| Reparent/delete cells externally after exporting a future semantic extension | Baseline conflict prevents restoring stale ownership/elements; require reconciliation or scene-only copy; STC6 |
+| Forge old clipboard/native version around new hierarchy/semantics | Reject without partially mutating destination/document; SC1/STC2 |
+| Cyclic process, cyclic parent tree, excessive nested depth | Process cycle is allowed and traversed boundedly; parent cycle/depth overflow rejects structurally; SC1/STC2 |
+
+## 5. Phase-by-phase planning critique
+
+| Phase | Main challenge / condition for proceeding |
+|---|---|
+| SC0 + STC0 | Highest-leverage work. Resolve legacy card occurrences, text/endpoint authority, supported source policies and one shared owner. Stop instead of quietly weakening identity/lifecycle guarantees |
+| SC1 | Hierarchy serialization and generic commands are a substantial feature. Test older-envelope rejection, legacy groups and keyboard movement before exposing it |
+| SC2 | Nested resize/collapse is the highest interaction risk. Bound scheduling and real endpoints are more important than adding more visual symbols |
+| SC3 | The shared engine must prove value to draw.io without semantic code. Initial appearance or schema-valid XML is not structural/behavioral round-trip acceptance |
+| SC4 | Tables reuse the same engine, not another containment model. Defer full row/column authoring rather than delaying workflow v1 indefinitely |
+| STC1 | A dependency/milestone consumption marker, not extra implementation of the SC work. Do not double-count its cost or assign a second owner |
+| STC2 | Do not call persistence done before copy/delete/reparent/recovery/masking cover real nested scenes. Unknown-version fallback must not become silent loss |
+| STC3 | Complete the whole authoring loop, including accountability/rationale and drafts. More icons cannot compensate for missing safe reconnect or keyboard editing |
+| STC4 | "First class" is a release assertion requiring platform, accessibility and artifact evidence. Missing gates keep the release open or explicitly narrow its advertised target |
+| STC5 | Independent geometry over shared meaning is useful but raises deletion/aggregation ambiguity. Preserve the canonical workflow and distinguish occurrence removal from model deletion |
+| STC6 | Only fund an adapter when demand justifies it. BPMN XML and draw.io semantic extensions have different mappings/gates; no arbitrary interoperability guarantee |
+| STC7 | Choose a concrete blueprint or intentional-modeling extension rather than adding all notations at once. Each needs actual data, not a recolored workflow |
+
+## 6. Residual decisions and evidence limits
+
+- SC0/STC0 still need named owners, numerical budgets/tolerances, an inventory
+  of text/endpoint consumers, actual keyboard prototypes and measured reference
+  hardware. These are execution-phase outputs, not unanswered user requirements.
+- Header/stack mappings are supported by documentation/source inspection; no
+  live draw.io renderer screenshot or behavior recording was produced here.
+  SC3 must compare fixtures in a pinned draw.io build.
+- Current corpus evidence confirms nested source structures, not that Thinoda
+  already preserves them. Table cases must be classified separately from
+  stack lanes. Do not label all 88 occurrences as accepted.
+- Full formal notation profiles and executable workflows remain excluded.
+  Modeling accountability is a communication aid, not a legal/compliance check.
+
+## 7. Final independent delta review
+
+The same reviewer read the new common contract and revised concept, plus the
+DRAWIO/PLAN crosslinks. Its verdict was **no remaining blockers to accepting
+the documents as a plan**, with several non-blocking wording and execution
+decisions. No additional reviewer or parallel implementation was launched.
+
+Author dispositions following that final review:
+
+- **Critical path:** retained bounded SC3 before semantic adoption deliberately
+  to prove one common native/draw.io structure. Added the rationale and made
+  clear that complete foreign-format save-back is not its gate.
+- **Earlier draw.io dependencies:** named the relevant Phase 3 model,
+  Phase 4/5 rendering/interpreter and Phase 2/6/7 adapter capabilities. SC0
+  itself has no implementation prerequisites; full parent-phase closure is
+  not required.
+- **Mutation bypass:** SC1 now requires the common binding-hook interface on
+  every generic mutation path, tested with unbound no-op and stub bound cases.
+- **Collapsed geometry and edge ancestry:** specified hidden-descendant and
+  expanded-bounds movement, one undo for induced layouts, stored edge parents
+  recomputed on explicit endpoint reparent, stable moved-edge ordering and
+  normalized repeated interchange checks.
+- **One-tree corner cases:** unbound intermediate groups are transparent;
+  v1 semantic bindings target supported free/stack containers, not table
+  cells. Reparent previews inherited performer changes. Converting to plain
+  art materializes labels/endpoints instead of stripping bindings blindly.
+- **Scope and ownership:** a single default bound connector label suffices;
+  advanced edge-child fidelity is deferred. SC2 owns immutable definition
+  resolution and STC2 consumes it. SC0 decides whether unreleased SC1/SC2
+  share one version, and explicitly stops/rescopes card integration if needed.
+- **Shared quality gate:** SC2 includes a nested depth-by-child-count latency/
+  operation-budget fixture; the later semantic performance gate is not its
+  substitute. Added a pointer in the actual DRAWIO Phase 10 section.
+
+These author-applied final clarifications were not submitted for another
+independent pass. The plan is coherent at the design level; its spikes,
+implementation gates and release acceptance remain open. Implementation
+approval was a separate user decision, subsequently granted.
+
+## 8. First implementation checkpoint critique
+
+**Implemented:** a shared immutable object-only hierarchy prototype in
+`thinoda-core`, with bounded structural validation, stable traversal and atomic
+move/reparent previews. Geometry translation reuses the board helper rather
+than introducing a separate transform implementation. The hierarchy borrows
+the canvas immutably, so candidate failures cannot mutate a document.
+
+**Rubber-duck questions and dispositions:**
+
+- Does this already deliver nested swimlane editing? No. There is no live
+  command, authoring UI, persistence, header/layout/collapse policy or semantic
+  binding. SC0 is partial and SC1-SC4/STC release gates remain open.
+- Could saving silently flatten newly authored hierarchy? The prototype cannot
+  be attached to a workbook or serialized through the current model. No live
+  command may adopt it until the complete lifecycle/version gate is implemented.
+  A translation preview alone must never be treated as a saved nested document.
+- Do overlapping parent/child selections double-translate geometry or manual
+  connector controls? The closure and the implicit internal-edge set are
+  deduplicated before the existing translation helper runs.
+- What if an endpoint is another connector? A dependency queue propagates rigid
+  translations independently of source order. A selected edge whose controls
+  move while a terminal stays fixed is not classified as rigid; downstream
+  manual controls remain fixed instead of acquiring an incorrect translation.
+- Can a child escape a locked container, or can one locked child prevent a whole
+  parent move? Source/target ancestry is checked for direct edits; a selected
+  ancestor carries its individually locked descendants as one unit.
+- Do legacy groups or cards create another ownership system? Legacy editor
+  behavior is unchanged. The prototype explicitly refuses hierarchy membership
+  in flat groups and movement requiring a mixed-group card occurrence. This is
+  a documented spike boundary, not the final grouping/card integration.
+- Is the bounded implementation accidentally quadratic? Indexed identities and
+  lock sets avoid repeated linear canvas lookup during per-object ancestry
+  checks. Parent chains stop after 32 links; traversal is iterative. The
+  maximum-object fixture is not a substitute for SC2's measured latency gate.
+- Is reparent already a complete transaction? No. Geometry-preserving topology
+  previews are present, but stored edge-parent normalization, target insertion
+  ordering, binding consequences, history and persistence were later gates at
+  this first checkpoint. The next checkpoint below advances the preview contract,
+  not persisted editing.
+
+This is an author critique, not another independent review. The previous
+independent verdict accepted the plan only; it does not certify this code or
+close the implementation gates.
+
+## 9. Command-contract checkpoint critique
+
+**Implemented:** stable child ordering across chained previews; reconciliation of
+affected connector parents, including connector-to-connector dependencies; and
+one shared read-only validation context for reparent/translation previews.
+Candidate geometry stays in sheet space and source data stays immutable.
+
+**Rubber-duck questions and dispositions:**
+
+- Does a reparent reset a previous edit's sibling order? No. The candidate
+  clones the current hierarchy and appends actually moved roots in prior
+  traversal order. Same-parent requests do not reorder siblings.
+- Does the edge solver normalize an entire imported document? No. Only edges
+  whose endpoint ancestry changes are reconciled. A geometry move leaves all
+  imported parents unchanged; unrelated edge parents survive reparenting too.
+- Could edge dependencies make the result depend on source array order?
+  Ownership uses a dependency queue, but insertion uses prior traversal order.
+  Duplicate endpoint dependencies are counted separately. Missing targets and
+  connector cycles reject the preview instead of producing partial ownership.
+- Can a late consequence violate depth or lock constraints? The full candidate
+  is validated after edge reconciliation and before binding validation. A
+  locked external edge or old/new ancestor can reject the edit; locked edges
+  carried by a selected structural ancestor keep their locks and move as a unit.
+- Can ownership be unchanged while paint order changes? Yes, if an explicitly
+  selected edge is normalized back to its original owner. The before/after
+  child lists disclose this ordering consequence, even with no final owner delta.
+- Can bindings observe only part of the edit, or mutate it during validation?
+  No. The one-shot callback receives reconciled read-only structure, geometry
+  and consequences. A stub-bound policy can detect a nested task's inherited
+  scope change through intermediate containers and reject the whole candidate.
+- Is this already the production semantic transaction hook? No. Only the two
+  immutable preview mutations are wired. Live delete/paste/ungroup, history,
+  confirmation UI, actual semantic diagnostics and persisted format gates are
+  still required. Unbound convenience methods must not be used by bound commands.
+
+**Critique:** this removes concrete command-contract gaps without shipping an
+unsafe intermediate document format. It also exposes a real distinction between
+dependency order and paint order that a flat-parent rewrite would lose.
+The remaining risk is integration, not missing visual symbols: SC0 is still
+partial, and SC1 cannot be declared complete from these previews. This is an
+author review, not a new independent rubber-duck sign-off.
+
+## 10. Bounded layout-preview checkpoint critique
+
+**Implemented:** a pure geometry preview for one container's direct children,
+with orthogonal header-side and stack-axis settings, deterministic sibling
+ordering, finite coordinate and object-count checks, and explicit overflow
+rejection. A scene preview applies each resulting offset to a unique descendant
+closure and its internal connectors in one candidate canvas, then offers the
+complete geometry to a read-only validator. A nested-policy preview schedules
+containers parent-first, composes net subtree deltas and applies each object's
+net geometry change once.
+
+**Rubber-duck questions and dispositions:**
+
+- Does a left header force horizontal stacking, or a top header force vertical
+  stacking? No. Header body bounds are calculated independently from the stack
+  axis, and mixed combinations have regression coverage.
+- Does the preview silently shrink, clip, or overflow children? No. Invalid
+  header/body dimensions and insufficient primary or cross-axis space reject
+  the entire preview.
+- Can a validator reject the result after inspecting partial geometry? No. It
+  receives the fully translated candidate; a veto returns no candidate and
+  leaves the source canvas unchanged.
+- Are conflicting translations silently applied twice? No. A repeated object
+  can receive successive parent and child offsets, but these are accumulated
+  into one net delta and applied once.
+- Does policy-map key order change nested results? No. The scene preorder, not
+  map order, schedules parent containers before nested containers.
+- What happens to a connector between siblings moved by different amounts?
+  Internal connector controls move with their subtree. An external connector's
+  controls follow when both endpoint subtrees share a net delta; otherwise its
+  manual controls stay fixed. Its attached endpoints remain object IDs.
+- Can a caller persist these policies or apply the output as a live edit? No.
+  Policies are not part of `SceneStructure`, and no document transaction,
+  undo history, renderer or interchange path calls this preview.
+- Does this implement full resizing, clipping or route presentation? No.
+  Minimum-size calculation, auto-grow/fill-last, clipping, collapse projection,
+  live rendering, undo and UI remain open.
+
+**Critique:** this is a useful deterministic scene preview, not a shipped
+container behavior. Parent-first layout closes the ordering gap for nested
+free/stack previews, and net-delta application limits repeated transforms.
+Explicitly fixing controls when endpoint subtrees diverge follows existing
+single-endpoint movement behavior, but still needs rendered-route acceptance.
+The persistence, resize, collapse, routing presentation, SC0/SC1/SC2/SC3 and
+socio-technical release gates remain open. This author critique does not replace
+independent review or measured runtime acceptance.
+
+## 10. Persistent free-container checkpoint critique
+
+**Implemented:** one stored object-only parent relation, scene-aware native and
+transport gates, core subtree lifecycle operations and conservative refusals
+where existing flat commands would lose structure. The Software starter group
+and original human/service, approval and incident-response examples are now
+explicitly in the STC3/STC4 plan; they are not yet start-page content.
+
+**Rubber-duck questions and dispositions:**
+
+- Is there now a second ownership model? No. Stored IDs/order are authoritative;
+  the immutable hierarchy is derived. Cards remain outside this slice rather
+  than being silently converted or assigned an invented parent.
+- Can a geometry preview accidentally restore old ancestry? The final audit
+  found this integration hazard in chained previews. Translation now stores the
+  current derived tree/order before transforming geometry; a regression case
+  detaches a task, moves its former lane and verifies both stored ownership and
+  the task's unchanged position.
+- Can old envelopes silently flatten the model? Native, sheet/board clipboard,
+  recovery and private XMind paths select scene-aware versions and reject
+  forged older or unversioned hierarchy. Raw scene-field detection also protects
+  malformed private snapshots from outline fallback. Empty ordinary documents
+  retain their previous serialization and required versions.
+- Is the central export guard sufficient? No: explicit draw.io clipboard
+  encoding calls a lower-level writer. That writer now rejects hierarchy too.
+  Lossy consent cannot bypass this boundary; native copy remains supported.
+- Do legacy lifecycle operations leave dangling IDs? Subtree deletion prunes
+  stored ancestry, partial copy detaches omitted parents, paste remaps IDs, and
+  Sankey endpoint reconciliation removes the parent entry of its deleted flow.
+  Duplication, sheet merging, masking and document history preserve the relation.
+- Are failed edits truly rolled back? Structural/geometry candidates commit
+  only after validation; `Document` restores the whole sheet and history on
+  failure, including the legacy allocator's reserved IDs on failed creation.
+  Direct low-level insertion may reserve an unused ID, as before, but does not
+  insert partial canvas data.
+- Can inherited locks or overlapping selections break movement? Root-based
+  selection checks avoid double moves and allow a parent to carry locked
+  descendants. Direct child edits and lock presentation consult ancestry.
+  Unrelated mixed legacy groups still move cards and objects together.
+- Does safe persistence close SC1? No. Free-frame resize deliberately leaves
+  children in sheet coordinates. Rotation, reconnection, paint ordering,
+  category changes and conflicting legacy grouping/band edits have explicit
+  limitations. Collapse, navigation, complete binding-aware transactions and
+  accepted authoring UI are still open; headers/stack layout and draw.io fidelity
+  follow in SC2/SC3.
+
+**Critique:** this makes the first stored structural slice usable by core
+commands without pretending that flat exports or old transports preserve it.
+The remaining risk is end-to-end authoring and layout integration, not symbol
+coverage. The conservative refusals must be replaced with shared, tested
+commands before exposing a first-class editor or starter templates. This is an
+author critique, not another independent review or release acceptance.
+
+**Validation evidence:** `cargo test -p thinoda-core -p thinoda-io -p
+thinoda-platform` passed 1,477 tests across 67 suites, with 10 ignored. Formatting,
+affected-package clippy (`--all-targets -- -D warnings`) and builds passed;
+`cargo check --workspace` also passed. These checks cover model/transport
+integration, not browser/native UI or reference-renderer acceptance.
+
+## 11. Live hierarchy command checkpoint critique
+
+**Implemented:** latest develop stencil changes merged into this worktree;
+scene-aware sibling paint commands and endpoint reconnection now replace two
+temporary refusals. Existing document/canvas actions consume the shared core,
+without new shape variants, stored fields or an independent ownership solver.
+
+**Rubber-duck questions and dispositions:**
+
+- Does bring-to-front flatten a nested lane? No. Only selected structural roots
+  reorder among siblings in the same parent/band. Their descendants retain their
+  geometry, internal order and locks; overlapping selections are deduplicated.
+- Can a selection jump between parents or paint bands? No. Each sibling/band
+  sequence is independent. A related audit also closed the generic-object-update
+  bypass of the existing hierarchy-member band-change refusal.
+- Can reconnecting an edge leave dependent edges with stale owners? The edited
+  edge is explicitly seeded into the shared dependency solver. Owner changes
+  propagate to dependents; unchanged owners do not normalize unrelated imported
+  edges. Both free/topic terminals remain attached to their real identities.
+- Will reversed dependency and paint order change rendering unpredictably?
+  Solving and insertion remain separate. Changed owners append edges in prior
+  traversal order, even when a dependent is painted before its attachment.
+- Does reconnection translate manual controls or rewrite fixed ports? No.
+  The checked object replacement is retained; induced ownership changes leave
+  dependent objects untouched. Headless drag coverage also exercises existing
+  fixed attachment controls rather than only calling a core helper.
+- Can a locked consequence or deep target produce a partial edit? Old/new owner
+  ancestry, edited/dependent edge locks, endpoint validity, connector cycles and
+  final depth all gate assignment. A maximum-depth case rejects the induced
+  33rd link, and document history restores the complete candidate in one step.
+- Can binding validation inspect stale stored metadata? The read-only geometry
+  context now agrees with the proposed tree/order for reparent, reorder and
+  reconnect. A rejecting validator runs once and commits nothing. This remains
+  a preview interface, not the complete semantic confirmation workflow.
+- Do zero-change terminal edits normalize imported parents? No. Changing only
+  labels/ports does not trigger endpoint-owner reconciliation. A regression
+  preserves intentionally noncanonical imported ownership.
+- Is this only a model-level proxy for the UI? Headless canvas cases verify
+  actual overlap hit order, fixed endpoint dragging across containers and
+  undo/redo. They do not establish native/browser/device acceptance or accessible
+  containment navigation.
+- Does this complete socio-technical support? No. Collapse, layout/header
+  policies, containment navigation, structural draw.io fidelity, semantic
+  persistence/authoring and Software examples are still outstanding. The
+  20,000-object fanout verifies bounded behavior, not a measured latency gate.
+
+**Critique:** existing board operations can now consume the saved hierarchy
+without substituting flat behavior or a second solver. The remaining work is
+the declared scene/semantic authoring stack; existing stencil expansion alone
+must not be presented as socio-technical modeling. This is an author critique,
+not independent review or release acceptance.
+
+**Validation evidence:** core regression suites passed 623 tests; the targeted
+canvas hierarchy filter passed 3 headless tests; IO/platform suites passed 879
+tests with 10 ignored. Formatting, core/canvas clippy (`--all-targets -- -D
+warnings`), core/canvas builds and `cargo check --workspace` passed. No live
+browser, native-device or draw.io reference-renderer acceptance is claimed.
+
+## 12. Containment-navigation checkpoint: author critique
+
+**Implemented:** a shared read-only structural target resolver, canvas keyboard
+selection/reveal/focus, localized parent/child descriptions and inherited-lock
+announcements. Existing persisted hierarchy and identities remain authoritative.
+
+**Rubber-duck questions and dispositions:**
+
+- Does navigation confuse geometry, paint order or semantic responsibility?
+  No. It uses stored immediate sibling order and the single structural parent
+  tree. It does not infer a process, lane performer or participant binding.
+- Can a leaf, empty container or layer boundary wrap unexpectedly? No. Missing
+  neighbors are no-ops, while an unknown source identity is an explicit error.
+  Layer roots remain object siblings; the layer itself is not a selectable
+  surrogate topic.
+- Does selecting a locked child imply permission to edit it? No. Locked objects
+  remain navigable. Accessibility now follows indexed ancestry to announce
+  inherited locks; existing mutation guards still enforce them.
+- Can focus jump without revealing offscreen content? Navigation uses the
+  existing selection/reveal path and requests the corresponding real AccessKit
+  item. Headless coverage traverses an offscreen sibling and back.
+- Can navigation dirty the workbook or destroy pending redo? It never enters
+  the document transaction path. Tests retain the exact workbook/state ID,
+  clean state, empty undo stack and an existing redo entry across navigation.
+- Do the shortcuts steal arrows, Home/End or Tab? No. Explicit Alt+Page keys
+  avoid those existing bindings. Exact event modifiers and focus ownership
+  exclude additional Command/Ctrl modifiers, focused controls, text editing,
+  flat boards and mixed/multiple selections.
+- Is the accessibility path quadratic on a large nested scene? Child counts
+  are built once per pass; lock checks use the object index and at most 32
+  ancestor links. Navigation constructs a validated bounded hierarchy only
+  when its chord is actually handled. This is bounded algorithmic work, not
+  a measured interactive latency guarantee.
+- Are these buttons now a complete accessible hierarchy? No. Localized labels
+  and descriptions improve discovery but preserve the current flat focusable
+  button structure and spatial Tab order. Native screen-reader behavior,
+  browser/platform shortcuts and future collapse semantics still need dedicated
+  acceptance.
+
+**Critique:** this closes the first keyboard containment slice without adding
+document state or parallel ownership. It does not deliver container authoring,
+collapse, layout/header policies, structural draw.io fidelity, semantic
+authoring or Software templates. Those remain explicit planned work.
+This is an author critique, not another independent review or release approval.
+
+**Validation evidence:** the final core/canvas regression run passed 1,239 tests
+with 2 ignored. The serialized app library run passed 971 tests with 2 ignored;
+the board-catalog coverage was also rerun against the final canvas changes.
+Formatting, affected-package clippy (`--all-targets -- -D warnings`),
+core/canvas/app builds and `cargo check --workspace` passed. No native
+screen-reader, live browser or device acceptance is claimed.
+
+## 13. Document-transaction checkpoint: author critique
+
+**Implemented:** a shared runtime validator at document sheet/workbook/reload
+commit boundaries, complete workbook rollback/history and policy retention by
+clones and previews. Unconfigured documents retain unbound behavior.
+
+**Rubber-duck questions and dispositions:**
+
+- Can a generic paste, delete or style command forget a reparent-specific
+  validator? An installed document guard sees the final transaction regardless
+  of which low-level sheet helper produced it. Bulk sheet operations have an
+  equivalent whole-workbook context.
+- Is the policy looking at an incomplete connector graph? It runs after
+  reconciliation, endpoint detachment and structural/resource checks. Tests
+  inspect induced dependent owners and real point terminals, while a cyclic
+  candidate never reaches the policy.
+- Does the guard really detect inherited semantic consequences? A test-only
+  bound-scope policy follows the shared hierarchy through transparent unbound
+  containers. It rejects both ordinary and bulk reparenting, but allows moving
+  the same subtree geometrically. No production semantic rules are inferred.
+- Could a refused proposal leak metadata, identifiers or history changes?
+  Rejection restores the original sheet or complete workbook before recording
+  history. Workbook snapshots were widened because restoring only sheets
+  would leak edited metadata and make metadata-only acceptance non-undoable.
+  Clipboard, reload and existing redo entries are covered.
+- Can a preview silently disable the policy? No. Clone/preview/reset retain
+  the same runtime guard. Clearing it requires explicit configuration. A
+  semantic-aware application must not drop its validator just because the
+  current snapshot is unbound.
+- Are reset and history replay new semantic decisions? No. Trusted construction
+  and `replace` remain loading/reset boundaries, not guarded edits; `reload`
+  is guarded. Undo/redo replays accepted snapshots. The future binding model
+  must live in those snapshots, not only in mutable callback state.
+- Can this callback host asynchronous confirmation? No. It is an immutable
+  candidate acceptance/veto interface. Detached proposal presentation,
+  explicit user decisions and document-instance/state checks still need the
+  semantic authoring integration; a refusal string is not a confirmation UI.
+- Does the hook itself change native or clipboard schemas? No. It is runtime
+  configuration, and the same scene fields remain authoritative.
+
+**Critique:** the core commit boundary can now enforce shared policies without
+requiring every command to remember a callback. This is necessary infrastructure,
+not evidence that bound workflows, collapse or Software examples are available.
+SC0/SC1 remain partial. This is an author critique, not an independent review
+or release acceptance.
+
+**Validation evidence:** core/canvas regression suites passed 1,247 tests with
+2 ignored; the serialized app library run passed 971 tests with 2 ignored.
+Affected-package clippy (`--all-targets -- -D warnings`), core/canvas/app builds,
+workspace check, formatting and diff checks passed. No native/browser/device
+or production semantic-authoring acceptance is claimed.
+
+## 14. Collapse-projection checkpoint: author critique
+
+**Implemented:** an immutable collapse preview over the shared scene builder,
+compact-frame visibility and projected connector terminals. No saved state or
+application controls are enabled.
+
+**Rubber-duck questions and dispositions:**
+
+- Does collapse destroy the geometry needed to expand? No. The preview borrows
+  the source sheet; compact copies never replace stored objects. Tests compare
+  complete source sheets before/after projection and ordinary rendering after
+  removing it.
+- Which boundary wins when both parent and child are collapsed? The outermost
+  currently visible compact frame. Removing the outer configuration reveals
+  the independently configured inner frame, without moving descendants.
+- Are connections really preserved, including fixed ports and edge targets?
+  Stored terminal IDs and ports never change. Hidden-child ports are ignored
+  only for their projected ancestor. Visible connector targets resolve from
+  projected route midpoints, even in reversed paint order.
+- Could ownership hide an imported crossing edge or a genuine self-loop?
+  Visibility considers projected terminals as well as structural ownership.
+  An initial fixture exposed incorrect hiding of a visible container self-loop;
+  that classification was corrected and retained as a regression case.
+- Do free points gain accidental containment semantics? No. They remain real
+  sheet-space points. Structural edge ownership can hide an internal edge, but
+  geometric inclusion alone does not move or fold a free terminal.
+- Is this another shape renderer? No. Compact native and JSON stencil frames
+  and connector attachment use the existing shared geometry implementation.
+- Does movement while collapsed work automatically? Only source movement is
+  implemented: existing ancestor commands carry hidden locked descendants once
+  and preserve crossing-edge manual controls. The transient caller supplies
+  the moved compact frame; saved-state/UI lifecycle integration is still open.
+- Is every diagram family supported? No. Nonempty collapse configuration on
+  Sankey sheets is explicitly refused. Empty configuration preserves ordinary
+  Sankey rendering; weighted collapse needs its own accepted ribbon contract.
+- Have scalability and release parity been proved? No. Maximum-depth and
+  20,000-object dependency fixtures establish bounded iterative behavior, not
+  platform latency, label/paint/export parity or device acceptance.
+
+**Critique:** the structural visibility/routing contract is now executable
+without prematurely freezing a document format. It is intentionally not an
+activated editor feature. Persisted collapse, header/layout policies, actual
+controls/accessibility, structural draw.io fidelity, semantic authoring and the
+Software examples remain open. This is an author critique, not an independent
+review or release acceptance.
+
+**Validation evidence:** core/canvas/IO regressions passed 1,883 tests with
+12 ignored; the final focused collapse run passed all 11 fixtures, including
+the additional JSON stencil case. Serialized app library regressions passed
+971 tests with 2 ignored. Affected-package clippy (`--all-targets -- -D warnings`),
+core/canvas/IO/app builds, workspace check, formatting and diff checks passed.
+No live native/browser/device acceptance is claimed.
+
+## 15. Collapse persistence checkpoint: author critique
+
+**Implemented:** validated saved expanded frames, active compact object frames,
+document-guarded collapse/expand, shared scene consumption and coordinated
+native/clipboard/recovery/private XMind capabilities.
+
+**Rubber-duck questions and dispositions:**
+
+- Are there two competing rectangles for layout? No. A collapsed object's
+  rectangle is its active compact frame; the map retains the frame to restore
+  on expansion. Children remain in sheet coordinates. Review removed an initial
+  same-origin restriction: right/bottom headers can need an offset compact
+  frame. A regression verifies exact restoration after moving that frame.
+- Can a repeated collapse forget the true expanded frame? No. An identical
+  command is a no-op; changing the compact frame requires expansion first.
+  Ordinary resize and clearing container status also require expansion until
+  a shared header/resize policy is implemented.
+- Does movement preserve hidden state? Compact/expanded frames and nested
+  collapsed descendants translate through the same deduplicated movement
+  command. Expanded frame validation is part of candidate acceptance, not
+  postponed until the user expands.
+- Can history, deletion or a structural preview lose metadata? Scene storage
+  retains it, deletion removes entries for deleted containers, history counts
+  and snapshots it, and undo restores it. Copy/paste carries hidden contents,
+  remaps IDs and translates the restore frames with their compact objects.
+- Could an ordinary command bypass semantic policy? The document command uses
+  the shared transaction guard. A veto fixture confirms collapse cannot leak
+  compact geometry, restore metadata or history changes.
+- Will older readers silently expand or flatten saved state? Native v29 and
+  dedicated clipboard/recovery/private XMind envelopes gate the new field.
+  Downgraded payloads fail even when their envelope supports the older hierarchy
+  and embedded stencil closures. Documents without collapse keep earlier gates.
+- Is visual geometry now divergent from labels/styles? Saved objects hold their
+  compact frames, so existing consumers see the same object geometry as the
+  shared scene. SVG and editable contextual PowerPoint omit hidden objects.
+  Full consumer/port/label parity still requires the declared SC2 matrix.
+- Are fit bounds and waypoint controls using the painted route? Review found
+  auxiliary bounds/connector helpers still used expanded contents or raw
+  hidden-child targets. They now use saved collapse projection too. A far-hidden
+  task regression checks actual visible bounds and waypoint insertion positions.
+- Can keyboard focus land on hidden descendants? Accessible items come from
+  the shared scene. A collapsed frame has no navigable first child, and canvas
+  navigation refuses nonvisible targets. Headless coverage exercises the real
+  focus path rather than only testing the hierarchy resolver.
+- Is persistence equivalent to complete UX? No. There are no collapse controls
+  or automatic compact/header defaults yet. Sankey collapse remains explicitly
+  unsupported; semantic black-box state is not inferred from visual collapse.
+
+**Critique:** this closes the saved collapse/lifecycle slice without declaring
+SC1 or the editor complete. It intentionally refuses unsupported resizing rather
+than guessing a header policy. Next work is shared header/free/stack behavior
+and authoring controls, followed by structural interchange and semantic editing.
+Software starter examples still depend on those capabilities. This is an author
+critique, not an independent review or release acceptance.
+
+**Validation evidence:** the broad core/canvas/IO/platform run passed 2,143
+tests with 12 ignored. Subsequent helper/offset refinements passed the focused
+hierarchy/container/collapse suites (72 tests, including 16 collapse fixtures),
+core/canvas library regressions, and targeted canvas/export/recovery fixtures.
+Serialized app library regressions passed 971 tests with 2 ignored.
+Affected-package clippy (`--all-targets -- -D warnings`), builds, workspace
+check, formatting and diff checks passed. No live platform acceptance is claimed.
+
+## 16. Explicit collapse controls: author rubber-duck
+
+- Should the editor invent a compact header height? No. Width/height are explicit
+  view drafts initialized from the current frame. The user can choose to hide
+  contents without changing that frame; automatic layout remains separate work.
+- Can a properties edit leak into another document revision? Actions compare the
+  complete live owner and revision. Numeric widget identity also includes revision,
+  preventing an unfinished text buffer from surviving a document change.
+- Do locked children make the parent unusable? Collapse checks the selected
+  container's ancestry, not its expanded descendant selection. A parent can hide
+  individually locked contents without modifying them; inherited locks still block.
+- Does the UI bypass the shared policy guard? No. It invokes the existing document
+  command and surfaces rejection through ordinary errors. No local geometry patch
+  or success notification substitutes for acceptance.
+- Are there misleading affordances? Empty collapsed containers previously offered
+  resize/rotate handles that core commands refuse. Those are suppressed, along with
+  unsupported rotation for expanded containers, without changing ordinary shapes.
+
+**Critique:** this makes saved collapse editable without pretending the container
+editor is finished. Explicit dimensions are intentionally less convenient than
+policy-aware headers. Creation/reparent controls, shared header/free/stack policies,
+interchange, semantic authoring and Software templates remain required. The review
+is an author critique, not independent review or live native/web acceptance.
+
+**Validation evidence:** serialized app regressions passed 975 tests (2 ignored);
+canvas regressions passed 551 (2 ignored). Affected all-target clippy with denied
+warnings, builds, wasm32 web compilation, workspace check, formatting and diff
+checks passed. An initial handle fixture incorrectly expected a connection-arrow
+label; its assertion was removed rather than treating an unrelated arrow policy
+as part of the transform-handle contract.
+
+## 17. Free-container authoring: author rubber-duck
+
+- Are users still forced to author hierarchy through JSON? No. Mark a shape,
+  choose its parent, then collapse/expand through the ordinary properties panel.
+  The existing tools already create shapes, labels and connectors.
+- Does selecting a parent imply positional containment or automatic layout? No.
+  Ownership and sheet-space position remain distinct; a visible caption states
+  that free containers do not arrange contents.
+- Can a parent choice create a cycle or hide the selected object? Choices exclude
+  self/descendants and collapsed/hidden destinations using shared resolvers.
+  Core validation still checks the exact candidate, including depth and locks.
+- Do names act as identities? No. Duplicate/empty names retain explicit object IDs.
+  Commands bind to the complete document/selection/revision, not display text.
+- Is scanning locks cheap enough? The first implementation used the canvas's
+  linear object lookup for each candidate. Review replaced it with the validated
+  hierarchy's indexed, depth-bounded lookup. Whole-menu/render latency still
+  requires measured SC0/SC2 acceptance rather than an asymptotic claim alone.
+- Does this complete semantic authoring? No. The optional transaction hook remains
+  the boundary for future semantics; no graph, promotion or confirmation is faked.
+
+**Critique:** this closes the basic free-container authoring gap without adding
+a second parent model or an unsafe storage bypass. The picker is deliberately
+less convenient than direct manipulation; full keyboard/native/web acceptance,
+headers/stack policies, structural interchange, semantic lifecycle and Software
+starter examples remain open. This is an author review, not independent review.
+
+**Validation evidence:** serialized app regressions passed 977 tests (2 ignored);
+the hierarchy/container/collapse suites passed 72. Affected all-target clippy with
+denied warnings, builds, wasm32 web compilation, workspace check, formatting and
+diff checks passed. No live native/browser acceptance is claimed.
+
+## 18. Early Software examples: author rubber-duck
+
+- Are these diagrams editable examples or pictures? They contain the same real
+  free-container ancestry, shapes and connector endpoints as user-authored scenes.
+  Moving a frame carries its contents; property editing, collapse and undo use
+  the shared model. Native save/reopen and SVG use that same structure.
+- Does bringing examples forward silently relax semantic gates? No. A visible,
+  localized legend says these are structural examples, not typed semantics or
+  automatic lane layout. STC3/STC4 still require typed authoring and acceptance.
+- Is this another hard-coded swimlane renderer? No. One JSON header-frame
+  definition supplies the outline, separator, label region and height parameter
+  through the existing bounded interpreter. Header height clamps to compact bounds.
+  No new Rust shape variant, layout engine or inferred participant binding exists.
+- Will old labels be reinterpreted when semantics arrive? They must not be.
+  Semantic promotion remains explicit, even for older starter documents.
+- Are revisions and existing library behavior preserved? The package revision is
+  incremented while existing definition order and hashes stay unchanged. Review
+  caught index-dependent fixtures when the new definition was initially prepended;
+  appending it preserves ordering. The pinned-library test now compares against
+  the original package revision instead of assuming revision one forever.
+- What does draw.io support mean here? The header has a plain-art mapping.
+  Structural diagrams remain protected by the existing hierarchy export refusal;
+  this does not assert SC3 interoperability or BPMN conformance.
+
+**Critique:** the examples make current capabilities discoverable without
+pretending to deliver a complete socio-technical editor. Their free placement and
+descriptive labels are intentional interim limits. Typed relationships,
+accountability/rationale, broader automatic layout, structural interchange,
+performance budgets and live platform/accessibility acceptance remain required.
+
+**Validation evidence:** core library regressions passed 422 tests; canvas passed
+551 (2 ignored); board export passed 68 (3 ignored); serialized app regressions
+passed 978 (2 ignored). Focused fixtures cover template copy/paste including
+collapsed state, localized header editing, native round trips and SVG geometry.
+Affected all-target clippy with denied warnings, builds, wasm32 web compilation,
+workspace check, formatting and diff checks passed.
+
+## 19. First interactive layout-authoring slice
+
+The container property panel now separates policy drafting, saving and
+application. It exposes free placement and horizontal/vertical stacks with
+spacing, padding and header extent; applying a stored nested policy remains one
+undoable geometry edit. Existing policy header sides are displayed and preserved
+but are not yet editable. The panel states that header extent reserves layout
+space and does not change drawing, avoiding a false appearance of renderer
+integration.
+
+**Rubber-duck questions:** Can a draft silently change geometry? No; saving
+stores policy only, and the distinct arrange command applies it. Can the panel
+erase an imported side policy? No; the side is retained and shown read-only.
+Can an overflowing stack partially move children? No; the core candidate is
+validated before the single document edit. Does this complete swimlane editing?
+No; render/hit-test/SVG/PDF parity, a data-defined header-side mapping, resize
+policies, drop behavior, draw.io fidelity, measured performance and live
+accessibility acceptance remain open.
+
+**Validation evidence:** the focused app harness changes and persists a vertical
+stack, verifies that drafting and saving do not move children, applies the
+layout, preserves a non-top header side, and undoes the application and policy
+save independently. The serialized app suite passed 979 tests (2 ignored);
+workspace Clippy/build, wasm32 web check and diff checks passed. SC2 remains
+partial.
+
+## 20. Shared policy-driven stencil rendering
+
+The shared scene now resolves a container's stored header policy through a
+stencil definition's `thinoda.containerHeader` data binding. One evaluated
+`StencilRender` is carried by `SceneItem`; its geometry, label region, canvas
+paint, connector ports, label editor and SVG/PDF board export consume that
+result. The `header-frame-v2` JSON definition supports top, right, bottom and
+left headers. The prior `header-frame` definition is preserved unchanged so
+existing definition hashes remain valid. Definitions without the binding keep
+their original appearance, even when their container has a layout policy.
+
+**Rubber-duck questions:** Is this another renderer branch per shape? No: the
+scene reads a namespaced parameter binding, while the bounded JSON interpreter
+evaluates the selected header geometry. Does a stored side silently change a
+legacy stencil? No: the old definition remains hash-stable, and only the new
+definition declares the binding. Do the connectors acquire new ports or move
+their perimeter? No: connection points and the outer outline stay data-defined
+and unchanged; only the separator and label region vary. Are paint, hit
+geometry and export independent evaluations? No: they receive the same resolved
+scene render. Does this complete swimlane editing? No: the policy panel exposes
+side editing only for definitions with a complete data-defined four-side
+binding; unsupported stencils remain read-only. Draw.io orientation mapping,
+layout resize/drop behavior, measured performance and live native/web acceptance
+remain open.
+
+**Critique:** the scene item is now the shared boundary for derived stencil
+render data, avoiding policy lookups and divergent evaluations in renderers.
+Using a new definition ID protects older pinned documents; it also means
+existing `header-frame` instances do not gain side behavior automatically.
+That compatibility boundary is intentional and should remain explicit until a
+separate migration is designed. The tests verify each side's label region and
+divider geometry, but do not replace visual acceptance or draw.io round-trip
+tests.
+
+**Validation evidence:** the affected core/canvas/I/O suites passed 1,908 tests;
+the serialized app library suite passed 979 tests (2 ignored). Workspace build,
+all-target Clippy with warnings denied, wasm32 web check, formatting and diff
+checks passed. This does not claim live browser/native visual acceptance.
+
+## 21. Header-side policy editing
+
+The shared container properties panel now edits the stored header side for
+stencils that declare a complete `thinoda.containerHeader` four-side binding.
+Other stencils retain a read-only side value, so saving their layout policy
+cannot imply unsupported rendering behavior. Drafts initialize from the
+bound stencil's current side and extent, and extent is clamped to the selected
+side's frame dimension. The explanatory caption distinguishes layout reservation
+from visible header rendering.
+
+**Rubber-duck questions:** Can editing the policy make an unbound stencil look
+like a swimlane? No; its side control stays read-only and the renderer continues
+to use the stencil's existing appearance. Can changing the side leave an extent
+larger than its new frame dimension? No; the draft clamps it using the active
+side's width or height. Can this silently modify the old pinned header stencil?
+No; only `header-frame-v2` declares the binding, preserving the legacy definition
+hash.
+
+**Remaining boundary:** this UI and its headless tests do not establish native
+or browser visual/accessibility acceptance. Draw.io side/orientation mapping,
+resize/drop policies, structural interchange fidelity and measured performance
+remain open; SC2/SC3 and the first-class editor release gates are still partial.
+
+## 22. Fill-last stack resizing
+
+The shared stack policy now offers opt-in `FillLast`: preserve every existing
+child size except the final child, which grows along the stack axis to the
+remaining body space. Cross-axis size and leading-edge alignment are unchanged.
+Overflow before the final child rejects the whole preview; neither shrinking the
+last child nor automatic parent growth is implied. The nested layout candidate
+applies explicit size changes as well as translations, so document validation
+and undo see the complete geometry transaction.
+
+**Rubber-duck questions:** Do old stack policies change behavior? No; absent
+resize data defaults to `Preserve`, which is omitted when serialized. Can a
+short parent silently shrink a manually sized last child? No; the preview rejects
+when the existing contents and gaps do not fit. Does this implement draw.io's
+full resize policy set? No; grow-parent, grow-only, distribute, nested minimum
+size, drop behavior and interchange mapping remain separate work. Can this
+resize a compact child while preserving an older expanded frame? No; the layout
+is refused until that child is expanded.
+
+Fill-last requires native format v31 and board clipboard v25; older formats
+reject it rather than lose the resize choice. Existing fixed-layout policies
+remain native v30 / clipboard v24. This is a bounded SC2 slice, not SC2
+acceptance: measured performance, draw.io round trips and live native/web
+visual/accessibility checks remain open.
+
+## 23. Parent-resize policies
+
+The shared stack policy distinguishes `GrowParent` (minimum bounds, but never
+shrink) from `FitParent` (set the frame to those minimum bounds, allowing
+shrink). Both preserve child sizes and compute nested container frames
+bottom-up, then place children top-down in one candidate edit. `FillLast` is
+mutually exclusive with either parent mode; a parent-resize mode therefore
+cannot silently also resize the final child.
+
+**Rubber-duck questions:** Can a fit policy unexpectedly shrink a nested frame?
+Yes, by design; the exact candidate is one undoable layout command and callers
+must validate it before commit. Can it resize a collapsed child or operate under
+a collapsed ancestor? No, the hierarchy preflight rejects the layout. Does this
+match draw.io geometry exactly? Not yet: mxStackLayout distinguishes
+`resizeParent` from `resizeParentMax` and explicitly ignores `resizeLast` when
+`resizeParent` is enabled ([source][mxstack]). Thinoda computes the minimum in
+both dimensions, so source-specific dimension mapping and round-trip fixtures
+remain open.
+
+Grow-parent requires native v32 / clipboard v26; fit-parent requires native v33
+/ clipboard v27. These gates preserve older readers' ability to reject rather
+than discard the selected policy. The focused tests cover minimum bounds,
+nested growth, frame shrink, UI selection and both old-envelope gates; they do
+not close SC2 or establish live draw.io/native/web parity.
+
+[mxstack]: https://github.com/jgraph/mxgraph/blob/master/javascript/src/js/layout/mxStackLayout.js
+
+## 24. Explicit stack-gap distribution
+
+`Distribute` keeps child extents and edge padding fixed, then allocates the
+remaining primary-axis slack equally across the gaps between siblings. It is
+deliberately not center-distribution of selected objects: a stack with zero or
+one child stays leading-aligned. If the children plus configured minimum gaps
+do not fit, the candidate is rejected instead of shrinking children.
+
+**Rubber-duck questions:** Does this mutate child sizes? No. Does it add
+unbounded work or recursive scaling? No; gap allocation is one bounded
+arithmetic pass after the existing layout limits. Is this a draw.io
+`resizeLast` behavior? No; it is a Thinoda-specific explicit arrangement
+policy, and interchange mapping remains open. Distributed spacing requires
+native v34 / board clipboard v28; older envelopes reject it.
+
+## 25. Semantic authoring and typed-example checkpoint
+
+**Implemented:** a sheet-scoped typed semantic model with feature-gated native,
+full-sheet clipboard, recovery and private XMind persistence; masking/history
+accounting and export-loss reporting; an initial Data inspector; and typed
+Software examples with nested semantic lanes, role-based accountability and a
+trust boundary. Shape promotion and connector sequence/exchange classification
+are explicit user actions. The inspector edits participant kind, process
+black-box state, step kind/automation, boundary kind, descriptions, use-case
+intent and decision rationale. It now creates and removes participant-role
+fulfillment, process ownership, lane performer, use-case step, boundary
+membership and accountability relations, and can change an unbound relation's
+target without replacing its record. Reconnecting a bound sequence or exchange
+connector now updates its semantic endpoints in the same validated transaction;
+incompatible endpoints leave both records unchanged. Link changes are
+transactional and undoable.
+The inspector also surfaces initial modeling warnings for unowned processes,
+unperformed lanes, incomplete decisions, cross-scope sequences, empty use cases
+and automated work without human accountability. New checks also flag empty
+non-black-box process scopes, one-sided start/end events and unallocated steps;
+black-box processes and workflow fragments with neither event remain valid
+without those completeness warnings.
+
+**Rubber-duck questions and dispositions:**
+
+- Can legacy formats silently drop the new model? Feature-aware versions reject
+  unsupported semantic data, and presentation exports report loss. Partial
+  semantic board clipboard remains refused rather than copying dangling IDs.
+- Does selecting a connector infer Sequence or Exchange from its appearance?
+  No. The user explicitly chooses a relation; available choices require typed
+  step endpoints or distinct bound process scopes. Same-owner process
+  exchanges are marked internal when ownership data establishes that fact.
+- Do names in the typed model silently diverge from canvas labels? Current
+  bound-label edits are synchronized and validated, but both copies are still
+  serialized. Search/import/other mutation paths need a complete authority
+  inventory before this can be treated as one authoritative value.
+- Does the inspector create all v1 meaning? No. Core ownership, performer, role
+  fulfillment, use-case, boundary and accountability links are now authorable,
+  their unbound targets can be changed, and they can be removed. Canvas
+  reconnection synchronizes the endpoint IDs of bound Sequence/Exchange
+  relations. Direct endpoint fields in the inspector, dependency previews,
+  reachability analysis, complete diagnostic coverage, comprehensive lifecycle
+  handling and keyboard and assistive-technology acceptance remain open.
+- Do the three starter examples satisfy the acceptance corpus? No. They now
+  contain explicit incomplete-request, approval/refusal, timeout/escalation,
+  and recovery retry/repeated-failure paths with decision rationale. Typed
+  tests check their step counts, branches and accountability. They still lack
+  broader expected-diagnostic fixtures, full save/reopen/clipboard/export
+  acceptance and native/web end-to-end coverage.
+- Do passing model tests prove first-class native and web UX? No. Targeted
+  headless UI tests cover shape/connector promotion, relationship creation,
+  target editing/removal, accountability authoring, and translation catalogs;
+  core tests cover atomic bound-connector reconnection. Browser/device,
+  accessibility, performance and release checklists remain open.
+
+**Critique:** this is a coherent persistence and authoring prototype, not
+STC2/STC3 completion or a first-class release. The main risks are no longer
+schema discovery; they are incomplete lifecycle and diagnostic coverage,
+duplicate label authority, partial-copy refusal, and unproven scenario/platform
+acceptance. The prototype should remain explicitly scoped until those gates
+close.
+This is an author critique, not another independent review or release approval.

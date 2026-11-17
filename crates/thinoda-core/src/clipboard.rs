@@ -39,12 +39,24 @@ const DRAWIO_ROUNDING_SHEET_PREFIX: &str = "THINODA-SHEET-19\n";
 const FINAL_STATE_SHEET_PREFIX: &str = "THINODA-SHEET-20\n";
 const SANKEY_SHEET_PREFIX: &str = "THINODA-SHEET-21\n";
 const STENCIL_SHEET_PREFIX: &str = "THINODA-SHEET-22\n";
+const SCENE_SHEET_PREFIX: &str = "THINODA-SHEET-23\n";
+const COLLAPSE_SHEET_PREFIX: &str = "THINODA-SHEET-24\n";
+const SCENE_LAYOUT_SHEET_PREFIX: &str = "THINODA-SHEET-25\n";
+const SEMANTIC_SHEET_PREFIX: &str = "THINODA-SHEET-26\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_stencils() {
+    let prefix = if sheet.has_semantic_model() {
+        SEMANTIC_SHEET_PREFIX
+    } else if sheet.has_scene_layout_policies() {
+        SCENE_LAYOUT_SHEET_PREFIX
+    } else if sheet.has_scene_collapse() {
+        COLLAPSE_SHEET_PREFIX
+    } else if sheet.has_scene_hierarchy() {
+        SCENE_SHEET_PREFIX
+    } else if sheet.has_stencils() {
         STENCIL_SHEET_PREFIX
     } else if sheet.has_sankey() {
         SANKEY_SHEET_PREFIX
@@ -107,9 +119,29 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(STENCIL_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-22\r\n"))
-        .map(|json| (22, json))
+        .strip_prefix(SCENE_LAYOUT_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-25\r\n"))
+        .map(|json| (25, json))
+        .or_else(|| {
+            text.strip_prefix(SEMANTIC_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-26\r\n"))
+                .map(|json| (26, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(COLLAPSE_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-24\r\n"))
+                .map(|json| (24, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(SCENE_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-23\r\n"))
+                .map(|json| (23, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(STENCIL_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-22\r\n"))
+                .map(|json| (22, json))
+        })
         .or_else(|| {
             text.strip_prefix(SANKEY_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-21\r\n"))
@@ -217,6 +249,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 26 && sheet.has_semantic_model() {
+        return Err("socio-technical data requires sheet clipboard version 26".into());
+    }
     if version < 7 && sheet.has_connector_markers() {
         return Err("connector markers require sheet clipboard version 7".into());
     }
@@ -257,6 +292,15 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         return Err(
             "standard draw.io rectangle rounding requires sheet clipboard version 19".into(),
         );
+    }
+    if version < 25 && sheet.has_scene_layout_policies() {
+        return Err("scene layout policies require sheet clipboard version 25".into());
+    }
+    if version < 24 && sheet.has_scene_collapse() {
+        return Err("collapsed containers require sheet clipboard version 24".into());
+    }
+    if version < 23 && sheet.has_scene_hierarchy() {
+        return Err("scene hierarchy requires sheet clipboard version 23".into());
     }
     if version < 22 && sheet.has_stencils() {
         return Err("stencil shapes require sheet clipboard version 22".into());
@@ -533,6 +577,31 @@ fn same_normalized(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socio_technical_sheet_clipboard_is_versioned_and_lossless() {
+        let mut sheet = Sheet::new("Workflow", "Root");
+        let mut model = crate::semantic::SemanticModel::default();
+        model.entities.insert(
+            crate::semantic::SemanticEntityId(2),
+            crate::semantic::SemanticEntity::Participant(crate::semantic::Participant {
+                kind: crate::semantic::ParticipantKind::Software,
+                name: "Order service".into(),
+                description: String::new(),
+            }),
+        );
+        sheet.semantic = Some(model);
+
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(SEMANTIC_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let legacy = encoded.replacen(SEMANTIC_SHEET_PREFIX, SCENE_LAYOUT_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&legacy)
+                .unwrap_err()
+                .contains("clipboard version 26")
+        );
+    }
 
     fn formatted_card_sheet(kind: crate::CardKind) -> Sheet {
         let mut sheet = Sheet::new("Board", "Root");
@@ -1173,6 +1242,70 @@ mod tests {
                 let forged = format!("{DOUBLE_ELLIPSE_SHEET_PREFIX}{malformed}");
                 assert!(decode_sheet(&forged).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn scene_layout_policies_require_new_sheet_clipboard_version() {
+        use crate::scene_layout::{
+            ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+            StackCrossAxisPolicy, StackResizePolicy,
+        };
+        use crate::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        for collapsed in [false, true] {
+            let mut sheet = Sheet::new("Layout clipboard", "Root");
+            let container = sheet
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+                ))
+                .unwrap();
+            sheet.set_canvas_container(container, true).unwrap();
+            sheet
+                .set_canvas_container_layout_policy(
+                    container,
+                    Some(ContainerLayoutPolicy {
+                        header: HeaderPolicy {
+                            side: HeaderSide::Top,
+                            extent: 24.0,
+                        },
+                        layout: ContainerLayout::Stack {
+                            axis: StackAxis::Vertical,
+                            spacing: 8.0,
+                            padding: 8.0,
+                            cross_axis: StackCrossAxisPolicy::Fill,
+                            resize: StackResizePolicy::Preserve,
+                        },
+                    }),
+                )
+                .unwrap();
+            if collapsed {
+                sheet
+                    .set_canvas_container_collapsed(
+                        container,
+                        Some(Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 30.0))),
+                    )
+                    .unwrap();
+            }
+
+            let encoded = encode_sheet(&sheet).unwrap();
+            assert!(encoded.starts_with(SCENE_LAYOUT_SHEET_PREFIX));
+            assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+            assert_eq!(
+                decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+                sheet
+            );
+
+            let old = format!(
+                "{COLLAPSE_SHEET_PREFIX}{}",
+                serde_json::to_string(&sheet).unwrap()
+            );
+            assert!(
+                decode_sheet(&old)
+                    .unwrap_err()
+                    .contains("scene layout policies")
+            );
         }
     }
 

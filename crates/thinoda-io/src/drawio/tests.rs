@@ -3563,7 +3563,144 @@ fn recognized_approximations_do_not_claim_to_be_unknown_shapes() {
         r#"<mxCell id="folder" value="Folder" style="shape=folder;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"#,
     );
     let report = load(&xml);
-    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    assert!(
+        report.warnings.is_empty(),
+        "a mapped stencil is exact: {:?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn plain_drawio_shapes_resolve_through_the_stencil_import_map() {
+    let cell = |id: &str, style: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="{style}" vertex="1" parent="1"><mxGeometry x="10" y="10" width="100" height="80" as="geometry"/></mxCell>"#
+        )
+    };
+    let cells = [
+        cell("folder", "shape=folder;"),
+        cell("left", "shape=folder;tabPosition=left;tabWidth=110;"),
+        cell("tape", "shape=tape;"),
+        cell("storage", "shape=dataStorage;"),
+        cell("fixed", "shape=dataStorage;fixedSize=1;"),
+        cell("arrow", "shape=mxgraph.arrows2.arrow;dy=0.6;dx=30;notch=0;"),
+    ]
+    .concat();
+    let sheet = clean(&page(&cells));
+    let objects = shapes(&sheet);
+    let label_of = |object: &CanvasObject| match &object.kind {
+        CanvasObjectKind::Shape { label, .. } => label.clone(),
+        _ => String::new(),
+    };
+    let stencil = |label: &str| {
+        objects
+            .iter()
+            .find(|object| label_of(object) == label)
+            .and_then(|object| object.stencil.clone())
+    };
+    let param = |label: &str, key: &str| stencil(label).unwrap().parameters.get(key).copied();
+
+    let folder = stencil("folder").unwrap();
+    assert_eq!(
+        (folder.package.as_str(), folder.definition.as_str()),
+        ("thinoda.general", "folder")
+    );
+    // draw.io's class defaults apply to keys absent from the style.
+    assert_eq!(param("folder", "tabWidth"), Some(60.0));
+    assert_eq!(param("folder", "tabHeight"), Some(20.0));
+    assert_eq!(param("folder", "tabPosition"), Some(1.0));
+    assert_eq!(param("left", "tabPosition").unwrap_or(0.0), 0.0);
+    assert_eq!(param("left", "tabWidth"), Some(110.0));
+
+    let tape = stencil("tape").unwrap();
+    assert_eq!(
+        (tape.package.as_str(), tape.definition.as_str()),
+        ("thinoda.drawio", "tape")
+    );
+    assert_eq!(param("storage", "size").unwrap_or(0.1), 0.1);
+    assert_eq!(param("fixed", "size"), Some(20.0));
+    assert_eq!(param("arrow", "dx"), Some(30.0));
+    for object in &objects {
+        if object.stencil.is_some() {
+            assert!(thinoda_core::stencil_object::render(object).is_some());
+        }
+    }
+
+    let xml = String::from_utf8(export(&Workbook::new(sheet.clone())).unwrap()).unwrap();
+    assert!(xml.contains("shape=tape;"));
+    assert_eq!(
+        shapes(&clean(&xml))
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>(),
+        objects
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inline_drawio_stencils_import_render_and_round_trip() {
+    use base64::Engine as _;
+    let encode = |stencil: &str| {
+        let deflated = miniz_oxide::deflate::compress_to_vec(
+            crate::drawio_clipboard::encode_uri_component(stencil).as_bytes(),
+            6,
+        );
+        base64::engine::general_purpose::STANDARD.encode(deflated)
+    };
+    let payload = encode(
+        r#"<shape name="Gem" aspect="variable" w="40" h="40" strokewidth="inherit"><background><path><move x="20" y="0"/><line x="40" y="20"/><line x="20" y="40"/><line x="0" y="20"/><close/></path></background><foreground><fillstroke/></foreground></shape>"#,
+    );
+    let other = encode(
+        r#"<shape name="Bar" aspect="variable" w="40" h="20" strokewidth="inherit"><background><rect x="0" y="0" w="40" h="20"/></background><foreground><fillstroke/></foreground></shape>"#,
+    );
+    let xml = page(&format!(
+        r#"<mxCell id="2" value="gem" style="shape=stencil({payload});whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="80" as="geometry"/></mxCell><mxCell id="3" style="shape=stencil({other});" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell><mxCell id="4" style="shape=stencil({payload});" vertex="1" parent="1"><mxGeometry x="300" y="10" width="40" height="40" as="geometry"/></mxCell>"#
+    ));
+    let report = load(&xml);
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = report.workbook.sheets.into_iter().next().unwrap();
+    let object = shapes(&sheet)[0].clone();
+    let reference = object.stencil.clone().unwrap();
+    assert_eq!(reference.package, "drawio.inline");
+    let render = thinoda_core::stencil_object::render(&object).unwrap();
+    assert!(render.contains(Vec2::new(40.0, 40.0)));
+    assert!(!render.contains(Vec2::new(2.0, 2.0)));
+    // Every inline stencil on a page shares one bundled package resource.
+    let stencils: Vec<_> = shapes(&sheet)
+        .into_iter()
+        .map(|shape| shape.stencil.clone().unwrap())
+        .collect();
+    assert_eq!(stencils.len(), 3);
+    assert_ne!(stencils[0].definition, stencils[1].definition);
+    assert_eq!(stencils[0].definition, stencils[2].definition);
+    assert!(reference.package_resource.is_some());
+    assert!(
+        stencils
+            .iter()
+            .all(|stencil| stencil.package_resource == reference.package_resource)
+    );
+    assert_eq!(sheet.resources.entries.len(), 1);
+
+    let book = Workbook::new(sheet.clone());
+    export_bytes(&book, Format::Svg, &ExportOptions::default()).unwrap();
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+
+    let exported = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(exported.contains("shape=stencil("));
+    let again = clean(&exported);
+    let reopened = shapes(&again)[0];
+    assert_eq!(reopened.stencil.as_ref(), Some(&reference));
+    assert!(thinoda_core::stencil_object::render(reopened).is_some());
 }
 
 #[test]
@@ -7310,6 +7447,718 @@ fn shaped_containers_report_their_frame_approximation() {
 }
 
 #[test]
+fn nested_swimlanes_preserve_scene_hierarchy_and_header_orientation() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="80" width="500" height="320" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell>
+        <mxCell id="sub-lane" value="Sub-lane" style="swimlane;startSize=18;horizontal=1;collapsible=0;" vertex="1" parent="lane"><mxGeometry x="40" y="50" width="300" height="160" as="geometry"/></mxCell>
+        <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="sub-lane"><mxGeometry x="20" y="30" width="100" height="50" as="geometry"/></mxCell>
+        <mxCell id="edge" edge="1" source="pool" target="task" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+
+    let sheet = &report.workbook.sheets[0];
+    assert!(sheet.zones.is_empty());
+    assert_eq!(sheet.canvas.scene.containers.len(), 3);
+    assert_eq!(sheet.canvas.scene.parents.len(), 4);
+    let objects = &sheet.canvas.objects;
+    let pool = objects
+        .iter()
+        .find(|object| object.label() == "Pool")
+        .unwrap();
+    let lane = objects
+        .iter()
+        .find(|object| object.label() == "Lane")
+        .unwrap();
+    let sub_lane = objects
+        .iter()
+        .find(|object| object.label() == "Sub-lane")
+        .unwrap();
+    let task = objects
+        .iter()
+        .find(|object| object.label() == "Task")
+        .unwrap();
+    assert_eq!(pool.rect, rect(100.0, 80.0, 500.0, 320.0));
+    assert_eq!(lane.rect, rect(130.0, 120.0, 420.0, 240.0));
+    assert_eq!(sub_lane.rect, rect(170.0, 170.0, 300.0, 160.0));
+    assert_eq!(task.rect, rect(190.0, 200.0, 100.0, 50.0));
+    assert!(sheet.canvas.scene.containers.contains(&pool.id));
+    assert!(sheet.canvas.scene.containers.contains(&lane.id));
+    assert!(sheet.canvas.scene.containers.contains(&sub_lane.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&lane.id), Some(&pool.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&sub_lane.id), Some(&lane.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&task.id), Some(&sub_lane.id));
+    let connector_id = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|object| matches!(object.kind, CanvasObjectKind::Connector(_)))
+        .unwrap()
+        .id;
+    assert_eq!(
+        objects.iter().map(|object| object.id).collect::<Vec<_>>(),
+        vec![pool.id, lane.id, sub_lane.id, task.id, connector_id]
+    );
+    assert_eq!(
+        sheet.canvas.scene.parents.get(&connector_id),
+        Some(&pool.id)
+    );
+    assert_eq!(connectors(sheet).len(), 1);
+    assert_eq!(connectors(sheet)[0].from, Endpoint::Object(pool.id));
+    assert_eq!(connectors(sheet)[0].to, Endpoint::Object(task.id));
+    assert_eq!(
+        lane.stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerHeight")),
+        Some(&24.0)
+    );
+    assert_eq!(
+        lane.stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerSide")),
+        Some(&3.0)
+    );
+    sheet.validate().unwrap();
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+    let drawio = export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let round_trip = crate::import_bytes(Format::DrawIo, &drawio).unwrap();
+    let restored = &round_trip.sheets[0];
+    assert_eq!(
+        restored.canvas.scene.containers,
+        sheet.canvas.scene.containers
+    );
+    assert_eq!(restored.canvas.scene.parents, sheet.canvas.scene.parents);
+    assert_eq!(
+        restored
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>(),
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>()
+    );
+    let restored_lane = restored
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Lane")
+        .unwrap();
+    let restored_sub_lane = restored
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Sub-lane")
+        .unwrap();
+    assert_eq!(
+        restored_lane
+            .stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerSide")),
+        Some(&3.0)
+    );
+    assert_eq!(
+        restored_sub_lane
+            .stencil
+            .as_ref()
+            .and_then(|stencil| stencil.parameters.get("headerSide")),
+        Some(&0.0)
+    );
+    assert_eq!(connectors(restored)[0].from, connectors(sheet)[0].from);
+    assert_eq!(connectors(restored)[0].to, connectors(sheet)[0].to);
+    let mut right_header = report.workbook.clone();
+    right_header.sheets[0]
+        .canvas
+        .objects
+        .iter_mut()
+        .find(|object| object.id == lane.id)
+        .unwrap()
+        .stencil
+        .as_mut()
+        .unwrap()
+        .parameters
+        .insert("headerSide".into(), 1.0);
+    assert!(matches!(
+        export_bytes(&right_header, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("right or bottom scene headers")
+    ));
+
+    let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
+    assert_eq!(
+        crate::import_drawio_link(&link).unwrap().warnings,
+        report.warnings
+    );
+    let pasted = crate::drawio_clipboard::decode(&xml).unwrap();
+    assert!(pasted.warnings.contains(&ImportWarning::Other));
+    assert!(
+        pasted
+            .losses
+            .contains(&crate::drawio_clipboard::DrawioPasteLoss::SceneHierarchy(
+                sheet.canvas.scene.parents.len()
+            ))
+    );
+}
+
+#[test]
+fn isolated_scene_container_with_shape_child_round_trips() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let container = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 80.0, 400.0, 260.0),
+            "Pool",
+        ))
+        .unwrap();
+    let task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(150.0, 140.0, 120.0, 60.0),
+            "Task",
+        ))
+        .unwrap();
+    sheet.canvas.scene.containers.insert(container);
+    sheet.canvas.scene.parents.insert(task, container);
+    let workbook = Workbook::new(sheet);
+
+    let xml = String::from_utf8(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()).unwrap(),
+    )
+    .unwrap();
+    assert!(xml.contains("thinodaSceneContainer=1;"));
+    let imported = load(&xml);
+    assert!(imported.warnings.is_empty(), "{:?}", imported.warnings);
+    let restored = imported.workbook;
+    let sheet = &restored.sheets[0];
+    assert_eq!(sheet.canvas.scene.parents.get(&task), Some(&container));
+    assert!(sheet.canvas.scene.containers.contains(&container));
+    assert_eq!(
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.id == task)
+            .unwrap()
+            .rect,
+        rect(150.0, 140.0, 120.0, 60.0)
+    );
+    restored.validate().unwrap();
+}
+
+#[test]
+fn multiple_isolated_scene_containers_with_shape_children_round_trip() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let first = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(40.0, 60.0, 300.0, 200.0),
+            "First pool",
+        ))
+        .unwrap();
+    let first_task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(70.0, 110.0, 100.0, 50.0),
+            "First task",
+        ))
+        .unwrap();
+    let second = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(420.0, 60.0, 300.0, 200.0),
+            "Second pool",
+        ))
+        .unwrap();
+    let second_task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(450.0, 110.0, 100.0, 50.0),
+            "Second task",
+        ))
+        .unwrap();
+    sheet.canvas.scene.containers.extend([first, second]);
+    sheet.canvas.scene.parents.insert(first_task, first);
+    sheet.canvas.scene.parents.insert(second_task, second);
+    let workbook = Workbook::new(sheet);
+
+    let exported = export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let imported = load(&String::from_utf8(exported).unwrap());
+    assert!(imported.warnings.is_empty(), "{:?}", imported.warnings);
+    let restored = &imported.workbook.sheets[0];
+    assert_eq!(
+        restored.canvas.scene.containers,
+        workbook.sheets[0].canvas.scene.containers
+    );
+    assert_eq!(
+        restored.canvas.scene.parents,
+        workbook.sheets[0].canvas.scene.parents
+    );
+    assert_eq!(
+        restored
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>(),
+        workbook.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn isolated_scene_container_with_connector_is_refused() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let container = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 80.0, 400.0, 260.0),
+            "Pool",
+        ))
+        .unwrap();
+    let task = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(150.0, 140.0, 120.0, 60.0),
+            "Task",
+        ))
+        .unwrap();
+    let edge = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(task),
+            Endpoint::Point(Vec2::new(350.0, 200.0)),
+        )))
+        .unwrap();
+    sheet.canvas.scene.containers.insert(container);
+    sheet.canvas.scene.parents.insert(task, container);
+    sheet.canvas.scene.parents.insert(edge, container);
+    let workbook = Workbook::new(sheet);
+    assert!(matches!(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("connectors inside isolated containers")
+    ));
+}
+
+#[test]
+fn isolated_scene_container_combined_with_nested_scene_is_refused() {
+    let mut sheet = Sheet::new("Board", "Root");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let isolated = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 300.0, 200.0),
+            "Isolated",
+        ))
+        .unwrap();
+    let isolated_child = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(20.0, 40.0, 100.0, 50.0),
+            "Isolated child",
+        ))
+        .unwrap();
+    let parent = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(400.0, 0.0, 300.0, 200.0),
+            "Pool",
+        ))
+        .unwrap();
+    let lane = sheet
+        .add_canvas_object(shape(
+            ShapeKind::Rectangle,
+            rect(420.0, 30.0, 260.0, 150.0),
+            "Lane",
+        ))
+        .unwrap();
+    sheet
+        .canvas
+        .scene
+        .containers
+        .extend([isolated, parent, lane]);
+    sheet.canvas.scene.parents.insert(isolated_child, isolated);
+    sheet.canvas.scene.parents.insert(lane, parent);
+    let workbook = Workbook::new(sheet);
+    assert!(matches!(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("isolated container is combined")
+    ));
+}
+
+#[test]
+fn isolated_scene_containers_across_pages_are_refused() {
+    let isolated_sheet = |title: &str| {
+        let mut sheet = Sheet::new(title, "Root");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let container = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(0.0, 0.0, 300.0, 200.0),
+                "Pool",
+            ))
+            .unwrap();
+        let child = sheet
+            .add_canvas_object(shape(
+                ShapeKind::Rectangle,
+                rect(20.0, 40.0, 100.0, 50.0),
+                "Task",
+            ))
+            .unwrap();
+        sheet.canvas.scene.containers.insert(container);
+        sheet.canvas.scene.parents.insert(child, container);
+        sheet
+    };
+    let workbook = Workbook {
+        sheets: vec![isolated_sheet("First"), isolated_sheet("Second")],
+        ..Workbook::default()
+    };
+    assert!(matches!(
+        export_bytes(&workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("isolated across multiple pages")
+    ));
+}
+
+#[test]
+fn nested_drawio_cards_are_imported_with_a_specific_containment_warning() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=0;" vertex="1" parent="1"><mxGeometry x="100" y="80" width="500" height="320" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=0;" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="420" height="240" as="geometry"/></mxCell>
+        <mxCell id="note" value="Nested note" style="shape=note;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="160" height="100" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneCardContainmentNotPreserved)
+    );
+    assert!(!report.warnings.contains(&ImportWarning::Other));
+
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(sheet.canvas.scene.containers.len(), 2);
+    assert_eq!(sheet.canvas.scene.parents.len(), 1);
+    let note = sheet
+        .topics
+        .values()
+        .find(|topic| topic.title == "Nested note")
+        .unwrap();
+    assert_eq!(note.card.unwrap().kind, CardKind::Sticky);
+}
+
+#[test]
+fn nested_swimlanes_preserve_mapped_layout_and_warn_for_missing_collapsed_bounds() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;horizontalStack=0;stackSpacing=8;stackBorder=1;marginLeft=10;marginRight=10;marginTop=10;marginBottom=10;" collapsed="1" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="300" height="180" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioCollapsedSceneExpanded)
+    );
+    let sheet = &report.workbook.sheets[0];
+    assert_eq!(sheet.canvas.scene.containers.len(), 2);
+    let pool = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Pool")
+        .unwrap();
+    assert_eq!(
+        sheet.canvas.scene.layout_policies.get(&pool.id),
+        Some(&thinoda_core::scene_layout::ContainerLayoutPolicy {
+            header: thinoda_core::scene_layout::HeaderPolicy {
+                side: thinoda_core::scene_layout::HeaderSide::Top,
+                extent: 40.0,
+            },
+            layout: thinoda_core::scene_layout::ContainerLayout::Stack {
+                axis: thinoda_core::scene_layout::StackAxis::Vertical,
+                spacing: 8.0,
+                padding: 11.0,
+                cross_axis: thinoda_core::scene_layout::StackCrossAxisPolicy::Fill,
+                resize: thinoda_core::scene_layout::StackResizePolicy::GrowParent,
+            },
+        })
+    );
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    let drawio = export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let round_trip = crate::import_bytes_with_report(Format::DrawIo, &drawio).unwrap();
+    assert_eq!(
+        round_trip.workbook.sheets[0].canvas.scene.layout_policies,
+        sheet.canvas.scene.layout_policies
+    );
+    let native =
+        export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(
+        crate::import_bytes(Format::Thinoda, &native).unwrap(),
+        report.workbook
+    );
+}
+
+#[test]
+fn nested_stack_layout_maps_drawio_resize_flags() {
+    use thinoda_core::scene_layout::{ContainerLayout, StackCrossAxisPolicy, StackResizePolicy};
+    let header = thinoda_core::scene_layout::HeaderPolicy {
+        side: thinoda_core::scene_layout::HeaderSide::Top,
+        extent: 24.0,
+    };
+    let layout = |style: &str| {
+        let (policy, unsupported) = Style::parse(style).scene_layout_policy(header);
+        assert!(!unsupported);
+        match policy.unwrap().layout {
+            stack @ ContainerLayout::Stack { .. } => stack,
+            ContainerLayout::Free => unreachable!(),
+        }
+    };
+    let resize = |style: &str| match layout(style) {
+        ContainerLayout::Stack { resize, .. } => resize,
+        ContainerLayout::Free => unreachable!(),
+    };
+    assert_eq!(
+        resize("childLayout=stackLayout"),
+        StackResizePolicy::GrowParent
+    );
+    assert_eq!(
+        resize("childLayout=stackLayout;resizeParent=0;resizeLast=1"),
+        StackResizePolicy::FillLast
+    );
+    assert_eq!(
+        resize("childLayout=stackLayout;resizeParent=1;resizeParentMax=0"),
+        StackResizePolicy::FitParent
+    );
+    assert_eq!(
+        resize("childLayout=stackLayout;resizeParent=0;resizeLast=0"),
+        StackResizePolicy::Preserve
+    );
+    assert_eq!(
+        match layout("childLayout=stackLayout;fill=0") {
+            ContainerLayout::Stack { cross_axis, .. } => cross_axis,
+            ContainerLayout::Free => unreachable!(),
+        },
+        StackCrossAxisPolicy::Preserve
+    );
+    assert_eq!(
+        match layout("childLayout=stackLayout") {
+            ContainerLayout::Stack { cross_axis, .. } => cross_axis,
+            ContainerLayout::Free => unreachable!(),
+        },
+        StackCrossAxisPolicy::Fill
+    );
+    assert!(
+        Style::parse("childLayout=stackLayout;allowGaps=1")
+            .scene_layout_policy(header)
+            .1
+    );
+    assert!(
+        Style::parse("childLayout=stackLayout;fill=invalid")
+            .scene_layout_policy(header)
+            .1
+    );
+    assert_eq!(
+        Style::parse("childLayout=stackLayout;horizontalStack=2").scene_layout_policy(header),
+        (None, true)
+    );
+}
+
+#[test]
+fn drawio_export_refuses_unmapped_distributed_gap_layouts() {
+    use thinoda_core::scene_layout::{
+        ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+        StackCrossAxisPolicy, StackResizePolicy,
+    };
+
+    let mut sheet = Sheet::new("Board", "Root");
+    let container = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 300.0, 200.0),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(container, true).unwrap();
+    sheet
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 24.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: StackCrossAxisPolicy::Fill,
+                    resize: StackResizePolicy::Distribute,
+                },
+            }),
+        )
+        .unwrap();
+
+    let error = export_bytes(
+        &Workbook::new(sheet),
+        Format::DrawIo,
+        &ExportOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, IoError::Invalid(message) if message.contains("distributed stack spacing"))
+    );
+}
+
+#[test]
+fn nested_swimlanes_warn_and_drop_unmapped_gap_policy() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;allowGaps=1;" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="300" height="180" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    let sheet = &report.workbook.sheets[0];
+    let pool = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Pool")
+        .unwrap();
+    assert!(!sheet.canvas.scene.layout_policies.contains_key(&pool.id));
+}
+
+#[test]
+fn collapsed_nested_swimlanes_preserve_alternate_bounds_on_round_trip() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;startSize=24;collapsible=1;" collapsed="1" vertex="1" parent="1"><mxGeometry x="100" y="80" width="160" height="120" as="geometry"><mxRectangle x="100" y="80" width="500" height="320" as="alternateBounds"/></mxGeometry></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;startSize=24;horizontal=0;collapsible=1;" collapsed="1" vertex="1" parent="pool"><mxGeometry x="30" y="40" width="120" height="100" as="geometry"><mxRectangle x="30" y="40" width="420" height="240" as="alternateBounds"/></mxGeometry></mxCell>
+        <mxCell id="task" value="Task" style="shape=rectangle;" vertex="1" parent="lane"><mxGeometry x="20" y="30" width="100" height="50" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::DrawioCollapsedSceneExpanded),
+        "{:?}",
+        report.warnings
+    );
+
+    let sheet = &report.workbook.sheets[0];
+    let object = |label: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.label() == label)
+            .unwrap()
+    };
+    let pool = object("Pool");
+    let lane = object("Lane");
+    let task = object("Task");
+    assert_eq!(pool.rect, rect(100.0, 80.0, 160.0, 120.0));
+    assert_eq!(lane.rect, rect(130.0, 120.0, 120.0, 100.0));
+    assert_eq!(task.rect, rect(150.0, 150.0, 100.0, 50.0));
+    assert_eq!(sheet.canvas.scene.parents.get(&lane.id), Some(&pool.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&task.id), Some(&lane.id));
+    assert_eq!(
+        sheet.canvas.scene.collapsed.get(&pool.id),
+        Some(&rect(100.0, 80.0, 500.0, 320.0))
+    );
+    assert_eq!(
+        sheet.canvas.scene.collapsed.get(&lane.id),
+        Some(&rect(130.0, 120.0, 420.0, 240.0))
+    );
+    report.workbook.validate().unwrap();
+
+    let exported =
+        export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()).unwrap();
+    let exported = String::from_utf8(exported).unwrap();
+    assert!(exported.contains("collapsed=\"1\""));
+    assert!(exported.contains("as=\"alternateBounds\""));
+    let restored = load(&exported);
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    let restored_sheet = &restored.workbook.sheets[0];
+    assert_eq!(
+        restored_sheet.canvas.scene.collapsed,
+        sheet.canvas.scene.collapsed
+    );
+    assert_eq!(
+        restored_sheet.canvas.scene.parents,
+        sheet.canvas.scene.parents
+    );
+    for label in ["Pool", "Lane", "Task"] {
+        assert_eq!(
+            object(label).rect,
+            restored_sheet
+                .canvas
+                .objects
+                .iter()
+                .find(|item| item.label() == label)
+                .unwrap()
+                .rect
+        );
+    }
+    restored.workbook.validate().unwrap();
+}
+
+#[test]
+fn nested_stack_layout_does_not_approximate_asymmetric_margins() {
+    let xml = page(
+        r#"
+        <mxCell id="pool" value="Pool" style="swimlane;childLayout=stackLayout;stackSpacing=4;marginLeft=2;marginRight=6;" vertex="1" parent="1"><mxGeometry width="400" height="240" as="geometry"/></mxCell>
+        <mxCell id="lane" value="Lane" style="swimlane;" vertex="1" parent="pool"><mxGeometry x="20" y="30" width="300" height="180" as="geometry"/></mxCell>
+        "#,
+    );
+    let report = load(&xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    assert!(
+        report.workbook.sheets[0]
+            .canvas
+            .scene
+            .layout_policies
+            .is_empty()
+    );
+}
+
+#[test]
 fn notes_text_lines_directions_and_user_objects() {
     let xml = page(
         r#"
@@ -7471,9 +8320,26 @@ fn built_in_shape_aliases_map_to_their_thinoda_equivalents() {
             ("me".into(), S::Rectangle),
             ("uf".into(), S::Rectangle),
             ("es".into(), S::FinalState),
-            ("pc".into(), S::Ellipse),
-            ("ar".into(), S::Arrow),
+            ("pc".into(), S::Rectangle),
+            ("ar".into(), S::Rectangle),
             ("ps".into(), S::Rectangle),
+        ]
+    );
+    let stencils: Vec<_> = shapes(sheet)
+        .iter()
+        .map(|object| object.stencil.as_ref().map(|s| s.definition.as_str()))
+        .collect();
+    assert_eq!(
+        stencils,
+        [
+            Some("folder"),
+            Some("cube"),
+            Some("message"),
+            Some("uml-frame"),
+            None,
+            Some("part-concentric-ellipse"),
+            Some("arrow"),
+            None,
         ]
     );
     let partial = shapes(sheet).last().copied().unwrap();
@@ -8541,8 +9407,9 @@ fn stencil_objects_round_trip_through_native_drawio_styles() {
                 .parameters
                 .insert(name.clone(), value);
         }
-        expected.push((object.rect, object.stencil.clone().unwrap()));
         sheet.add_canvas_object(object).unwrap();
+        let inserted = sheet.canvas.objects.last().unwrap();
+        expected.push((inserted.rect, inserted.stencil.clone().unwrap()));
     }
     let xml = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
     assert!(

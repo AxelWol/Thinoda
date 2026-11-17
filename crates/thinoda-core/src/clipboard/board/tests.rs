@@ -6,6 +6,9 @@ use crate::board::{
 use crate::clipboard::MAX_TOPIC_CLIPBOARD_DEPTH;
 use crate::geometry::{Color, Rect};
 use crate::layout::{ApproxMeasure, layout_sheet};
+use crate::scene_layout::{
+    ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis, StackResizePolicy,
+};
 use crate::{Document, EditError, Workbook};
 
 fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
@@ -1328,6 +1331,7 @@ fn double_ellipse_board_clipboard_requires_version_fourteen() {
             );
             assert!(decode_board_payload(&forged).is_err(), "version {version}");
         }
+
         for value in [serde_json::json!(-1), serde_json::json!("invalid")] {
             let mut malformed = serde_json::to_value(&payload).unwrap();
             malformed["fragment"]["canvas"]["objects"][0]["double_ellipse_margin"] = value;
@@ -1347,6 +1351,395 @@ fn double_ellipse_board_clipboard_requires_version_fourteen() {
         ));
         assert_eq!(restored.double_ellipse_margin, margin);
     }
+}
+
+#[test]
+fn stencil_definition_closures_and_hashes_use_distinct_clipboard_versions() {
+    let mut package = crate::stencil_object::find_package("thinoda.general")
+        .unwrap()
+        .clone();
+    package.id = "vendor.clipboard-offline".into();
+    let definition = package.definition("folder").unwrap();
+    let object = crate::stencil_object::new_object(&package, definition, Vec2::ZERO);
+    let mut source = Sheet::new("Source", "Root");
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(CLOSED_STENCIL_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let decoded = decode_board_payload(&encoded).unwrap();
+    let mut destination = Sheet::new("Destination", "Root");
+    paste_board_selection(&mut destination, &decoded, Vec2::ZERO).unwrap();
+    assert!(
+        crate::stencil_object::render(&destination.canvas.objects[0]).is_some(),
+        "the pasted closure should render without an installed library"
+    );
+    let older_closure_prefix = encoded.replacen(
+        "THINODA-BOARD-CLIPBOARD-21",
+        "THINODA-BOARD-CLIPBOARD-20",
+        1,
+    );
+    assert!(
+        decode_board_payload(&older_closure_prefix)
+            .unwrap_err()
+            .contains("definition closures")
+    );
+
+    let mut hash_only_source = source.clone();
+    hash_only_source.canvas.objects[0]
+        .stencil
+        .as_mut()
+        .unwrap()
+        .package_resource = None;
+    hash_only_source.resources = Default::default();
+    let hash_only = copy(&hash_only_source, &[], &[id]);
+    let encoded = encode_board_payload(&hash_only).unwrap();
+    assert!(encoded.starts_with(PINNED_STENCIL_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), hash_only);
+
+    let legacy_prefix = encoded.replacen(
+        "THINODA-BOARD-CLIPBOARD-20",
+        "THINODA-BOARD-CLIPBOARD-19",
+        1,
+    );
+    assert!(
+        decode_board_payload(&legacy_prefix)
+            .unwrap_err()
+            .contains("pinned stencil definitions")
+    );
+
+    let mut hashless_source = hash_only_source;
+    hashless_source.canvas.objects[0]
+        .stencil
+        .as_mut()
+        .unwrap()
+        .definition_hash = None;
+    let hashless = copy(&hashless_source, &[], &[id]);
+    let encoded = encode_board_payload(&hashless).unwrap();
+    assert!(encoded.starts_with(STENCIL_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), hashless);
+}
+
+#[test]
+fn layout_policies_round_trip_and_remap_with_collapsed_containers() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    let child = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(130.0, 140.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    source
+        .reparent_canvas_objects(&[child], Some(container))
+        .unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Left,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Free,
+            }),
+        )
+        .unwrap();
+    source
+        .set_canvas_container_collapsed(container, Some(rect(100.0, 100.0, 120.0, 50.0)))
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LAYOUT_BOARD_PREFIX));
+    let decoded = decode_board_payload(&encoded).unwrap();
+    assert_eq!(decoded, payload);
+
+    let mut destination = hidden_sheet("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &decoded, Vec2::ZERO).unwrap();
+    let pasted_container = pasted.objects[0];
+    assert_ne!(pasted_container, container);
+    assert_eq!(
+        destination
+            .canvas
+            .scene
+            .layout_policies
+            .get(&pasted_container),
+        Some(&ContainerLayoutPolicy {
+            header: HeaderPolicy {
+                side: HeaderSide::Left,
+                extent: 20.0,
+            },
+            layout: ContainerLayout::Free,
+        })
+    );
+    assert!(
+        destination
+            .canvas
+            .scene
+            .collapsed
+            .contains_key(&pasted_container)
+    );
+    assert!(
+        destination
+            .canvas
+            .scene
+            .parents
+            .contains_key(&pasted.objects[1])
+    );
+    assert!(
+        !destination
+            .canvas
+            .scene
+            .layout_policies
+            .contains_key(&container)
+    );
+}
+
+#[test]
+fn fill_last_stack_resize_uses_clipboard_v25_and_rejects_v24() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
+                    resize: StackResizePolicy::FillLast,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(FILL_LAST_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(FILL_LAST_LAYOUT_BOARD_PREFIX, LAYOUT_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("fill-last stack resizing")
+    );
+}
+
+#[test]
+fn grow_parent_stack_resize_uses_clipboard_v26_and_rejects_v25() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
+                    resize: StackResizePolicy::GrowParent,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(GROW_PARENT_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        GROW_PARENT_LAYOUT_BOARD_PREFIX,
+        FILL_LAST_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("grow-parent stack resizing")
+    );
+}
+
+#[test]
+fn fit_parent_stack_resize_uses_clipboard_v27_and_rejects_v26() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
+                    resize: StackResizePolicy::FitParent,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(FIT_PARENT_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        FIT_PARENT_LAYOUT_BOARD_PREFIX,
+        GROW_PARENT_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("fit-parent stack resizing")
+    );
+}
+
+#[test]
+fn distribute_stack_resize_uses_clipboard_v28_and_rejects_v27() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Preserve,
+                    resize: StackResizePolicy::Distribute,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(DISTRIBUTE_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        DISTRIBUTE_LAYOUT_BOARD_PREFIX,
+        FIT_PARENT_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("distributed stack spacing")
+    );
+}
+
+#[test]
+fn cross_axis_fill_uses_clipboard_v29_and_rejects_v28() {
+    let mut source = hidden_sheet("Source", "Root");
+    let container = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(100.0, 100.0, 200.0, 140.0),
+        ))
+        .unwrap();
+    source.set_canvas_container(container, true).unwrap();
+    source
+        .set_canvas_container_layout_policy(
+            container,
+            Some(ContainerLayoutPolicy {
+                header: HeaderPolicy {
+                    side: HeaderSide::Top,
+                    extent: 20.0,
+                },
+                layout: ContainerLayout::Stack {
+                    axis: StackAxis::Vertical,
+                    spacing: 5.0,
+                    padding: 10.0,
+                    cross_axis: crate::scene_layout::StackCrossAxisPolicy::Fill,
+                    resize: StackResizePolicy::Preserve,
+                },
+            }),
+        )
+        .unwrap();
+
+    let payload = copy(&source, &[], &[container]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+
+    let downgraded = encoded.replacen(
+        CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX,
+        DISTRIBUTE_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("cross-axis stack fill")
+    );
+}
+
+#[test]
+fn installed_builtin_stencils_are_pinned_by_hash_without_a_closure() {
+    let package = crate::stencil_object::find_package("thinoda.general").unwrap();
+    let definition = package.definition("folder").unwrap();
+    let object = crate::stencil_object::new_object(package, definition, Vec2::ZERO);
+    let mut sheet = Sheet::new("Built-in", "Root");
+    sheet.add_canvas_object(object).unwrap();
+    let stencil = sheet.canvas.objects[0].stencil.as_ref().unwrap();
+    assert!(stencil.package_resource.is_none());
+    assert!(stencil.definition_hash.is_some());
+    assert!(sheet.resources.entries.is_empty());
+    assert!(crate::stencil_object::render(&sheet.canvas.objects[0]).is_some());
 }
 
 #[test]

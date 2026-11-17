@@ -238,8 +238,21 @@ pub fn validate_visual(sheet: &Sheet) -> Result<std::collections::BTreeMap<Strin
     if sheet.topics.values().any(|t| t.attachment.is_some()) {
         return Err("visual output does not support attachment topics yet".into());
     }
+    let stencil_packages: std::collections::BTreeSet<&str> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| object.stencil.as_ref()?.package_resource.as_deref())
+        .collect();
     let mut dimensions = std::collections::BTreeMap::new();
     for (id, resource) in &sheet.resources.entries {
+        // Stencil package closures are geometry data, already validated on load.
+        if resource.media_type == "application/json"
+            && stencil_packages
+                .contains(format!("{}{id}", crate::resources::RESOURCE_PREFIX).as_str())
+        {
+            continue;
+        }
         let decoded = decode(resource.bytes())?;
         if resource.media_type != decoded.media_type {
             return Err("image media type does not match its content".into());

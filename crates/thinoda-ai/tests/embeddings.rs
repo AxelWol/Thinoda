@@ -201,7 +201,7 @@ fn rejects_invalid_responses_on_both_native_paths() {
         ),
         (
             r#"{"data":[{"index":0,"embedding":[1e39]},{"index":1,"embedding":[2]}]}"#,
-            "finite",
+            "invalid response",
         ),
         (
             r#"{"data":[{"index":0,"embedding":[NaN]},{"index":1,"embedding":[2]}]}"#,

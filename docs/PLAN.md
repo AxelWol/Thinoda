@@ -9,6 +9,88 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## Socio-technical diagram editor (2026-11-13)
+
+Implementation started after user approval; the editor feature is not yet available.
+[SOCIO-TECHNICAL.md](SOCIO-TECHNICAL.md) researches BPMN collaboration,
+S-BPM, ArchiMate, service blueprints, iStar, UML and C4, and recommends a
+workflow-first Thinoda notation with peer human/software participants,
+explicit responsibilities, typed flows, use cases and distinct boundaries.
+STC0-STC4 cover contract spikes, consuming shared scene foundations, safe semantic
+persistence, complete authoring and first-release acceptance. Linked context
+views, interoperability and experience/intention extensions are later,
+separately gated work. Reuse the implemented JSON stencil interpreter and the
+shared [nested-container/swimlane contract](SCENE-CONTAINERS.md);
+SC0-SC3 deliver one scene-only milestone carved out of draw.io Phase 10, and
+SC4 adds tables in the same engine. Socio-technical meaning is optional binding
+data, never a second hierarchy or something inferred from imported shapes.
+Do not introduce per-symbol Rust variants or claim standards conformance. The
+[rubber-duck review](SOCIO-TECHNICAL-REVIEW.md) records the critique and
+remaining decisions.
+
+The first SC0 checkpoint adds an immutable object-only hierarchy prototype with
+bounded validation, ordered traversal, reparent previews and deduplicated movement
+previews in `thinoda-core`. That checkpoint did not enter saved documents or live
+editor commands. The next command-contract checkpoint added stable reparent insertion,
+affected-edge ownership reconciliation and a shared binding-validation preview
+hook. The persistence checkpoint added object-only free containers to
+the core model, native v27 and scene-aware clipboard/recovery/XMind gates,
+subtree move/delete/copy and history integration. Unsafe editable exports are
+refused rather than flattened. After merging the latest develop stencil work,
+the next checkpoint adds sibling/band-aware paint ordering and endpoint
+reconnection with dependent-edge ownership reconciliation. Existing board
+controls use those commands, with undo/redo and headless hit-test/drag coverage.
+The containment-navigation checkpoint adds read-only parent/first-child and
+previous/next-sibling keyboard selection, reveal and focus, with localized
+containment descriptions and inherited-lock announcements. Boundaries do not
+wrap, and navigation preserves history/redo. Existing flat-board/map shortcuts,
+text editing and focused controls retain ownership.
+The document-transaction checkpoint adds an optional runtime validator enforced
+after reconciliation for generic sheet/workbook edits and reload. Rejection
+restores the complete proposal before history changes; previews/clones retain
+the guard. Whole-workbook rollback and history now include metadata, not just
+sheets. A stub binding policy exercises inherited scope changes through ordinary
+commands; no persisted semantic graph or confirmation UI is added.
+These changes need no additional saved fields or format version.
+The collapse-projection checkpoint adds an immutable presentation preview:
+compact container frames hide descendants/internal edges, and crossing terminals
+resolve to visible boundaries without rewriting stored endpoints, ports or
+sheet-space geometry. Nested collapse and connector dependencies use the same
+bounded hierarchy/routing engine; nonempty collapse on Sankey sheets is explicitly
+refused. This prototype has no saved collapse fields, controls or app activation.
+The following persistence checkpoint adds saved expanded bounds with active
+compact object frames, guarded core collapse/expand transactions, and move,
+delete, clipboard and history integration. Native v29, whole-sheet clipboard
+v24, mixed-board clipboard v23 and collapse-aware recovery/private XMind
+envelopes preserve the state and reject downgraded payloads. The shared scene
+builder consumes saved collapse automatically; hidden descendants leave hit
+testing and the accessible reading order. The authoring checkpoint exposes
+localized collapse/expand controls for selected containers in object properties.
+Compact dimensions are explicit, initially matching the expanded frame; editing
+them alone does not mutate the document. Commands reject stale/blocked contexts,
+respect inherited locks without blocking on individually locked contents, and
+use the document transaction guard. Accessible containers announce their state;
+unsupported compact resizing and container rotation handles are hidden.
+No automatic header-size policy is introduced.
+The free-container authoring checkpoint adds a properties checkbox for eligible
+shapes and a parent-container picker. It excludes self/descendant, locked and
+collapsed/hidden destinations; reparenting preserves sheet-space coordinates.
+Commands use the same guarded document transactions and one-step history.
+This is partial SC1, not a released container UI:
+headers/stack layout, card occurrences, production
+binding-policy installation/confirmation, full platform/accessibility acceptance
+and semantic authoring remain open; see the checkpoints in SCENE-CONTAINERS.md.
+
+The user-requested **Software** start-page group now includes original editable
+human/service handoff, approval workflow and incident-response examples. This
+structural subset is brought forward from STC3/STC4: it uses the supported shared
+hierarchy, real connector endpoints and a shared JSON header-frame definition,
+not flattened art. All examples visibly state that labels are descriptive and
+typed semantics/automatic lane layout are not enabled. Their header height is
+editable through the existing bounded stencil interpreter.
+Typed versions and native/web release acceptance remain STC3/STC4 work; existing
+unbound diagrams must never be silently promoted by interpreting their labels.
+
 ## draw.io diagram support (2026-11-05)
 
 🟡 In progress (Milestone A — codec, import, export — landed; see DRAWIO.md §4.1).
@@ -22,8 +104,10 @@ boards to draw.io behaviour and ships independently of file support.
 extensible JSON stencil definitions and a shared, bounded interpreter, not more
 hardcoded native shape variants. [DRAWIO.md §3.1.2](DRAWIO.md#312-json-stencil-dsl-and-interpreter-contract-proposed-2026-11-12)
 defines the proposed DSL, persistence, third-party adapters and ST0-ST7 migration.
-Existing shapes remain compatible while migrating. The interpreter is not yet
-implemented; the unfinished shape-specific envelope prototype has been shelved.
+Existing shapes remain compatible while migrating. The interpreter foundation
+is implemented; persistence/rendering/library integration is partial, as
+recorded in DRAWIO.md's implementation status. The unfinished shape-specific
+envelope prototype has been shelved.
 
 ## Sankey family support (2026-11-11)
 

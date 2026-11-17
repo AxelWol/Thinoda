@@ -562,6 +562,18 @@ fn stencils_require_v26_and_aware_xmind_snapshots() {
             Vec2::new(300.0, 200.0),
         ))
         .unwrap();
+    let stencil = book
+        .active_mut()
+        .canvas
+        .objects
+        .last_mut()
+        .unwrap()
+        .stencil
+        .as_mut()
+        .unwrap();
+    stencil.definition_hash = None;
+    stencil.package_resource = None;
+    book.active_mut().resources = Default::default();
     assert_eq!(required_native_version(&book), 26);
     let native = export(&book, Format::Thinoda);
     assert_eq!(manifest_version(&native), 26);
@@ -596,6 +608,235 @@ fn stencils_require_v26_and_aware_xmind_snapshots() {
         stencil_svg.matches("<path").count() > fallback_svg.matches("<path").count(),
         "a cube stencil paints its face edges as extra paths"
     );
+}
+
+fn scene_book() -> Workbook {
+    let mut book = central();
+    let sheet = book.active_mut();
+    let pool = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0)),
+        ))
+        .unwrap();
+    let child = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(40.0, 60.0), Vec2::new(100.0, 50.0)),
+        ))
+        .unwrap();
+    sheet.set_canvas_container(pool, true).unwrap();
+    sheet.reparent_canvas_objects(&[child], Some(pool)).unwrap();
+    book
+}
+
+#[test]
+fn scene_hierarchy_requires_v27_and_preserves_native_and_private_xmind_data() {
+    let book = scene_book();
+    assert_eq!(required_native_version(&book), 27);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 27);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    let forged = zip_with(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":26,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ]);
+    assert!(matches!(
+        import_bytes(Format::Thinoda, &forged),
+        Err(IoError::NewerVersion(_))
+    ));
+    assert!(import_bytes(Format::Thinoda, &content).is_err());
+    let xmind = export(&book, Format::XMind);
+    assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+    assert!(
+        String::from_utf8(entry(&xmind, "metadata.json"))
+            .unwrap()
+            .contains("THINODA-XMIND-SCENE-1")
+    );
+}
+
+#[test]
+fn scene_drawio_exports_and_clipboard_preserve_non_nested_containers() {
+    let book = scene_book();
+    let drawio =
+        export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true).unwrap();
+    let restored = import_bytes_with_report(Format::DrawIo, &drawio)
+        .unwrap()
+        .workbook;
+    let restored_scene = &restored.sheets[0].canvas.scene;
+    assert_eq!(
+        restored_scene.containers.len(),
+        book.sheets[0].canvas.scene.containers.len()
+    );
+    assert_eq!(
+        restored_scene.parents.len(),
+        book.sheets[0].canvas.scene.parents.len()
+    );
+    assert!(
+        restored_scene
+            .parents
+            .values()
+            .all(|parent| restored_scene.containers.contains(parent))
+    );
+    for format in [
+        Format::DrawIoSvg,
+        Format::DrawIoPng,
+        Format::FreeMind,
+        Format::Opml,
+        Format::Markdown,
+        Format::MindManager,
+        Format::Word,
+    ] {
+        assert!(
+            export_bytes_with_consent(&book, format, &ExportOptions::default(), true).is_err(),
+            "{format:?}"
+        );
+    }
+    let svg = export(&book, Format::Svg);
+    assert!(String::from_utf8(svg).unwrap().contains("<svg"));
+    let sheet = book.active();
+    let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
+    let pool = *sheet.canvas.scene.containers.first().unwrap();
+    let payload = thinoda_core::clipboard::copy_board_selection(sheet, &layout, &[], &[pool])
+        .unwrap()
+        .unwrap();
+    assert!(
+        !thinoda_io::drawio_clipboard::encode(&payload)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn software_starters_round_trip_native_and_export_shared_scene_geometry() {
+    for id in ["software-handoff", "software-approval", "software-incident"] {
+        let book = thinoda_core::templates::instantiate(id);
+        let native = export(&book, Format::Thinoda);
+        assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+        let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+        for object in &book.active().canvas.objects {
+            assert!(
+                svg.contains(&format!("id=\"object-{}\"", object.id)),
+                "{id}"
+            );
+        }
+        let mut document = thinoda_core::Document::new(book.clone());
+        let root = *book.active().canvas.scene.containers.first().unwrap();
+        document
+            .move_canvas_objects(&[root], Vec2::new(25.0, 40.0))
+            .unwrap();
+        document.workbook().validate().unwrap();
+        assert!(document.undo());
+        assert_eq!(document.workbook(), &book);
+    }
+}
+
+#[test]
+fn collapsed_containers_round_trip_with_capability_gates_and_hide_visual_content() {
+    let mut book = scene_book();
+    let pool = *book.active().canvas.scene.containers.first().unwrap();
+    if let CanvasObjectKind::Shape { label, .. } = &mut book.active_mut().canvas.objects[1].kind {
+        *label = "HiddenStepForCollapse".into();
+    }
+    let child = book.active().canvas.objects[1].id;
+    let svg_id = format!("id=\"object-{child}\"");
+    let pptx_name = format!("Canvas object {child}");
+    let branch = book.active().topic(book.active().root).unwrap().children[0];
+    book.active_mut()
+        .add_presentation_slide(
+            "Collapse",
+            PresentationSource::Branch(branch),
+            Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(800.0, 600.0)),
+        )
+        .unwrap();
+    let before_svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+    assert!(before_svg.contains(&svg_id));
+    assert!(all_text(&export(&book, Format::PowerPoint)).contains(&pptx_name));
+    book.active_mut()
+        .set_canvas_container_collapsed(
+            pool,
+            Some(Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 35.0))),
+        )
+        .unwrap();
+    assert_eq!(required_native_version(&book), 29);
+    let native = export(&book, Format::Thinoda);
+    assert_eq!(manifest_version(&native), 29);
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+    let content = serde_json::to_vec(&book).unwrap();
+    for version in [27, 28] {
+        let manifest = format!(r#"{{"format":"thinoda","version":{version},"resources":[]}}"#);
+        let downgraded = zip_with(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("content.json", &content),
+        ]);
+        assert!(matches!(
+            import_bytes(Format::Thinoda, &downgraded),
+            Err(IoError::NewerVersion(_))
+        ));
+    }
+    for with_stencil in [false, true] {
+        if with_stencil {
+            let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+            book.active_mut()
+                .add_canvas_object(thinoda_core::stencil_object::new_object(
+                    package,
+                    package.definition("message").unwrap(),
+                    Vec2::new(400.0, 0.0),
+                ))
+                .unwrap();
+            let native = export(&book, Format::Thinoda);
+            assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+        }
+        let xmind = export(&book, Format::XMind);
+        assert_eq!(import_bytes(Format::XMind, &xmind).unwrap(), book);
+        let metadata = String::from_utf8(entry(&xmind, "metadata.json")).unwrap();
+        assert!(metadata.contains("THINODA-XMIND-COLLAPSE-1"));
+        let downgraded_metadata =
+            metadata.replace("THINODA-XMIND-COLLAPSE-1", "THINODA-XMIND-SCENE-STENCIL-1");
+        let public_content = entry(&xmind, "content.json");
+        let downgraded = zip_with(&[
+            ("metadata.json", downgraded_metadata.as_bytes()),
+            ("content.json", &public_content),
+        ]);
+        assert!(matches!(
+            import_bytes(Format::XMind, &downgraded),
+            Err(IoError::NewerVersion(_))
+        ));
+        let svg = String::from_utf8(export(&book, Format::Svg)).unwrap();
+        assert!(!svg.contains(&svg_id));
+        let pptx = export(&book, Format::PowerPoint);
+        assert!(!all_text(&pptx).contains(&pptx_name));
+        let drawio =
+            export_bytes_with_consent(&book, Format::DrawIo, &ExportOptions::default(), true)
+                .unwrap();
+        let restored = import_bytes_with_report(Format::DrawIo, &drawio)
+            .unwrap()
+            .workbook;
+        let restored_sheet = &restored.sheets[0];
+        assert_eq!(
+            restored_sheet.canvas.scene.collapsed.len(),
+            book.active().canvas.scene.collapsed.len()
+        );
+        assert_eq!(
+            restored_sheet.canvas.scene.parents.len(),
+            book.active().canvas.scene.parents.len()
+        );
+        let restored_child = restored_sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.label() == "HiddenStepForCollapse")
+            .unwrap();
+        assert_eq!(
+            restored_child.rect,
+            book.active().canvas.object(child).unwrap().rect
+        );
+        restored.validate().unwrap();
+    }
 }
 
 #[test]

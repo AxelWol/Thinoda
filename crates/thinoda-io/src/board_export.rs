@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 26;
+pub const NATIVE_FORMAT_VERSION: u64 = 36;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -25,10 +25,34 @@ pub const NATIVE_FORMAT_VERSION: u64 = 26;
 /// 18 bar connector markers, 19 adjustable rectangle corners, and
 /// 20 partial rectangle outline sides, 21 double ellipses, 22 fixed connector ports,
 /// 23 standard draw.io rectangle rounding, 24 final-state shapes, 25 Sankey flows,
-/// and 26 data-defined stencil shapes.
+/// 26 data-defined stencil shapes, 27 scene ancestry and stencil definition
+/// hashes, 28 embedded stencil definition closures, 29 collapsed containers,
+/// 30 persistent scene layout policies, 31 fill-last stack resizing, and
+/// 32 grow-parent, 33 fit-parent, 34 distribute stack resizing, and
+/// 35 stack cross-axis fill, and 36 typed socio-technical meaning.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_stencils() {
+    if book.has_semantic_model() {
+        36
+    } else if book.has_scene_cross_axis_fill() {
+        35
+    } else if book.has_scene_distribute_resize() {
+        34
+    } else if book.has_scene_fit_parent_resize() {
+        33
+    } else if book.has_scene_grow_parent_resize() {
+        32
+    } else if book.has_scene_fill_last_resize() {
+        31
+    } else if book.has_scene_layout_policies() {
+        30
+    } else if book.has_scene_collapse() {
+        29
+    } else if book.has_stencil_definition_closures() {
+        28
+    } else if book.has_stencil_definition_hashes() || book.has_scene_hierarchy() {
+        27
+    } else if book.has_stencils() {
         26
     } else if book.has_sankey() {
         25
@@ -262,6 +286,8 @@ pub enum ExportLoss {
     DrawioCardAppearanceApproximated(usize),
     /// Topic notes, labels, markers and task state are not written.
     TopicDetailsDropped(usize),
+    /// Typed socio-technical meaning is not represented by the target format.
+    SocioTechnicalSemanticsDropped(usize),
     /// Presentation slides are not written.
     SlidesDropped(usize),
 }
@@ -314,6 +340,13 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
             sheets.iter().filter(|(_, s)| s.has_sankey()).count(),
         );
     }
+    push(
+        ExportLoss::SocioTechnicalSemanticsDropped,
+        sheets
+            .iter()
+            .filter(|(_, sheet)| sheet.has_semantic_model())
+            .count(),
+    );
     if matches!(
         format,
         Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
@@ -467,6 +500,7 @@ fn connector_label_compositing_differs(object: &CanvasObject) -> bool {
 /// structure is drawn but not editable as a map.
 fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportLoss> {
     let mut sankey = 0;
+    let mut semantic = 0;
     let mut flattened = 0;
     let mut details = 0;
     let mut slides = 0;
@@ -485,6 +519,7 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut card_appearance = 0;
     for sheet in sheets {
         sankey += usize::from(sheet.has_sankey());
+        semantic += usize::from(sheet.has_semantic_model());
         let flow_nodes = thinoda_core::sankey::evaluate(sheet)
             .unwrap_or_default()
             .nodes;
@@ -655,6 +690,10 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     }
     let mut out = Vec::new();
     for (loss, count) in [
+        (
+            ExportLoss::SocioTechnicalSemanticsDropped as fn(usize) -> ExportLoss,
+            semantic,
+        ),
         (
             ExportLoss::SankeyDrawioExtension as fn(usize) -> ExportLoss,
             sankey,

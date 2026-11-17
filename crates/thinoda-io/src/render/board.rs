@@ -168,14 +168,14 @@ pub(crate) fn object_prims(
     };
     let automatic_stroke = visual.automatic_board_stroke.unwrap_or(ink);
     let mut out = Vec::new();
-    if let Some(render) = thinoda_core::stencil_object::render(object) {
+    if let Some(render) = item.stencil_render.as_ref() {
         let under = object.style.fill.map_or(background, |f| f.over(background));
         let font = object
             .style
             .text_color
             .unwrap_or_else(|| Color::highest_contrast_on(under));
         let slots = thinoda_core::stencil_object::slots(object, automatic_stroke, font);
-        let (paths, texts) = thinoda_core::stencil_object::primitives(object, &render, &slots);
+        let (paths, texts) = thinoda_core::stencil_object::primitives(object, render, &slots);
         for path in paths {
             let stroke = path.stroke.map(|s| (s.color, s.width));
             for (points, closed) in path.subpaths {
@@ -223,7 +223,7 @@ pub(crate) fn object_prims(
         if let CanvasObjectKind::Shape { label, .. } = &object.kind
             && !label.trim().is_empty()
         {
-            let rect = thinoda_core::stencil_object::label_rect(object, &render);
+            let rect = thinoda_core::stencil_object::label_rect(object, render);
             out.push(Prim::Text {
                 rect,
                 pivot: object.rect.center(),
@@ -593,4 +593,67 @@ pub(crate) fn card_fill(card: &Card, dark: bool) -> Option<Color> {
 /// Darker edge of a sticky note.
 pub(crate) fn card_edge(fill: Color) -> Color {
     fill.lerp(Color::BLACK, 0.18)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use thinoda_core::{
+        scene::{SceneId, build_scene},
+        scene_layout::{ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide},
+        stencil_object::StencilRef,
+    };
+
+    #[test]
+    fn export_primitives_use_the_stored_header_side_and_extent() {
+        let mut sheet = Sheet::new("Header export", "Root");
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 100.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+            *label = "External service".into();
+        }
+        object.stencil = Some(StencilRef::new("thinoda.general", "header-frame-v2"));
+        let id = sheet.add_canvas_object(object).unwrap();
+        sheet.set_canvas_container(id, true).unwrap();
+        sheet
+            .set_canvas_container_layout_policy(
+                id,
+                Some(ContainerLayoutPolicy {
+                    header: HeaderPolicy {
+                        side: HeaderSide::Right,
+                        extent: 20.0,
+                    },
+                    layout: ContainerLayout::Free,
+                }),
+            )
+            .unwrap();
+
+        let scene = build_scene(&sheet, &thinoda_core::layout::Layout::default());
+        let item = scene.item(SceneId::Object(id)).unwrap();
+        let object = sheet.canvas.object(id).unwrap();
+        let primitives = object_prims(
+            item,
+            object,
+            Color::rgb(255, 255, 255),
+            false,
+            VisualExportContext::default(),
+        );
+        assert!(primitives.iter().any(|primitive| match primitive {
+            Prim::Path { points, closed, .. } if !closed => points.windows(2).any(|segment| {
+                segment[0] == Vec2::new(100.0, 0.0) && segment[1] == Vec2::new(100.0, 100.0)
+            }),
+            _ => false,
+        }));
+        assert!(primitives.iter().any(|primitive| matches!(
+            primitive,
+            Prim::Text {
+                rect,
+                lines,
+                ..
+            } if *rect == Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0))
+                && lines.join(" ") == "External service"
+        )));
+    }
 }

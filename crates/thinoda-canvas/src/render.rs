@@ -86,10 +86,11 @@ pub(crate) struct GhostClip {
     pub moving_zone: Option<ZoneId>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct PaintSceneExtras {
     pub ghost_clip: Option<GhostClip>,
     pub editing_board_object: Option<CanvasObjectId>,
+    pub stencil_handle_preview: Option<Box<CanvasObject>>,
 }
 
 /// Background color of the sheet.
@@ -190,6 +191,7 @@ pub(crate) fn paint_map_scene(
             _ => frame,
         })
     };
+    let stencil_handle_preview = extras.stencil_handle_preview.as_deref();
     let objects: HashMap<_, _> = sheet
         .canvas
         .objects
@@ -274,6 +276,7 @@ pub(crate) fn paint_map_scene(
         xf,
         opts,
         extras.editing_board_object,
+        stencil_handle_preview,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -498,6 +501,7 @@ pub(crate) fn paint_map_scene(
         xf,
         opts,
         extras.editing_board_object,
+        stencil_handle_preview,
         &mut ink_cache,
         ink_tessellation,
     );
@@ -726,6 +730,7 @@ fn paint_objects_in_band(
     xf: Xf,
     opts: &PaintOptions<'_>,
     editing_board_object: Option<CanvasObjectId>,
+    stencil_handle_preview: Option<&CanvasObject>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
 ) {
@@ -734,9 +739,12 @@ fn paint_objects_in_band(
         let SceneId::Object(id) = item.id else {
             continue;
         };
-        let Some(object) = objects.get(&id) else {
+        let Some(object) = objects.get(&id).copied() else {
             continue;
         };
+        let object = stencil_handle_preview
+            .filter(|preview| preview.id == id)
+            .unwrap_or(object);
         if !object_in_viewport(object, item, xf.zoom, viewport) {
             continue;
         }
@@ -832,7 +840,11 @@ fn shape_label_visible_bounds(
     if label.is_empty() {
         return None;
     }
-    let label_rect = thinoda_core::board::object_label_rect(object)?;
+    let label_rect = item
+        .stencil_render
+        .as_ref()
+        .map(|render| thinoda_core::stencil_object::label_rect(object, render))
+        .or_else(|| thinoda_core::board::object_label_rect(object))?;
     // Labels can extend beyond their outline; keep a generous text bound for culling.
     let (longest, line_count) = label.split('\n').fold((0, 0), |(longest, lines), line| {
         (longest.max(line.len()), lines + 1)
@@ -1542,12 +1554,12 @@ fn paint_canvas_object(
     ink_tessellation: InkTessellationConfig,
 ) {
     let z = xf.zoom;
-    if let Some(render) = thinoda_core::stencil_object::render(object) {
+    if let Some(render) = item.stencil_render.as_ref() {
         paint_stencil_object(
             painter,
             sheet,
             object,
-            &render,
+            render,
             xf,
             opts,
             editing_board_object,

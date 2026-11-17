@@ -466,8 +466,12 @@ impl SceneGeometry {
                     || point_in_polygon(p, outline)
                     || distance_to_outline(p, outline) <= tolerance
             }
-            SceneGeometry::Polygon { outline, .. } => {
-                point_in_polygon(p, outline) || distance_to_outline(p, outline) <= tolerance
+            SceneGeometry::Polygon { outline, details } => {
+                point_in_polygon(p, outline)
+                    || distance_to_outline(p, outline) <= tolerance
+                    || details
+                        .iter()
+                        .any(|detail| distance_to_polyline(p, detail) <= tolerance)
             }
             SceneGeometry::Ink {
                 points,
@@ -528,6 +532,8 @@ pub struct SceneItem {
     /// Optional frame clipping in sheet coordinates.
     pub clip: Option<Rect>,
     pub geometry: SceneGeometry,
+    /// Resolved stencil data shared by paint, labels, hit geometry and export.
+    pub stencil_render: Option<crate::stencil::StencilRender>,
 }
 
 impl SceneItem {
@@ -558,13 +564,182 @@ pub struct Scene {
     pub items: Vec<SceneItem>,
 }
 
+/// Transient collapse geometry over an immutable source sheet. This is not a
+/// savable document: stored bounds, endpoints and ownership remain in the source.
+#[derive(Debug)]
+pub struct CollapsePreview<'a> {
+    sheet: &'a Sheet,
+    objects: HashMap<CanvasObjectId, &'a CanvasObject>,
+    compact: HashMap<CanvasObjectId, CanvasObject>,
+    hidden_by: HashMap<CanvasObjectId, CanvasObjectId>,
+}
+
+impl<'a> CollapsePreview<'a> {
+    pub fn new(sheet: &'a Sheet, collapsed: &[(CanvasObjectId, Rect)]) -> Result<Self, String> {
+        if collapsed.len() > crate::board::MAX_CANVAS_OBJECTS
+            || collapsed.len() > sheet.canvas.objects.len()
+        {
+            return Err("collapse preview exceeds canvas limits".into());
+        }
+        crate::board::validate_board(sheet)?;
+        if !collapsed.is_empty() && sheet.has_sankey() {
+            return Err("collapse preview does not support Sankey sheets".into());
+        }
+        let objects: HashMap<_, _> = sheet.canvas.objects.iter().map(|o| (o.id, o)).collect();
+        let mut compact: HashMap<_, _> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| sheet.canvas.scene.collapsed.contains_key(&object.id))
+            .map(|object| (object.id, object.clone()))
+            .collect();
+        let mut requested = HashSet::with_capacity(collapsed.len());
+        for &(id, rect) in collapsed {
+            if !sheet.canvas.scene.containers.contains(&id) {
+                return Err(format!("collapse target {id} is not a scene container"));
+            }
+            if !requested.insert(id) {
+                return Err(format!("duplicate collapse target {id}"));
+            }
+            let mut object = (**objects.get(&id).ok_or("collapse target not found")?).clone();
+            object.rect = rect;
+            crate::board::validate_object(&object)?;
+            if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+                return Err(format!(
+                    "collapse target {id} requires a positive compact frame"
+                ));
+            }
+            compact.insert(id, object);
+        }
+        Ok(Self::project(sheet, objects, compact))
+    }
+
+    fn stored(sheet: &'a Sheet) -> Self {
+        let objects = sheet.canvas.objects.iter().map(|o| (o.id, o)).collect();
+        let compact = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| sheet.canvas.scene.collapsed.contains_key(&object.id))
+            .map(|object| (object.id, object.clone()))
+            .collect();
+        Self::project(sheet, objects, compact)
+    }
+
+    // Both entry points operate on validated sheets. The bounded parent walk is
+    // order-independent; dependency order is shared with load-boundary validation.
+    fn project(
+        sheet: &'a Sheet,
+        objects: HashMap<CanvasObjectId, &'a CanvasObject>,
+        compact: HashMap<CanvasObjectId, CanvasObject>,
+    ) -> Self {
+        let mut hidden_by = HashMap::new();
+        for &id in objects.keys() {
+            let mut cursor = id;
+            for _ in 0..crate::scene_hierarchy::MAX_SCENE_DEPTH {
+                let Some(&parent) = sheet.canvas.scene.parents.get(&cursor) else {
+                    break;
+                };
+                if compact.contains_key(&parent) {
+                    hidden_by.insert(id, parent);
+                }
+                cursor = parent;
+            }
+        }
+        for id in connector_dependency_order(sheet).0 {
+            let Some(CanvasObjectKind::Connector(connector)) =
+                objects.get(&id).map(|object| &object.kind)
+            else {
+                continue;
+            };
+            let terminal = |end: Endpoint| match end {
+                Endpoint::Object(target) => Some((
+                    hidden_by.get(&target).copied().unwrap_or(target),
+                    hidden_by.contains_key(&target),
+                )),
+                _ => None,
+            };
+            let from = terminal(connector.from);
+            let to = terminal(connector.to);
+            let visible_self_loop = from
+                .zip(to)
+                .is_some_and(|((a, folded_a), (b, folded_b))| a == b && !folded_a && !folded_b);
+            let structural_owner = hidden_by.get(&id).copied();
+            let folded_owner = from.zip(to).and_then(|((a, folded_a), (b, folded_b))| {
+                (a == b && (folded_a || folded_b)).then_some(a)
+            });
+            let hidden_owner = structural_owner
+                .filter(|_| !visible_self_loop)
+                .filter(|owner| {
+                    [connector.from, connector.to]
+                        .into_iter()
+                        .all(|end| match end {
+                            Endpoint::Point(_) => true,
+                            Endpoint::Topic(_) => false,
+                            Endpoint::Object(_) => {
+                                terminal(end).is_some_and(|(target, _)| target == *owner)
+                            }
+                        })
+                })
+                .or(folded_owner);
+            if let Some(owner) = hidden_owner {
+                hidden_by.insert(id, owner);
+            } else {
+                // Imported crossing edges can be owned by hidden containers.
+                hidden_by.remove(&id);
+            }
+        }
+        Self {
+            sheet,
+            objects,
+            compact,
+            hidden_by,
+        }
+    }
+
+    pub fn source_sheet(&self) -> &Sheet {
+        self.sheet
+    }
+
+    /// The nearest visible target, or the object itself when it is visible.
+    pub fn visible_representative(&self, id: CanvasObjectId) -> Option<CanvasObjectId> {
+        self.objects.get(&id)?;
+        Some(self.hidden_by.get(&id).copied().unwrap_or(id))
+    }
+
+    /// Visible object geometry/styles for consumers of the derived scene.
+    pub fn object(&self, id: CanvasObjectId) -> Option<&CanvasObject> {
+        if self.hidden_by.contains_key(&id) {
+            return None;
+        }
+        self.compact
+            .get(&id)
+            .or_else(|| self.objects.get(&id).copied())
+    }
+
+    pub fn build_scene(&self, layout: &Layout) -> Scene {
+        build_scene_with_collapse(self.sheet, layout, Some(self))
+    }
+}
+
 /// Builds the paint-order scene of a validated `sheet` from its layout.
 /// Load/import/recovery/paste boundaries must validate first: unsupported Sankey
 /// endpoints are rejected there, never repaired or normalized by this renderer.
 pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
+    let collapse = sheet
+        .has_scene_collapse()
+        .then(|| CollapsePreview::stored(sheet));
+    build_scene_with_collapse(sheet, layout, collapse.as_ref())
+}
+
+fn build_scene_with_collapse<'a>(
+    sheet: &'a Sheet,
+    layout: &'a Layout,
+    collapse: Option<&'a CollapsePreview<'a>>,
+) -> Scene {
     let mut items =
         Vec::with_capacity(sheet.zones.len() + layout.order.len() + sheet.canvas.objects.len());
-    let mut connectors = ConnectorResolver::new(sheet, layout);
+    let mut connectors = ConnectorResolver::with_collapse(sheet, layout, collapse);
     let flow_values = crate::sankey::evaluate(sheet).unwrap_or_default();
     let ribbons = crate::sankey::ribbons_with_values(sheet, layout, &flow_values);
     for zone in &sheet.zones {
@@ -577,10 +752,19 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
                 rect: zone.frame,
                 rotation: 0.0,
             },
+            stencil_render: None,
         });
     }
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
         for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
+            let object = if let Some(collapse) = collapse {
+                let Some(object) = collapse.object(object.id) else {
+                    continue;
+                };
+                object
+            } else {
+                object
+            };
             if let Some(item) = object_item(sheet, object, &mut connectors) {
                 if let Some(outline) = ribbons.get(&object.id) {
                     if let Some(bounds) = crate::board::points_bounds(outline) {
@@ -634,6 +818,7 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
                 rect: t.rect,
                 rotation,
             },
+            stencil_render: None,
         });
     }
     objects(Band::Above, &mut items);
@@ -651,9 +836,21 @@ fn object_item(
         Band::Below => SceneBand::BelowMap,
         Band::Above => SceneBand::AboveMap,
     };
+    let header_policy = sheet
+        .canvas
+        .scene
+        .layout_policies
+        .get(&object.id)
+        .map(|policy| policy.header);
+    let stencil_render = matches!(object.kind, CanvasObjectKind::Shape { .. })
+        .then(|| crate::stencil_object::render_with_header_policy(object, header_policy))
+        .flatten();
     let geometry = match &object.kind {
         CanvasObjectKind::Shape { .. } => {
-            let g = crate::board::object_shape_geometry(object)?;
+            let g = stencil_render
+                .as_ref()
+                .map(|render| crate::stencil_object::geometry(object, render))
+                .or_else(|| crate::board::object_shape_geometry(object))?;
             SceneGeometry::Polygon {
                 outline: g.outline,
                 details: g.details,
@@ -730,6 +927,7 @@ fn object_item(
         bounds,
         clip,
         geometry,
+        stencil_render,
     })
 }
 
@@ -855,13 +1053,26 @@ pub fn object_bounds(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> O
             .item(SceneId::Object(object.id))
             .and_then(SceneItem::visible_bounds);
     }
-    object_item(sheet, object, &mut ConnectorResolver::new(sheet, layout))
-        .and_then(|item| item.visible_bounds())
+    let collapse = sheet
+        .has_scene_collapse()
+        .then(|| CollapsePreview::stored(sheet));
+    if collapse
+        .as_ref()
+        .is_some_and(|collapse| collapse.hidden_by.contains_key(&object.id))
+    {
+        return None;
+    }
+    object_item(
+        sheet,
+        object,
+        &mut ConnectorResolver::with_collapse(sheet, layout, collapse.as_ref()),
+    )
+    .and_then(|item| item.visible_bounds())
 }
 
 /// Visible bounds of the whole canvas layer, resolving shared connector dependencies once.
 pub fn canvas_bounds(sheet: &Sheet, layout: &Layout) -> Option<Rect> {
-    if sheet.has_sankey() {
+    if sheet.has_sankey() || sheet.has_scene_collapse() {
         return build_scene(sheet, layout)
             .items
             .iter()
@@ -1007,11 +1218,12 @@ fn topic_anchor(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<(TopicId,
 
 /// What a connector end attaches to: a (rotated) box and, for shapes, the outline
 /// the end lands on.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct EndTarget {
     rect: Rect,
     rotation: f32,
     shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    custom_outline: Option<Vec<Vec2>>,
 }
 
 impl EndTarget {
@@ -1020,6 +1232,7 @@ impl EndTarget {
             rect,
             rotation,
             shape: None,
+            custom_outline: None,
         }
     }
 
@@ -1059,7 +1272,22 @@ impl EndTarget {
 
     /// Point on the visible perimeter in the direction of `toward`, like draw.io's
     /// shape perimeters; boxes and rectangular shapes clip to their rotated rect.
-    fn clip(self, toward: Vec2) -> Vec2 {
+    fn clip(&self, toward: Vec2) -> Vec2 {
+        if let Some(outline) = self.custom_outline.as_deref()
+            && outline.len() >= 3
+        {
+            let center = self.rect.center();
+            let origin = if point_in_polygon(center, outline)
+                && distance_to_outline(center, outline) > 0.5
+            {
+                center
+            } else {
+                polygon_centroid(outline)
+            };
+            if let Some(point) = clip_to_polygon(outline, origin, toward) {
+                return point;
+            }
+        }
         if let Some((_, Some(rounding))) = self.shape
             && rounding.is_standard()
         {
@@ -1170,6 +1398,7 @@ pub fn fixed_connector_port_position(
         rect,
         rotation,
         shape,
+        custom_outline: None,
     }
     .with_port(Some(port))
     .rect
@@ -1495,19 +1724,47 @@ struct ConnectorResolver<'a> {
     layout: &'a Layout,
     objects: HashMap<CanvasObjectId, &'a CanvasObject>,
     paths: HashMap<CanvasObjectId, Option<Vec<Vec2>>>,
+    collapse: Option<&'a CollapsePreview<'a>>,
 }
 
 impl<'a> ConnectorResolver<'a> {
     fn new(sheet: &'a Sheet, layout: &'a Layout) -> Self {
+        Self::with_collapse(sheet, layout, None)
+    }
+
+    fn with_collapse(
+        sheet: &'a Sheet,
+        layout: &'a Layout,
+        collapse: Option<&'a CollapsePreview<'a>>,
+    ) -> Self {
+        let mut objects: HashMap<_, _> = sheet.canvas.objects.iter().map(|o| (o.id, o)).collect();
+        if let Some(collapse) = collapse {
+            objects.extend(collapse.compact.iter().map(|(id, object)| (*id, object)));
+        }
         Self {
             sheet,
             layout,
-            objects: sheet.canvas.objects.iter().map(|o| (o.id, o)).collect(),
+            objects,
             paths: HashMap::new(),
+            collapse,
         }
     }
 
+    fn visible_target(&self, id: CanvasObjectId) -> Option<CanvasObjectId> {
+        self.collapse
+            .map_or(Some(id), |collapse| collapse.visible_representative(id))
+    }
+
     fn endpoint(&self, end: Endpoint, port: Option<ConnectorPort>) -> Option<EndTarget> {
+        let (end, port) = if let Endpoint::Object(id) = end {
+            let visible = self.visible_target(id)?;
+            (
+                Endpoint::Object(visible),
+                (visible == id).then_some(port).flatten(),
+            )
+        } else {
+            (end, port)
+        };
         let target = match end {
             Endpoint::Point(p) => {
                 Some(EndTarget::boxed(Rect::from_center_size(p, Vec2::ZERO), 0.0))
@@ -1542,6 +1799,8 @@ impl<'a> ConnectorResolver<'a> {
                             }
                             _ => None,
                         },
+                        custom_outline: crate::stencil_object::render(object)
+                            .map(|render| crate::stencil_object::geometry(object, &render).outline),
                     })
                 }
             }
@@ -1577,6 +1836,7 @@ impl<'a> ConnectorResolver<'a> {
             stack.push((id, true));
             for end in [connector.from, connector.to] {
                 if let Endpoint::Object(target) = end
+                    && let Some(target) = self.visible_target(target)
                     && self.objects.get(&target).is_some_and(|o| o.is_connector())
                     && !self.paths.contains_key(&target)
                 {
@@ -1597,6 +1857,7 @@ impl<'a> ConnectorResolver<'a> {
         } else {
             for end in [connector.from, connector.to] {
                 if let Endpoint::Object(target) = end
+                    && let Some(target) = self.visible_target(target)
                     && !self.resolve(target)
                 {
                     return None;
@@ -1611,6 +1872,15 @@ impl<'a> ConnectorResolver<'a> {
 
 /// Reject cyclic connector dependencies before a board is edited or loaded.
 pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
+    let (order, count) = connector_dependency_order(sheet);
+    if order.len() == count {
+        Ok(())
+    } else {
+        Err("connector dependencies contain a cycle".into())
+    }
+}
+
+fn connector_dependency_order(sheet: &Sheet) -> (Vec<CanvasObjectId>, usize) {
     let connectors: HashMap<_, _> = sheet
         .canvas
         .objects
@@ -1638,9 +1908,9 @@ pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
         .iter()
         .filter_map(|(&id, &count)| (count == 0).then_some(id))
         .collect();
-    let mut visited = 0;
+    let mut order = Vec::with_capacity(connectors.len());
     while let Some(id) = ready.pop_front() {
-        visited += 1;
+        order.push(id);
         if let Some(owners) = dependents.get(&id) {
             for owner in owners {
                 let count = pending.get_mut(owner).expect("connector dependency exists");
@@ -1651,11 +1921,7 @@ pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
             }
         }
     }
-    if visited == connectors.len() {
-        Ok(())
-    } else {
-        Err("connector dependencies contain a cycle".into())
-    }
+    (order, connectors.len())
 }
 
 fn connector_targets(
@@ -1663,9 +1929,13 @@ fn connector_targets(
     layout: &Layout,
     connector: &CanvasConnector,
 ) -> Option<(EndTarget, EndTarget)> {
-    let mut resolver = ConnectorResolver::new(sheet, layout);
+    let collapse = sheet
+        .has_scene_collapse()
+        .then(|| CollapsePreview::stored(sheet));
+    let mut resolver = ConnectorResolver::with_collapse(sheet, layout, collapse.as_ref());
     for end in [connector.from, connector.to] {
         if let Endpoint::Object(id) = end
+            && let Some(id) = resolver.visible_target(id)
             && !resolver.resolve(id)
         {
             return None;

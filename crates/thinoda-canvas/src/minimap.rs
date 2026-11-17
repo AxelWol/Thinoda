@@ -944,6 +944,7 @@ mod tests {
                 rect,
                 rotation: 0.0,
             },
+            stencil_render: None,
         }
     }
 

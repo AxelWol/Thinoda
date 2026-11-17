@@ -6,6 +6,7 @@ use crate::board::{
 };
 use crate::edit::{EditError, EditResult};
 use crate::model::TopicId;
+use crate::scene_layout::ContainerLayoutPolicy;
 use crate::schedule::{Task, WorkCalendar};
 use crate::{
     geometry::{Rect, Vec2},
@@ -24,10 +25,31 @@ const MAX_HISTORY: usize = 300;
 /// connector points and embedded resources are counted once across both stacks.
 pub const MAX_HISTORY_BYTES: usize = 256 * 1024 * 1024;
 
+/// Read-only final candidate, after structural validation and reconciliation.
+#[derive(Debug, Clone, Copy)]
+pub enum DocumentEditContext<'a> {
+    Sheet {
+        label: &'a str,
+        index: usize,
+        before: &'a Sheet,
+        after: &'a Sheet,
+    },
+    Workbook {
+        label: &'a str,
+        before: &'a Workbook,
+        after: &'a Workbook,
+    },
+}
+
+/// Runtime policy shared by all document commands, including generic edits.
+/// Rejection rolls back the complete transaction before history is recorded.
+pub trait DocumentEditValidator: std::fmt::Debug + Send + Sync {
+    fn validate(&self, context: DocumentEditContext<'_>) -> EditResult<()>;
+}
+
 #[derive(Debug, Clone)]
 enum Snapshot {
     Sheet { index: usize, sheet: Box<Sheet> },
-    Book { sheets: Vec<Sheet>, active: usize },
     Workbook(Box<Workbook>),
 }
 
@@ -55,7 +77,6 @@ impl Snapshot {
     fn approx_bytes(&self) -> usize {
         match self {
             Snapshot::Sheet { sheet, .. } => approx_sheet_bytes(sheet),
-            Snapshot::Book { sheets, .. } => sheets.iter().map(approx_sheet_bytes).sum(),
             Snapshot::Workbook(workbook) => approx_workbook_bytes(workbook),
         }
     }
@@ -95,11 +116,6 @@ impl Snapshot {
 
         match self {
             Snapshot::Sheet { sheet, .. } => visit_sheet(sheet, visit),
-            Snapshot::Book { sheets, .. } => {
-                for sheet in sheets {
-                    visit_sheet(sheet, visit);
-                }
-            }
             Snapshot::Workbook(workbook) => {
                 for sheet in &workbook.sheets {
                     visit_sheet(sheet, visit);
@@ -236,6 +252,16 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
         + sheet.floating.len() * size_of::<crate::model::TopicId>()
         + sheet.canvas.groups.len() * size_of::<crate::board::CanvasGroup>()
         + sheet.canvas.card_states.len() * size_of::<crate::board::CanvasCardState>()
+        + sheet.canvas.scene.containers.len() * (size_of::<CanvasObjectId>() + 48)
+        + sheet.canvas.scene.parents.len() * (2 * size_of::<CanvasObjectId>() + 48)
+        + sheet.canvas.scene.collapsed.len()
+            * (size_of::<CanvasObjectId>() + size_of::<Rect>() + 48)
+        + sheet.canvas.scene.layout_policies.len()
+            * (size_of::<CanvasObjectId>() + size_of::<ContainerLayoutPolicy>() + 48)
+        + sheet
+            .semantic
+            .as_ref()
+            .map_or(0, crate::semantic::SemanticModel::estimated_heap_bytes)
         + sheet
             .relationships
             .iter()
@@ -313,6 +339,7 @@ pub struct Document {
     next_state: u64,
     saved_state: u64,
     history_budget: usize,
+    edit_validator: Option<Arc<dyn DocumentEditValidator>>,
 }
 
 impl Default for Document {
@@ -333,6 +360,7 @@ impl Document {
             next_state: 1,
             saved_state: 0,
             history_budget: MAX_HISTORY_BYTES,
+            edit_validator: None,
         }
     }
 
@@ -371,6 +399,13 @@ impl Document {
         &self.workbook
     }
 
+    /// Installs a document-wide policy; `None` explicitly restores unbound editing.
+    /// Clones, previews and replacements retain it. History replay does not
+    /// revalidate previously accepted snapshots.
+    pub fn set_edit_validator(&mut self, validator: Option<Arc<dyn DocumentEditValidator>>) {
+        self.edit_validator = validator;
+    }
+
     /// Independent working copy with the same content state, but no copied undo history.
     pub fn preview(&self) -> Self {
         Self {
@@ -383,6 +418,7 @@ impl Document {
             next_state: self.next_state,
             saved_state: self.saved_state,
             history_budget: self.history_budget,
+            edit_validator: self.edit_validator.clone(),
         }
     }
 
@@ -443,7 +479,8 @@ impl Document {
         self.state = self.bump();
     }
 
-    /// Edits the active sheet. If `f` fails, the sheet is restored and no history is recorded.
+    /// Edits the active sheet. Closure, structural or policy errors restore the
+    /// sheet without recording history or discarding redo.
     pub fn edit_sheet<T>(
         &mut self,
         label: &str,
@@ -483,6 +520,23 @@ impl Document {
                     self.workbook.sheets[index] = before;
                     return Err(EditError::Invalid(error));
                 }
+                if let Some(semantic) = &sheet.semantic
+                    && let Err(error) = semantic.validate(sheet)
+                {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
+                if let Some(validator) = &self.edit_validator
+                    && let Err(error) = validator.validate(DocumentEditContext::Sheet {
+                        label,
+                        index,
+                        before: &before,
+                        after: &self.workbook.sheets[index],
+                    })
+                {
+                    self.workbook.sheets[index] = before;
+                    return Err(error);
+                }
                 if self.workbook.sheets[index] != before {
                     self.push(
                         label,
@@ -502,18 +556,18 @@ impl Document {
     }
 
     /// Edits the whole workbook (sheet add/remove/reorder, metadata).
+    /// Rejection restores all content, including metadata and active sheet.
     pub fn edit_book<T>(
         &mut self,
         label: &str,
         f: impl FnOnce(&mut Workbook) -> EditResult<T>,
     ) -> EditResult<T> {
-        let sheets = self.workbook.sheets.clone();
-        let active = self.workbook.active_sheet;
+        let before = self.workbook.clone();
+        let sheets = &before.sheets;
         match f(&mut self.workbook) {
             Ok(v) => {
                 if self.workbook.sheets.is_empty() {
-                    self.workbook.sheets = sheets;
-                    self.workbook.active_sheet = active;
+                    self.workbook = before;
                     return Err(EditError::Invalid(
                         "a workbook needs at least one sheet".into(),
                     ));
@@ -547,14 +601,12 @@ impl Document {
                         crate::fim::validate_projection(sheet)
                     };
                     if let Err(error) = result {
-                        self.workbook.sheets = sheets;
-                        self.workbook.active_sheet = active;
+                        self.workbook = before;
                         return Err(EditError::Invalid(error.to_string()));
                     }
                 }
                 if let Err(error) = self.workbook.validate_resources() {
-                    self.workbook.sheets = sheets;
-                    self.workbook.active_sheet = active;
+                    self.workbook = before;
                     return Err(EditError::Invalid(error));
                 }
                 for (index, sheet) in self.workbook.sheets.iter_mut().enumerate() {
@@ -575,31 +627,39 @@ impl Document {
                         && let Some(old) = sheets.get(index)
                         && let Err(error) = crate::sankey::reconcile(old, sheet)
                     {
-                        self.workbook.sheets = sheets;
-                        self.workbook.active_sheet = active;
+                        self.workbook = before;
                         return Err(EditError::Invalid(error));
                     }
                     if let Some(old) = sheets.get(index)
                         && let Err(error) = sheet.fix_dangling_endpoints(old)
                     {
-                        self.workbook.sheets = sheets;
-                        self.workbook.active_sheet = active;
+                        self.workbook = before;
                         return Err(EditError::Invalid(error));
                     }
                     if let Err(error) = crate::board::validate_board(sheet) {
-                        self.workbook.sheets = sheets;
-                        self.workbook.active_sheet = active;
+                        self.workbook = before;
                         return Err(EditError::Invalid(error));
                     }
                 }
-                if self.workbook.sheets != sheets {
-                    self.push(label, Snapshot::Book { sheets, active });
+                if let Some(validator) = &self.edit_validator
+                    && let Err(error) = validator.validate(DocumentEditContext::Workbook {
+                        label,
+                        before: &before,
+                        after: &self.workbook,
+                    })
+                {
+                    self.workbook = before;
+                    return Err(error);
+                }
+                if self.workbook.sheets != before.sheets
+                    || self.workbook.metadata != before.metadata
+                {
+                    self.push(label, Snapshot::Workbook(Box::new(before)));
                 }
                 Ok(v)
             }
             Err(e) => {
-                self.workbook.sheets = sheets;
-                self.workbook.active_sheet = active;
+                self.workbook = before;
                 Err(e)
             }
         }
@@ -617,15 +677,6 @@ impl Document {
                 Snapshot::Sheet {
                     index,
                     sheet: Box::new(cur),
-                }
-            }
-            Snapshot::Book { sheets, active } => {
-                let cur = std::mem::replace(&mut self.workbook.sheets, sheets);
-                let cur_active = self.workbook.active_sheet;
-                self.workbook.active_sheet = active.min(self.workbook.sheets.len() - 1);
-                Snapshot::Book {
-                    sheets: cur,
-                    active: cur_active,
                 }
             }
         }
@@ -675,16 +726,26 @@ impl Document {
         true
     }
 
-    /// Replaces the whole workbook (e.g. after reload) and clears history.
+    /// Trusted reset of the whole workbook and history, retaining the policy.
+    /// This does not invoke validation; use `reload` for a guarded replacement.
     pub fn replace(&mut self, workbook: Workbook) {
         let budget = self.history_budget;
+        let validator = self.edit_validator.clone();
         *self = Document::new(workbook);
         self.history_budget = budget;
+        self.edit_validator = validator;
     }
 
     /// Reloads complete content as one undoable action, including workbook metadata.
     pub fn reload(&mut self, workbook: Workbook) -> EditResult<()> {
         workbook.validate().map_err(EditError::Invalid)?;
+        if let Some(validator) = &self.edit_validator {
+            validator.validate(DocumentEditContext::Workbook {
+                label: "Reload file",
+                before: &self.workbook,
+                after: &workbook,
+            })?;
+        }
         if self.workbook != workbook {
             let previous = std::mem::replace(&mut self.workbook, workbook);
             self.push("Reload file", Snapshot::Workbook(Box::new(previous)));
@@ -1025,6 +1086,65 @@ impl Document {
                 .remove_board_members(members)
                 .map_err(EditError::Invalid)
         })
+    }
+
+    pub fn set_canvas_container(&mut self, id: CanvasObjectId, enabled: bool) -> EditResult<()> {
+        self.edit_sheet("Change container state", |sheet| {
+            sheet
+                .set_canvas_container(id, enabled)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_canvas_container_layout_policy(
+        &mut self,
+        id: CanvasObjectId,
+        policy: Option<ContainerLayoutPolicy>,
+    ) -> EditResult<()> {
+        self.edit_sheet("Set container layout policy", |sheet| {
+            sheet
+                .set_canvas_container_layout_policy(id, policy)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn layout_canvas_container(&mut self, id: CanvasObjectId) -> EditResult<()> {
+        self.edit_sheet("Arrange container contents", |sheet| {
+            sheet
+                .layout_canvas_container(id)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn reparent_canvas_objects(
+        &mut self,
+        ids: &[CanvasObjectId],
+        target: Option<CanvasObjectId>,
+    ) -> EditResult<()> {
+        self.edit_sheet("Change parent container", |sheet| {
+            sheet
+                .reparent_canvas_objects(ids, target)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_canvas_container_collapsed(
+        &mut self,
+        id: CanvasObjectId,
+        compact: Option<Rect>,
+    ) -> EditResult<()> {
+        self.edit_sheet(
+            if compact.is_some() {
+                "Collapse container"
+            } else {
+                "Expand container"
+            },
+            |sheet| {
+                sheet
+                    .set_canvas_container_collapsed(id, compact)
+                    .map_err(EditError::Invalid)
+            },
+        )
     }
 
     pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> EditResult<()> {
@@ -1453,6 +1573,63 @@ mod tests {
         d.edit_sheet("t", |s| s.set_title(root, "last")).unwrap();
         assert!(d.undo());
         assert!(!d.undo());
+    }
+
+    #[test]
+    fn scene_layout_policies_are_counted_in_history_size() {
+        use crate::scene_layout::{ContainerLayout, HeaderPolicy, HeaderSide};
+
+        let mut sheet = Sheet::new("Layout history", "Root");
+        let container = sheet
+            .add_canvas_object(CanvasObject::shape(
+                crate::board::ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 100.0)),
+            ))
+            .unwrap();
+        sheet.set_canvas_container(container, true).unwrap();
+        let before = approx_sheet_bytes(&sheet);
+        sheet
+            .set_canvas_container_layout_policy(
+                container,
+                Some(ContainerLayoutPolicy {
+                    header: HeaderPolicy {
+                        side: HeaderSide::Top,
+                        extent: 24.0,
+                    },
+                    layout: ContainerLayout::Free,
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            approx_sheet_bytes(&sheet) - before,
+            std::mem::size_of::<CanvasObjectId>()
+                + std::mem::size_of::<ContainerLayoutPolicy>()
+                + 48
+        );
+    }
+
+    #[test]
+    fn socio_technical_model_is_counted_in_history_size() {
+        let mut sheet = Sheet::new("Semantic history", "Root");
+        let before = approx_sheet_bytes(&sheet);
+        let mut semantic = crate::semantic::SemanticModel::default();
+        semantic.entities.insert(
+            crate::semantic::SemanticEntityId(2),
+            crate::semantic::SemanticEntity::Participant(crate::semantic::Participant {
+                kind: crate::semantic::ParticipantKind::Human,
+                name: "Case worker".repeat(200),
+                description: "Reviews incoming requests".repeat(200),
+            }),
+        );
+        sheet.semantic = Some(semantic);
+
+        assert!(
+            approx_sheet_bytes(&sheet)
+                > before
+                    + "Case worker".repeat(200).len()
+                    + "Reviews incoming requests".repeat(200).len()
+        );
     }
 
     #[test]

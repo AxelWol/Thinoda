@@ -122,6 +122,12 @@ pub struct BoardLabels {
     pub image: String,
     /// Generic fallback when a shape has no entry in `shape_names`.
     pub shape: String,
+    pub container: String,
+    pub collapsed: String,
+    pub expanded: String,
+    pub parent_container: String,
+    pub contained_objects: String,
+    pub containment_hint: String,
     /// Localized, human-readable names keyed by the core shape kind.
     pub shape_names: std::collections::HashMap<ShapeKind, String>,
     pub connector: String,
@@ -141,6 +147,7 @@ pub struct BoardLabels {
     pub insert_waypoint: String,
     pub waypoint_hint: String,
     pub insert_waypoint_hint: String,
+    pub stencil_handle_hint: String,
     pub connect_up: String,
     pub connect_right: String,
     pub connect_down: String,
@@ -163,6 +170,12 @@ impl Default for BoardLabels {
             text: "Text card".into(),
             image: "Image card".into(),
             shape: "Shape".into(),
+            container: "Container".into(),
+            collapsed: "Collapsed".into(),
+            expanded: "Expanded".into(),
+            parent_container: "Parent container".into(),
+            contained_objects: "Contained objects".into(),
+            containment_hint: "Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.".into(),
             shape_names: ShapeKind::ALL
                 .into_iter()
                 .map(|shape| {
@@ -190,6 +203,7 @@ impl Default for BoardLabels {
             insert_waypoint: "Add connector waypoint".into(),
             waypoint_hint: "Drag or use arrow keys to move; double-click or press Delete to remove.".into(),
             insert_waypoint_hint: "Drag, press Enter, or use arrow keys to add a waypoint.".into(),
+            stencil_handle_hint: "Drag to adjust; use arrow keys to nudge, Shift for larger steps.".into(),
             connect_up: "Add connected shape above".into(),
             connect_right: "Add connected shape to the right".into(),
             connect_down: "Add connected shape below".into(),
@@ -2515,6 +2529,7 @@ impl MapCanvas {
             &paint_scene,
             PaintSceneExtras {
                 editing_board_object: view.editing_board_object(),
+                stencil_handle_preview: board_input::stencil_handle_preview(view),
                 ..Default::default()
             },
         );

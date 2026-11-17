@@ -94,6 +94,41 @@ fn public_xmind_content(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 #[test]
+fn socio_technical_models_roundtrip_only_in_the_current_native_version() {
+    let mut book = Workbook::default();
+    let mut semantic = thinoda_core::semantic::SemanticModel::default();
+    semantic.entities.insert(
+        thinoda_core::semantic::SemanticEntityId(2),
+        thinoda_core::semantic::SemanticEntity::Participant(thinoda_core::semantic::Participant {
+            kind: thinoda_core::semantic::ParticipantKind::Software,
+            name: "Order service".into(),
+            description: String::new(),
+        }),
+    );
+    book.active_mut().semantic = Some(semantic);
+
+    assert_eq!(thinoda_io::required_native_version(&book), 36);
+    let bytes = export_bytes(&book, Format::Thinoda, &Default::default()).unwrap();
+    assert_eq!(import_bytes(Format::Thinoda, &bytes).unwrap(), book);
+
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut manifest = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("manifest.json").unwrap(),
+        &mut manifest,
+    )
+    .unwrap();
+    let mut content = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name("content.json").unwrap(), &mut content)
+        .unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    manifest["version"] = serde_json::json!(35);
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let older = zip_with(&[("manifest.json", &manifest), ("content.json", &content)]);
+    assert!(import_bytes(Format::Thinoda, &older).is_err());
+}
+
+#[test]
 fn custom_themes_remain_embedded_and_materialize_public_json_and_xml_appearance() {
     let mut book = Workbook::default();
     let sheet = book.active_mut();

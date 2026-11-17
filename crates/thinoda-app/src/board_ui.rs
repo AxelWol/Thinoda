@@ -9,6 +9,10 @@ use thinoda_core::{
         BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, MAX_BOARD_COORDINATE,
         MAX_CONNECTOR_MARKER_SIZE, MIN_CARD_SIZE,
     },
+    scene_layout::{
+        ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
+        StackCrossAxisPolicy, StackResizePolicy,
+    },
 };
 use thinoda_ui::{
     icons,
@@ -103,6 +107,342 @@ struct ConnectorOwner {
 struct ConnectorTarget {
     owner: ConnectorOwner,
     revision: u64,
+}
+
+struct ContainerContext {
+    target: ConnectorTarget,
+    enabled: bool,
+    rect: thinoda_core::Rect,
+    collapsed: bool,
+}
+
+#[derive(Clone)]
+struct ContainerCollapseDraft {
+    target: ConnectorTarget,
+    size: thinoda_core::Vec2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContainerLayoutChoice {
+    Free,
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone)]
+struct ContainerLayoutDraft {
+    target: ConnectorTarget,
+    policy: ContainerLayoutPolicy,
+}
+
+fn default_container_layout_policy(
+    object: &CanvasObject,
+    frame: thinoda_core::Rect,
+) -> ContainerLayoutPolicy {
+    let legacy_extent = object
+        .stencil
+        .as_ref()
+        .and_then(|stencil| {
+            let (_, definition) = stencil.resolve()?;
+            let parameter = definition.parameters.get("headerHeight")?;
+            Some(
+                stencil
+                    .parameters
+                    .get("headerHeight")
+                    .copied()
+                    .unwrap_or(parameter.default),
+            )
+        })
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+        .clamp(0.0, frame.size.y.max(0.0));
+    let header =
+        thinoda_core::stencil_object::container_header_policy(object).unwrap_or(HeaderPolicy {
+            side: HeaderSide::Top,
+            extent: legacy_extent,
+        });
+    let header_limit = match header.side {
+        HeaderSide::Top | HeaderSide::Bottom => frame.size.y,
+        HeaderSide::Right | HeaderSide::Left => frame.size.x,
+    }
+    .clamp(0.0, MAX_BOARD_COORDINATE);
+    ContainerLayoutPolicy {
+        header: HeaderPolicy {
+            extent: header.extent.clamp(0.0, header_limit),
+            ..header
+        },
+        layout: ContainerLayout::Free,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SceneStructureChange {
+    Container(bool),
+    Parent(Option<CanvasObjectId>),
+}
+
+enum SemanticRecordAction {
+    Entity(thinoda_core::semantic::SemanticEntityKind),
+    Link(thinoda_core::semantic::SemanticRelation),
+    UpdateRelation {
+        id: thinoda_core::semantic::SemanticRelationId,
+        relation: thinoda_core::semantic::SemanticRelation,
+    },
+    RemoveRelation(thinoda_core::semantic::SemanticRelationId),
+    UnbindEntity,
+    DeleteBoundEntity(thinoda_core::semantic::SemanticEntityId),
+    RemoveBoundRelation(thinoda_core::semantic::SemanticRelationId),
+    Sequence {
+        from: thinoda_core::semantic::SemanticEntityId,
+        to: thinoda_core::semantic::SemanticEntityId,
+        label: String,
+    },
+    Exchange {
+        from_process: thinoda_core::semantic::SemanticEntityId,
+        to_process: thinoda_core::semantic::SemanticEntityId,
+        internal: bool,
+        label: String,
+    },
+}
+
+fn semantic_relation_between_entities(
+    current: thinoda_core::semantic::SemanticEntityId,
+    current_kind: thinoda_core::semantic::SemanticEntityKind,
+    related: thinoda_core::semantic::SemanticEntityId,
+    related_kind: thinoda_core::semantic::SemanticEntityKind,
+) -> Option<thinoda_core::semantic::SemanticRelation> {
+    use thinoda_core::semantic::{PerformerRef, SemanticEntityKind as Kind, SemanticRelation};
+    match (current_kind, related_kind) {
+        (Kind::Participant, Kind::Role) => Some(SemanticRelation::RoleFulfillment {
+            participant: current,
+            role: related,
+        }),
+        (Kind::Participant, Kind::Process) => Some(SemanticRelation::ProcessOwnership {
+            process: related,
+            owner: current,
+        }),
+        (Kind::Participant, Kind::Lane) => Some(SemanticRelation::LanePerformer {
+            lane: related,
+            performer: PerformerRef::Participant(current),
+        }),
+        (Kind::Role, Kind::Participant) => Some(SemanticRelation::RoleFulfillment {
+            participant: related,
+            role: current,
+        }),
+        (Kind::Role, Kind::Lane) => Some(SemanticRelation::LanePerformer {
+            lane: related,
+            performer: PerformerRef::Role(current),
+        }),
+        (kind, Kind::Boundary) if kind != Kind::Boundary => {
+            Some(SemanticRelation::BoundaryMembership {
+                boundary: related,
+                member: current,
+            })
+        }
+        (Kind::Process, Kind::Participant) => Some(SemanticRelation::ProcessOwnership {
+            process: current,
+            owner: related,
+        }),
+        (Kind::Lane, Kind::Participant) => Some(SemanticRelation::LanePerformer {
+            lane: current,
+            performer: PerformerRef::Participant(related),
+        }),
+        (Kind::Lane, Kind::Role) => Some(SemanticRelation::LanePerformer {
+            lane: current,
+            performer: PerformerRef::Role(related),
+        }),
+        (Kind::Step, Kind::UseCase) => Some(SemanticRelation::UseCaseStep {
+            use_case: related,
+            step: current,
+        }),
+        (Kind::UseCase, Kind::Step) => Some(SemanticRelation::UseCaseStep {
+            use_case: current,
+            step: related,
+        }),
+        (Kind::Boundary, _) if current != related => Some(SemanticRelation::BoundaryMembership {
+            boundary: current,
+            member: related,
+        }),
+        _ => None,
+    }
+}
+
+fn semantic_accountability_between_entities(
+    current: thinoda_core::semantic::SemanticEntityId,
+    current_kind: thinoda_core::semantic::SemanticEntityKind,
+    related: thinoda_core::semantic::SemanticEntityId,
+    related_kind: thinoda_core::semantic::SemanticEntityKind,
+) -> Option<thinoda_core::semantic::SemanticRelation> {
+    use thinoda_core::semantic::{PerformerRef, SemanticEntityKind as Kind, SemanticRelation};
+    let performer = |id, kind| match kind {
+        Kind::Participant => Some(PerformerRef::Participant(id)),
+        Kind::Role => Some(PerformerRef::Role(id)),
+        _ => None,
+    };
+    match (current_kind, related_kind) {
+        (Kind::Process | Kind::Step | Kind::UseCase, Kind::Participant | Kind::Role) => {
+            Some(SemanticRelation::Accountability {
+                target: current,
+                accountable: performer(related, related_kind)?,
+            })
+        }
+        (Kind::Participant | Kind::Role, Kind::Process | Kind::Step | Kind::UseCase) => {
+            Some(SemanticRelation::Accountability {
+                target: related,
+                accountable: performer(current, current_kind)?,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn semantic_relation_label(relation: &thinoda_core::semantic::SemanticRelation) -> &'static str {
+    use thinoda_core::semantic::SemanticRelation;
+    match relation {
+        SemanticRelation::ProcessOwnership { .. } => "Process owner",
+        SemanticRelation::LanePerformer { .. } => "Lane performer",
+        SemanticRelation::RoleFulfillment { .. } => "Role fulfillment",
+        SemanticRelation::UseCaseStep { .. } => "Use case step",
+        SemanticRelation::BoundaryMembership { .. } => "Boundary membership",
+        SemanticRelation::Accountability { .. } => "Accountability",
+        SemanticRelation::Sequence { .. } => "Sequence",
+        SemanticRelation::Exchange { .. } => "Exchange",
+    }
+}
+
+fn semantic_relation_other_entity(
+    relation: &thinoda_core::semantic::SemanticRelation,
+    current: thinoda_core::semantic::SemanticEntityId,
+) -> Option<thinoda_core::semantic::SemanticEntityId> {
+    use thinoda_core::semantic::{PerformerRef, SemanticRelation};
+    match relation {
+        SemanticRelation::ProcessOwnership { process, owner } => (*process == current)
+            .then_some(*owner)
+            .or_else(|| (*owner == current).then_some(*process)),
+        SemanticRelation::LanePerformer { lane, performer } => {
+            let performer_id = match performer {
+                PerformerRef::Participant(id) | PerformerRef::Role(id) => *id,
+            };
+            (*lane == current)
+                .then_some(performer_id)
+                .or_else(|| (performer_id == current).then_some(*lane))
+        }
+        SemanticRelation::RoleFulfillment { participant, role } => (*participant == current)
+            .then_some(*role)
+            .or_else(|| (*role == current).then_some(*participant)),
+        SemanticRelation::UseCaseStep { use_case, step } => (*use_case == current)
+            .then_some(*step)
+            .or_else(|| (*step == current).then_some(*use_case)),
+        SemanticRelation::BoundaryMembership { boundary, member } => (*boundary == current)
+            .then_some(*member)
+            .or_else(|| (*member == current).then_some(*boundary)),
+        SemanticRelation::Accountability {
+            target,
+            accountable,
+        } => {
+            let accountable_id = match accountable {
+                PerformerRef::Participant(id) | PerformerRef::Role(id) => *id,
+            };
+            (*target == current)
+                .then_some(accountable_id)
+                .or_else(|| (accountable_id == current).then_some(*target))
+        }
+        SemanticRelation::Sequence { .. } | SemanticRelation::Exchange { .. } => None,
+    }
+}
+
+fn semantic_relation_references_entity(
+    relation: &thinoda_core::semantic::SemanticRelation,
+    entity: thinoda_core::semantic::SemanticEntityId,
+) -> bool {
+    use thinoda_core::semantic::SemanticRelation;
+    semantic_relation_other_entity(relation, entity).is_some()
+        || match relation {
+            SemanticRelation::Sequence { from, to, .. } => *from == entity || *to == entity,
+            SemanticRelation::Exchange {
+                from_process,
+                to_process,
+                ..
+            } => *from_process == entity || *to_process == entity,
+            _ => false,
+        }
+}
+
+fn show_semantic_diagnostics(
+    ui: &mut Ui,
+    diagnostics: &[thinoda_core::semantic::SemanticDiagnostic],
+    entity: Option<thinoda_core::semantic::SemanticEntityId>,
+) {
+    let relevant = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.entity.is_none() || diagnostic.entity == entity)
+        .collect::<Vec<_>>();
+    if relevant.is_empty() {
+        return;
+    }
+    ui.separator();
+    widgets::caption(ui, t("Modeling diagnostics"));
+    for diagnostic in relevant {
+        ui.colored_label(ui.visuals().warn_fg_color, t(diagnostic.message));
+    }
+}
+
+fn semantic_description(entity: &thinoda_core::semantic::SemanticEntity) -> &str {
+    match entity {
+        thinoda_core::semantic::SemanticEntity::Participant(value) => &value.description,
+        thinoda_core::semantic::SemanticEntity::Role(value) => &value.description,
+        thinoda_core::semantic::SemanticEntity::Process(value) => &value.description,
+        thinoda_core::semantic::SemanticEntity::Lane(value) => &value.description,
+        thinoda_core::semantic::SemanticEntity::Step(value) => &value.description,
+        thinoda_core::semantic::SemanticEntity::UseCase(value) => &value.description,
+        thinoda_core::semantic::SemanticEntity::Boundary(value) => &value.description,
+    }
+}
+
+fn set_semantic_description(
+    entity: &mut thinoda_core::semantic::SemanticEntity,
+    description: String,
+) {
+    match entity {
+        thinoda_core::semantic::SemanticEntity::Participant(value) => {
+            value.description = description;
+        }
+        thinoda_core::semantic::SemanticEntity::Role(value) => value.description = description,
+        thinoda_core::semantic::SemanticEntity::Process(value) => {
+            value.description = description;
+        }
+        thinoda_core::semantic::SemanticEntity::Lane(value) => value.description = description,
+        thinoda_core::semantic::SemanticEntity::Step(value) => {
+            value.description = description;
+        }
+        thinoda_core::semantic::SemanticEntity::UseCase(value) => {
+            value.description = description;
+        }
+        thinoda_core::semantic::SemanticEntity::Boundary(value) => {
+            value.description = description;
+        }
+    }
+}
+
+fn semantic_text_field(
+    ui: &mut Ui,
+    id: egui::Id,
+    current: &str,
+) -> (egui::Response, Option<String>) {
+    let mut value = ui
+        .data(|data| data.get_temp::<String>(id))
+        .unwrap_or_else(|| current.to_owned());
+    let response = ui.add(egui::TextEdit::multiline(&mut value).desired_rows(2));
+    if response.changed() {
+        ui.data_mut(|data| data.insert_temp(id, value.clone()));
+    }
+    if response.lost_focus() {
+        ui.data_mut(|data| data.remove::<String>(id));
+        (response, (value != current).then_some(value))
+    } else {
+        (response, None)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -492,6 +832,12 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.text = t("Text card").into();
     labels.image = t("Image card").into();
     labels.shape = t("Shape").into();
+    labels.container = t("Container").into();
+    labels.collapsed = t("Collapsed").into();
+    labels.expanded = t("Expanded").into();
+    labels.parent_container = t("Parent container").into();
+    labels.contained_objects = t("Contained objects").into();
+    labels.containment_hint = t("Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.").into();
     labels.shape_names = ShapeKind::ALL
         .into_iter()
         .map(|shape| (shape, t(shape_name(shape)).into()))
@@ -524,6 +870,8 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
         t("Drag or use arrow keys to move; double-click or press Delete to remove.").into();
     labels.insert_waypoint_hint =
         t("Drag, press Enter, or use arrow keys to add a waypoint.").into();
+    labels.stencil_handle_hint =
+        t("Drag to adjust; use arrow keys to nudge, Shift for larger steps.").into();
     labels.connect_up = t("Add connected shape above").into();
     labels.connect_right = t("Add connected shape to the right").into();
     labels.connect_down = t("Add connected shape below").into();
@@ -1483,7 +1831,1583 @@ impl ThinodaApp {
     }
 
     /// Shows properties for a selected free object instead of topic styling.
+    fn apply_scene_structure(
+        &mut self,
+        target: &ConnectorTarget,
+        change: SceneStructureChange,
+    ) -> Result<(), String> {
+        let (current, enabled) = self
+            .single_board_object()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        if !enabled || current != *target {
+            return Err(t("Not possible here").to_owned());
+        }
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let id = target.owner.object;
+        if doc.doc.sheet().canvas.is_locked(id) {
+            return Err(t("Locked").to_owned());
+        }
+        match change {
+            SceneStructureChange::Container(enabled) => doc.doc.set_canvas_container(id, enabled),
+            SceneStructureChange::Parent(parent) => doc.doc.reparent_canvas_objects(&[id], parent),
+        }
+        .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(id);
+        Ok(())
+    }
+
+    fn board_structure_properties(&mut self, ui: &mut Ui) -> bool {
+        let Some((target, enabled)) = self.single_board_object() else {
+            return false;
+        };
+        let Some(doc) = self.doc() else { return false };
+        let sheet = doc.doc.sheet();
+        let id = target.owner.object;
+        let Some(object) = sheet.canvas.object(id) else {
+            return false;
+        };
+        if matches!(object.kind, CanvasObjectKind::Connector(_)) {
+            return false;
+        }
+        let enabled = enabled && !sheet.canvas.is_locked(id);
+        let mut container = sheet.canvas.scene.containers.contains(&id);
+        let mut parent = sheet.canvas.scene.parents.get(&id).copied();
+        let previous_parent = parent;
+        let can_toggle = matches!(object.kind, CanvasObjectKind::Shape { .. })
+            && object.rotation == 0.0
+            && object.group.is_none()
+            && (!container
+                || (!sheet
+                    .canvas
+                    .scene
+                    .parents
+                    .values()
+                    .any(|parent| *parent == id)
+                    && !sheet.canvas.scene.collapsed.contains_key(&id)));
+        let mut change = None;
+        ui.push_id(("scene_structure", &target.owner), |ui| {
+            ui.strong(t("Structure"));
+            if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+                ui.add_enabled_ui(enabled && can_toggle, |ui| {
+                    if ui.checkbox(&mut container, t("Use as container")).changed() {
+                        change = Some(SceneStructureChange::Container(container));
+                    }
+                }).response.on_hover_text(t(
+                    "Containers must be unrotated and ungrouped. Empty and expand a container before clearing it.",
+                ));
+            }
+            if !sheet.canvas.scene.containers.is_empty() {
+                let choices = (|| {
+                    let hierarchy = thinoda_core::scene_hierarchy::SceneHierarchy::from_canvas(&sheet.canvas)?;
+                    let descendants: std::collections::BTreeSet<_> = hierarchy
+                        .descendant_closure(&[id])?.into_iter().collect();
+                    let projection = thinoda_core::scene::CollapsePreview::new(sheet, &[])?;
+                    Ok::<_, String>(sheet.canvas.objects.iter().filter(|object| {
+                        let candidate = object.id;
+                        sheet.canvas.scene.containers.contains(&candidate)
+                            && !descendants.contains(&candidate)
+                            && !hierarchy.is_locked(candidate)
+                            && !sheet.canvas.scene.collapsed.contains_key(&candidate)
+                            && projection.visible_representative(candidate) == Some(candidate)
+                    }).map(|object| {
+                        let name = if object.label().is_empty() {
+                            t("Container")
+                        } else {
+                            object.label()
+                        };
+                        (object.id, format!("{name} ({})", object.id))
+                    }).collect::<Vec<_>>())
+                })();
+                match choices {
+                    Ok(choices) => {
+                        let selected = parent.and_then(|id| sheet.canvas.object(id))
+                            .map(|object| {
+                                let name = if object.label().is_empty() {
+                                    t("Container")
+                                } else {
+                                    object.label()
+                                };
+                                format!("{name} ({})", object.id)
+                            }).unwrap_or_else(|| t("No parent container").to_owned());
+                        ui.add_enabled_ui(enabled, |ui| {
+                            widgets::property_field(ui, t("Parent container"), |ui| {
+                                egui::ComboBox::from_id_salt(("scene_parent", &target))
+                                    .selected_text(selected)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut parent, None, t("No parent container"));
+                                        for (id, name) in choices {
+                                            ui.selectable_value(&mut parent, Some(id), name);
+                                        }
+                                    }).response
+                            });
+                        });
+                        if parent != previous_parent {
+                            change = Some(SceneStructureChange::Parent(parent));
+                        }
+                    }
+                    Err(error) => {
+                        widgets::caption(ui, &error);
+                    }
+                }
+            }
+            widgets::caption(ui, t("Free containers preserve child positions; they do not arrange contents."));
+            ui.separator();
+        });
+        if let Some(change) = change {
+            if let Err(error) = self.apply_scene_structure(&target, change) {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        false
+    }
+
+    fn container_context(&self) -> Option<ContainerContext> {
+        let (target, enabled) = self.single_board_object()?;
+        let sheet = self.doc()?.doc.sheet();
+        let id = target.owner.object;
+        if !sheet.canvas.scene.containers.contains(&id) {
+            return None;
+        }
+        Some(ContainerContext {
+            rect: sheet.canvas.object(id)?.rect,
+            collapsed: sheet.canvas.scene.collapsed.contains_key(&id),
+            enabled: enabled && !sheet.canvas.is_locked(id) && !sheet.has_sankey(),
+            target,
+        })
+    }
+
+    fn apply_container_collapse(
+        &mut self,
+        target: &ConnectorTarget,
+        compact: Option<thinoda_core::Rect>,
+    ) -> Result<(), String> {
+        let context = self
+            .container_context()
+            .filter(|context| context.enabled && context.target == *target)
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .set_canvas_container_collapsed(context.target.owner.object, compact)
+            .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(context.target.owner.object);
+        Ok(())
+    }
+
+    fn apply_container_layout_policy(
+        &mut self,
+        target: &ConnectorTarget,
+        policy: Option<ContainerLayoutPolicy>,
+    ) -> Result<(), String> {
+        let context = self
+            .container_context()
+            .filter(|context| context.enabled && context.target == *target)
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .set_canvas_container_layout_policy(context.target.owner.object, policy)
+            .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(context.target.owner.object);
+        Ok(())
+    }
+
+    fn apply_container_layout(&mut self, target: &ConnectorTarget) -> Result<(), String> {
+        let context = self
+            .container_context()
+            .filter(|context| context.enabled && !context.collapsed && context.target == *target)
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        let doc = self
+            .doc_mut()
+            .ok_or_else(|| t("Not possible here").to_owned())?;
+        doc.doc
+            .layout_canvas_container(context.target.owner.object)
+            .map_err(|error| error.to_string())?;
+        doc.view.reveal_board_object(context.target.owner.object);
+        Ok(())
+    }
+
+    /// Returns true when a command was attempted, so properties use a fresh snapshot next frame.
+    fn board_container_properties(&mut self, ui: &mut Ui) -> bool {
+        let slot = egui::Id::unique(("container_collapse_draft", self.current_viewport));
+        let Some(context) = self.container_context() else {
+            ui.ctx().data_mut(|data| {
+                data.remove::<ContainerCollapseDraft>(slot);
+            });
+            return false;
+        };
+        let mut draft = ui
+            .ctx()
+            .data(|data| data.get_temp::<ContainerCollapseDraft>(slot))
+            .filter(|draft| context.enabled && draft.target == context.target)
+            .unwrap_or_else(|| ContainerCollapseDraft {
+                target: context.target.clone(),
+                size: context.rect.size,
+            });
+        let mut apply = false;
+        let policy_slot = egui::Id::unique(("container_layout_draft", self.current_viewport));
+        let Some(doc) = self.doc() else { return false };
+        let sheet = doc.doc.sheet();
+        let Some(object) = sheet.canvas.object(context.target.owner.object) else {
+            return false;
+        };
+        let header_supported = thinoda_core::stencil_object::supports_container_header(object);
+        let expanded_frame = sheet
+            .canvas
+            .scene
+            .collapsed
+            .get(&context.target.owner.object)
+            .copied()
+            .unwrap_or(object.rect);
+        let stored_policy = sheet
+            .canvas
+            .scene
+            .layout_policies
+            .get(&context.target.owner.object)
+            .copied();
+        let mut layout_draft = ui
+            .ctx()
+            .data(|data| data.get_temp::<ContainerLayoutDraft>(policy_slot))
+            .filter(|draft| draft.target == context.target)
+            .unwrap_or_else(|| ContainerLayoutDraft {
+                target: context.target.clone(),
+                policy: stored_policy
+                    .unwrap_or_else(|| default_container_layout_policy(object, expanded_frame)),
+            });
+        let mut save_layout = false;
+        let mut apply_layout = false;
+        let mut clear_layout = false;
+        ui.push_id(&context.target.owner, |ui| {
+            ui.strong(t("Container"));
+            ui.label(t(if context.collapsed {
+                "Collapsed"
+            } else {
+                "Expanded"
+            }));
+            ui.add_enabled_ui(context.enabled, |ui| {
+                if !context.collapsed {
+                    widgets::caption(
+                        ui,
+                        t("Collapse hides contents without moving them. Set compact dimensions before collapsing."),
+                    );
+                    ui.push_id(context.target.revision, |ui| {
+                        widgets::property_field(ui, t("Compact width"), |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut draft.size.x)
+                                    .speed(1.0)
+                                    .range(1.0..=MAX_BOARD_COORDINATE),
+                            )
+                        });
+                        widgets::property_field(ui, t("Compact height"), |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut draft.size.y)
+                                    .speed(1.0)
+                                    .range(1.0..=MAX_BOARD_COORDINATE),
+                            )
+                        });
+                    });
+                }
+                ui.push_id("toggle_container_collapse", |ui| {
+                    apply = ui
+                        .button(t(if context.collapsed {
+                            "Expand container"
+                        } else {
+                            "Collapse container"
+                        }))
+                        .clicked();
+                });
+            });
+            ui.separator();
+            ui.strong(t("Child layout"));
+            ui.add_enabled_ui(context.enabled, |ui| {
+                let choice = match layout_draft.policy.layout {
+                    ContainerLayout::Free => ContainerLayoutChoice::Free,
+                    ContainerLayout::Stack {
+                        axis: StackAxis::Horizontal,
+                        ..
+                    } => ContainerLayoutChoice::Horizontal,
+                    ContainerLayout::Stack {
+                        axis: StackAxis::Vertical,
+                        ..
+                    } => ContainerLayoutChoice::Vertical,
+                };
+                let mut choice = choice;
+                widgets::property_field(ui, t("Layout mode"), |ui| {
+                    egui::ComboBox::from_id_salt(("container_layout", &context.target))
+                        .selected_text(t(match choice {
+                            ContainerLayoutChoice::Free => "Free placement",
+                            ContainerLayoutChoice::Horizontal => "Horizontal stack",
+                            ContainerLayoutChoice::Vertical => "Vertical stack",
+                        }))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut choice,
+                                ContainerLayoutChoice::Free,
+                                t("Free placement"),
+                            );
+                            ui.selectable_value(
+                                &mut choice,
+                                ContainerLayoutChoice::Horizontal,
+                                t("Horizontal stack"),
+                            );
+                            ui.selectable_value(
+                                &mut choice,
+                                ContainerLayoutChoice::Vertical,
+                                t("Vertical stack"),
+                            );
+                        })
+                        .response
+                });
+                let (spacing, padding, cross_axis, resize) = match layout_draft.policy.layout {
+                    ContainerLayout::Free => (
+                        5.0,
+                        10.0,
+                        StackCrossAxisPolicy::Preserve,
+                        StackResizePolicy::Preserve,
+                    ),
+                    ContainerLayout::Stack {
+                        spacing,
+                        padding,
+                        cross_axis,
+                        resize,
+                        ..
+                    } => (spacing, padding, cross_axis, resize),
+                };
+                let mut spacing = spacing;
+                let mut padding = padding;
+                let mut cross_axis = cross_axis;
+                let mut resize = resize;
+                if choice != ContainerLayoutChoice::Free {
+                    widgets::property_field(ui, t("Cross-axis sizing"), |ui| {
+                        egui::ComboBox::from_id_salt(("container_stack_cross_axis", &context.target))
+                            .selected_text(t(match cross_axis {
+                                StackCrossAxisPolicy::Preserve => "Preserve child cross-axis sizes",
+                                StackCrossAxisPolicy::Fill => "Fill container cross-axis",
+                            }))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut cross_axis,
+                                    StackCrossAxisPolicy::Preserve,
+                                    t("Preserve child cross-axis sizes"),
+                                );
+                                ui.selectable_value(
+                                    &mut cross_axis,
+                                    StackCrossAxisPolicy::Fill,
+                                    t("Fill container cross-axis"),
+                                );
+                            })
+                            .response
+                    });
+                    widgets::property_field(ui, t("Stack resizing"), |ui| {
+                        egui::ComboBox::from_id_salt(("container_stack_resize", &context.target))
+                            .selected_text(t(match resize {
+                                StackResizePolicy::Preserve => "Preserve child sizes",
+                                StackResizePolicy::FillLast => "Fill last child",
+                                StackResizePolicy::GrowParent => "Grow parent to fit",
+                                StackResizePolicy::FitParent => "Fit parent to contents",
+                                StackResizePolicy::Distribute => "Distribute gaps",
+                            }))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::Preserve,
+                                    t("Preserve child sizes"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::FillLast,
+                                    t("Fill last child"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::GrowParent,
+                                    t("Grow parent to fit"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::FitParent,
+                                    t("Fit parent to contents"),
+                                );
+                                ui.selectable_value(
+                                    &mut resize,
+                                    StackResizePolicy::Distribute,
+                                    t("Distribute gaps"),
+                                );
+                            })
+                            .response
+                    });
+                    widgets::property_field(ui, t("Stack spacing"), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut spacing)
+                                .range(0.0..=MAX_BOARD_COORDINATE)
+                                .speed(0.5),
+                        )
+                    });
+                    widgets::property_field(ui, t("Stack padding"), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut padding)
+                                .range(0.0..=MAX_BOARD_COORDINATE)
+                                .speed(0.5),
+                        )
+                    });
+                }
+                layout_draft.policy.layout = match choice {
+                    ContainerLayoutChoice::Free => ContainerLayout::Free,
+                    ContainerLayoutChoice::Horizontal => ContainerLayout::Stack {
+                        axis: StackAxis::Horizontal,
+                        spacing,
+                        padding,
+                        cross_axis,
+                        resize,
+                    },
+                    ContainerLayoutChoice::Vertical => ContainerLayout::Stack {
+                        axis: StackAxis::Vertical,
+                        spacing,
+                        padding,
+                        cross_axis,
+                        resize,
+                    },
+                };
+                widgets::caption(ui, t("Header side and extent affect child layout; supported stencils also use them to draw the header."));
+                widgets::property_field(ui, t("Header side"), |ui| {
+                    if header_supported {
+                        egui::ComboBox::from_id_salt(("container_header_side", &context.target))
+                            .selected_text(t(match layout_draft.policy.header.side {
+                                HeaderSide::Top => "Top",
+                                HeaderSide::Right => "Right",
+                                HeaderSide::Bottom => "Bottom",
+                                HeaderSide::Left => "Left",
+                            }))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Top,
+                                    t("Top"),
+                                );
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Right,
+                                    t("Right"),
+                                );
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Bottom,
+                                    t("Bottom"),
+                                );
+                                ui.selectable_value(
+                                    &mut layout_draft.policy.header.side,
+                                    HeaderSide::Left,
+                                    t("Left"),
+                                );
+                            })
+                            .response
+                    } else {
+                        ui.label(t(match layout_draft.policy.header.side {
+                            HeaderSide::Top => "Top",
+                            HeaderSide::Right => "Right",
+                            HeaderSide::Bottom => "Bottom",
+                            HeaderSide::Left => "Left",
+                        }))
+                    }
+                });
+                let header_limit = match layout_draft.policy.header.side {
+                    HeaderSide::Top | HeaderSide::Bottom => expanded_frame.size.y,
+                    HeaderSide::Right | HeaderSide::Left => expanded_frame.size.x,
+                }
+                .min(MAX_BOARD_COORDINATE);
+                layout_draft.policy.header.extent =
+                    layout_draft.policy.header.extent.clamp(0.0, header_limit);
+                widgets::property_field(ui, t("Header extent"), |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut layout_draft.policy.header.extent)
+                            .range(0.0..=header_limit)
+                            .speed(0.5),
+                    )
+                });
+                let save_enabled = stored_policy != Some(layout_draft.policy);
+                ui.horizontal(|ui| {
+                    save_layout = ui
+                        .add_enabled(save_enabled, egui::Button::new(t("Save layout policy")))
+                        .clicked();
+                    apply_layout = ui
+                        .add_enabled(
+                            stored_policy.is_some() && !context.collapsed,
+                            egui::Button::new(t("Arrange contents")),
+                        )
+                        .clicked();
+                    clear_layout = ui
+                        .add_enabled(stored_policy.is_some(), egui::Button::new(t("Clear layout")))
+                        .clicked();
+                });
+            });
+            ui.separator();
+        });
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(slot, draft.clone()));
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(policy_slot, layout_draft.clone()));
+        if apply {
+            let compact = (!context.collapsed)
+                .then(|| thinoda_core::Rect::from_min_size(context.rect.min, draft.size));
+            if let Err(error) = self.apply_container_collapse(&context.target, compact) {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        let action = if save_layout {
+            Some(Some(layout_draft.policy))
+        } else if clear_layout {
+            Some(None)
+        } else {
+            None
+        };
+        if let Some(policy) = action {
+            if let Err(error) = self.apply_container_layout_policy(&context.target, policy) {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        if apply_layout {
+            if let Err(error) = self.apply_container_layout(&context.target) {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn board_semantic_properties(&mut self, ui: &mut Ui) -> bool {
+        let Some(doc) = self.doc() else { return false };
+        if doc.view.board_selection.len() != 1 || !doc.view.selection.is_empty() {
+            widgets::caption(ui, t("Select one board object to edit its meaning."));
+            return true;
+        }
+        let id = doc.view.board_selection[0];
+        let sheet = doc.doc.sheet();
+        let Some(object) = sheet.canvas.object(id).cloned() else {
+            return true;
+        };
+        let locked = sheet
+            .expand_board_selection(&[BoardMember::Object(id)])
+            .map_or(true, |members| {
+                members
+                    .iter()
+                    .any(|member| sheet.is_board_member_locked(*member))
+            });
+        let binding = sheet
+            .semantic
+            .as_ref()
+            .and_then(|semantic| semantic.bindings.get(&id).copied());
+        let is_container = sheet.canvas.scene.containers.contains(&id);
+        let semantic_diagnostics = sheet.semantic.as_ref().map_or_else(Vec::new, |semantic| {
+            let cache_id = ui.make_persistent_id((
+                "semantic_diagnostics",
+                doc.doc.instance_id(),
+                doc.doc.active_index(),
+                doc.doc.state_id(),
+            ));
+            if let Some(cached) = ui.ctx().data(|data| {
+                data.get_temp::<Vec<thinoda_core::semantic::SemanticDiagnostic>>(cache_id)
+            }) {
+                cached
+            } else {
+                let diagnostics = semantic.diagnostics(sheet);
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(cache_id, diagnostics.clone()));
+                diagnostics
+            }
+        });
+        let mut action: Option<(SemanticRecordAction, String)> = None;
+        let mut entity_update = None;
+        widgets::section(ui, t("Socio-technical meaning"), true, |ui| match binding {
+            Some(thinoda_core::semantic::SemanticBinding::Entity(entity_id)) => {
+                if let Some(entity) = sheet
+                    .semantic
+                    .as_ref()
+                    .and_then(|semantic| semantic.entities.get(&entity_id))
+                {
+                    let kind = match entity.kind() {
+                        thinoda_core::semantic::SemanticEntityKind::Participant => "Participant",
+                        thinoda_core::semantic::SemanticEntityKind::Role => "Role",
+                        thinoda_core::semantic::SemanticEntityKind::Process => "Process",
+                        thinoda_core::semantic::SemanticEntityKind::Lane => "Lane",
+                        thinoda_core::semantic::SemanticEntityKind::Step => "Step",
+                        thinoda_core::semantic::SemanticEntityKind::UseCase => "Use case",
+                        thinoda_core::semantic::SemanticEntityKind::Boundary => "Boundary",
+                    };
+                    ui.label(format!("{}: {}", t(kind), entity.name()));
+                    let mut edited = entity.clone();
+                    let mut changed = false;
+                    ui.add_enabled_ui(!locked, |ui| match &mut edited {
+                        thinoda_core::semantic::SemanticEntity::Participant(value) => {
+                            let original = value.kind;
+                            widgets::property_field(ui, t("Participant kind"), |ui| {
+                                egui::ComboBox::from_id_salt(("semantic_participant_kind", id))
+                                    .selected_text(t(match value.kind {
+                                        thinoda_core::semantic::ParticipantKind::Unspecified => {
+                                            "Unspecified"
+                                        }
+                                        thinoda_core::semantic::ParticipantKind::Human => "Human",
+                                        thinoda_core::semantic::ParticipantKind::Team => "Team",
+                                        thinoda_core::semantic::ParticipantKind::Software => {
+                                            "Software"
+                                        }
+                                        thinoda_core::semantic::ParticipantKind::Api => "API",
+                                    }))
+                                    .show_ui(ui, |ui| {
+                                        for (kind, label) in [
+                                            (
+                                                thinoda_core::semantic::ParticipantKind::Unspecified,
+                                                "Unspecified",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::ParticipantKind::Human,
+                                                "Human",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::ParticipantKind::Team,
+                                                "Team",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::ParticipantKind::Software,
+                                                "Software",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::ParticipantKind::Api,
+                                                "API",
+                                            ),
+                                        ] {
+                                            ui.selectable_value(&mut value.kind, kind, t(label));
+                                        }
+                                    })
+                                    .response
+                            });
+                            changed |= value.kind != original;
+                        }
+                        thinoda_core::semantic::SemanticEntity::Process(value) => {
+                            changed |= ui
+                                .checkbox(&mut value.black_box, t("Black-box process"))
+                                .changed();
+                        }
+                        thinoda_core::semantic::SemanticEntity::Step(value) => {
+                            let original_kind = value.kind;
+                            widgets::property_field(ui, t("Step kind"), |ui| {
+                                egui::ComboBox::from_id_salt(("semantic_step_kind", id))
+                                    .selected_text(t(match value.kind {
+                                        thinoda_core::semantic::StepKind::Task => "Task",
+                                        thinoda_core::semantic::StepKind::Start => "Start",
+                                        thinoda_core::semantic::StepKind::End => "End",
+                                        thinoda_core::semantic::StepKind::ExclusiveDecision => {
+                                            "Decision"
+                                        }
+                                    }))
+                                    .show_ui(ui, |ui| {
+                                        for (kind, label) in [
+                                            (thinoda_core::semantic::StepKind::Task, "Task"),
+                                            (thinoda_core::semantic::StepKind::Start, "Start"),
+                                            (thinoda_core::semantic::StepKind::End, "End"),
+                                            (
+                                                thinoda_core::semantic::StepKind::ExclusiveDecision,
+                                                "Decision",
+                                            ),
+                                        ] {
+                                            ui.selectable_value(&mut value.kind, kind, t(label));
+                                        }
+                                    })
+                                    .response
+                            });
+                            changed |= value.kind != original_kind;
+                            let original_automation = value.automation;
+                            widgets::property_field(ui, t("Automation"), |ui| {
+                                egui::ComboBox::from_id_salt(("semantic_step_automation", id))
+                                    .selected_text(t(match value.automation {
+                                        thinoda_core::semantic::AutomationMode::Manual => "Manual",
+                                        thinoda_core::semantic::AutomationMode::Assisted => {
+                                            "Assisted"
+                                        }
+                                        thinoda_core::semantic::AutomationMode::Automated => {
+                                            "Automated"
+                                        }
+                                    }))
+                                    .show_ui(ui, |ui| {
+                                        for (mode, label) in [
+                                            (
+                                                thinoda_core::semantic::AutomationMode::Manual,
+                                                "Manual",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::AutomationMode::Assisted,
+                                                "Assisted",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::AutomationMode::Automated,
+                                                "Automated",
+                                            ),
+                                        ] {
+                                            ui.selectable_value(
+                                                &mut value.automation,
+                                                mode,
+                                                t(label),
+                                            );
+                                        }
+                                    })
+                                    .response
+                            });
+                            changed |= value.automation != original_automation;
+                        }
+                        thinoda_core::semantic::SemanticEntity::Boundary(value) => {
+                            let original = value.kind;
+                            widgets::property_field(ui, t("Boundary kind"), |ui| {
+                                egui::ComboBox::from_id_salt(("semantic_boundary_kind", id))
+                                    .selected_text(t(match value.kind {
+                                        thinoda_core::semantic::BoundaryKind::Organization => {
+                                            "Organization"
+                                        }
+                                        thinoda_core::semantic::BoundaryKind::SoftwareScope => {
+                                            "Software scope"
+                                        }
+                                        thinoda_core::semantic::BoundaryKind::Trust => "Trust",
+                                        thinoda_core::semantic::BoundaryKind::Visibility => {
+                                            "Visibility"
+                                        }
+                                    }))
+                                    .show_ui(ui, |ui| {
+                                        for (kind, label) in [
+                                            (
+                                                thinoda_core::semantic::BoundaryKind::Organization,
+                                                "Organization",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::BoundaryKind::SoftwareScope,
+                                                "Software scope",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::BoundaryKind::Trust,
+                                                "Trust",
+                                            ),
+                                            (
+                                                thinoda_core::semantic::BoundaryKind::Visibility,
+                                                "Visibility",
+                                            ),
+                                        ] {
+                                            ui.selectable_value(&mut value.kind, kind, t(label));
+                                        }
+                                    })
+                                    .response
+                            });
+                            changed |= value.kind != original;
+                        }
+                        _ => {}
+                    });
+                    let description_id = ui.make_persistent_id((
+                        "semantic_description",
+                        doc.doc.instance_id(),
+                        doc.doc.active_index(),
+                        doc.doc.state_id(),
+                        id,
+                        entity_id,
+                    ));
+                    let mut description = None;
+                    ui.add_enabled_ui(!locked, |ui| {
+                        widgets::property_field(ui, t("Description"), |ui| {
+                            let (response, value) = semantic_text_field(
+                                ui,
+                                description_id,
+                                semantic_description(&edited),
+                            );
+                            description = value;
+                            response
+                        });
+                    });
+                    if let Some(value) = description {
+                        set_semantic_description(&mut edited, value);
+                        changed = true;
+                    }
+                    if let thinoda_core::semantic::SemanticEntity::UseCase(value) = &mut edited {
+                        let intent_id = ui.make_persistent_id((
+                            "semantic_intent",
+                            doc.doc.instance_id(),
+                            doc.doc.active_index(),
+                            doc.doc.state_id(),
+                            id,
+                            entity_id,
+                        ));
+                        let mut intent = None;
+                        ui.add_enabled_ui(!locked, |ui| {
+                            widgets::property_field(ui, t("Intent"), |ui| {
+                                let (response, value) =
+                                    semantic_text_field(ui, intent_id, &value.intent);
+                                intent = value;
+                                response
+                            });
+                        });
+                        if let Some(intent) = intent {
+                            value.intent = intent;
+                            changed = true;
+                        }
+                    }
+                    if let thinoda_core::semantic::SemanticEntity::Step(value) = &mut edited
+                        && value.kind == thinoda_core::semantic::StepKind::ExclusiveDecision
+                    {
+                        let rationale_id = ui.make_persistent_id((
+                            "semantic_rationale",
+                            doc.doc.instance_id(),
+                            doc.doc.active_index(),
+                            doc.doc.state_id(),
+                            id,
+                            entity_id,
+                        ));
+                        let mut rationale = None;
+                        ui.add_enabled_ui(!locked, |ui| {
+                            widgets::property_field(ui, t("Decision and reason"), |ui| {
+                                let (response, value) = semantic_text_field(
+                                    ui,
+                                    rationale_id,
+                                    value.rationale.as_deref().unwrap_or_default(),
+                                );
+                                rationale = value;
+                                response
+                            });
+                        });
+                        if let Some(rationale) = rationale {
+                            value.rationale = (!rationale.is_empty()).then_some(rationale);
+                            changed = true;
+                        }
+                    }
+                    if let Some(semantic) = sheet.semantic.as_ref() {
+                        let bound_relations = semantic
+                            .bindings
+                            .values()
+                            .filter_map(|binding| match binding {
+                                thinoda_core::semantic::SemanticBinding::Relation(id) => Some(*id),
+                                thinoda_core::semantic::SemanticBinding::Entity(_) => None,
+                            })
+                            .collect::<std::collections::HashSet<_>>();
+                        let targets = semantic
+                            .entities
+                            .iter()
+                            .filter_map(|(target_id, target)| {
+                                let relation = semantic_relation_between_entities(
+                                    entity_id,
+                                    edited.kind(),
+                                    *target_id,
+                                    target.kind(),
+                                )?;
+                                let already_exists = semantic
+                                    .relations
+                                    .values()
+                                    .any(|existing| existing == &relation);
+                                (!already_exists).then_some((
+                                    *target_id,
+                                    target.name().to_owned(),
+                                    semantic_relation_label(&relation),
+                                ))
+                            })
+                            .collect::<Vec<_>>();
+                        ui.separator();
+                        widgets::caption(ui, t("Relationships"));
+                        if targets.is_empty() {
+                            widgets::caption(ui, t("No compatible relationship targets."));
+                        } else {
+                            let picker_id = ui.make_persistent_id((
+                                "semantic_relationship_target",
+                                doc.doc.instance_id(),
+                                doc.doc.active_index(),
+                                id,
+                                entity_id,
+                            ));
+                            let mut selected = ui.ctx().data(|data| {
+                                data.get_temp::<thinoda_core::semantic::SemanticEntityId>(picker_id)
+                            });
+                            if selected.is_none_or(|selected| {
+                                !targets.iter().any(|(id, _, _)| *id == selected)
+                            }) {
+                                selected = targets.first().map(|(id, _, _)| *id);
+                            }
+                            let selected_name = selected
+                                .and_then(|selected| {
+                                    targets.iter().find(|(id, _, _)| *id == selected).map(
+                                        |(_, name, relation)| format!("{} ({})", name, t(relation)),
+                                    )
+                                })
+                                .unwrap_or_default();
+                            widgets::property_field(ui, t("Related entity"), |ui| {
+                                egui::ComboBox::from_id_salt(picker_id)
+                                    .selected_text(selected_name)
+                                    .show_ui(ui, |ui| {
+                                        for (target_id, target_name, relation) in &targets {
+                                            ui.selectable_value(
+                                                &mut selected,
+                                                Some(*target_id),
+                                                format!("{} ({})", target_name, t(relation)),
+                                            );
+                                        }
+                                    })
+                                    .response
+                            });
+                            ui.ctx().data_mut(|data| {
+                                if let Some(selected) = selected {
+                                    data.insert_temp(picker_id, selected);
+                                } else {
+                                    data.remove::<thinoda_core::semantic::SemanticEntityId>(
+                                        picker_id,
+                                    );
+                                }
+                            });
+                            if ui
+                                .add_enabled(!locked, egui::Button::new(t("Add relationship")))
+                                .clicked()
+                                && let Some(target_id) = selected
+                                && let Some(target) = semantic.entities.get(&target_id)
+                                && let Some(relation) = semantic_relation_between_entities(
+                                    entity_id,
+                                    edited.kind(),
+                                    target_id,
+                                    target.kind(),
+                                )
+                            {
+                                action =
+                                    Some((SemanticRecordAction::Link(relation), String::new()));
+                            }
+                        }
+                        let accountability_targets = semantic
+                            .entities
+                            .iter()
+                            .filter_map(|(target_id, target)| {
+                                let relation = semantic_accountability_between_entities(
+                                    entity_id,
+                                    edited.kind(),
+                                    *target_id,
+                                    target.kind(),
+                                )?;
+                                let already_exists = semantic
+                                    .relations
+                                    .values()
+                                    .any(|existing| existing == &relation);
+                                (!already_exists).then_some((*target_id, target.name().to_owned()))
+                            })
+                            .collect::<Vec<_>>();
+                        if !accountability_targets.is_empty() {
+                            let picker_id = ui.make_persistent_id((
+                                "semantic_accountability_target",
+                                doc.doc.instance_id(),
+                                doc.doc.active_index(),
+                                id,
+                                entity_id,
+                            ));
+                            let mut selected = ui.ctx().data(|data| {
+                                data.get_temp::<thinoda_core::semantic::SemanticEntityId>(picker_id)
+                            });
+                            if selected.is_none_or(|selected| {
+                                !accountability_targets.iter().any(|(id, _)| *id == selected)
+                            }) {
+                                selected = accountability_targets.first().map(|(id, _)| *id);
+                            }
+                            let selected_name = selected
+                                .and_then(|selected| {
+                                    accountability_targets
+                                        .iter()
+                                        .find(|(id, _)| *id == selected)
+                                        .map(|(_, name)| name.as_str())
+                                })
+                                .unwrap_or_default();
+                            widgets::property_field(ui, t("Accountable performer"), |ui| {
+                                egui::ComboBox::from_id_salt(picker_id)
+                                    .selected_text(selected_name)
+                                    .show_ui(ui, |ui| {
+                                        for (target_id, target_name) in &accountability_targets {
+                                            ui.selectable_value(
+                                                &mut selected,
+                                                Some(*target_id),
+                                                target_name,
+                                            );
+                                        }
+                                    })
+                                    .response
+                            });
+                            ui.ctx().data_mut(|data| {
+                                if let Some(selected) = selected {
+                                    data.insert_temp(picker_id, selected);
+                                } else {
+                                    data.remove::<thinoda_core::semantic::SemanticEntityId>(
+                                        picker_id,
+                                    );
+                                }
+                            });
+                            if ui
+                                .add_enabled(!locked, egui::Button::new(t("Add accountability")))
+                                .clicked()
+                                && let Some(target_id) = selected
+                                && let Some(target) = semantic.entities.get(&target_id)
+                                && let Some(relation) = semantic_accountability_between_entities(
+                                    entity_id,
+                                    edited.kind(),
+                                    target_id,
+                                    target.kind(),
+                                )
+                            {
+                                action =
+                                    Some((SemanticRecordAction::Link(relation), String::new()));
+                            }
+                        }
+                        for (relation_id, relation) in &semantic.relations {
+                            if bound_relations.contains(relation_id) {
+                                continue;
+                            }
+                            let Some(target_id) =
+                                semantic_relation_other_entity(relation, entity_id)
+                            else {
+                                continue;
+                            };
+                            let Some(target) = semantic.entities.get(&target_id) else {
+                                continue;
+                            };
+                            let candidates =
+                                semantic
+                                    .entities
+                                    .iter()
+                                    .filter_map(|(candidate_id, candidate)| {
+                                        let replacement = if matches!(
+                                        relation,
+                                        thinoda_core::semantic::SemanticRelation::Accountability {
+                                            ..
+                                        }
+                                    ) {
+                                            semantic_accountability_between_entities(
+                                                entity_id,
+                                                edited.kind(),
+                                                *candidate_id,
+                                                candidate.kind(),
+                                            )
+                                        } else {
+                                            semantic_relation_between_entities(
+                                                entity_id,
+                                                edited.kind(),
+                                                *candidate_id,
+                                                candidate.kind(),
+                                            )
+                                        }?;
+                                        (std::mem::discriminant(&replacement)
+                                            == std::mem::discriminant(relation)
+                                            && !semantic.relations.iter().any(
+                                                |(existing_id, existing)| {
+                                                    existing_id != relation_id
+                                                        && existing == &replacement
+                                                },
+                                            ))
+                                        .then_some((
+                                            *candidate_id,
+                                            candidate.name().to_owned(),
+                                            replacement,
+                                        ))
+                                    })
+                                    .collect::<Vec<_>>();
+                            let picker_id = ui.make_persistent_id((
+                                "semantic_relationship_edit_target",
+                                doc.doc.instance_id(),
+                                doc.doc.active_index(),
+                                id,
+                                entity_id,
+                                relation_id,
+                            ));
+                            let mut selected = ui.ctx().data(|data| {
+                                data.get_temp::<thinoda_core::semantic::SemanticEntityId>(picker_id)
+                            });
+                            if selected.is_none_or(|selected| {
+                                !candidates.iter().any(|(id, _, _)| *id == selected)
+                            }) {
+                                selected = Some(target_id);
+                            }
+                            let selected_name = selected
+                                .and_then(|selected| {
+                                    candidates
+                                        .iter()
+                                        .find(|(id, _, _)| *id == selected)
+                                        .map(|(_, name, _)| name.as_str())
+                                })
+                                .unwrap_or_default();
+                            ui.horizontal(|ui| {
+                                ui.label(format!(
+                                    "{}: {}",
+                                    t(semantic_relation_label(relation)),
+                                    target.name()
+                                ));
+                                if ui
+                                    .add_enabled(!locked, egui::Button::new(t("Remove")))
+                                    .clicked()
+                                {
+                                    action = Some((
+                                        SemanticRecordAction::RemoveRelation(*relation_id),
+                                        String::new(),
+                                    ));
+                                }
+                            });
+                            widgets::property_field(ui, t("Relationship target"), |ui| {
+                                egui::ComboBox::from_id_salt(picker_id)
+                                    .selected_text(selected_name)
+                                    .show_ui(ui, |ui| {
+                                        for (candidate_id, candidate_name, _) in &candidates {
+                                            ui.selectable_value(
+                                                &mut selected,
+                                                Some(*candidate_id),
+                                                candidate_name,
+                                            );
+                                        }
+                                    })
+                                    .response
+                            });
+                            ui.ctx().data_mut(|data| {
+                                if let Some(selected) = selected {
+                                    data.insert_temp(picker_id, selected);
+                                } else {
+                                    data.remove::<thinoda_core::semantic::SemanticEntityId>(
+                                        picker_id,
+                                    );
+                                }
+                            });
+                            if ui
+                                .add_enabled(
+                                    !locked && selected != Some(target_id),
+                                    egui::Button::new(t("Change target")),
+                                )
+                                .clicked()
+                                && let Some((_, _, replacement)) = selected.and_then(|selected| {
+                                    candidates.iter().find(|(id, _, _)| *id == selected)
+                                })
+                            {
+                                action = Some((
+                                    SemanticRecordAction::UpdateRelation {
+                                        id: *relation_id,
+                                        relation: replacement.clone(),
+                                    },
+                                    String::new(),
+                                ));
+                            }
+                        }
+                    }
+                    if ui
+                        .add_enabled(!locked, egui::Button::new(t("Unbind occurrence")))
+                        .clicked()
+                    {
+                        action = Some((SemanticRecordAction::UnbindEntity, String::new()));
+                    }
+                    let can_delete = sheet.semantic.as_ref().is_some_and(|semantic| {
+                        let occurrences = semantic
+                            .bindings
+                            .values()
+                            .filter(|binding| {
+                                matches!(
+                                    binding,
+                                    thinoda_core::semantic::SemanticBinding::Entity(bound_id)
+                                        if *bound_id == entity_id
+                                )
+                            })
+                            .count();
+                        occurrences == 1
+                            && !semantic.relations.values().any(|relation| {
+                                semantic_relation_references_entity(relation, entity_id)
+                            })
+                    });
+                    if ui
+                        .add_enabled(
+                            !locked && can_delete,
+                            egui::Button::new(t("Delete semantic entity")),
+                        )
+                        .clicked()
+                    {
+                        action = Some((
+                            SemanticRecordAction::DeleteBoundEntity(entity_id),
+                            String::new(),
+                        ));
+                    }
+                    if !can_delete {
+                        widgets::caption(
+                            ui,
+                            t(
+                                "Remove relationships and other occurrences before deleting this entity.",
+                            ),
+                        );
+                    }
+                    show_semantic_diagnostics(ui, &semantic_diagnostics, Some(entity_id));
+                    if changed {
+                        entity_update = Some((entity_id, edited));
+                    }
+                }
+            }
+            Some(thinoda_core::semantic::SemanticBinding::Relation(relation_id)) => {
+                if let Some(relation) = sheet
+                    .semantic
+                    .as_ref()
+                    .and_then(|semantic| semantic.relations.get(&relation_id))
+                {
+                    ui.label(match relation {
+                        thinoda_core::semantic::SemanticRelation::Sequence { .. } => t("Sequence"),
+                        thinoda_core::semantic::SemanticRelation::Exchange { .. } => t("Exchange"),
+                        _ => t("Semantic relation"),
+                    });
+                    if ui
+                        .add_enabled(!locked, egui::Button::new(t("Remove semantic relation")))
+                        .clicked()
+                    {
+                        action = Some((
+                            SemanticRecordAction::RemoveBoundRelation(relation_id),
+                            String::new(),
+                        ));
+                    }
+                    let entity = match relation {
+                        thinoda_core::semantic::SemanticRelation::Sequence { from, .. } => {
+                            Some(*from)
+                        }
+                        _ => None,
+                    };
+                    show_semantic_diagnostics(ui, &semantic_diagnostics, entity);
+                }
+            }
+            None => match &object.kind {
+                CanvasObjectKind::Shape { .. } => {
+                    let label = object.label().trim();
+                    if label.is_empty() {
+                        widgets::caption(ui, t("Set a label before adding semantic meaning."));
+                    } else {
+                        widgets::caption(ui, t("Add this shape as:"));
+                        let kinds = [
+                            (
+                                thinoda_core::semantic::SemanticEntityKind::Participant,
+                                "Participant",
+                                true,
+                            ),
+                            (
+                                thinoda_core::semantic::SemanticEntityKind::Role,
+                                "Role",
+                                true,
+                            ),
+                            (
+                                thinoda_core::semantic::SemanticEntityKind::Process,
+                                "Process",
+                                is_container,
+                            ),
+                            (
+                                thinoda_core::semantic::SemanticEntityKind::Lane,
+                                "Lane",
+                                is_container,
+                            ),
+                            (
+                                thinoda_core::semantic::SemanticEntityKind::Step,
+                                "Step",
+                                !is_container,
+                            ),
+                            (
+                                thinoda_core::semantic::SemanticEntityKind::UseCase,
+                                "Use case",
+                                true,
+                            ),
+                            (
+                                thinoda_core::semantic::SemanticEntityKind::Boundary,
+                                "Boundary",
+                                true,
+                            ),
+                        ];
+                        ui.horizontal_wrapped(|ui| {
+                            for (kind, title, compatible) in kinds {
+                                if ui
+                                    .add_enabled(!locked && compatible, egui::Button::new(t(title)))
+                                    .clicked()
+                                {
+                                    action = Some((
+                                        SemanticRecordAction::Entity(kind),
+                                        label.to_owned(),
+                                    ));
+                                }
+                            }
+                        });
+                        if !is_container {
+                            widgets::caption(
+                                ui,
+                                t("Use a scene container for processes and lanes."),
+                            );
+                        }
+                    }
+                }
+                CanvasObjectKind::Connector(connector) => {
+                    let semantic = sheet.semantic.as_ref();
+                    let sequence = semantic.and_then(|semantic| {
+                        Some((
+                            semantic.step_for_endpoint(connector.from)?,
+                            semantic.step_for_endpoint(connector.to)?,
+                        ))
+                    });
+                    let exchange = semantic.and_then(|semantic| {
+                        Some((
+                            semantic.process_for_endpoint(sheet, connector.from)?,
+                            semantic.process_for_endpoint(sheet, connector.to)?,
+                        ))
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                            if let Some((from, to)) = sequence
+                                && ui
+                                    .add_enabled(!locked, egui::Button::new(t("Sequence")))
+                                    .clicked()
+                            {
+                                action = Some((
+                                    SemanticRecordAction::Sequence {
+                                        from,
+                                        to,
+                                        label: connector.label.clone(),
+                                    },
+                                    String::new(),
+                                ));
+                            }
+                            if let Some((from_process, to_process)) =
+                                exchange.filter(|(from, to)| from != to)
+                                && ui
+                                    .add_enabled(!locked, egui::Button::new(t("Exchange")))
+                                    .clicked()
+                            {
+                                let owner = |process| {
+                                    semantic
+                                        .into_iter()
+                                        .flat_map(|semantic| semantic.relations.values())
+                                        .find_map(|relation| match relation {
+                                            thinoda_core::semantic::SemanticRelation::ProcessOwnership {
+                                                process: owner_process,
+                                                owner,
+                                            } if *owner_process == process => Some(*owner),
+                                            _ => None,
+                                        })
+                                };
+                                action = Some((
+                                    SemanticRecordAction::Exchange {
+                                        from_process,
+                                        to_process,
+                                        internal: owner(from_process).is_some()
+                                            && owner(from_process) == owner(to_process),
+                                        label: connector.label.clone(),
+                                    },
+                                    String::new(),
+                                ));
+                            }
+                    });
+                    if sequence.is_none() && exchange.is_none() {
+                        widgets::caption(
+                            ui,
+                            t(
+                                "Bind endpoint steps or process scopes before classifying this connector.",
+                            ),
+                        );
+                    }
+                }
+                CanvasObjectKind::Ink(_) => {
+                    widgets::caption(
+                        ui,
+                        t("Semantic meaning is available for shapes and connectors."),
+                    );
+                }
+            },
+        });
+        if let Some((action, name)) = action {
+            let result = (|| {
+                let doc = self
+                    .doc_mut()
+                    .ok_or_else(|| t("Not possible here").to_owned())?;
+                doc.doc
+                    .edit_sheet("Add semantic meaning", |sheet| {
+                        let binding = match action {
+                            SemanticRecordAction::Entity(kind) => {
+                                let entity = match kind {
+                                    thinoda_core::semantic::SemanticEntityKind::Participant => {
+                                        thinoda_core::semantic::SemanticEntity::Participant(
+                                            thinoda_core::semantic::Participant {
+                                                kind: thinoda_core::semantic::ParticipantKind::Unspecified,
+                                                name,
+                                                description: String::new(),
+                                            },
+                                        )
+                                    }
+                                    thinoda_core::semantic::SemanticEntityKind::Role => {
+                                        thinoda_core::semantic::SemanticEntity::Role(
+                                            thinoda_core::semantic::Role {
+                                                name,
+                                                description: String::new(),
+                                            },
+                                        )
+                                    }
+                                    thinoda_core::semantic::SemanticEntityKind::Process => {
+                                        thinoda_core::semantic::SemanticEntity::Process(
+                                            thinoda_core::semantic::ProcessScope {
+                                                name,
+                                                description: String::new(),
+                                                black_box: false,
+                                            },
+                                        )
+                                    }
+                                    thinoda_core::semantic::SemanticEntityKind::Lane => {
+                                        thinoda_core::semantic::SemanticEntity::Lane(
+                                            thinoda_core::semantic::Lane {
+                                                name,
+                                                description: String::new(),
+                                            },
+                                        )
+                                    }
+                                    thinoda_core::semantic::SemanticEntityKind::Step => {
+                                        thinoda_core::semantic::SemanticEntity::Step(
+                                            thinoda_core::semantic::Step {
+                                                kind: thinoda_core::semantic::StepKind::Task,
+                                                automation:
+                                                    thinoda_core::semantic::AutomationMode::Manual,
+                                                name,
+                                                description: String::new(),
+                                                rationale: None,
+                                            },
+                                        )
+                                    }
+                                    thinoda_core::semantic::SemanticEntityKind::UseCase => {
+                                        thinoda_core::semantic::SemanticEntity::UseCase(
+                                            thinoda_core::semantic::UseCase {
+                                                name,
+                                                intent: String::new(),
+                                                description: String::new(),
+                                            },
+                                        )
+                                    }
+                                    thinoda_core::semantic::SemanticEntityKind::Boundary => {
+                                        thinoda_core::semantic::SemanticEntity::Boundary(
+                                            thinoda_core::semantic::Boundary {
+                                                kind: thinoda_core::semantic::BoundaryKind::Trust,
+                                                name,
+                                                description: String::new(),
+                                            },
+                                        )
+                                    }
+                                };
+                                let entity_id = sheet
+                                    .add_semantic_entity(entity)
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                Some(thinoda_core::semantic::SemanticBinding::Entity(entity_id))
+                            }
+                            SemanticRecordAction::Sequence { from, to, label } => {
+                                let relation_id = sheet
+                                    .add_semantic_relation(
+                                        thinoda_core::semantic::SemanticRelation::Sequence {
+                                            from,
+                                            to,
+                                            label,
+                                        },
+                                    )
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                Some(thinoda_core::semantic::SemanticBinding::Relation(relation_id))
+                            }
+                            SemanticRecordAction::Exchange {
+                                from_process,
+                                to_process,
+                                internal,
+                                label,
+                            } => {
+                                let relation_id = sheet
+                                    .add_semantic_relation(
+                                        thinoda_core::semantic::SemanticRelation::Exchange {
+                                            from_process,
+                                            to_process,
+                                            label,
+                                            payload_description: String::new(),
+                                            internal,
+                                        },
+                                    )
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                Some(thinoda_core::semantic::SemanticBinding::Relation(relation_id))
+                            }
+                            SemanticRecordAction::Link(relation) => {
+                                sheet
+                                    .add_semantic_relation(relation)
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                None
+                            }
+                            SemanticRecordAction::UpdateRelation { id, relation } => {
+                                sheet
+                                    .update_semantic_relation(id, relation)
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                None
+                            }
+                            SemanticRecordAction::RemoveRelation(relation_id) => {
+                                sheet
+                                    .remove_semantic_relation(relation_id)
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                None
+                            }
+                            SemanticRecordAction::UnbindEntity => {
+                                sheet
+                                    .remove_semantic_binding(id)
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                None
+                            }
+                            SemanticRecordAction::DeleteBoundEntity(entity_id) => {
+                                sheet
+                                    .remove_semantic_binding(id)
+                                    .and_then(|()| sheet.remove_semantic_entity(entity_id))
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                None
+                            }
+                            SemanticRecordAction::RemoveBoundRelation(relation_id) => {
+                                sheet
+                                    .remove_semantic_binding(id)
+                                    .and_then(|()| sheet.remove_semantic_relation(relation_id))
+                                    .map_err(thinoda_core::edit::EditError::Invalid)?;
+                                None
+                            }
+                        };
+                        if let Some(binding) = binding {
+                            sheet
+                                .bind_semantic_occurrence(id, binding)
+                                .map_err(thinoda_core::edit::EditError::Invalid)
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .map_err(|error| error.to_string())
+            })();
+            if let Err(error) = result {
+                self.toasts.error(error);
+            }
+            return true;
+        }
+        if let Some((entity_id, entity)) = entity_update {
+            let result = self
+                .doc_mut()
+                .ok_or_else(|| t("Not possible here").to_owned())
+                .and_then(|doc| {
+                    doc.doc
+                        .edit_sheet("Edit semantic properties", |sheet| {
+                            let semantic = sheet.semantic.as_mut().ok_or_else(|| {
+                                thinoda_core::edit::EditError::Invalid(
+                                    "semantic model not found".into(),
+                                )
+                            })?;
+                            let current =
+                                semantic.entities.get_mut(&entity_id).ok_or_else(|| {
+                                    thinoda_core::edit::EditError::Invalid(format!(
+                                        "semantic entity {entity_id} not found"
+                                    ))
+                                })?;
+                            *current = entity;
+                            Ok(())
+                        })
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = result {
+                self.toasts.error(error);
+            }
+        }
+        true
+    }
+
     pub(crate) fn board_object_properties(&mut self, ui: &mut Ui) -> bool {
+        if self.board_container_properties(ui) {
+            return true;
+        }
         let Some(doc) = self.doc() else { return false };
         if doc.view.board_selection.is_empty() {
             return false;
@@ -1780,6 +3704,93 @@ impl ThinodaApp {
                     width_field(ui, &mut ink.width);
                 }
             }
+            let definition = edited
+                .stencil
+                .as_ref()
+                .and_then(|stencil| stencil.resolve())
+                .map(|(_, definition)| definition.parameters.clone());
+            if let (Some(stencil), Some(parameters)) = (edited.stencil.as_mut(), definition)
+                && !parameters.is_empty()
+            {
+                ui.separator();
+                ui.strong(t("Stencil parameters"));
+                for (name, parameter) in &parameters {
+                    let mut value = parameter.clamp(
+                        stencil
+                            .parameters
+                            .get(name)
+                            .copied()
+                            .unwrap_or(parameter.default),
+                    );
+                    let label = if parameter.label.is_empty() {
+                        name.as_str()
+                    } else {
+                        parameter.label.as_str()
+                    };
+                    let label = if stencil.is_installed_builtin() {
+                        crate::stencils::builtin_title(label)
+                    } else {
+                        label.to_owned()
+                    };
+                    let changed = match parameter.kind {
+                        thinoda_core::stencil::ParameterKind::Number => {
+                            widgets::property_field(ui, &label, |ui| {
+                                let mut drag = egui::DragValue::new(&mut value).speed(0.1);
+                                if let Some(unit) = &parameter.unit {
+                                    drag = drag.suffix(unit);
+                                }
+                                ui.add(drag)
+                            })
+                            .changed()
+                        }
+                        thinoda_core::stencil::ParameterKind::Choice => {
+                            let mut selected = value as usize;
+                            let selected_text = parameter
+                                .options
+                                .get(selected)
+                                .map_or("", String::as_str);
+                            widgets::property_field(ui, &label, |ui| {
+                                egui::ComboBox::from_id_salt(("stencil_parameter", id, name))
+                                    .selected_text(selected_text)
+                                    .show_ui(ui, |ui| {
+                                        for (index, option) in
+                                            parameter.options.iter().enumerate()
+                                        {
+                                            ui.selectable_value(&mut selected, index, option);
+                                        }
+                                    })
+                                    .response
+                            });
+                            let changed = selected != value as usize;
+                            value = selected as f64;
+                            changed
+                        }
+                        thinoda_core::stencil::ParameterKind::Toggle => {
+                            let mut enabled = value != 0.0;
+                            let changed = ui.checkbox(&mut enabled, &label).changed();
+                            value = if enabled { 1.0 } else { 0.0 };
+                            changed
+                        }
+                    };
+                    let reset = stencil.parameters.contains_key(name)
+                        && ui
+                            .small_button(t("Reset"))
+                            .on_hover_text(t("Reset to the stencil default"))
+                            .clicked();
+                    if changed || reset {
+                        if reset {
+                            stencil.parameters.remove(name);
+                        } else {
+                            let value = parameter.clamp(value);
+                            if value == parameter.default {
+                                stencil.parameters.remove(name);
+                            } else {
+                                stencil.parameters.insert(name.clone(), value);
+                            }
+                        }
+                    }
+                }
+            }
         });
         if edited != original || clear_waypoints {
             let result = (|| {
@@ -1832,6 +3843,7 @@ impl ThinodaApp {
                 self.toasts.error(error);
             }
         }
+        self.board_structure_properties(ui);
         true
     }
 
@@ -6503,6 +8515,1313 @@ mod tests {
         assert!(screen_center.distance(view.canvas_rect().center()) < 0.1);
     }
 
+    fn container_app() -> (ThinodaApp, CanvasObjectId, CanvasObjectId) {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let (container, child) = doc
+            .doc
+            .edit_sheet("Containers", |sheet| {
+                let mut add = |size| {
+                    sheet
+                        .add_canvas_object(CanvasObject::shape(
+                            ShapeKind::Rectangle,
+                            BoardRect::from_min_size(Vec2::new(25.0, 40.0), size),
+                        ))
+                        .map_err(thinoda_core::EditError::Invalid)
+                };
+                let container = add(Vec2::new(800.0, 400.0))?;
+                let child = add(Vec2::new(120.0, 80.0))?;
+                sheet
+                    .set_canvas_container(container, true)
+                    .and_then(|_| sheet.set_canvas_container(child, true))
+                    .and_then(|_| sheet.reparent_canvas_objects(&[child], Some(container)))
+                    .and_then(|_| sheet.set_canvas_objects_locked(&[child], true))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok((container, child))
+            })
+            .unwrap();
+        doc.view.select_board_object(container);
+        (app, container, child)
+    }
+
+    fn container_app_with_header_frame() -> (ThinodaApp, CanvasObjectId, CanvasObjectId) {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Add header stencil", |sheet| {
+                sheet.canvas.object_mut(container).unwrap().stencil =
+                    Some(thinoda_core::stencil_object::StencilRef::new(
+                        "thinoda.general",
+                        "header-frame-v2",
+                    ));
+                Ok(())
+            })
+            .unwrap();
+        (app, container, child)
+    }
+
+    fn container_properties_harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1000.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness
+    }
+
+    #[test]
+    fn semantic_properties_bind_a_selected_shape_as_a_participant() {
+        let mut app = ThinodaApp::headless();
+        let object = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Add participant shape", |sheet| {
+                let mut shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    BoardRect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 60.0)),
+                );
+                if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+                    *label = "Requester".into();
+                }
+                sheet
+                    .add_canvas_object(shape)
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        {
+            let view = &mut app.doc_mut().unwrap().view;
+            view.selection.clear();
+            view.board_selection = vec![object];
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(500.0, 600.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_semantic_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Participant")
+            .click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::ComboBox, "Participant kind")
+            .click();
+        harness.run_steps(2);
+        harness.get_by_label("Human").click();
+        harness.run_steps(2);
+
+        let doc = harness.state().doc().unwrap();
+        let semantic = doc.doc.sheet().semantic.as_ref().unwrap();
+        let entity_id = match semantic.bindings.get(&object).unwrap() {
+            thinoda_core::semantic::SemanticBinding::Entity(id) => *id,
+            _ => panic!("shape must bind to an entity"),
+        };
+        assert!(matches!(
+            semantic.entities.get(&entity_id),
+            Some(thinoda_core::semantic::SemanticEntity::Participant(value))
+                if value.name == "Requester"
+                    && value.kind == thinoda_core::semantic::ParticipantKind::Human
+        ));
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Unbind occurrence")
+            .click();
+        harness.run_steps(2);
+        let semantic = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .semantic
+            .as_ref()
+            .unwrap();
+        assert!(!semantic.bindings.contains_key(&object));
+        assert!(semantic.entities.contains_key(&entity_id));
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Rebind participant", |sheet| {
+                sheet
+                    .bind_semantic_occurrence(
+                        object,
+                        thinoda_core::semantic::SemanticBinding::Entity(entity_id),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Delete semantic entity")
+            .click();
+        harness.run_steps(2);
+        let semantic = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .semantic
+            .as_ref()
+            .unwrap();
+        assert!(!semantic.bindings.contains_key(&object));
+        assert!(!semantic.entities.contains_key(&entity_id));
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .remove_canvas_objects(&[object])
+            .unwrap();
+        assert!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(object)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn semantic_properties_add_and_remove_entity_relationships() {
+        let mut app = ThinodaApp::headless();
+        let (participant_object, role_object, approver_id) = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Build relationship fixture", |sheet| {
+                let mut participant_shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    BoardRect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 60.0)),
+                );
+                if let CanvasObjectKind::Shape { label, .. } = &mut participant_shape.kind {
+                    *label = "Requester".into();
+                }
+                let participant_object = sheet
+                    .add_canvas_object(participant_shape)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let participant_id = sheet
+                    .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Participant(
+                        thinoda_core::semantic::Participant {
+                            kind: thinoda_core::semantic::ParticipantKind::Human,
+                            name: "Requester".into(),
+                            description: String::new(),
+                        },
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .bind_semantic_occurrence(
+                        participant_object,
+                        thinoda_core::semantic::SemanticBinding::Entity(participant_id),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)?;
+
+                let mut role_shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    BoardRect::from_min_size(Vec2::new(160.0, 0.0), Vec2::new(120.0, 60.0)),
+                );
+                if let CanvasObjectKind::Shape { label, .. } = &mut role_shape.kind {
+                    *label = "Reviewer".into();
+                }
+                let role_object = sheet
+                    .add_canvas_object(role_shape)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let role_id = sheet
+                    .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Role(
+                        thinoda_core::semantic::Role {
+                            name: "Reviewer".into(),
+                            description: String::new(),
+                        },
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .bind_semantic_occurrence(
+                        role_object,
+                        thinoda_core::semantic::SemanticBinding::Entity(role_id),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let approver_id = sheet
+                    .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Role(
+                        thinoda_core::semantic::Role {
+                            name: "Approver".into(),
+                            description: String::new(),
+                        },
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok((participant_object, role_object, approver_id))
+            })
+            .unwrap();
+        {
+            let view = &mut app.doc_mut().unwrap().view;
+            view.selection.clear();
+            view.board_selection = vec![participant_object];
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(500.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_semantic_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Add relationship")
+            .click();
+        harness.run_steps(2);
+        {
+            let doc = harness.state().doc().unwrap();
+            let semantic = doc.doc.sheet().semantic.as_ref().unwrap();
+            assert!(semantic.relations.values().any(|relation| matches!(
+                relation,
+                thinoda_core::semantic::SemanticRelation::RoleFulfillment { .. }
+            )));
+        }
+
+        harness
+            .get_by_role_and_label(egui::Role::ComboBox, "Relationship target")
+            .click();
+        harness.run_steps(2);
+        harness.get_by_label("Approver").click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Change target")
+            .click();
+        harness.run_steps(2);
+        {
+            let doc = harness.state().doc().unwrap();
+            let semantic = doc.doc.sheet().semantic.as_ref().unwrap();
+            assert!(
+                semantic.relations.values().any(|relation| matches!(
+                    relation,
+                    thinoda_core::semantic::SemanticRelation::RoleFulfillment { role, .. }
+                        if *role == approver_id
+                )),
+                "expected the relationship target to change; got {:?}",
+                semantic.relations
+            );
+        }
+
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Remove")
+            .click();
+        harness.run_steps(2);
+        let doc = harness.state().doc().unwrap();
+        assert!(
+            doc.doc
+                .sheet()
+                .semantic
+                .as_ref()
+                .unwrap()
+                .relations
+                .is_empty()
+        );
+        assert!(doc.doc.sheet().canvas.object(role_object).is_some());
+    }
+
+    #[test]
+    fn semantic_properties_add_accountability_relationships() {
+        let mut app = ThinodaApp::headless();
+        let process_object = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Build accountability fixture", |sheet| {
+                let mut process_shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    BoardRect::from_min_size(Vec2::ZERO, Vec2::new(240.0, 140.0)),
+                );
+                if let CanvasObjectKind::Shape { label, .. } = &mut process_shape.kind {
+                    *label = "Review".into();
+                }
+                let process_object = sheet
+                    .add_canvas_object(process_shape)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .set_canvas_container(process_object, true)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let process_id = sheet
+                    .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Process(
+                        thinoda_core::semantic::ProcessScope {
+                            name: "Review".into(),
+                            description: String::new(),
+                            black_box: false,
+                        },
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .bind_semantic_occurrence(
+                        process_object,
+                        thinoda_core::semantic::SemanticBinding::Entity(process_id),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let mut participant_shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    BoardRect::from_min_size(Vec2::new(280.0, 0.0), Vec2::new(140.0, 60.0)),
+                );
+                if let CanvasObjectKind::Shape { label, .. } = &mut participant_shape.kind {
+                    *label = "Reviewer".into();
+                }
+                let participant_object = sheet
+                    .add_canvas_object(participant_shape)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let participant_id = sheet
+                    .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Participant(
+                        thinoda_core::semantic::Participant {
+                            kind: thinoda_core::semantic::ParticipantKind::Human,
+                            name: "Reviewer".into(),
+                            description: String::new(),
+                        },
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .bind_semantic_occurrence(
+                        participant_object,
+                        thinoda_core::semantic::SemanticBinding::Entity(participant_id),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok(process_object)
+            })
+            .unwrap();
+        {
+            let view = &mut app.doc_mut().unwrap().view;
+            view.selection.clear();
+            view.board_selection = vec![process_object];
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(500.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_semantic_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Add accountability")
+            .click();
+        harness.run_steps(2);
+        let doc = harness.state().doc().unwrap();
+        assert!(
+            doc.doc
+                .sheet()
+                .semantic
+                .as_ref()
+                .unwrap()
+                .relations
+                .values()
+                .any(|relation| matches!(
+                    relation,
+                    thinoda_core::semantic::SemanticRelation::Accountability { .. }
+                ))
+        );
+    }
+
+    #[test]
+    fn semantic_properties_show_diagnostics_for_the_selected_entity() {
+        let mut app = ThinodaApp::headless();
+        let step_object = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Build diagnostic fixture", |sheet| {
+                let mut process_shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    BoardRect::from_min_size(Vec2::ZERO, Vec2::new(240.0, 140.0)),
+                );
+                if let CanvasObjectKind::Shape { label, .. } = &mut process_shape.kind {
+                    *label = "Automation".into();
+                }
+                let process_object = sheet
+                    .add_canvas_object(process_shape)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .set_canvas_container(process_object, true)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let process_id = sheet
+                    .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Process(
+                        thinoda_core::semantic::ProcessScope {
+                            name: "Automation".into(),
+                            description: String::new(),
+                            black_box: false,
+                        },
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .bind_semantic_occurrence(
+                        process_object,
+                        thinoda_core::semantic::SemanticBinding::Entity(process_id),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)?;
+
+                let mut step_shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    BoardRect::from_min_size(Vec2::new(30.0, 30.0), Vec2::new(140.0, 55.0)),
+                );
+                if let CanvasObjectKind::Shape { label, .. } = &mut step_shape.kind {
+                    *label = "Automated task".into();
+                }
+                let step_object = sheet
+                    .add_canvas_object(step_shape)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .reparent_canvas_objects(&[step_object], Some(process_object))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let step_id = sheet
+                    .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Step(
+                        thinoda_core::semantic::Step {
+                            kind: thinoda_core::semantic::StepKind::Task,
+                            automation: thinoda_core::semantic::AutomationMode::Automated,
+                            name: "Automated task".into(),
+                            description: String::new(),
+                            rationale: None,
+                        },
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .bind_semantic_occurrence(
+                        step_object,
+                        thinoda_core::semantic::SemanticBinding::Entity(step_id),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok(step_object)
+            })
+            .unwrap();
+        {
+            let view = &mut app.doc_mut().unwrap().view;
+            view.selection.clear();
+            view.board_selection = vec![step_object];
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(500.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_semantic_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+
+        assert!(harness.get_by_label("Modeling diagnostics").rect().width() > 0.0);
+        assert!(
+            harness
+                .get_by_label("Automated step has no accountable human, team, or fulfilled role.")
+                .rect()
+                .width()
+                > 0.0
+        );
+    }
+
+    #[test]
+    fn semantic_properties_bind_a_selected_connector_as_sequence() {
+        let mut app = ThinodaApp::headless();
+        let (process, first_step, second_step, connector) = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Build sequence fixture", |sheet| {
+                let process = sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        BoardRect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 180.0)),
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .set_canvas_container(process, true)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let mut step_ids = Vec::new();
+                for (x, label) in [(30.0, "Start"), (190.0, "Finish")] {
+                    let mut shape = CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        BoardRect::from_min_size(Vec2::new(x, 60.0), Vec2::new(80.0, 40.0)),
+                    );
+                    if let CanvasObjectKind::Shape {
+                        label: object_label,
+                        ..
+                    } = &mut shape.kind
+                    {
+                        *object_label = label.into();
+                    }
+                    let step_object = sheet
+                        .add_canvas_object(shape)
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    sheet
+                        .reparent_canvas_objects(&[step_object], Some(process))
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    let entity = sheet
+                        .add_semantic_entity(thinoda_core::semantic::SemanticEntity::Step(
+                            thinoda_core::semantic::Step {
+                                kind: thinoda_core::semantic::StepKind::Task,
+                                automation: thinoda_core::semantic::AutomationMode::Manual,
+                                name: label.into(),
+                                description: String::new(),
+                                rationale: None,
+                            },
+                        ))
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    sheet
+                        .bind_semantic_occurrence(
+                            step_object,
+                            thinoda_core::semantic::SemanticBinding::Entity(entity),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    step_ids.push(step_object);
+                }
+                let connector = sheet
+                    .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                        Endpoint::Object(step_ids[0]),
+                        Endpoint::Object(step_ids[1]),
+                    )))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok((process, step_ids[0], step_ids[1], connector))
+            })
+            .unwrap();
+        {
+            let view = &mut app.doc_mut().unwrap().view;
+            view.selection.clear();
+            view.board_selection = vec![connector];
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(500.0, 600.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_semantic_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Sequence")
+            .click();
+        harness.run_steps(2);
+
+        let doc = harness.state().doc().unwrap();
+        let semantic = doc.doc.sheet().semantic.as_ref().unwrap();
+        let relation_id = match semantic.bindings.get(&connector).unwrap() {
+            thinoda_core::semantic::SemanticBinding::Relation(id) => *id,
+            _ => panic!("connector must bind to a relation"),
+        };
+        let entity_for = |object| match semantic.bindings.get(&object).unwrap() {
+            thinoda_core::semantic::SemanticBinding::Entity(id) => *id,
+            _ => panic!("step must bind to an entity"),
+        };
+        assert!(matches!(
+            semantic.relations.get(&relation_id),
+            Some(thinoda_core::semantic::SemanticRelation::Sequence { from, to, .. })
+                if *from == entity_for(first_step) && *to == entity_for(second_step)
+        ));
+        assert!(doc.doc.sheet().canvas.scene.containers.contains(&process));
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Remove semantic relation")
+            .click();
+        harness.run_steps(2);
+        let semantic = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .semantic
+            .as_ref()
+            .unwrap();
+        assert!(!semantic.bindings.contains_key(&connector));
+        assert!(!semantic.relations.contains_key(&relation_id));
+    }
+
+    #[test]
+    fn container_layout_properties_save_and_apply_with_separate_undo_steps() {
+        let (mut app, container, child) = container_app_with_header_frame();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_container_layout_policy(
+                container,
+                Some(ContainerLayoutPolicy {
+                    header: HeaderPolicy {
+                        side: HeaderSide::Right,
+                        extent: 12.0,
+                    },
+                    layout: ContainerLayout::Free,
+                }),
+            )
+            .unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let original = app.doc().unwrap().doc.workbook().clone();
+        let original_child = original.active().canvas.object(child).unwrap().rect;
+        let mut h = container_properties_harness(app);
+
+        h.get_all_by_role_and_label(egui::Role::ComboBox, "Header side")
+            .find(|side| side.value().as_deref() == Some("Right"))
+            .unwrap()
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Bottom").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Cross-axis sizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Fill container cross-axis").click();
+        h.run_steps(2);
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &original,
+            "editing the layout draft must not mutate document state"
+        );
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+        let saved = h.state().doc().unwrap().doc.workbook().clone();
+        assert!(matches!(
+            saved.active().canvas.scene.layout_policies[&container].layout,
+            ContainerLayout::Stack {
+                axis: StackAxis::Vertical,
+                spacing: 5.0,
+                padding: 10.0,
+                cross_axis: StackCrossAxisPolicy::Fill,
+                resize: StackResizePolicy::Preserve,
+            }
+        ));
+        assert_eq!(
+            saved.active().canvas.scene.layout_policies[&container]
+                .header
+                .side,
+            HeaderSide::Bottom
+        );
+        assert_eq!(
+            saved.active().canvas.scene.layout_policies[&container]
+                .header
+                .extent,
+            12.0
+        );
+        assert_eq!(
+            saved.active().canvas.object(child).unwrap().rect,
+            original_child
+        );
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(
+                Vec2::new(35.0, 50.0),
+                Vec2::new(780.0, original_child.size.y)
+            )
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &saved);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &original);
+    }
+
+    #[test]
+    fn fill_last_stack_policy_resizes_final_child_in_one_undoable_arrange() {
+        let (mut app, _, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let original = app.doc().unwrap().doc.workbook().clone();
+        let original_child = original.active().canvas.object(child).unwrap().rect;
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Fill last child").click();
+        h.run_steps(2);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &original);
+
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+        let saved = h.state().doc().unwrap().doc.workbook().clone();
+        assert!(matches!(
+            saved
+                .active()
+                .canvas
+                .scene
+                .layout_policies
+                .values()
+                .next()
+                .unwrap()
+                .layout,
+            ContainerLayout::Stack {
+                axis: StackAxis::Vertical,
+                resize: StackResizePolicy::FillLast,
+                ..
+            }
+        ));
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 380.0))
+        );
+        assert_ne!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            original_child
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &saved);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &original);
+    }
+
+    #[test]
+    fn grow_parent_stack_policy_expands_the_container_to_fit_children() {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Make container undersized", |sheet| {
+                sheet.canvas.object_mut(container).unwrap().rect.size = Vec2::new(60.0, 40.0);
+                Ok(())
+            })
+            .unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Grow parent to fit").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(container).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(25.0, 40.0), Vec2::new(140.0, 100.0))
+        );
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn fit_parent_stack_policy_shrinks_the_container_to_contents() {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child], false)
+            .unwrap();
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Fit parent to contents").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(container).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(25.0, 40.0), Vec2::new(140.0, 100.0))
+        );
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn distribute_stack_policy_shares_available_space_between_children() {
+        let (mut app, container, child) = container_app();
+        let second = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Add second stack child", |sheet| {
+                let second = sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        BoardRect::from_min_size(Vec2::new(25.0, 40.0), Vec2::new(120.0, 80.0)),
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                sheet
+                    .reparent_canvas_objects(&[second], Some(container))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                Ok(second)
+            })
+            .unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_objects_locked(&[child, second], false)
+            .unwrap();
+        let mut h = container_properties_harness(app);
+
+        h.get_by_role_and_label(egui::Role::ComboBox, "Layout mode")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Vertical stack").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Stack resizing")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("Distribute gaps").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(egui::Role::Button, "Save layout policy")
+            .click();
+        h.run_steps(3);
+
+        h.get_by_role_and_label(egui::Role::Button, "Arrange contents")
+            .click();
+        h.run_steps(3);
+        let arranged = h.state().doc().unwrap().doc.workbook().clone();
+        assert_eq!(
+            arranged.active().canvas.object(child).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 50.0), Vec2::new(120.0, 80.0))
+        );
+        assert_eq!(
+            arranged.active().canvas.object(second).unwrap().rect,
+            BoardRect::from_min_size(Vec2::new(35.0, 350.0), Vec2::new(120.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn container_header_side_editor_is_limited_to_bound_stencils() {
+        let (app, _, _) = container_app();
+        let unsupported = container_properties_harness(app);
+        assert_eq!(
+            unsupported
+                .query_all_by_role_and_label(egui::Role::ComboBox, "Header side")
+                .count(),
+            0
+        );
+        drop(unsupported);
+
+        let (app, _, _) = container_app_with_header_frame();
+        let supported = container_properties_harness(app);
+        assert!(
+            supported
+                .query_all_by_role_and_label(egui::Role::ComboBox, "Header side")
+                .count()
+                > 0
+        );
+    }
+
+    #[test]
+    fn container_collapse_properties_use_explicit_dimensions_and_restore_with_undo() {
+        let (app, container, child) = container_app();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let revision = app.doc().unwrap().doc.state_id();
+        let mut h = container_properties_harness(app);
+        for (label, value) in [("Compact width", "240"), ("Compact height", "45")] {
+            h.get_by_role_and_label(egui::Role::SpinButton, label)
+                .click();
+            h.run_steps(2);
+            h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            h.get_by_role_and_label(egui::Role::SpinButton, label)
+                .type_text(value);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(3);
+        }
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        h.get_by_role_and_label(egui::Role::Button, "Collapse container")
+            .click();
+        h.run_steps(3);
+        let doc = h.state().doc().unwrap();
+        let original = before.active().canvas.object(container).unwrap().rect;
+        assert_eq!(
+            doc.doc.sheet().canvas.object(container).unwrap().rect,
+            BoardRect::from_min_size(original.min, Vec2::new(240.0, 45.0))
+        );
+        assert_eq!(doc.doc.sheet().canvas.scene.collapsed[&container], original);
+        assert_eq!(
+            doc.doc.sheet().canvas.object(child),
+            before.active().canvas.object(child)
+        );
+        assert_eq!(doc.view.board_selection, vec![container]);
+        assert!(h.query_by_label("Collapsed").is_some());
+        assert!(
+            h.query_by_role_and_label(egui::Role::SpinButton, "Compact width")
+                .is_none()
+        );
+        let collapsed = h.state().doc().unwrap().doc.workbook().clone();
+        h.get_by_role_and_label(egui::Role::Button, "Expand container")
+            .click();
+        h.run_steps(3);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &collapsed);
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
+    fn container_collapse_refuses_stale_owners_and_blocked_contexts() {
+        for case in ["revision", "selection", "instance", "lock", "modal", "tool"] {
+            let (mut app, container, child) = container_app();
+            let target = app.container_context().unwrap().target;
+            match case {
+                "revision" => {
+                    app.doc_mut()
+                        .unwrap()
+                        .doc
+                        .update_canvas_object("Description", container, |object| {
+                            object.alt_text = "Changed".into();
+                        })
+                        .unwrap();
+                }
+                "selection" => app.doc_mut().unwrap().view.select_board_object(child),
+                "instance" => {
+                    let book = app.doc().unwrap().doc.workbook().clone();
+                    app.doc_mut().unwrap().doc = thinoda_core::Document::new(book);
+                }
+                "lock" => {
+                    let doc = app.doc_mut().unwrap();
+                    doc.doc
+                        .edit_sheet("Ancestor lock", |sheet| {
+                            sheet.canvas.object_mut(child).unwrap().locked = false;
+                            sheet.canvas.object_mut(container).unwrap().locked = true;
+                            Ok(())
+                        })
+                        .unwrap();
+                    doc.view.select_board_object(child);
+                    assert!(!app.container_context().unwrap().enabled);
+                }
+                "modal" => app.dialogs.settings = true,
+                "tool" => app.doc_mut().unwrap().view.set_board_tool(BoardTool::Pen),
+                _ => unreachable!(),
+            }
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let revision = app.doc().unwrap().doc.state_id();
+            assert!(
+                app.apply_container_collapse(
+                    &target,
+                    Some(BoardRect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 40.0),))
+                )
+                .is_err(),
+                "{case}"
+            );
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before, "{case}");
+            assert_eq!(app.doc().unwrap().doc.state_id(), revision, "{case}");
+            assert!(
+                app.apply_scene_structure(&target, SceneStructureChange::Parent(None))
+                    .is_err(),
+                "{case}"
+            );
+            assert_eq!(app.doc().unwrap().doc.workbook(), &before, "{case}");
+            assert_eq!(app.doc().unwrap().doc.state_id(), revision, "{case}");
+        }
+    }
+
+    #[test]
+    fn container_collapse_draft_expires_after_document_changes_and_policy_refusal_is_atomic() {
+        use thinoda_core::document::{DocumentEditContext, DocumentEditValidator};
+        #[derive(Debug)]
+        struct Refuse;
+        impl DocumentEditValidator for Refuse {
+            fn validate(&self, _: DocumentEditContext<'_>) -> thinoda_core::EditResult<()> {
+                Err(thinoda_core::EditError::Invalid(
+                    "Container policy refused".into(),
+                ))
+            }
+        }
+        let (app, container, _) = container_app();
+        let mut h = container_properties_harness(app);
+        let slot = egui::Id::unique(("container_collapse_draft", h.state().current_viewport));
+        h.get_by_role_and_label(egui::Role::SpinButton, "Compact width")
+            .click();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.get_by_role_and_label(egui::Role::SpinButton, "Compact width")
+            .type_text("250");
+        h.run_steps(2);
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .update_canvas_object("Description", container, |object| {
+                object.alt_text = "New revision".into();
+            })
+            .unwrap();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(
+            h.ctx
+                .data(|data| data.get_temp::<ContainerCollapseDraft>(slot).unwrap().size),
+            Vec2::new(800.0, 400.0)
+        );
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_edit_validator(Some(std::sync::Arc::new(Refuse)));
+        let target = h.state().container_context().unwrap().target;
+        assert_eq!(
+            h.state_mut().apply_container_collapse(
+                &target,
+                Some(BoardRect::from_min_size(Vec2::ZERO, Vec2::new(250.0, 40.0),))
+            ),
+            Err("Container policy refused".into())
+        );
+        h.get_by_role_and_label(egui::Role::Button, "Collapse container")
+            .click();
+        h.run_steps(3);
+        assert!(
+            h.query_by_role_and_label(egui::Role::Button, "Expand container")
+                .is_none()
+        );
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+
+    #[test]
+    fn container_collapse_labels_are_localized() {
+        for key in [
+            "Use as container",
+            "No parent container",
+            "Change container state",
+            "Change parent container",
+            "Containers must be unrotated and ungrouped. Empty and expand a container before clearing it.",
+            "Free containers preserve child positions; they do not arrange contents.",
+            "Collapsed",
+            "Expanded",
+            "Collapse container",
+            "Expand container",
+            "Compact width",
+            "Compact height",
+            "Collapse hides contents without moving them. Set compact dimensions before collapsing.",
+        ] {
+            assert!(i18n::has_translations(key), "{key}");
+            for language in i18n::Lang::ALL {
+                if language != i18n::Lang::En {
+                    assert_ne!(i18n::t_in(language, key), key, "{language:?}: {key}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scene_structure_properties_create_and_reparent_containers_without_geometry_changes() {
+        let (mut app, container, _) = container_app();
+        let orphan = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_min_size(Vec2::new(500.0, 100.0), Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        app.doc_mut().unwrap().view.select_board_object(orphan);
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let mut h = container_properties_harness(app);
+        h.get_by_role_and_label(egui::Role::CheckBox, "Use as container")
+            .click();
+        h.run_steps(3);
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .scene
+                .containers
+                .contains(&orphan)
+        );
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        h.get_by_label(&format!("Container ({container})")).click();
+        h.run_steps(3);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(
+            doc.doc.sheet().canvas.scene.parents.get(&orphan),
+            Some(&container)
+        );
+        assert_eq!(
+            doc.doc.sheet().canvas.object(orphan),
+            before.active().canvas.object(orphan)
+        );
+        assert_eq!(doc.view.board_selection, vec![orphan]);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        h.get_by_label("No parent container").click();
+        h.run_steps(3);
+        assert!(
+            !h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .scene
+                .parents
+                .contains_key(&orphan)
+        );
+        for _ in 0..3 {
+            assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        }
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
+    fn scene_structure_properties_exclude_cycles_hidden_and_locked_targets() {
+        let (mut app, container, child) = container_app();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Unlock child", |sheet| {
+                sheet.canvas.object_mut(child).unwrap().locked = false;
+                Ok(())
+            })
+            .unwrap();
+        let mut h = container_properties_harness(app);
+        assert!(
+            h.get_by_role_and_label(egui::Role::CheckBox, "Use as container")
+                .accesskit_node()
+                .is_disabled()
+        );
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        assert!(
+            h.query_by_label(&format!("Container ({container})"))
+                .is_none()
+        );
+        assert!(h.query_by_label(&format!("Container ({child})")).is_none());
+        h.key_press(egui::Key::Escape);
+        let app = h.state_mut();
+        let target = app.single_board_object().unwrap().0;
+        let before = app.doc().unwrap().doc.workbook().clone();
+        assert!(
+            app.apply_scene_structure(&target, SceneStructureChange::Parent(Some(child)))
+                .is_err()
+        );
+        assert!(
+            app.apply_scene_structure(&target, SceneStructureChange::Container(false))
+                .is_err()
+        );
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_container_collapsed(
+                container,
+                Some(BoardRect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 40.0))),
+            )
+            .unwrap();
+        let orphan = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                BoardRect::from_min_size(Vec2::new(600.0, 100.0), Vec2::new(100.0, 60.0)),
+            ))
+            .unwrap();
+        app.doc_mut().unwrap().view.select_board_object(orphan);
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        assert!(
+            h.query_by_label(&format!("Container ({container})"))
+                .is_none()
+        );
+        assert!(h.query_by_label(&format!("Container ({child})")).is_none());
+        h.key_press(egui::Key::Escape);
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .set_canvas_container_collapsed(container, None)
+            .unwrap();
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Lock target", |sheet| {
+                sheet
+                    .set_canvas_objects_locked(&[container], true)
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::ComboBox, "Parent container")
+            .click();
+        h.run_steps(2);
+        assert!(
+            h.query_by_label(&format!("Container ({container})"))
+                .is_none()
+        );
+        assert!(h.query_by_label(&format!("Container ({child})")).is_none());
+    }
+
     #[test]
     fn object_description_is_editable_and_undoable() {
         let mut app = ThinodaApp::headless();
@@ -6977,6 +10296,149 @@ mod tests {
         assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
         harness.run_steps(2);
         assert!(current(harness.state()).stencil.is_some());
+    }
+
+    #[test]
+    fn software_header_properties_localize_the_installed_definition() {
+        let mut app = ThinodaApp::headless();
+        app.new_doc(thinoda_core::templates::instantiate("software-handoff"));
+        let root = *app
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .scene
+            .containers
+            .first()
+            .unwrap();
+        app.doc_mut().unwrap().view.select_board_object(root);
+        let previous = i18n::lang();
+        i18n::set_lang(i18n::Lang::De);
+        let mut h = container_properties_harness(app);
+        let found = h
+            .query_by_role_and_label(
+                egui::Role::SpinButton,
+                i18n::t_in(i18n::Lang::De, "Header height"),
+            )
+            .is_some();
+        i18n::set_lang(previous);
+        assert!(found);
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::Role::SpinButton, "Header height")
+            .click();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.get_by_role_and_label(egui::Role::SpinButton, "Header height")
+            .type_text("55");
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(root)
+                .unwrap()
+                .stencil
+                .as_ref()
+                .unwrap()
+                .parameters
+                .get("headerHeight"),
+            Some(&55.0)
+        );
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(root)
+                .unwrap()
+                .stencil
+                .as_ref()
+                .unwrap()
+                .parameters
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn stencil_parameter_inspector_edits_defaults_and_is_undoable() {
+        let package = thinoda_core::stencil_object::find_package("thinoda.general").unwrap();
+        let definition = package.definition("folder").unwrap();
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .add_canvas_object(thinoda_core::stencil_object::new_object(
+                package,
+                definition,
+                Vec2::new(100.0, 100.0),
+            ))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let current = |app: &ThinodaApp| {
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .stencil
+                .as_ref()
+                .unwrap()
+                .parameters
+                .clone()
+        };
+        assert!(harness.query_by_label("Stencil parameters").is_some());
+        assert_eq!(
+            harness
+                .get_by_role_and_label(egui::Role::SpinButton, "Tab width")
+                .value()
+                .as_deref(),
+            Some("40.0")
+        );
+        let width = harness.get_by_role_and_label(egui::Role::SpinButton, "Tab width");
+        width.click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(egui::Role::SpinButton, "Tab width")
+            .type_text("55");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).get("tabWidth"), Some(&55.0));
+
+        harness
+            .get_by_role_and_label(egui::Role::ComboBox, "Tab position")
+            .click();
+        harness.run_steps(2);
+        harness.get_by_label("Right").click();
+        harness.run_steps(3);
+        assert_eq!(current(harness.state()).get("tabPosition"), Some(&1.0));
+
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert_eq!(current(harness.state()).get("tabPosition"), None);
+        assert_eq!(current(harness.state()).get("tabWidth"), Some(&55.0));
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(2);
+        assert!(current(harness.state()).is_empty());
     }
 
     #[test]

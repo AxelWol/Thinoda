@@ -3,10 +3,13 @@
 //! Uses the examples in `docs/draw-io-examples`, or a folder of `.drawio`/`.xml`
 //! files selected by `THINODA_DRAWIO_CORPUS`. The test skips when absent.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 use thinoda_core::{
     Color, ConnectorPort, Rect, RectangleSides, ShapeKind, Sheet, Vec2, Workbook,
-    board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute},
+    board::{CanvasObjectKind, ConnectorMarkerKind, ConnectorRoute, Endpoint},
 };
 use thinoda_io::{ExportLoss, ExportOptions, Format, IoError};
 
@@ -386,6 +389,7 @@ fn check(path: &Path) -> Result<String, String> {
     let opts = ExportOptions::default();
 
     let losses = thinoda_io::export_losses(&book, Format::DrawIo, &opts);
+    let has_scene_hierarchy = book.sheets.iter().any(|sheet| sheet.has_scene_hierarchy());
     let attachment_losses: Vec<_> = losses
         .iter()
         .filter(|loss| {
@@ -399,66 +403,260 @@ fn check(path: &Path) -> Result<String, String> {
         .cloned()
         .collect();
     let strict = thinoda_io::export_bytes(&book, Format::DrawIo, &opts);
-    let drawio = match (attachment_losses.as_slice(), strict) {
-        ([], Ok(bytes)) => bytes,
+    let consented_drawio = || -> Result<Option<Vec<u8>>, String> {
+        match thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(IoError::Invalid(message)) if message.contains("cannot preserve scene") => Ok(None),
+            Err(error) => Err(format!("consented draw.io export: {error}")),
+        }
+    };
+    let drawio = match (has_scene_hierarchy, attachment_losses.as_slice(), strict) {
+        (true, [], Ok(bytes)) => Some(bytes),
         (
+            true,
             [ExportLoss::ConnectorAttachmentsDetached(expected)],
             Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(actual)),
-        ) if expected == &actual => {
-            thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
-                .map_err(|e| format!("consented draw.io export: {e}"))?
-        }
-        (expected, Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(actual)))
+        ) if expected == &actual => consented_drawio()?,
+        (true, expected, Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(actual)))
             if expected == actual =>
         {
-            thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
-                .map_err(|e| format!("consented draw.io export: {e}"))?
+            consented_drawio()?
         }
-        (expected, Ok(_)) => {
+        (true, _, Err(IoError::Invalid(message))) if message.contains("cannot preserve scene") => {
+            None
+        }
+        (true, _, result) => {
+            return Err(format!(
+                "nested scene export returned an unexpected result: {result:?}"
+            ));
+        }
+        (false, [], Ok(bytes)) => Some(bytes),
+        (
+            false,
+            [ExportLoss::ConnectorAttachmentsDetached(expected)],
+            Err(IoError::DrawioConnectorAttachmentsNeedConfirmation(actual)),
+        ) if expected == &actual => Some(
+            thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
+                .map_err(|e| format!("consented draw.io export: {e}"))?,
+        ),
+        (
+            false,
+            expected,
+            Err(IoError::DrawioFixedConnectorAttachmentsNeedConfirmation(actual)),
+        ) if expected == actual => Some(
+            thinoda_io::export_bytes_with_consent(&book, Format::DrawIo, &opts, true)
+                .map_err(|e| format!("consented draw.io export: {e}"))?,
+        ),
+        (false, expected, Ok(_)) => {
             return Err(format!(
                 "strict draw.io export accepted attachment losses {expected:?}"
             ));
         }
-        (expected, Err(error)) => {
+        (false, expected, Err(error)) => {
             return Err(format!(
                 "strict draw.io export reported {error:?} instead of {expected:?}"
             ));
         }
     };
-    let again = thinoda_io::import_bytes_with_report(Format::DrawIo, &drawio)
-        .map_err(|e| format!("draw.io re-import: {e}"))?
-        .workbook;
-    if again.sheets.len() != book.sheets.len() {
-        return Err(format!(
-            "round trip pages {} -> {}",
-            book.sheets.len(),
-            again.sheets.len()
-        ));
-    }
-    for (index, (original, restored)) in book.sheets.iter().zip(&again.sheets).enumerate() {
-        if original.board != restored.board {
-            return Err(format!("page {} changed its grid settings", index + 1));
+    if let Some(drawio) = drawio {
+        let again = thinoda_io::import_bytes_with_report(Format::DrawIo, &drawio)
+            .map_err(|e| format!("draw.io re-import: {e}"))?
+            .workbook;
+        if again.sheets.len() != book.sheets.len() {
+            return Err(format!(
+                "round trip pages {} -> {}",
+                book.sheets.len(),
+                again.sheets.len()
+            ));
         }
-        if original.theme.background != restored.theme.background {
-            return Err(format!("page {} changed its background", index + 1));
+        for (index, (original, restored)) in book.sheets.iter().zip(&again.sheets).enumerate() {
+            if original.board != restored.board {
+                return Err(format!("page {} changed its grid settings", index + 1));
+            }
+            if original.theme.background != restored.theme.background {
+                return Err(format!("page {} changed its background", index + 1));
+            }
         }
+        let round_trip = items(&again);
+        if round_trip < count {
+            return Err(format!("round trip lost items {count} -> {round_trip}"));
+        }
+        let scene_state = |sheet: &Sheet| {
+            let coord = |value: f32| (value * 1000.0).round() as i64;
+            let rect_key = |rect: Rect| {
+                (
+                    coord(rect.min.x),
+                    coord(rect.min.y),
+                    coord(rect.size.x),
+                    coord(rect.size.y),
+                )
+            };
+            let object_key = |object: &thinoda_core::CanvasObject| {
+                let kind = match &object.kind {
+                    CanvasObjectKind::Shape { shape, .. } => format!("shape:{shape:?}"),
+                    CanvasObjectKind::Connector(_) => "connector".into(),
+                    CanvasObjectKind::Ink(_) => "ink".into(),
+                };
+                (
+                    kind,
+                    object.label().to_owned(),
+                    rect_key(object.rect),
+                    format!("{:?}", object.band),
+                )
+            };
+            let object_keys: HashMap<_, _> = sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| (object.id, object_key(object)))
+                .collect();
+            let mut objects: Vec<_> = object_keys.values().cloned().collect();
+            objects.sort();
+            let mut containers: Vec<_> = sheet
+                .canvas
+                .scene
+                .containers
+                .iter()
+                .filter_map(|id| object_keys.get(id).cloned())
+                .collect();
+            containers.sort();
+            let mut parents: Vec<_> = sheet
+                .canvas
+                .scene
+                .parents
+                .iter()
+                .filter_map(|(child, parent)| {
+                    Some((
+                        object_keys.get(child)?.clone(),
+                        object_keys.get(parent)?.clone(),
+                    ))
+                })
+                .collect();
+            parents.sort();
+            let mut child_order: Vec<_> = sheet
+                .canvas
+                .scene
+                .containers
+                .iter()
+                .filter_map(|parent| {
+                    let parent_key = object_keys.get(parent)?.clone();
+                    let children: Vec<_> = sheet
+                        .canvas
+                        .objects
+                        .iter()
+                        .filter(|object| sheet.canvas.scene.parents.get(&object.id) == Some(parent))
+                        .map(object_key)
+                        .collect();
+                    Some((parent_key, children))
+                })
+                .collect();
+            child_order.sort();
+            let mut collapsed: Vec<_> = sheet
+                .canvas
+                .scene
+                .collapsed
+                .iter()
+                .filter_map(|(id, rect)| Some((object_keys.get(id)?.clone(), rect_key(*rect))))
+                .collect();
+            collapsed.sort();
+            let mut policies: Vec<_> = sheet
+                .canvas
+                .scene
+                .layout_policies
+                .iter()
+                .filter_map(|(id, policy)| {
+                    Some((object_keys.get(id)?.clone(), format!("{policy:?}")))
+                })
+                .collect();
+            policies.sort();
+            let endpoint_key = |endpoint: Endpoint| match endpoint {
+                Endpoint::Object(id) => format!("object:{:?}", object_keys.get(&id)),
+                Endpoint::Topic(id) => format!(
+                    "topic:{}",
+                    sheet.topic(id).map_or("", |topic| topic.title.as_str())
+                ),
+                Endpoint::Point(point) => {
+                    format!("point:{},{}", coord(point.x), coord(point.y))
+                }
+            };
+            let mut endpoints: Vec<_> = sheet
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|object| match &object.kind {
+                    CanvasObjectKind::Connector(connector) => Some((
+                        object_key(object),
+                        endpoint_key(connector.from),
+                        endpoint_key(connector.to),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            endpoints.sort();
+            (
+                objects,
+                containers,
+                parents,
+                child_order,
+                collapsed,
+                policies,
+                endpoints,
+            )
+        };
+        if has_scene_hierarchy {
+            for (index, (original, restored)) in book.sheets.iter().zip(&again.sheets).enumerate() {
+                if scene_state(original) != scene_state(restored) {
+                    return Err(format!(
+                        "page {} changed scene structure, geometry, order or endpoints",
+                        index + 1,
+                    ));
+                }
+            }
+            let repeated =
+                thinoda_io::export_bytes_with_consent(&again, Format::DrawIo, &opts, true)
+                    .map_err(|e| format!("repeated draw.io export: {e}"))?;
+            let repeated_report = thinoda_io::import_bytes_with_report(Format::DrawIo, &repeated)
+                .map_err(|e| format!("repeated draw.io re-import: {e}"))?;
+            let introduced_warnings: Vec<_> = repeated_report
+                .warnings
+                .iter()
+                .filter(|warning| !report.warnings.contains(warning))
+                .collect();
+            if !introduced_warnings.is_empty() {
+                return Err(format!(
+                    "repeated round trip introduced import warnings {introduced_warnings:?}"
+                ));
+            }
+            let repeated = repeated_report.workbook;
+            if repeated.sheets.len() != again.sheets.len() {
+                return Err(format!(
+                    "repeated round trip pages {} -> {}",
+                    again.sheets.len(),
+                    repeated.sheets.len()
+                ));
+            }
+            for (index, (first, second)) in again.sheets.iter().zip(&repeated.sheets).enumerate() {
+                if scene_state(first) != scene_state(second) {
+                    return Err(format!(
+                        "page {} changed scene state on repeated round trip",
+                        index + 1
+                    ));
+                }
+            }
+        }
+        check_waypoints(&book, &again)?;
+        check_markers(&book, &again)?;
+        check_partial_rectangles(&book, &again)?;
+        check_double_ellipses(&book, &again)?;
+        let detached = attachment_losses
+            .iter()
+            .find_map(|loss| match loss {
+                ExportLoss::FixedConnectorAttachmentsDetached(count) => Some(*count),
+                _ => None,
+            })
+            .unwrap_or(0);
+        check_fixed_ports(&book, &again, detached)?;
     }
-    let round_trip = items(&again);
-    if round_trip < count {
-        return Err(format!("round trip lost items {count} -> {round_trip}"));
-    }
-    check_waypoints(&book, &again)?;
-    check_markers(&book, &again)?;
-    check_partial_rectangles(&book, &again)?;
-    check_double_ellipses(&book, &again)?;
-    let detached = attachment_losses
-        .iter()
-        .find_map(|loss| match loss {
-            ExportLoss::FixedConnectorAttachmentsDetached(count) => Some(*count),
-            _ => None,
-        })
-        .unwrap_or(0);
-    check_fixed_ports(&book, &again, detached)?;
 
     let native = thinoda_io::export_bytes(&book, Format::Thinoda, &opts)
         .map_err(|e| format!("native export: {e}"))?;
@@ -482,6 +680,11 @@ fn check(path: &Path) -> Result<String, String> {
         let mut expected = Vec::new();
         if !book.sheets[0].zones.is_empty() {
             expected.push(DrawioPasteLoss::ContainerFrames(book.sheets[0].zones.len()));
+        }
+        if !book.sheets[0].canvas.scene.parents.is_empty() {
+            expected.push(DrawioPasteLoss::SceneHierarchy(
+                book.sheets[0].canvas.scene.parents.len(),
+            ));
         }
         if book.sheets.len() > 1 {
             expected.push(DrawioPasteLoss::AdditionalPages(book.sheets.len() - 1));
@@ -586,6 +789,45 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
     }
     eprintln!("{} file(s), {} failure(s)", files.len(), failures.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn supplied_uml_activity_nested_swimlane_import_preserves_structure_and_geometry() {
+    let bytes = include_bytes!("../../../docs/draw-io-examples/uml-activity-example.drawio");
+    let report = thinoda_io::import_bytes_with_report(Format::DrawIo, bytes).unwrap();
+    let sheet = &report.workbook.sheets[0];
+    let object = |label: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.label() == label)
+            .unwrap_or_else(|| panic!("missing supplied swimlane {label:?}"))
+    };
+    let actors = object("Actors");
+    let orders = object("Orders");
+
+    assert!(sheet.canvas.scene.containers.contains(&actors.id));
+    assert!(sheet.canvas.scene.containers.contains(&orders.id));
+    assert_eq!(sheet.canvas.scene.parents.get(&orders.id), Some(&actors.id));
+    assert_eq!(
+        actors.rect,
+        Rect::from_min_size(Vec2::new(30.0, 20.0), Vec2::new(890.0, 510.0))
+    );
+    assert_eq!(
+        orders.rect,
+        Rect::from_min_size(Vec2::new(50.0, 20.0), Vec2::new(870.0, 270.0))
+    );
+    assert!(
+        !report
+            .warnings
+            .contains(&thinoda_io::ImportWarning::DrawioSceneLayoutNotPreserved)
+    );
+    assert!(matches!(
+        thinoda_io::export_bytes(&report.workbook, Format::DrawIo, &ExportOptions::default()),
+        Err(IoError::Invalid(message)) if message.contains("isolated across multiple pages")
+    ));
+    report.workbook.validate().unwrap();
 }
 
 #[test]
@@ -955,9 +1197,13 @@ fn supplied_uml_package_keeps_its_thin_diamond_markers() {
         })
         .sum::<usize>();
     assert_eq!(count, expected);
-    let exported =
-        thinoda_io::export_bytes(&book, Format::DrawIo, &ExportOptions::default()).unwrap();
-    let reopened = thinoda_io::import_bytes_with_report(Format::DrawIo, &exported)
+    let format = if book.sheets.iter().any(|sheet| sheet.has_scene_hierarchy()) {
+        Format::Thinoda
+    } else {
+        Format::DrawIo
+    };
+    let exported = thinoda_io::export_bytes(&book, format, &ExportOptions::default()).unwrap();
+    let reopened = thinoda_io::import_bytes_with_report(format, &exported)
         .unwrap()
         .workbook;
     check_markers(&book, &reopened).unwrap();

@@ -1,4 +1,18 @@
 # Regional wording overrides.
+On-call (human)|Plantão (pessoa)
+Monitor (software)|Monitoramento (software)
+Record approval|Registrar aprovação
+Detect incident|Detectar incidente
+Typed editable example. Participants own process scopes; steps, exchanges and use-case links are semantic.|Exemplo editável tipado. Os participantes possuem âmbitos de processo; etapas, trocas e ligações a casos de uso são semânticas.
+Typed socio-technical meaning is not preserved|O significado sociotécnico tipado não é preservado
+Use as container|Usar como contêiner
+No parent container|Sem contêiner superior
+Change container state|Alterar estado do contêiner
+Change parent container|Alterar contêiner superior
+Containers must be unrotated and ungrouped. Empty and expand a container before clearing it.|Os contêineres não podem estar girados nem agrupados. Esvazie e expanda um contêiner antes de remover o estado.
+Free containers preserve child positions; they do not arrange contents.|Os contêineres livres mantêm as posições dos elementos; não organizam o conteúdo.
+Collapse container|Recolher contêiner
+Expand container|Expandir contêiner
 Corner radius|Raio dos cantos
 Relative corner radius|Raio relativo dos cantos
 Connect at rounded corners|Conectar nos cantos arredondados
@@ -491,6 +505,9 @@ draw.io grid settings were adjusted|As configurações de grade do draw.io foram
 draw.io page background was approximated or omitted|O fundo da página do draw.io foi aproximado ou omitido
 draw.io folded notes may be flattened or simplified|As notas dobradas do draw.io podem ser achatadas ou simplificadas
 draw.io placeholders are not resolved and their data is not preserved|Os espaços reservados do draw.io não são resolvidos e seus dados não são preservados
+draw.io container layout was only partially preserved; unsupported child-layout, margin, fill, or resize settings may change behavior|O layout dos contêineres do draw.io foi preservado apenas parcialmente; configurações não suportadas de layout filho, margem, preenchimento ou redimensionamento podem alterar o comportamento
+draw.io collapsed container state was not preserved; imported containers are expanded|O estado recolhido dos contêineres do draw.io não foi preservado; os contêineres importados estão expandidos
+draw.io cards nested in a scene were imported as standalone board cards; their containment is not preserved|Os cartões do draw.io aninhados em uma cena foram importados como cartões independentes do quadro; seu aninhamento não é preservado
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão
@@ -999,6 +1016,11 @@ Copy as draw.io|Copiar como draw.io
 Copied for draw.io; paste it into a diagram|Copiado para o draw.io; cole em um diagrama
 Pasted from draw.io; some content may have been omitted or simplified|Colado do draw.io; parte do conteúdo pode ter sido omitida ou simplificada
 Container frames omitted|Molduras de contêineres omitidas
+Scene parent links omitted|Relações de ascendência da cena omitidas
+Container|Contêiner
+Parent container|Contêiner superior
+Contained objects|Objetos contidos
+Alt+PageUp: parent; Alt+PageDown: first child; Alt+Shift+PageUp/PageDown: previous/next sibling.|Alt+PageUp: superior; Alt+PageDown: primeiro filho; Alt+Shift+PageUp/PageDown: irmão anterior/seguinte.
 Additional draw.io pages omitted|Páginas adicionais do draw.io omitidas
 The first draw.io page has no pasteable items; additional pages were not pasted.|A primeira página do draw.io não contém itens que possam ser colados; as páginas adicionais não foram coladas.
 The draw.io page has no pasteable items.|A página do draw.io não contém itens que possam ser colados.
@@ -1006,3 +1028,111 @@ Could not paste draw.io content|Não foi possível colar o conteúdo do draw.io
 This HTML contains multiple draw.io diagrams. Export each diagram separately.|Este arquivo HTML contém vários diagramas draw.io. Exporte cada diagrama separadamente.
 This HTML viewer has no embedded diagram. Remote references are not loaded.|Este visualizador HTML não tem um diagrama incorporado. As referências remotas não são carregadas.
 Could not read an embedded draw.io diagram from this HTML. It may be invalid, too large or unsafe.|Não foi possível ler um diagrama draw.io incorporado neste arquivo HTML. Ele pode ser inválido, grande demais ou inseguro.
+Socio-technical meaning|Significado sociotécnico
+Relationships|Relações
+Related entity|Entidade relacionada
+Relationship target|Destino da relação
+Add relationship|Adicionar relação
+Change target|Alterar destino
+Unbind occurrence|Desvincular ocorrência
+Remove semantic relation|Remover relação semântica
+Delete semantic entity|Excluir entidade semântica
+Remove relationships and other occurrences before deleting this entity.|Remova as relações e outras ocorrências antes de excluir esta entidade.
+Accountable performer|Responsável
+Add accountability|Adicionar responsabilidade
+No compatible relationship targets.|Não há destinos de relação compatíveis.
+Modeling diagnostics|Diagnósticos de modelagem
+Process has no declared owner.|O processo não tem proprietário declarado.
+Process has no workflow steps.|O processo não tem etapas do fluxo de trabalho.
+Process has no start event.|O processo não tem um evento inicial.
+Process has no end event.|O processo não tem um evento final.
+Step is not contained in a process scope.|A etapa não está contida em um escopo de processo.
+Lane has no declared performer.|A raia não tem responsável declarado.
+Decision needs at least two labeled outgoing sequence branches.|A decisão precisa de pelo menos dois ramos de sequência de saída identificados.
+Sequence connects steps in different process scopes.|A sequência liga etapas em âmbitos de processo diferentes.
+Step is unreachable from any start event in its process.|A etapa não é alcançável a partir de nenhum evento inicial do seu processo.
+Step has no sequence path to an end event.|A etapa não tem um caminho de sequência até um evento final.
+Automated step has no accountable human, team, or fulfilled role.|A etapa automatizada não tem pessoa, equipe ou papel preenchido responsável.
+Accountable role has no human or team fulfillment.|O papel responsável não é preenchido por uma pessoa ou equipe.
+Automated step is accountable only to software participants.|A etapa automatizada tem apenas participantes de software como responsáveis.
+Use case has no linked workflow steps.|O caso de uso não tem etapas de fluxo ligadas.
+Unresolved semantic references remain.|Ainda existem referências semânticas por resolver.
+Select one board object to edit its meaning.|Selecione um objeto do quadro para editar seu significado.
+Set a label before adding semantic meaning.|Defina um rótulo antes de adicionar significado semântico.
+Add this shape as:|Adicionar esta forma como:
+Use a scene container for processes and lanes.|Use um contêiner de cena para processos e raias.
+Semantic meaning is available for shapes and connectors.|O significado semântico está disponível para formas e conectores.
+Bind endpoint steps or process scopes before classifying this connector.|Vincule as etapas dos pontos finais ou os escopos do processo antes de classificar este conector.
+Participant|Participante
+Role|Papel
+Lane|Raia
+Use case|Caso de uso
+Sequence|Sequência
+Exchange|Troca
+Semantic relation|Relação semântica
+Process owner|Responsável pelo processo
+Lane performer|Responsável pela raia
+Role fulfillment|Cumprimento do papel
+Use case step|Etapa do caso de uso
+Boundary membership|Pertencimento ao limite
+Accountability|Responsabilidade
+Participant kind|Tipo de participante
+Unspecified|Não especificado
+Human|Pessoa
+Team|Equipe
+API|API
+Step kind|Tipo de etapa
+Start|Início
+Automation|Automação
+Manual|Manual
+Assisted|Assistido
+Automated|Automatizado
+Boundary kind|Tipo de limite
+Organization|Organização
+Software scope|Escopo de software
+Trust|Confiança
+Visibility|Visibilidade
+Black-box process|Processo caixa-preta
+Intent|Intenção
+Human responsibility|Responsabilidade humana
+Software responsibility|Responsabilidade do software
+Software trust boundary|Limite de confiança do software
+Support specialist|Especialista de suporte
+Access reviewer|Revisor de acesso
+On-call responder|Responsável de plantão
+Complete a request with a human handoff and a clear result.|Conclua um pedido com transferência humana e um resultado claro.
+Support confirms the request is complete before fulfilment.|O suporte confirma que o pedido está completo antes de executá-lo.
+Request complete?|Pedido completo?
+Request more information|Solicitar mais informações
+Request|Pedido
+Additional information|Informações adicionais
+Result|Resultado
+Grant or refuse access through policy, human review and timeout escalation.|Conceda ou recuse acesso por política, revisão humana e escalonamento por tempo limite.
+Evaluate policy|Avaliar a política
+Human review required?|É necessária revisão humana?
+Review request|Revisar pedido
+Policy exceptions require review by a human reviewer.|Exceções à política exigem revisão humana.
+Review outcome?|Resultado da revisão?
+The reviewer explicitly approves or refuses access.|O revisor aprova ou recusa explicitamente o acesso.
+Grant access|Conceder acesso
+Refuse access|Recusar acesso
+Review timed out?|O tempo de revisão expirou?
+A timeout without a reviewer response enters the escalation path.|Sem resposta do revisor dentro do prazo, ocorre escalonamento.
+Escalate to support|Escalonar para o suporte
+Record escalation|Registrar o escalonamento
+Access request|Pedido de acesso
+Approve|Aprovar
+Refuse|Recusar
+Granted|Concedido
+Refused|Recusado
+Timeout check|Verificação de tempo limite
+Escalation|Escalonamento
+Support result|Resultado do suporte
+Restore service with an explicit retry and human escalation path.|Restaure o serviço com nova tentativa explícita e escalonamento humano.
+Recovery verified?|A recuperação foi verificada?
+Recovery is verified before the incident is considered resolved.|A recuperação é verificada antes de considerar o incidente resolvido.
+Retry recovery|Tentar recuperar novamente
+Escalate incident|Escalonar o incidente
+Repeated failure|Falha repetida
+Recovery request|Pedido de recuperação
+Alert|Alerta

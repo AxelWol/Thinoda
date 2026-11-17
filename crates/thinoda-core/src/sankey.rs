@@ -923,12 +923,21 @@ pub fn reconcile(before: &Sheet, after: &mut Sheet) -> Result<(), String> {
         }
     }
     let existing: BTreeSet<_> = after.topics.keys().copied().collect();
+    let mut removed_links = Vec::new();
     after.canvas.objects.retain(|o| match &o.kind {
         CanvasObjectKind::Connector(c) if c.sankey.is_some() => {
-            !endpoints(c).is_ok_and(|(a, b)| !existing.contains(&a) || !existing.contains(&b))
+            let removed =
+                endpoints(c).is_ok_and(|(a, b)| !existing.contains(&a) || !existing.contains(&b));
+            if removed {
+                removed_links.push(o.id);
+            }
+            !removed
         }
         _ => true,
     });
+    for id in removed_links {
+        after.canvas.scene.parents.remove(&id);
+    }
     if let Some(settings) = &mut after.sankey {
         settings.sources.retain(|id, _| existing.contains(id));
         settings.stages.retain(|id, _| existing.contains(id));

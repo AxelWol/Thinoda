@@ -1,8 +1,8 @@
-//! Stencil panel preferences and imported draw.io libraries.
+//! Stencil panel preferences, draw.io libraries and declarative JSON packages.
 //!
 //! Kept in `stencils.json` beside the settings so large libraries never bloat
-//! `settings.toml`. Library contents are opaque `<mxlibrary>` text here; the
-//! app validates them with its draw.io parser before use.
+//! `settings.toml`. XML and JSON contents are opaque here; the app validates
+//! them with the bounded library parser or stencil interpreter before use.
 
 use std::{collections::BTreeSet, io::Write};
 
@@ -29,6 +29,13 @@ pub struct SavedLibrary {
     pub xml: String,
 }
 
+/// An installed declarative package, retained as its original JSON document.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedPackage {
+    pub id: String,
+    pub json: String,
+}
+
 /// Persistent state of the Stencils panel.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -39,6 +46,9 @@ pub struct StencilState {
     pub collapsed: Vec<String>,
     /// Imported libraries and the scratchpad, in display order.
     pub libraries: Vec<SavedLibrary>,
+    /// Declarative packages use the same local ID namespace as template libraries.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<SavedPackage>,
 }
 
 fn valid_id(id: &str) -> bool {
@@ -81,7 +91,7 @@ impl Write for SizeLimit {
 
 /// Checks the structural and serialized-size limits; the app validates contents.
 pub fn validate(state: &StencilState) -> std::result::Result<(), String> {
-    if state.libraries.len() > MAX_LIBRARIES {
+    if state.libraries.len().saturating_add(state.packages.len()) > MAX_LIBRARIES {
         return Err(format!("Keep at most {MAX_LIBRARIES} stencil libraries."));
     }
     if state.hidden_builtin.len() > MAX_IDS || state.collapsed.len() > MAX_IDS {
@@ -102,6 +112,11 @@ pub fn validate(state: &StencilState) -> std::result::Result<(), String> {
         }
         if library.title.len() > MAX_TITLE_BYTES {
             return Err("Stencil library titles are too long.".into());
+        }
+    }
+    for package in &state.packages {
+        if !valid_id(&package.id) || !ids.insert(package.id.as_str()) {
+            return Err("Stencil library IDs must be unique and valid.".into());
         }
     }
     let mut counter = SizeLimit {
@@ -172,6 +187,10 @@ mod tests {
             hidden_builtin: vec!["arrows".into(), "thinoda.general".into()],
             collapsed: vec!["basic".into(), "thinoda.general".into()],
             libraries: vec![library("scratchpad"), library("lib-1")],
+            packages: vec![SavedPackage {
+                id: "lib-2".into(),
+                json: r#"{"schema":"thinoda.stencil-package"}"#.into(),
+            }],
         };
         save(&paths, &state).unwrap();
         assert_eq!(load(&paths).unwrap(), state);
@@ -207,6 +226,25 @@ mod tests {
         assert!(load(&paths).is_err());
         std::fs::write(paths.config_dir.join(FILE_NAME), b"not json").unwrap();
         assert!(load(&paths).is_err());
+    }
+
+    #[test]
+    fn packages_and_template_libraries_share_ids_and_installation_limits() {
+        let mut state = StencilState {
+            libraries: vec![library("lib-1")],
+            packages: vec![SavedPackage {
+                id: "lib-1".into(),
+                json: "{}".into(),
+            }],
+            ..Default::default()
+        };
+        assert!(validate(&state).is_err());
+        state.packages[0].id = "lib-2".into();
+        validate(&state).unwrap();
+        state.libraries = (0..MAX_LIBRARIES)
+            .map(|i| library(&format!("xml-{i}")))
+            .collect();
+        assert!(validate(&state).is_err());
     }
 
     #[test]

@@ -2,7 +2,7 @@
  * Canvas gallery smoke coverage plus inspection of downloaded editable state.
  * egui exposes one browser canvas, not individual gallery DOM controls.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { colorBounds, frames, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
@@ -22,22 +22,27 @@ const examples = [
     { title: "Recycling loop", mode: "Circular", weights: [60000, 20000, 60000, 20000] },
 ];
 
+async function createSankey(page: Page, index: number) {
+    const canvas = page.locator("#thinoda_canvas");
+    await frames(page);
+    for (const position of [
+        { x: 220, y: 128 }, // category filter
+        { x: 220, y: 268 }, // Sankey diagrams (after Software)
+        { x: 115 + index * 175, y: 252 }, // six original starters
+        { x: 67, y: 722 }, // Create
+    ]) {
+        await canvas.click({ position });
+        await frames(page);
+    }
+}
+
 test("blank Sankey shows its weight scale legend even without flow links", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     const canvas = page.locator("#thinoda_canvas");
-    await frames(page);
-    for (const position of [
-        { x: 220, y: 128 }, // category filter
-        { x: 220, y: 246 }, // Sankey diagrams
-        { x: 115, y: 252 }, // Blank Sankey
-        { x: 67, y: 722 }, // Create
-    ]) {
-        await canvas.click({ position });
-        await frames(page);
-    }
+    await createSankey(page, 0);
 
     const colors = await colorBounds(
         page,
@@ -56,23 +61,14 @@ for (const [index, example] of examples.entries()) {
         await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
         await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
         const canvas = page.locator("#thinoda_canvas");
-        await frames(page);
-        for (const position of [
-            { x: 220, y: 128 }, // category filter
-            { x: 220, y: 246 }, // Sankey diagrams
-            { x: 115 + index * 175, y: 252 }, // six original starters
-            { x: 67, y: 722 }, // Create
-        ]) {
-            await canvas.click({ position });
-            await frames(page);
-        }
+        await createSankey(page, index);
 
         const saved = await saveAs(page, `sankey-${index}.thinoda`);
         const manifest = JSON.parse(zipEntry(saved, "manifest.json").toString("utf8"));
         const sheet = JSON.parse(zipEntry(saved, "content.json").toString("utf8")).sheets[0];
-        expect(manifest.version).toBe(25);
         expect(sheet.title).toBe(example.title);
         expect(sheet.sankey.mode).toBe(example.mode);
+        expect(manifest.version).toBe(25);
         expect(sheet.root_mode).toBe("hidden");
         expect((sheet.canvas?.objects ?? []).map(object => object.kind.connector.sankey.weight)).toEqual(example.weights);
         expect(sheet.floating).toHaveLength(Object.keys(sheet.topics).length - 1);
@@ -105,9 +101,8 @@ test("user can edit a weight with Enter, remove the flow and add an unset flow",
     // eframe web currently discards AccessKit updates, so individual controls
     // have no DOM accessible names. Named-control coverage lives in the native
     // inspector tests; this additionally exercises actual browser keyboard input.
+    await createSankey(page, 1);
     for (const position of [
-        { x: 220, y: 128 }, { x: 220, y: 246 },
-        { x: 290, y: 252 }, { x: 67, y: 722 },
         { x: 300, y: 340 }, // Available budget
         { x: 1096, y: 69 }, // Data
     ]) {
