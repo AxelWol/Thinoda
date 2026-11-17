@@ -48,6 +48,7 @@ const SEGMENT_ROUTES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SEGMENT-ROUTES-1";
 const EDGE_SHAPES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-EDGE-SHAPES-1";
 const CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-CONNECTOR-LABELS-1";
 const OBJECT_DATA_SNAPSHOT_VERSION: &str = "THINODA-XMIND-OBJECT-DATA-1";
+const LAYERS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LAYERS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -737,7 +738,9 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_object_data() {
+    if book.has_layers() {
+        Ok(serde_json::to_string(&(LAYERS_SNAPSHOT_VERSION, book))?)
+    } else if book.has_object_data() {
         Ok(serde_json::to_string(&(
             OBJECT_DATA_SNAPSHOT_VERSION,
             book,
@@ -919,6 +922,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == EDGE_SHAPES_SNAPSHOT_VERSION
                 || version == CONNECTOR_LABELS_SNAPSHOT_VERSION
                 || version == OBJECT_DATA_SNAPSHOT_VERSION
+                || version == LAYERS_SNAPSHOT_VERSION
         })
 }
 
@@ -940,6 +944,10 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
                         .get("canvas")
                         .and_then(|canvas| canvas.get("scene"))
                         .is_some()
+                    || sheet
+                        .get("canvas")
+                        .and_then(|canvas| canvas.get("layers"))
+                        .is_some()
             })
         })
     {
@@ -955,6 +963,7 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .any(|object| {
             object.get("rounding").is_some()
                 || object.get("data").is_some()
+                || object.get("layer").is_some()
                 || object.get("rectangle_sides").is_some()
                 || object.get("double_ellipse_margin").is_some()
                 || object.get("stencil").is_some()
@@ -1037,10 +1046,38 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != EDGE_SHAPES_SNAPSHOT_VERSION
             && version != CONNECTOR_LABELS_SNAPSHOT_VERSION
             && version != OBJECT_DATA_SNAPSHOT_VERSION
+            && version != LAYERS_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
+        let layers_envelope = version == LAYERS_SNAPSHOT_VERSION;
+        if workbook.has_layers() != layers_envelope {
+            return Err(IoError::NewerVersion(
+                "layers require a layer-aware private XMind snapshot".into(),
+            ));
+        }
+        let version = if !layers_envelope {
+            version
+        } else if workbook.has_object_data() {
+            OBJECT_DATA_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_labels() {
+            CONNECTOR_LABELS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_edge_shapes() {
+            EDGE_SHAPES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_segment_routes() {
+            SEGMENT_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_connector_line_jumps() {
+            LINE_JUMPS_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_SNAPSHOT_VERSION.to_owned()
+        } else if workbook.has_semantic_model() {
+            SEMANTIC_SNAPSHOT_VERSION.to_owned()
+        } else {
+            COLLAPSE_LAYOUT_SNAPSHOT_VERSION.to_owned()
+        };
         let object_data_envelope = version == OBJECT_DATA_SNAPSHOT_VERSION;
         if workbook.has_object_data() != object_data_envelope {
             return Err(IoError::NewerVersion(
@@ -1428,6 +1465,11 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_layers() {
+            return Err(IoError::NewerVersion(
+                "layers require a layer-aware private XMind snapshot".into(),
+            ));
+        }
         if workbook.has_object_data() {
             return Err(IoError::NewerVersion(
                 "object data requires an object-data-aware private XMind snapshot".into(),
@@ -2901,6 +2943,59 @@ mod tests {
                     import(&make_archive(&entries)),
                     Err(IoError::NewerVersion(_))
                 ));
+            }
+        }
+    }
+
+    #[test]
+    fn layers_require_matching_private_snapshot_envelope() {
+        use std::sync::Arc;
+        use thinoda_core::object_data::ObjectData;
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        for data in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 20.0)),
+            );
+            if data {
+                object.data = Some(Arc::new(ObjectData {
+                    tags: vec!["flow".into()],
+                    ..Default::default()
+                }));
+            }
+            let id = sheet.add_canvas_object(object).unwrap();
+            let layer = sheet.add_board_layer("Notes").unwrap();
+            sheet
+                .move_canvas_objects_to_layer(&[id], Some(layer))
+                .unwrap();
+            sheet.set_board_layer_locked(layer, true).unwrap();
+            let original = archive_entries(&export(&book).unwrap());
+            assert_eq!(import(&make_archive(&original)).unwrap(), book);
+
+            let plain = Workbook::default();
+            for snapshot in [
+                serde_json::to_string(&book).unwrap(),
+                serde_json::to_string(&(OBJECT_DATA_SNAPSHOT_VERSION, &book)).unwrap(),
+                serde_json::to_string(&(LAYERS_SNAPSHOT_VERSION, &plain)).unwrap(),
+            ] {
+                let mut entries = original.clone();
+                let (_, bytes) = entries
+                    .iter_mut()
+                    .find(|(name, _)| name == "metadata.json")
+                    .unwrap();
+                let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+                metadata["thinodaWorkbook"] = json!(snapshot);
+                *bytes = serde_json::to_vec(&metadata).unwrap();
+                assert!(
+                    matches!(
+                        import(&make_archive(&entries)),
+                        Err(IoError::NewerVersion(_))
+                    ),
+                    "{snapshot}"
+                );
             }
         }
     }

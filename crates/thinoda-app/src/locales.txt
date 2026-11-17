@@ -2344,3 +2344,26 @@ New property|Nueva propiedad|Nouvelle propriété|Ny egenskab|Nieuwe eigenschap|
 Add property|Añadir propiedad|Ajouter une propriété|Tilføj egenskab|Eigenschap toevoegen|Adicionar propriedade|Aggiungi proprietà|Dodaj właściwość
 Go to page|Ir a la página|Aller à la page|Gå til side|Ga naar pagina|Ir para a página|Vai alla pagina|Przejdź do strony
 The linked page is not in this document|La página enlazada no está en este documento|La page liée ne se trouve pas dans ce document|Den linkede side findes ikke i dette dokument|De gekoppelde pagina staat niet in dit document|A página ligada não está neste documento|La pagina collegata non è in questo documento|Połączonej strony nie ma w tym dokumencie
+draw.io cards, frames or extra layers were placed on the base layer; their layer assignment is not preserved|Las tarjetas, marcos o capas adicionales de draw.io se colocaron en la capa base; no se conserva su asignación de capa|Les cartes, cadres ou calques supplémentaires draw.io ont été placés sur le calque de base ; leur affectation de calque n’est pas préservée|draw.io-kort, rammer eller ekstra lag blev placeret på basislaget; deres lagtilknytning bevares ikke|draw.io-kaarten, kaders of extra lagen zijn op de basislaag geplaatst; hun laagtoewijzing blijft niet behouden|Os cartões, molduras ou camadas adicionais do draw.io foram colocados na camada base; a respetiva atribuição de camada não é preservada|Le schede, le cornici o i livelli aggiuntivi di draw.io sono stati posizionati sul livello di base; la relativa assegnazione del livello non è preservata|Karty, ramki lub dodatkowe warstwy draw.io umieszczono na warstwie bazowej; ich przypisanie do warstwy nie jest zachowywane
+Layer|Capa|Calque|Lag|Laag|Camada|Livello|Warstwa
+Add layer|Añadir capa|Ajouter un calque|Tilføj lag|Laag toevoegen|Adicionar camada|Aggiungi livello|Dodaj warstwę
+Base layer|Capa base|Calque de base|Basislag|Basislaag|Camada base|Livello di base|Warstwa bazowa
+Show layer|Mostrar capa|Afficher le calque|Vis lag|Laag tonen|Mostrar camada|Mostra livello|Pokaż warstwę
+Hide layer|Ocultar capa|Masquer le calque|Skjul lag|Laag verbergen|Ocultar camada|Nascondi livello|Ukryj warstwę
+Lock layer|Bloquear capa|Verrouiller le calque|Lås lag|Laag vergrendelen|Bloquear camada|Blocca livello|Zablokuj warstwę
+Unlock layer|Desbloquear capa|Déverrouiller le calque|Lås lag op|Laag ontgrendelen|Desbloquear camada|Sblocca livello|Odblokuj warstwę
+Delete layer|Eliminar capa|Supprimer le calque|Slet lag|Laag verwijderen|Eliminar camada|Elimina livello|Usuń warstwę
+Layer name|Nombre de la capa|Nom du calque|Lagnavn|Laagnaam|Nome da camada|Nome del livello|Nazwa warstwy
+Move selection here|Mover la selección aquí|Déplacer la sélection ici|Flyt markeringen hertil|Selectie hierheen verplaatsen|Mover a seleção para aqui|Sposta qui la selezione|Przenieś zaznaczenie tutaj
+Move layer up|Subir capa|Monter le calque|Flyt lag op|Laag omhoog|Subir camada|Sposta livello su|Przesuń warstwę w górę
+Move layer down|Bajar capa|Descendre le calque|Flyt lag ned|Laag omlaag|Descer camada|Sposta livello giù|Przesuń warstwę w dół
+Only the base layer exists. Add a layer to hide or lock board objects together.|Solo existe la capa base. Añade una capa para ocultar o bloquear objetos del tablero a la vez.|Seul le calque de base existe. Ajoutez un calque pour masquer ou verrouiller ensemble des objets du tableau.|Der findes kun basislaget. Tilføj et lag for at skjule eller låse tavleobjekter samlet.|Alleen de basislaag bestaat. Voeg een laag toe om bordobjecten samen te verbergen of te vergrendelen.|Só existe a camada base. Adicione uma camada para ocultar ou bloquear objetos do quadro em conjunto.|Esiste solo il livello di base. Aggiungi un livello per nascondere o bloccare insieme gli oggetti della lavagna.|Istnieje tylko warstwa bazowa. Dodaj warstwę, aby razem ukrywać lub blokować obiekty tablicy.
+Layer added|Capa añadida|Calque ajouté|Lag tilføjet|Laag toegevoegd|Camada adicionada|Livello aggiunto|Dodano warstwę
+Layer renamed|Capa renombrada|Calque renommé|Lag omdøbt|Laag hernoemd|Camada renomeada|Livello rinominato|Zmieniono nazwę warstwy
+Layer shown|Capa mostrada|Calque affiché|Lag vist|Laag getoond|Camada mostrada|Livello mostrato|Pokazano warstwę
+Layer hidden|Capa oculta|Calque masqué|Lag skjult|Laag verborgen|Camada oculta|Livello nascosto|Ukryto warstwę
+Layer locked|Capa bloqueada|Calque verrouillé|Lag låst|Laag vergrendeld|Camada bloqueada|Livello bloccato|Zablokowano warstwę
+Layer unlocked|Capa desbloqueada|Calque déverrouillé|Lag låst op|Laag ontgrendeld|Camada desbloqueada|Livello sbloccato|Odblokowano warstwę
+Layer moved|Capa movida|Calque déplacé|Lag flyttet|Laag verplaatst|Camada movida|Livello spostato|Przeniesiono warstwę
+Layer deleted|Capa eliminada|Calque supprimé|Lag slettet|Laag verwijderd|Camada eliminada|Livello eliminato|Usunięto warstwę
+Moved selection to layer|Selección movida a la capa|Sélection déplacée vers le calque|Markering flyttet til lag|Selectie naar laag verplaatst|Seleção movida para a camada|Selezione spostata sul livello|Przeniesiono zaznaczenie na warstwę

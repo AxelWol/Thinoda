@@ -2467,6 +2467,76 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn layered_board_clipboard_requires_version_thirty_eight_and_maps_layers_by_name() {
+    let mut source = Sheet::new("Source", "Root");
+    let base = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    let layered = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            rect(60.0, 0.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    source.add_board_layer("Unused").unwrap();
+    let notes = source.add_board_layer("Notes").unwrap();
+    source
+        .move_canvas_objects_to_layer(&[layered], Some(notes))
+        .unwrap();
+    let payload = copy(&source, &[], &[base, layered]);
+    assert_eq!(payload.fragment.canvas.layers.len(), 1);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LAYERS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(LAYERS_BOARD_PREFIX, OBJECT_DATA_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("layers require board clipboard version 38")
+    );
+
+    let mut plain = Sheet::new("Plain", "Root");
+    let pasted = paste_board_selection(&mut plain, &payload, Vec2::ZERO)
+        .unwrap()
+        .objects;
+    assert!(plain.canvas.layers.is_empty());
+    assert!(
+        pasted
+            .iter()
+            .all(|id| plain.canvas.object(*id).unwrap().layer.is_none())
+    );
+
+    let mut target = Sheet::new("Target", "Root");
+    let existing = target
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(0.0, 90.0, 40.0, 20.0),
+        ))
+        .unwrap();
+    let target_notes = target.add_board_layer("Notes").unwrap();
+    target
+        .move_canvas_objects_to_layer(&[existing], Some(target_notes))
+        .unwrap();
+    let pasted = paste_board_selection(&mut target, &payload, Vec2::ZERO)
+        .unwrap()
+        .objects;
+    let order: Vec<_> = target
+        .canvas
+        .objects
+        .iter()
+        .map(|object| object.id)
+        .collect();
+    assert_eq!(order, [pasted[0], existing, pasted[1]]);
+    assert_eq!(
+        target.canvas.object(pasted[1]).unwrap().layer,
+        Some(target_notes)
+    );
+}
+
+#[test]
 fn object_data_board_clipboard_requires_version_thirty_seven() {
     use crate::object_data::ObjectData;
 

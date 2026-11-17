@@ -1340,7 +1340,12 @@ fn build_scene_with_collapse<'a>(
     }
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
         let jumpers = &mut jumpers;
-        for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
+        for object in sheet
+            .canvas
+            .objects
+            .iter()
+            .filter(|o| o.band == band && sheet.canvas.is_layer_visible(o.layer))
+        {
             let object = if let Some(collapse) = collapse {
                 let Some(object) = collapse.object(object.id) else {
                     continue;

@@ -131,6 +131,9 @@ pub struct CanvasLayer {
     pub card_states: Vec<CanvasCardState>,
     #[serde(skip_serializing_if = "SceneStructure::is_empty")]
     pub scene: SceneStructure,
+    /// Named layers painted above the implicit base layer, bottom first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<crate::board_layers::BoardLayer>,
 }
 
 impl CanvasLayer {
@@ -139,6 +142,7 @@ impl CanvasLayer {
             && self.groups.is_empty()
             && self.card_states.is_empty()
             && self.scene.is_empty()
+            && self.layers.is_empty()
     }
 
     pub fn object(&self, id: CanvasObjectId) -> Option<&CanvasObject> {
@@ -184,7 +188,7 @@ impl CanvasLayer {
             .collect()
     }
 
-    /// An object is locked directly, through its group, or through scene ancestry.
+    /// An object is locked directly, through its group or layer, or through scene ancestry.
     pub fn is_locked(&self, id: CanvasObjectId) -> bool {
         let mut cursor = Some(id);
         for _ in 0..=crate::scene_hierarchy::MAX_SCENE_DEPTH {
@@ -195,6 +199,7 @@ impl CanvasLayer {
                 return false;
             };
             if object.locked
+                || self.is_layer_locked(object.layer)
                 || object
                     .group
                     .and_then(|group| self.group(group))
@@ -651,6 +656,9 @@ pub struct CanvasObject {
     /// Link, tags, custom properties and the placeholder flag.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<std::sync::Arc<crate::object_data::ObjectData>>,
+    /// Named layer of the object; `None` is the base layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<crate::board_layers::BoardLayerId>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -676,6 +684,7 @@ impl CanvasObject {
             stencil: None,
             drawio: None,
             data: None,
+            layer: None,
         }
     }
 
@@ -2678,6 +2687,7 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             }
         }
     }
+    crate::board_layers::validate_layers(canvas)?;
     crate::scene::validate_connector_cycles(sheet)?;
     Ok(())
 }
@@ -2757,6 +2767,10 @@ fn anchor_content(sheet: &Sheet, include_title: bool) -> Option<&'static str> {
 
 /// Masks free text of the canvas layer (see [`crate::Workbook::masked_copy`]).
 pub(crate) fn mask_canvas(sheet: &mut Sheet) {
+    for (index, layer) in sheet.canvas.layers.iter_mut().enumerate() {
+        layer.name = format!("Layer {}", index + 1);
+        layer.source_id = None;
+    }
     for (index, object) in sheet.canvas.objects.iter_mut().enumerate() {
         object.alt_text.clear();
         // Package programs and metadata can contain private text; use the legacy fallback.
@@ -3189,6 +3203,7 @@ impl Sheet {
             if selected.contains(&BoardMember::Object(object.id))
                 && self.canvas.scene.is_empty()
                 && (object.locked
+                    || self.canvas.is_layer_locked(object.layer)
                     || object
                         .group
                         .is_some_and(|group| locked_groups.contains(&group)))
@@ -3316,6 +3331,11 @@ impl Sheet {
         if !object.rotation.is_finite() {
             return Err("rotation must be finite".into());
         }
+        if let Some(layer) = object.layer
+            && self.canvas.board_layer(layer).is_none()
+        {
+            return Err(format!("board layer {layer} not found"));
+        }
         object.id = self.alloc_canvas_object_id();
         object.rotation = normalize_rotation(object.rotation);
         object.group = None;
@@ -3351,6 +3371,7 @@ impl Sheet {
         let id = object.id;
         if self.canvas.scene.is_empty() {
             self.canvas.objects.push(object);
+            self.canvas.normalize_layer_order();
         } else {
             let hierarchy = SceneHierarchy::from_canvas(&self.canvas)?;
             let parent = match &object.kind {
@@ -3406,7 +3427,7 @@ impl Sheet {
         Ok(())
     }
 
-    fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
+    pub(crate) fn require_unlocked(&self, ids: &[CanvasObjectId]) -> Result<(), String> {
         if !self.canvas.scene.is_empty() && !ids.is_empty() {
             SceneHierarchy::from_canvas(&self.canvas)?.require_unlocked_selection(ids)?;
             let members: Vec<_> = ids.iter().copied().map(BoardMember::Object).collect();
@@ -4120,11 +4141,18 @@ impl Sheet {
                 };
             }
             ZOrder::Forward | ZOrder::Backward => {
-                for band in [Band::Below, Band::Above] {
+                let ranks = self.canvas.layer_ranks();
+                let keys: Vec<_> = (0..=self.canvas.layers.len())
+                    .flat_map(|rank| [(Band::Below, rank), (Band::Above, rank)])
+                    .collect();
+                let objects = &mut self.canvas.objects;
+                for (band, rank) in keys {
                     let slots: Vec<usize> = objects
                         .iter()
                         .enumerate()
-                        .filter(|(_, o)| o.band == band)
+                        .filter(|(_, o)| {
+                            o.band == band && crate::board_layers::rank_of(&ranks, o.layer) == rank
+                        })
                         .map(|(i, _)| i)
                         .collect();
                     let n = slots.len();
@@ -4151,6 +4179,7 @@ impl Sheet {
                 }
             }
         }
+        self.canvas.normalize_layer_order();
         Ok(())
     }
 
@@ -4175,6 +4204,7 @@ impl Sheet {
             Band::Below => rest.into_iter().chain(picked).collect(),
             Band::Above => picked.into_iter().chain(rest).collect(),
         };
+        self.canvas.normalize_layer_order();
         Ok(())
     }
 
@@ -4194,6 +4224,19 @@ impl Sheet {
             return Err("select at least two board members to group".into());
         }
         let expanded = self.expand_board_selection(members)?;
+        let layers: HashSet<_> = expanded
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Object(id) => self.canvas.object(*id).map(|object| object.layer),
+                BoardMember::Card(_) => None,
+            })
+            .collect();
+        let has_card = expanded
+            .iter()
+            .any(|member| matches!(member, BoardMember::Card(_)));
+        if layers.len() > 1 || (has_card && layers.iter().any(Option::is_some)) {
+            return Err("objects on different layers cannot be grouped".into());
+        }
         self.require_board_members_unlocked(&expanded)?;
 
         let mut remaining: HashMap<CanvasGroupId, usize> = HashMap::new();

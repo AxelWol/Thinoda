@@ -2256,6 +2256,7 @@ impl ThinodaApp {
             } else {
                 self.board_toolbar(&ctx, center.response.rect, editing_toolbar)
             };
+            self.board_layers_panel(&ctx, center.response.rect);
             self.armed_shape_hint(&ctx, center.response.rect);
             (board_toolbar, editing_toolbar, options_toolbar)
         } else {

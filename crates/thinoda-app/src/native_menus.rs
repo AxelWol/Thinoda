@@ -184,6 +184,7 @@ impl ThinodaApp {
                                     && app.sidebar_family == crate::app::SidebarFamily::Symbols
                             }
                             Cmd::ToggleStatusBar => app.settings.show_status_bar,
+                            Cmd::BoardLayers => app.doc().is_some_and(|doc| doc.show_layers),
                             _ => false,
                         };
                         MenuItem::Action {

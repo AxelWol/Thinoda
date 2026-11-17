@@ -1136,3 +1136,4 @@ Escalate incident|Escalonar o incidente
 Repeated failure|Falha repetida
 Recovery request|Pedido de recuperação
 Alert|Alerta
+draw.io cards, frames or extra layers were placed on the base layer; their layer assignment is not preserved|Os cartões, molduras ou camadas adicionais do draw.io foram colocados na camada base; sua atribuição de camada não é preservada

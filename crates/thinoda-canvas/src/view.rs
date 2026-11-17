@@ -862,8 +862,9 @@ impl MapView {
         self.selection.retain(|id| {
             !sheet.is_anchor(*id) && sheet.topic(*id).is_some() && sheet.is_visible(*id)
         });
-        self.board_selection
-            .retain(|id| sheet.canvas.object(*id).is_some());
+        self.board_selection.retain(|id| {
+            sheet.canvas.object(*id).is_some() && !sheet.canvas.is_on_hidden_layer(*id)
+        });
         if self
             .selected_object
             .is_some_and(|object| !object.exists(sheet))

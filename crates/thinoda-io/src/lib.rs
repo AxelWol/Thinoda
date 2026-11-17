@@ -413,6 +413,9 @@ pub enum ImportWarning {
     DrawioCollapsedSceneExpanded,
     /// draw.io cards inside scene containers are imported without their containment.
     DrawioSceneCardContainmentNotPreserved,
+    /// draw.io cards and frames on named or hidden layers (or layers beyond the
+    /// layer limit) were placed on the base layer.
+    DrawioLayerContentFlattened,
     Other,
 }
 

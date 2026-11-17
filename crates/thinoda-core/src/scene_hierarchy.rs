@@ -293,6 +293,7 @@ impl<'a> SceneHierarchy<'a> {
             .map(|(rank, id)| (id, rank))
             .collect();
         canvas.objects.sort_by_key(|object| ranks[&object.id]);
+        canvas.normalize_layer_order();
         canvas
     }
 
@@ -353,6 +354,7 @@ impl<'a> SceneHierarchy<'a> {
                 return Err(format!("duplicate canvas object id {}", object.id));
             }
             if object.locked
+                || canvas.is_layer_locked(object.layer)
                 || object
                     .group
                     .is_some_and(|group| locked_groups.contains(&group))
@@ -646,15 +648,23 @@ impl<'a> SceneHierarchy<'a> {
             self.require_unlocked_path(*id)?;
         }
         let mut candidate = self.clone();
+        let ranks = self.canvas.layer_ranks();
+        let keys: Vec<_> = (0..=self.canvas.layers.len())
+            .flat_map(|rank| [(Band::Below, rank), (Band::Above, rank)])
+            .collect();
         for siblings in candidate.children.values_mut() {
             if !siblings.iter().any(|id| roots.contains(id)) {
                 continue;
             }
-            for band in [Band::Below, Band::Above] {
+            for &(band, rank) in &keys {
                 let slots: Vec<_> = siblings
                     .iter()
                     .enumerate()
-                    .filter(|(_, id)| self.canvas.objects[self.objects[id]].band == band)
+                    .filter(|(_, id)| {
+                        let object = &self.canvas.objects[self.objects[id]];
+                        object.band == band
+                            && crate::board_layers::rank_of(&ranks, object.layer) == rank
+                    })
                     .map(|(index, _)| index)
                     .collect();
                 match order {

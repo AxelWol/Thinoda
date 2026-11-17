@@ -845,6 +845,11 @@ impl Sheet {
         self.canvas.has_object_data()
     }
 
+    /// Whether the sheet needs layer-aware persistence.
+    pub fn has_layers(&self) -> bool {
+        self.canvas.has_layers()
+    }
+
     /// Whether the sheet needs draw.io segment-route-aware persistence.
     pub fn has_drawio_segment_routes(&self) -> bool {
         self.canvas.has_drawio_segment_routes()
@@ -2662,6 +2667,11 @@ impl Workbook {
     /// Whether any sheet needs object-data-aware persistence.
     pub fn has_object_data(&self) -> bool {
         self.sheets.iter().any(Sheet::has_object_data)
+    }
+
+    /// Whether any sheet needs layer-aware persistence.
+    pub fn has_layers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_layers)
     }
 
     /// Whether any sheet needs draw.io segment-route-aware persistence.

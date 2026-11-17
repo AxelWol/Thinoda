@@ -50,12 +50,15 @@ const SEGMENT_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-30\n";
 const EDGE_SHAPES_SHEET_PREFIX: &str = "THINODA-SHEET-31\n";
 const CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-32\n";
 const OBJECT_DATA_SHEET_PREFIX: &str = "THINODA-SHEET-33\n";
+const LAYERS_SHEET_PREFIX: &str = "THINODA-SHEET-34\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_object_data() {
+    let prefix = if sheet.has_layers() {
+        LAYERS_SHEET_PREFIX
+    } else if sheet.has_object_data() {
         OBJECT_DATA_SHEET_PREFIX
     } else if sheet.has_connector_labels() {
         CONNECTOR_LABELS_SHEET_PREFIX
@@ -147,6 +150,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
             text.strip_prefix(LINE_JUMPS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-28\r\n"))
                 .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LAYERS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-34\r\n"))
+                .map(|json| (34, json))
         })
         .or_else(|| {
             text.strip_prefix(OBJECT_DATA_SHEET_PREFIX)
@@ -305,6 +313,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 34 && sheet.has_layers() {
+        return Err("layers require sheet clipboard version 34".into());
+    }
     if version < 33 && sheet.has_object_data() {
         return Err("object data requires sheet clipboard version 33".into());
     }
@@ -1522,6 +1533,32 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn layered_sheet_clipboard_requires_version_thirty_four() {
+        use crate::board::CanvasObject;
+        let mut sheet = Sheet::new("Layers", "Root");
+        let shape = sheet
+            .add_canvas_object(CanvasObject::shape(
+                crate::ShapeKind::Rectangle,
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 20.0)),
+            ))
+            .unwrap();
+        let layer = sheet.add_board_layer("Notes").unwrap();
+        sheet
+            .move_canvas_objects_to_layer(&[shape], Some(layer))
+            .unwrap();
+        sheet.set_board_layer_visible(layer, false).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(LAYERS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(LAYERS_SHEET_PREFIX, OBJECT_DATA_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("layers require sheet clipboard version 34")
+        );
     }
 
     #[test]

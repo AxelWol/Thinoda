@@ -71,7 +71,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Files | VSDX, JPEG/WebP/GIF export | Missing (SVG/PNG/PDF exist) | D13 |
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
-| Layers | Named layers, visibility, lock, move to layer | Approx. (flattened; Below/Above bands only) | D8 |
+| Layers | Named layers, visibility, lock, move to layer | Native (implicit base layer; topics, cards and frames stay on it; layers interleave with the map only through Below/Above bands) | D8 |
 | Shapes | Core 16 + drawio 101 JS shapes | 31 native `ShapeKind`s + 66 JSON definitions; others approximate as rectangles | D5 ✅ |
 | Shapes | 9,090 XML stencils | 17 generic families bundled (81 packages, 2,238 shapes); vendor and platform families not yet available | D4 |
 | Shapes | 717 JS library shapes | 35 frequent corpus shapes defined (floorplan, mockup, BPMN, C4, lean mapping); icon-table shapes and the rest fall back to rectangles | D5 (partial) |
@@ -231,7 +231,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 ### D8 — Layers and tables
 
-- [ ] Named layers per sheet with visibility and lock, layers panel, move to layer
+- [x] Named layers per sheet with visibility and lock, layers panel, move to layer
 - [ ] Tables: rows, columns, merge, stripes on the container-table engine
 
 ### D9 — Style and text
@@ -278,6 +278,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D8 layers | Named board layers per sheet above an implicit base layer, with visibility and lock; hidden layers leave canvas, hits, lasso, select all, snapping and every export; locked layers lock their objects; Layers panel (View menu, Board menu and board toolbar) adds, renames, reorders, hides, locks and deletes layers and moves the selection with group members and container children; draw.io layers import named, hidden and locked instead of being flattened or dropped and export as layer cells; native v45, board clipboard v38, sheet clipboard v34, new XMind and recovery envelopes |
 | 2026-11-17 | D7 page links | `data:page/id` links navigate to the sheet with the matching imported draw.io page id from the inspector ("Go to page" shows the target sheet title) and the link opener; missing pages warn; D7 complete |
 | 2026-11-17 | D7 placeholders | `%name%` placeholders resolve in canvas and exports from object data, scene containers, `id`, `width`, `height` and the page name; draw.io import copies values inherited from non-container ancestors, resolves Zone names, and warns only for templates it cannot keep live (C4, kanban and home-lab now import resolved) |
 | 2026-11-17 | D7 object data | draw.io link, tags, placeholders flag and custom properties import into per-object data instead of passthrough and export back; inspector "Data" edits link (Open link for http/mailto), tags, properties and the placeholder flag; canvas hover shows description and link; find matches tags and property values, replace edits values; native v44, board clipboard v37, sheet clipboard v33, new XMind and recovery envelopes |
@@ -570,6 +571,31 @@ Export keeps imported page ids, so links round-trip. Known approximations:
   Thinoda get one on export, so new page links must be typed as
   `data:page/id,<id>` until a page picker exists.
 - Links resolve against the open document only, not other files.
+
+**D8 layers.** `CanvasLayer.layers` holds the named layers painted above an
+implicit base layer (`CanvasObject.layer: None`), and `objects` stays stably
+sorted by layer so the existing paint, hit and z-order code needs no layer
+awareness; z-order commands move objects only within their layer. Hidden
+layers are filtered when the scene is built, so canvas, hits, lasso, select
+all, snapping and SVG/PNG/PDF/PPTX exports skip them, and the selection drops
+objects that become hidden. Known approximations:
+
+- The base layer cannot be renamed, hidden, locked or reordered; a draw.io
+  first layer that is named, hidden or locked therefore imports as a named
+  layer above an empty base layer.
+- Layers apply to board objects only. Topics, cards and Zones stay on the base
+  layer; draw.io cards, frames or nested content on another layer import there
+  with a warning, and on export an object on a named layer leaves its Zone
+  because draw.io gives each cell one parent.
+- Layers still split into the Below and Above bands around the mind map
+  rather than interleaving with it.
+- There is no active layer: new objects go to the base layer and are moved
+  with "Move selection here". Deleting a layer moves its objects to the layer
+  below; a locked layer cannot be deleted.
+- Pasted objects keep their layer only when the target sheet has a visible,
+  unlocked layer with the same name; otherwise they land on the base layer.
+- Connectors attached to objects on a hidden layer still render from the
+  stored geometry.
 
 ## 5. Rubber-duck findings
 

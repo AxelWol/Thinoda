@@ -194,6 +194,8 @@ pub struct OpenDoc {
     pub(crate) inspector_edit: Option<InspectorEdit>,
     pub(crate) fim_edit: Option<FimEdit>,
     pub(crate) ink_feedback: crate::ink_ui::InkFeedback,
+    /// Whether the board Layers panel is open for this document.
+    pub(crate) show_layers: bool,
     snapshot_inspector_edit: Option<InspectorEdit>,
     last_seen_inspector_edit: Option<InspectorEdit>,
     /// After a failed autosave, the next automatic attempt waits until then.
@@ -237,6 +239,7 @@ impl OpenDoc {
             inspector_edit: None,
             fim_edit: None,
             ink_feedback: crate::ink_ui::InkFeedback::default(),
+            show_layers: false,
             snapshot_inspector_edit: None,
             last_seen_inspector_edit: None,
             autosave_retry_at: None,

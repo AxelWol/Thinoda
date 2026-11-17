@@ -2321,6 +2321,8 @@ struct Context {
     zone: Option<usize>,
     bucket: Option<usize>,
     scene_parent: Option<CanvasObjectId>,
+    /// Named board layer of the cell (`None` = base layer).
+    layer: Option<thinoda_core::BoardLayerId>,
 }
 
 enum End {
@@ -2355,6 +2357,8 @@ struct PageImport<'a> {
     /// Cells whose passthrough was already given to an object.
     passthrough_cells: HashSet<usize>,
     passthrough_bytes: usize,
+    /// Layers locked only after import, so grouping and locking can still edit them.
+    locked_layers: Vec<thinoda_core::BoardLayerId>,
 }
 
 /// Per bundled draw.io package id: the page's closure and, once an object
@@ -2454,8 +2458,13 @@ impl<'a> PageImport<'a> {
             .collect()
     }
 
-    fn register(&mut self, cell: usize, item: Item, context: Context, locked: bool) {
+    fn register(&mut self, cell: usize, item: Item, mut context: Context, locked: bool) {
         self.items.insert(cell, item);
+        if context.layer.is_some() && matches!(item, Item::Card(_)) {
+            // Cards always stay on the base layer and cannot share its groups.
+            self.warn(ImportWarning::DrawioLayerContentFlattened);
+            context.bucket = None;
+        }
         if context.scene_parent.is_some() && matches!(item, Item::Card(_)) {
             self.warn(ImportWarning::DrawioSceneCardContainmentNotPreserved);
         }
@@ -2694,6 +2703,7 @@ impl<'a> PageImport<'a> {
             CanvasObjectKind::Shape { shape, .. } => Some(*shape),
             _ => None,
         };
+        object.layer = context.layer;
         match self.sheet.add_canvas_object(object) {
             Ok(id) => {
                 if let Some(shape) = shape {
@@ -2753,19 +2763,19 @@ impl<'a> PageImport<'a> {
             .collect();
         for root in roots {
             self.visited[root] = true;
-            for layer in self.children[root].clone() {
+            for (position, layer) in self.children[root].clone().into_iter().enumerate() {
                 self.visited[layer] = true;
                 let cell = &self.cells[layer];
-                if !cell.visible {
-                    self.warn(ImportWarning::Other);
-                    continue;
-                }
                 if cell.vertex || cell.edge {
                     self.visited[layer] = false;
                     self.visit(layer, Context::default(), 0);
                 } else {
+                    let context = Context {
+                        layer: self.board_layer(layer, position),
+                        ..Context::default()
+                    };
                     for child in self.children[layer].clone() {
-                        self.visit(child, Context::default(), 0);
+                        self.visit(child, context, 0);
                     }
                 }
             }
@@ -2791,6 +2801,58 @@ impl<'a> PageImport<'a> {
         if hidden > 0 {
             self.warn(ImportWarning::Other);
         }
+    }
+
+    /// The board layer for a draw.io layer cell. An unnamed (or "Background"),
+    /// visible and unlocked first layer is the base layer.
+    fn board_layer(&mut self, index: usize, position: usize) -> Option<thinoda_core::BoardLayerId> {
+        let cell = &self.cells[index];
+        let locked = cell.style.flag("locked");
+        let value: String = cell
+            .value
+            .trim()
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(thinoda_core::board_layers::MAX_BOARD_LAYER_NAME_CHARS)
+            .collect();
+        if position == 0 && cell.visible && !locked && (value.is_empty() || value == "Background") {
+            return None;
+        }
+        if self.sheet.canvas.layers.len() >= thinoda_core::board_layers::MAX_BOARD_LAYERS {
+            self.warn(ImportWarning::DrawioLayerContentFlattened);
+            return None;
+        }
+        let name = match value.trim() {
+            "" if position == 0 => "Background".to_owned(),
+            "" => format!("Layer {position}"),
+            name => name.to_owned(),
+        };
+        let id = self.sheet.add_board_layer(&name).ok()?;
+        let source_id = (!cell.id.is_empty()
+            && !cell.id.starts_with('\u{0}')
+            && !matches!(cell.id.as_str(), "0" | "1")
+            && cell.id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            && !cell.id.chars().any(char::is_control)
+            && !self
+                .sheet
+                .canvas
+                .layers
+                .iter()
+                .any(|layer| layer.source_id.as_deref() == Some(cell.id.as_str())))
+        .then(|| cell.id.clone());
+        let visible = cell.visible;
+        let layer = self
+            .sheet
+            .canvas
+            .layers
+            .last_mut()
+            .expect("layer was just added");
+        layer.visible = visible;
+        layer.source_id = source_id;
+        if locked {
+            self.locked_layers.push(id);
+        }
+        Some(id)
     }
 
     fn visit(&mut self, index: usize, context: Context, depth: usize) {
@@ -2911,6 +2973,9 @@ impl<'a> PageImport<'a> {
                     context.zone.is_some() || context.bucket.is_some(),
                 ) =>
             {
+                if context.layer.is_some() {
+                    self.warn(ImportWarning::DrawioLayerContentFlattened);
+                }
                 child_context.zone = Some(zone);
                 child_context.bucket = None;
                 self.items.insert(index, Item::Area(rect));
@@ -3981,6 +4046,12 @@ impl<'a> PageImport<'a> {
             .canvas
             .objects
             .sort_by_key(|object| order.get(&object.id).copied().unwrap_or(usize::MAX));
+        self.sheet.canvas.normalize_layer_order();
+        for id in std::mem::take(&mut self.locked_layers) {
+            if self.sheet.set_board_layer_locked(id, true).is_err() {
+                self.warn(ImportWarning::Other);
+            }
+        }
         self.sheet
     }
 }
@@ -4386,6 +4457,7 @@ fn import_page(
         bundled_stencils: None,
         passthrough_cells: HashSet::new(),
         passthrough_bytes: 0,
+        locked_layers: Vec::new(),
     };
     import.run();
     if import.cells.iter().enumerate().any(|(i, cell)| {
@@ -5044,6 +5116,45 @@ struct PageWriter<'a> {
     label_placement: Option<ConnectorLabelPlacement>,
     /// Every cell id written or reserved, for generated label cell ids.
     used_ids: HashSet<String>,
+    /// draw.io layer cell id of each named board layer.
+    layer_cells: HashMap<thinoda_core::BoardLayerId, String>,
+}
+
+/// Layer cell ids of named board layers: the imported draw.io id when it is
+/// unique and not reserved, otherwise `l{id}`.
+fn layer_cell_ids(
+    sheet: &Sheet,
+    reserved: &HashSet<String>,
+) -> HashMap<thinoda_core::BoardLayerId, String> {
+    let tombstones: HashSet<&str> = sheet
+        .drawio
+        .iter()
+        .flat_map(|page| page.cell_ids.iter().map(String::as_str))
+        .collect();
+    let mut used = reserved.clone();
+    let mut ids = HashMap::new();
+    for layer in &sheet.canvas.layers {
+        if let Some(source) = &layer.source_id
+            && used.insert(source.clone())
+        {
+            ids.insert(layer.id, source.clone());
+        }
+    }
+    for layer in &sheet.canvas.layers {
+        if ids.contains_key(&layer.id) {
+            continue;
+        }
+        let base = format!("l{}", layer.id.0);
+        let mut id = base.clone();
+        let mut n = 1;
+        while used.contains(&id) || tombstones.contains(id.as_str()) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        used.insert(id.clone());
+        ids.insert(layer.id, id);
+    }
+    ids
 }
 
 /// Cell ids of canvas objects: the imported draw.io id when it is still unique
@@ -5133,7 +5244,19 @@ impl<'a> PageWriter<'a> {
         let mut connector_midpoints = HashMap::new();
         let mut detached_fixed_points = HashMap::new();
         if !edge_targets.is_empty() || !detached_fixed.is_empty() {
-            for item in thinoda_core::build_scene(sheet, &layout).items {
+            // Hidden layers are still exported, so measure them as if shown.
+            let shown;
+            let scene_sheet = if sheet.canvas.layers.iter().any(|layer| !layer.visible) {
+                let mut copy = sheet.clone();
+                for layer in &mut copy.canvas.layers {
+                    layer.visible = true;
+                }
+                shown = copy;
+                &shown
+            } else {
+                sheet
+            };
+            for item in thinoda_core::build_scene(scene_sheet, &layout).items {
                 if let (
                     thinoda_core::SceneId::Object(id),
                     thinoda_core::scene::SceneGeometry::Polyline { points, .. },
@@ -5169,6 +5292,7 @@ impl<'a> PageWriter<'a> {
             attributes: Vec::new(),
             label_placement: None,
             used_ids: HashSet::new(),
+            layer_cells: HashMap::new(),
         };
         let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
         reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
@@ -5196,6 +5320,8 @@ impl<'a> PageWriter<'a> {
                 .iter()
                 .map(|s| format!("s{}", s.id.0)),
         );
+        writer.layer_cells = layer_cell_ids(sheet, &reserved);
+        reserved.extend(writer.layer_cells.values().cloned());
         writer.cell_ids = object_cell_ids(sheet, &reserved);
         reserved.extend(writer.cell_ids.values().cloned());
         writer.used_ids = reserved;
@@ -5215,8 +5341,12 @@ impl<'a> PageWriter<'a> {
                 .reduce(|a, b| a.union(&b))
                 .unwrap_or_default();
             let zones: HashSet<_> = members.iter().map(|m| writer.member_zone(*m)).collect();
-            let parent = match zones.into_iter().collect::<Vec<_>>()[..] {
-                [Some(zone)] => format!("z{}", zone.0),
+            let parent = match (
+                members.iter().find_map(|m| writer.member_layer_cell(*m)),
+                &zones.into_iter().collect::<Vec<_>>()[..],
+            ) {
+                (Some(layer), _) => layer,
+                (None, [Some(zone)]) => format!("z{}", zone.0),
                 _ => "1".into(),
             };
             writer.groups.insert(group.id, (parent, bounds));
@@ -5244,6 +5374,15 @@ impl<'a> PageWriter<'a> {
                 ))
             }
         }
+    }
+
+    /// The layer cell of a member on a named board layer.
+    fn member_layer_cell(&self, member: BoardMember) -> Option<String> {
+        let BoardMember::Object(id) = member else {
+            return None;
+        };
+        let layer = self.sheet.canvas.object(id)?.layer?;
+        self.layer_cells.get(&layer).cloned()
     }
 
     fn member_zone(&self, member: BoardMember) -> Option<ZoneId> {
@@ -5292,6 +5431,10 @@ impl<'a> PageWriter<'a> {
         }
         if let Some(group) = self.member_group(member) {
             return (format!("g{}", group.0), self.groups[&group].1.min);
+        }
+        // draw.io layers hold top-level cells, so a layered object leaves its frame.
+        if let Some(layer) = self.member_layer_cell(member) {
+            return (layer, Vec2::ZERO);
         }
         match self.member_zone(member) {
             Some(zone) => (format!("z{}", zone.0), self.zone_origin(zone)),
@@ -5565,11 +5708,12 @@ impl<'a> PageWriter<'a> {
             && self.written_groups.insert(group)
         {
             let (parent, bounds) = self.groups[&group].clone();
-            let origin = if parent == "1" {
-                Vec2::ZERO
-            } else {
-                self.zone_origin(ZoneId(parent[1..].parse().unwrap_or(0)))
-            };
+            let origin = self
+                .sheet
+                .zones
+                .iter()
+                .find(|zone| format!("z{}", zone.id.0) == parent)
+                .map_or(Vec2::ZERO, |zone| zone.frame.min);
             let locked = self.sheet.canvas.group(group).is_some_and(|g| g.locked);
             let style = if locked { "group;locked=1;" } else { "group;" };
             self.vertex(
@@ -6310,7 +6454,26 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
             esc(&sheet.title),
             num(sheet.board.grid_size),
         ));
-        out.push_str(&PageWriter::new(sheet)?.write());
+        let writer = PageWriter::new(sheet)?;
+        for layer in &sheet.canvas.layers {
+            let id = writer
+                .layer_cells
+                .get(&layer.id)
+                .cloned()
+                .unwrap_or_else(|| format!("l{}", layer.id.0));
+            out.push_str(&format!(
+                "<mxCell id=\"{}\" value=\"{}\"{}{} parent=\"0\"/>\n",
+                esc(&id),
+                esc(&layer.name),
+                if layer.locked {
+                    " style=\"locked=1;\""
+                } else {
+                    ""
+                },
+                if layer.visible { "" } else { " visible=\"0\"" },
+            ));
+        }
+        out.push_str(&writer.write());
         out.push_str("</root>\n</mxGraphModel>\n</diagram>\n");
     }
     out.push_str("</mxfile>\n");

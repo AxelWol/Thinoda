@@ -883,6 +883,14 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   and Tab between individual ports remain planned.
 - **Layers panel**: compact side panel (View menu + board toolbar), visibility/lock,
   rename, reorder, move selection to layer; hidden when only the default layer exists.
+  *As implemented in D8 (layers):* `CanvasLayer.layers: Vec<BoardLayer { id, name,
+  visible, locked, source_id }>` lists named layers above an implicit base layer, and
+  `CanvasObject.layer: Option<BoardLayerId>` (not `parent`) references them; `objects`
+  stays stably ordered by layer, scene children share their parent's layer, and hidden
+  layers are filtered in `build_scene`. The panel is a compact canvas card opened from
+  the View and Board menus and the board toolbar; with only the base layer it shows an
+  explanation and "Add layer". Changes are announced through toasts. Gates: native v45,
+  board clipboard v38, sheet clipboard v34, XMind and recovery layer envelopes.
 - **Clipboard**: copy also as draw.io XML; paste of draw.io XML / compressed payloads /
   `#R` links inserts at cursor; size-capped like existing board clipboard payloads.
 - **Dark mode**: `default`/`light-dark()` resolve against Thinoda's Light/Dark/Auto theme.

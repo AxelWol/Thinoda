@@ -147,7 +147,7 @@ fn valid_text(value: &str) -> bool {
         .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
 }
 
-fn valid_id(id: &str, what: &str) -> Result<(), String> {
+pub(crate) fn valid_id(id: &str, what: &str) -> Result<(), String> {
     if id.is_empty() || id.len() > MAX_SOURCE_ID_BYTES || id.chars().any(char::is_control) {
         return Err(format!("invalid {what}"));
     }

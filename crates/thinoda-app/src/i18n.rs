@@ -200,6 +200,9 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
         ImportWarning::DrawioSceneCardContainmentNotPreserved => {
             "draw.io cards nested in a scene were imported as standalone board cards; their containment is not preserved"
         }
+        ImportWarning::DrawioLayerContentFlattened => {
+            "draw.io cards, frames or extra layers were placed on the base layer; their layer assignment is not preserved"
+        }
         ImportWarning::Other => "Other unsupported map data",
     }
 }
@@ -1056,6 +1059,31 @@ const DE: &[(&str, &str)] = &[
         "Gebogene Verbinder behalten Linienbrücken, zeichnen sie aber nicht.",
     ),
     ("Tick jumps", "Strichbrücken"),
+    ("Layer", "Ebene"),
+    ("Add layer", "Ebene hinzufügen"),
+    ("Base layer", "Basisebene"),
+    ("Show layer", "Ebene einblenden"),
+    ("Hide layer", "Ebene ausblenden"),
+    ("Lock layer", "Ebene sperren"),
+    ("Unlock layer", "Ebene entsperren"),
+    ("Delete layer", "Ebene löschen"),
+    ("Layer name", "Ebenenname"),
+    ("Move selection here", "Auswahl hierher verschieben"),
+    ("Move layer up", "Ebene nach oben"),
+    ("Move layer down", "Ebene nach unten"),
+    (
+        "Only the base layer exists. Add a layer to hide or lock board objects together.",
+        "Es gibt nur die Basisebene. Füge eine Ebene hinzu, um Board-Objekte gemeinsam auszublenden oder zu sperren.",
+    ),
+    ("Layer added", "Ebene hinzugefügt"),
+    ("Layer renamed", "Ebene umbenannt"),
+    ("Layer shown", "Ebene eingeblendet"),
+    ("Layer hidden", "Ebene ausgeblendet"),
+    ("Layer locked", "Ebene gesperrt"),
+    ("Layer unlocked", "Ebene entsperrt"),
+    ("Layer moved", "Ebene verschoben"),
+    ("Layer deleted", "Ebene gelöscht"),
+    ("Moved selection to layer", "Auswahl auf Ebene verschoben"),
     ("Go to page", "Zur Seite"),
     (
         "The linked page is not in this document",
@@ -1768,6 +1796,10 @@ const DE: &[(&str, &str)] = &[
     (
         "draw.io cards nested in a scene were imported as standalone board cards; their containment is not preserved",
         "In einer Szene verschachtelte draw.io-Karten wurden als eigenständige Board-Karten importiert; ihre Einbettung bleibt nicht erhalten",
+    ),
+    (
+        "draw.io cards, frames or extra layers were placed on the base layer; their layer assignment is not preserved",
+        "draw.io-Karten, Rahmen oder zusätzliche Ebenen wurden auf die Basisebene gelegt; ihre Ebenenzuordnung bleibt nicht erhalten",
     ),
     (
         "Other unsupported map data",
@@ -5648,6 +5680,28 @@ mod tests {
             "Draw a jump where this connector crosses connectors painted before it.",
             "Curved connectors keep line jumps but do not draw them.",
             "Tick jumps",
+            "Layer",
+            "Add layer",
+            "Base layer",
+            "Show layer",
+            "Hide layer",
+            "Lock layer",
+            "Unlock layer",
+            "Delete layer",
+            "Layer name",
+            "Move selection here",
+            "Move layer up",
+            "Move layer down",
+            "Only the base layer exists. Add a layer to hide or lock board objects together.",
+            "Layer added",
+            "Layer renamed",
+            "Layer shown",
+            "Layer hidden",
+            "Layer locked",
+            "Layer unlocked",
+            "Layer moved",
+            "Layer deleted",
+            "Moved selection to layer",
             "Go to page",
             "The linked page is not in this document",
             "Page link",
@@ -6110,6 +6164,7 @@ mod tests {
             include_str!("ui.rs"),
             include_str!("app.rs"),
             include_str!("board_ui.rs"),
+            include_str!("board_layers_ui.rs"),
             include_str!("sankey_ui.rs"),
             include_str!("ai.rs"),
             include_str!("ai/review.rs"),

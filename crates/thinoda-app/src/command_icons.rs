@@ -122,6 +122,7 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         ),
         Cmd::BoardSnap => (I::TUNE, None, T::View),
         Cmd::BoardMinimap => (I::BOARD_MINIMAP, None, T::View),
+        Cmd::BoardLayers => (I::STACK, None, T::View),
         Cmd::BoardZoomSelection => (I::ZOOM_RESET, Some(I::SELECT_ALL), T::View),
         Cmd::EditZone => (I::ZONES, Some(I::EDIT), T::Edit),
         Cmd::Zones => (I::ZONES, None, T::View),

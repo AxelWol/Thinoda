@@ -75,6 +75,7 @@ pub enum Cmd {
     BoardGrid(GridKind),
     BoardSnap,
     BoardMinimap,
+    BoardLayers,
     BoardImage,
     BoardZoomSelection,
     New,
@@ -930,6 +931,7 @@ impl ThinodaApp {
             &cmd,
             Cmd::BoardTool(_)
                 | Cmd::BoardMinimap
+                | Cmd::BoardLayers
                 | Cmd::New
                 | Cmd::NewFromTemplate(_)
                 | Cmd::Home
@@ -1046,6 +1048,13 @@ impl ThinodaApp {
                     self.toasts.warning(t("Not possible here"));
                 } else if let Some(doc) = self.doc_mut() {
                     doc.view.set_minimap_visible(!doc.view.show_minimap);
+                }
+            }
+            Cmd::BoardLayers => {
+                if !self.command_available(&Cmd::BoardLayers) {
+                    self.toasts.warning(t("Not possible here"));
+                } else if let Some(doc) = self.doc_mut() {
+                    doc.show_layers = !doc.show_layers;
                 }
             }
             Cmd::BoardImage => {
@@ -2080,6 +2089,7 @@ impl ThinodaApp {
             | Cmd::BoardGrid(_)
             | Cmd::BoardSnap
             | Cmd::BoardMinimap
+            | Cmd::BoardLayers
             | Cmd::BoardImage => {
                 !self.any_modal_open() && self.mode == CenterMode::Map && self.doc().is_some()
             }
@@ -2460,6 +2470,7 @@ impl ThinodaApp {
             (Cmd::BoardGrid(GridKind::Lines), "Line grid"),
             (Cmd::BoardSnap, "Snap to grid"),
             (Cmd::BoardMinimap, "Board minimap"),
+            (Cmd::BoardLayers, "Layers"),
             (
                 Cmd::BoardAction(BoardAction::Group),
                 "Group board selection",

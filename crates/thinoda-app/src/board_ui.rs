@@ -1184,6 +1184,7 @@ impl ThinodaApp {
         let doc = self.doc()?;
         let tool = doc.view.board_tool;
         let show_minimap = doc.view.show_minimap;
+        let show_layers = doc.show_layers;
         let collapsed_id = egui::Id::unique(("board_toolbar_collapsed", &doc.key));
         let mut collapsed = ctx
             .data(|data| data.get_temp::<bool>(collapsed_id))
@@ -1337,6 +1338,18 @@ impl ThinodaApp {
                         .1
                         {
                             command = Some(Cmd::BoardMinimap);
+                        }
+                        if board_tool_button(
+                            ui,
+                            icons::STACK.into(),
+                            "Layers",
+                            show_layers,
+                            collapsed,
+                            row_height,
+                        )
+                        .1
+                        {
+                            command = Some(Cmd::BoardLayers);
                         }
                         crate::ui::reveal_changed_focus(ui);
                     });
@@ -7903,14 +7916,14 @@ mod tests {
             .with_size(vec2(800.0, 800.0))
             .build_ui_state(expanded_toolbar, ThinodaApp::headless());
         harness.run_steps(4);
-        let last = harness.get_by_label("Board minimap").rect();
+        let last = harness.get_by_label("Layers").rect();
         assert!(
             harness.ctx.content_rect().contains_rect(last),
             "last tool should fit without scrolling: {last:?}"
         );
-        harness.get_by_label("Board minimap").click();
+        harness.get_by_label("Layers").click();
         harness.run_steps(2);
-        assert!(harness.state().doc().unwrap().view.show_minimap);
+        assert!(harness.state().doc().unwrap().show_layers);
     }
 
     #[test]
@@ -8969,17 +8982,17 @@ mod tests {
                         modifiers: egui::Modifiers::NONE,
                     });
                     harness.run_steps(4);
-                    let minimap = harness.get_by_label("Board minimap").rect();
+                    let minimap = harness.get_by_label("Layers").rect();
                     assert!(
                         harness.ctx.content_rect().contains_rect(minimap),
                         "last action unreachable: dark={dark} scale={scale} collapsed={collapsed}, \
                          button={minimap:?}, canvas={:?}",
                         harness.ctx.content_rect()
                     );
-                    harness.get_by_label("Board minimap").click();
+                    harness.get_by_label("Layers").click();
                     harness.run_steps(2);
                     assert!(
-                        harness.state().doc().unwrap().view.show_minimap,
+                        harness.state().doc().unwrap().show_layers,
                         "last action not clickable: dark={dark} scale={scale} collapsed={collapsed}, \
                          button={minimap:?}, scroll start={scroll_point:?}, toggle={:?}",
                         harness.get_by_label(toggle).rect()

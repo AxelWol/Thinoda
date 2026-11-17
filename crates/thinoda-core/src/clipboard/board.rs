@@ -56,6 +56,7 @@ const SEGMENT_ROUTES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-34\n";
 const EDGE_SHAPES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-35\n";
 const CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-36\n";
 const OBJECT_DATA_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-37\n";
+const LAYERS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-38\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -74,7 +75,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_object_data() {
+        if self.fragment.has_layers() {
+            LAYERS_BOARD_PREFIX
+        } else if self.fragment.has_object_data() {
             OBJECT_DATA_BOARD_PREFIX
         } else if self.fragment.has_connector_labels() {
             CONNECTOR_LABELS_BOARD_PREFIX
@@ -350,9 +353,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(OBJECT_DATA_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-37\r\n"))
-        .map(|json| (37, json))
+        .strip_prefix(LAYERS_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-38\r\n"))
+        .map(|json| (38, json))
+        .or_else(|| {
+            text.strip_prefix(OBJECT_DATA_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-37\r\n"))
+                .map(|json| (37, json))
+        })
         .or_else(|| {
             text.strip_prefix(CONNECTOR_LABELS_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-36\r\n"))
@@ -539,6 +547,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         serde_json::from_str(json).map_err(|error| error.to_string())?;
     if version < 30 && payload.fragment.has_drawio_passthrough() {
         return Err("draw.io passthrough requires board clipboard version 30".into());
+    }
+    if version < 38 && payload.fragment.has_layers() {
+        return Err("layers require board clipboard version 38".into());
     }
     if version < 37 && payload.fragment.has_object_data() {
         return Err("object data requires board clipboard version 37".into());
@@ -1150,6 +1161,23 @@ fn copy_prepared_board_selection(
         .filter(|group| groups.contains(&group.id))
         .copied()
         .collect();
+    let layers: HashSet<_> = fragment
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| object.layer)
+        .collect();
+    fragment.canvas.layers = sheet
+        .canvas
+        .layers
+        .iter()
+        .filter(|layer| layers.contains(&layer.id))
+        .map(|layer| {
+            let mut layer = layer.clone();
+            layer.source_id = None;
+            layer
+        })
+        .collect();
 
     let text = plain_text(sheet, &roots, &fragment.canvas.objects)?;
     let payload = BoardClipboardPayload { text, fragment };
@@ -1618,9 +1646,26 @@ pub fn paste_board_selection(
             .layout_policies
             .insert(map_object(*id)?, *policy);
     }
+    // Copied layers land on a usable target layer of the same name, else on the base layer.
+    let layer_map: HashMap<_, _> = source
+        .canvas
+        .layers
+        .iter()
+        .filter_map(|layer| {
+            let target = candidate
+                .canvas
+                .layers
+                .iter()
+                .find(|target| target.name == layer.name && target.visible && !target.locked)?;
+            Some((layer.id, target.id))
+        })
+        .collect();
     for original in &source.canvas.objects {
         let mut object = original.clone();
         object.id = map_object(original.id)?;
+        object.layer = object
+            .layer
+            .and_then(|layer| layer_map.get(&layer).copied());
         object.drawio = DrawioCellPassthrough::for_copy(&object.drawio);
         object.group = object.group.map(map_group).transpose()?;
         object.rect = object.rect.translate(delta);
@@ -1657,6 +1702,7 @@ pub fn paste_board_selection(
         pasted_objects.push(object.id);
         candidate.canvas.objects.push(object);
     }
+    candidate.canvas.normalize_layer_order();
     candidate.hydrate_stencil_packages()?;
     candidate.validate()?;
     *sheet = candidate;

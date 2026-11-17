@@ -10352,3 +10352,125 @@ fn connector_labels_import_positioned_and_round_trip() {
         );
     }
 }
+
+#[test]
+fn drawio_layers_import_as_named_hidden_and_locked_board_layers_and_round_trip() {
+    let xml = concat!(
+        r#"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/>"#,
+        r#"<mxCell id="1" parent="0"/>"#,
+        r#"<mxCell id="base-a" value="A" style="rounded=0;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="notes" value="Notes" parent="0"/>"#,
+        r#"<mxCell id="n1" value="N" style="ellipse;" vertex="1" parent="notes"><mxGeometry x="100" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="secret" value="Secret" visible="0" parent="0"/>"#,
+        r#"<mxCell id="s1" value="S" style="rounded=0;" vertex="1" parent="secret"><mxGeometry x="200" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="fixed" value="Fixed" style="locked=1;" parent="0"/>"#,
+        r#"<mxCell id="f1" value="F" style="rounded=0;" vertex="1" parent="fixed"><mxGeometry x="300" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="f2" value="F2" style="rounded=0;" vertex="1" parent="fixed"><mxGeometry x="400" y="0" width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel></diagram></mxfile>"#,
+    );
+    let report = load(xml);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let sheet = &report.workbook.sheets[0];
+    let layers: Vec<_> = sheet
+        .canvas
+        .layers
+        .iter()
+        .map(|l| (l.name.as_str(), l.visible, l.locked, l.source_id.as_deref()))
+        .collect();
+    assert_eq!(
+        layers,
+        [
+            ("Notes", true, false, Some("notes")),
+            ("Secret", false, false, Some("secret")),
+            ("Fixed", true, true, Some("fixed")),
+        ]
+    );
+    let layer_of = |sheet: &Sheet, source: &str| {
+        let object = sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(source))
+            .unwrap_or_else(|| panic!("missing {source}"));
+        object
+            .layer
+            .map(|id| sheet.canvas.board_layer(id).unwrap().name.clone())
+    };
+    assert_eq!(layer_of(sheet, "base-a"), None);
+    assert_eq!(layer_of(sheet, "n1").as_deref(), Some("Notes"));
+    assert_eq!(layer_of(sheet, "s1").as_deref(), Some("Secret"));
+    assert_eq!(layer_of(sheet, "f2").as_deref(), Some("Fixed"));
+    let f1 = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("f1"))
+        .unwrap();
+    assert!(sheet.canvas.is_locked(f1.id));
+    assert!(!f1.locked);
+    assert_eq!(crate::required_native_version(&report.workbook), 45);
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    assert_eq!(reopened.sheets[0].canvas.layers, sheet.canvas.layers);
+    let content = serde_json::to_vec(&reopened).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":44,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(crate::formats::native_import(&old).is_err());
+
+    let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    for needle in [
+        r#"<mxCell id="notes" value="Notes" parent="0"/>"#,
+        r#"<mxCell id="secret" value="Secret" visible="0" parent="0"/>"#,
+        r#"<mxCell id="fixed" value="Fixed" style="locked=1;" parent="0"/>"#,
+        r#"id="n1""#,
+        r#"id="s1""#,
+    ] {
+        assert!(out.contains(needle), "missing {needle}: {out}");
+    }
+    let layer_pos = out.find(r#"id="secret""#).unwrap();
+    assert!(out.find(r#"id="s1""#).unwrap() > layer_pos);
+    assert!(out.contains(r#"parent="secret""#), "{out}");
+    let again = load(&out);
+    assert!(again.warnings.is_empty(), "{:?}", again.warnings);
+    let again = &again.workbook.sheets[0];
+    assert_eq!(again.canvas.layers, sheet.canvas.layers);
+    for source in ["base-a", "n1", "s1", "f1", "f2"] {
+        assert_eq!(layer_of(again, source), layer_of(sheet, source), "{source}");
+    }
+}
+
+#[test]
+fn drawio_named_first_layer_and_layered_cards_stay_explicit() {
+    let xml = concat!(
+        r#"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/>"#,
+        r#"<mxCell id="1" value="Sketch" parent="0"/>"#,
+        r#"<mxCell id="a" value="A" style="rounded=0;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="2" value="Cards" parent="0"/>"#,
+        r#"<mxCell id="c" value="Card" style="shape=note;thinodaCard=sticky;backgroundOutline=1;size=14;" vertex="1" parent="2"><mxGeometry x="100" width="120" height="60" as="geometry"/></mxCell>"#,
+        r#"</root></mxGraphModel></diagram></mxfile>"#,
+    );
+    let mut report = load(xml);
+    assert!(
+        report
+            .warnings
+            .contains(&ImportWarning::DrawioLayerContentFlattened),
+        "{:?}",
+        report.warnings
+    );
+    assert_eq!(cards(&report.workbook.sheets[0]).len(), 1);
+    let sheet = report.workbook.sheets.remove(0);
+    assert_eq!(sheet.canvas.layers.len(), 2);
+    assert_eq!(sheet.canvas.layers[0].name, "Sketch");
+    // Reserved ids are never kept as layer source ids.
+    assert_eq!(sheet.canvas.layers[0].source_id, None);
+    assert!(sheet.canvas.objects.iter().all(|o| o.layer.is_some()));
+    let out = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(out.contains(r#"value="Sketch" parent="0"/>"#), "{out}");
+}

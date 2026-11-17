@@ -297,6 +297,7 @@ impl ThinodaApp {
                 ("Format Panel", Cmd::ToggleFormatPanel),
                 ("Symbols", Cmd::ToggleSymbolsPanel),
                 ("Status Bar", Cmd::ToggleStatusBar),
+                ("Layers", Cmd::BoardLayers),
                 ("Zoom In", Cmd::Canvas(Action::ZoomIn)),
                 ("Zoom Out", Cmd::Canvas(Action::ZoomOut)),
                 ("Actual Size", Cmd::Canvas(Action::ZoomReset)),

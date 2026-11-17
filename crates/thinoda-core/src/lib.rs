@@ -12,6 +12,7 @@
 //! command line tools and servers.
 
 pub mod board;
+pub mod board_layers;
 mod board_semantics;
 pub mod clipboard;
 pub mod custom_theme;
@@ -55,6 +56,7 @@ pub use board::{
     ObjectStyle, RectangleSides, RootProjection, ShapeKind, ShapeRounding, ShapeRoundingMode,
     SheetRootMode, ZOrder,
 };
+pub use board_layers::{BoardLayer, BoardLayerId};
 pub use document::Document;
 pub use edit::{EditError, EditResult};
 pub use geometry::{Color, Rect, Vec2};
