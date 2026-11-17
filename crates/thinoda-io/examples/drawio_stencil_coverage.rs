@@ -6,7 +6,9 @@
 //! The directory holds draw.io `<shapes>` XML files, in any sub-folders (for
 //! example a checkout of `src/main/webapp/stencils`). The report counts,
 //! per file, the shapes converted into definitions, the definitions that
-//! evaluate successfully, and the reasons for the remainder.
+//! evaluate successfully, and the reasons for the remainder. Files that fail
+//! as a whole (for example over a package limit) are reported separately,
+//! with the number of shapes they contain.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -25,6 +27,8 @@ struct Tally {
     shapes: usize,
     rendered: usize,
     failed_files: usize,
+    /// Shapes in files that failed as a whole; not part of `shapes`.
+    failed_file_shapes: usize,
     reasons: BTreeMap<String, usize>,
 }
 
@@ -60,8 +64,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let import = match import_drawio_stencils(&xml, &id, "probe") {
             Ok(import) => import,
             Err(error) => {
+                let shapes = xml.matches("<shape ").count();
                 tally.failed_files += 1;
                 total.failed_files += 1;
+                tally.failed_file_shapes += shapes;
+                total.failed_file_shapes += shapes;
                 *total.reasons.entry(format!("file: {error}")).or_default() += 1;
                 continue;
             }
@@ -105,6 +112,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         "files": t.files,
                         "shapes": t.shapes,
                         "rendered": t.rendered,
+                        "failedFiles": t.failed_files,
+                        "failedFileShapes": t.failed_file_shapes,
                         "reasons": t.reasons,
                     }),
                 )
@@ -115,6 +124,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "files": total.files,
                 "failedFiles": total.failed_files,
+                "failedFileShapes": total.failed_file_shapes,
                 "shapes": total.shapes,
                 "rendered": total.rendered,
                 "reasons": total.reasons,
@@ -130,8 +140,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
         }
         println!(
-            "TOTAL                  {:>5} {:>7} {:>8}  ({} files failed)",
-            total.files, total.shapes, total.rendered, total.failed_files
+            "TOTAL                  {:>5} {:>7} {:>8}  ({} files with {} shapes failed as a whole)",
+            total.files, total.shapes, total.rendered, total.failed_files, total.failed_file_shapes
         );
         let unique: BTreeSet<_> = total.reasons.iter().collect();
         for (reason, count) in unique {

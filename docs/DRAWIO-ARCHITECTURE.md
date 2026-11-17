@@ -428,9 +428,14 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
   `<shapes>`/`<shape>` XML and compressed inline `stencil(...)` payloads into a
   package: every drawing, style, text and path element maps to a DSL op; local
   `include-shape` references become includes; `<image>`, external includes and
-  unknown elements become definition capabilities (`drawio.image`,
-  `drawio.include-shape`, `drawio.element.*`) with diagnostics, and the bounded
-  original XML is kept in the `drawio.source` extension.
+  painting inside a `<path>` become definition capabilities (`drawio.image`,
+  `drawio.include-shape`, `drawio.element.path.*`) with diagnostics, and the bounded
+  original XML is kept in the `drawio.source` extension. Conversion follows
+  draw.io's renderer (`mxStencil.drawNode`, 2026-11-17 revision): elements it
+  ignores are ignored with a diagnostic; state setters inside a path apply as if
+  placed before it; a shape element inside a path replaces it; stray path
+  commands extend the open path or are ignored; `fillalpha`/`strokealpha` set
+  the global alpha.
   The existing Stencils panel's import picker also accepts versioned JSON
   packages. Installed packages retain their original JSON in `stencils.json`,
   display searchable/collapsible sections, preview through the shared

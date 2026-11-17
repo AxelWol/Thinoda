@@ -145,11 +145,11 @@ A task is ticked only when implemented, tested and committed.
 - [x] Retire the old plan; move binding contracts to DRAWIO-ARCHITECTURE.md; write this gap analysis and plan
 - [x] Rubber-duck review of this plan (findings and resolutions in §5)
 
-### D1 — Translator completeness and fidelity evidence
+### D1 — Translator completeness and fidelity evidence ✅
 
-- [ ] Support `ellipse` inside `<path>`, a stray `line`/`move` outside a path, `fillstrokecolor` and `linejoin` inside paths
-- [ ] Coverage reports failed files separately from failed shapes (aws4's 1,050 shapes exceed the package node limit and are vendor-only)
-- [ ] Coverage gate test over a pinned fixture subset (one shape per construct: transforms, paint state, text, connections)
+- [x] Follow `mxStencil.drawNode` semantics: shapes inside `<path>` replace it, state setters inside paths, stray path commands, unknown elements ignored like draw.io (e.g. `fillstrokecolor`), `fillalpha`/`strokealpha` as global alpha, rounded paths disclosed
+- [x] Coverage reports failed files separately from failed shapes (aws4's 1,050 shapes exceed the package node limit; D4 splits oversized vendor libraries)
+- [x] Coverage gate test: one synthetic shape per element draw.io's renderer knows (geometry, path commands, paint state, text, include, connections)
 
 Visual parity against draw.io reference renders is tracked in D15.
 
@@ -176,6 +176,7 @@ Interchange contract: like draw.io itself, `.drawio` files reference bundled sha
 
 - [ ] Import a draw.io stencil XML file (any family, including vendor families) as a user library through the existing library import, with its aliases
 - [ ] Resolver interface so draw.io import also resolves installed user libraries; placeholders upgrade on reopen
+- [ ] Split stencil files that exceed package limits (aws4) into several packages
 - [ ] Optional user-triggered download of a pinned family (desktop) with SHA-256 verification and display of the applicable terms
 
 ### D5 — JS-coded draw.io shapes as JSON definitions
@@ -246,6 +247,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D1 | 8,040 of 8,040 shapes in converted files evaluate; aws4 (1,050 shapes) still fails as a file and moves to D4 |
 | 2026-11-17 | D0 | Research, gap analysis, plan, coverage probe, translator fixes (99.94 % of shapes in converted files), rubber-duck review folded in |
 
 ### Critiques
@@ -256,6 +258,16 @@ and collaboration features as out of scope. The coverage probe proves that
 definitions validate and evaluate, not that they look like draw.io; visual
 parity still needs reference renders. Phases D6-D15 are large and each will be
 split into committed slices when started.
+
+**D1.** Matching draw.io's renderer instead of refusing unknown elements is a
+deliberate contract change: draw.io itself ignores them, so refusing made
+Thinoda strictly worse. Hoisting state setters out of paths is exact for
+draw.io's SVG canvas, which applies state at paint time. Mapping
+`fillalpha`/`strokealpha` to global alpha reproduces a draw.io quirk on 991
+shapes rather than the element names' intent; parity wins because users compare
+against draw.io. Rounded paths (none in the 32.6.10 stencils) are only
+disclosed. 100 % evaluation is not visual parity; D15 still owns reference
+renders.
 
 ## 5. Rubber-duck findings
 

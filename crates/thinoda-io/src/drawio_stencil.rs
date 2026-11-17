@@ -113,6 +113,7 @@ pub fn import_drawio_stencils(
             ids: &ids,
             requires: BTreeSet::new(),
             notes: Vec::new(),
+            hoisted: Vec::new(),
         };
         let definition = cx.shape(shape, id.clone(), name);
         diagnostics.extend(cx.notes.into_iter().map(|n| format!("{id}: {n}")));
@@ -152,6 +153,45 @@ fn is_paint(name: &str) -> bool {
     matches!(name, "fill" | "stroke" | "fillstroke")
 }
 
+fn is_path_command(name: &str) -> bool {
+    matches!(name, "move" | "line" | "quad" | "curve" | "arc" | "close")
+}
+
+/// Canvas state setters. draw.io applies them when a path is painted, so one
+/// that appears inside a `<path>` is equivalent to one placed before it.
+fn is_state(name: &str) -> bool {
+    matches!(
+        name,
+        "strokecolor"
+            | "fillcolor"
+            | "fontcolor"
+            | "alpha"
+            | "fillalpha"
+            | "strokealpha"
+            | "strokewidth"
+            | "dashed"
+            | "dashpattern"
+            | "linejoin"
+            | "linecap"
+            | "miterlimit"
+            | "fontsize"
+            | "fontstyle"
+            | "fontfamily"
+    )
+}
+
+/// Elements draw.io's renderer draws or applies; it ignores every other name.
+fn is_known(name: &str) -> bool {
+    is_geometry(name)
+        || is_paint(name)
+        || is_path_command(name)
+        || is_state(name)
+        || matches!(
+            name,
+            "save" | "restore" | "text" | "image" | "include-shape"
+        )
+}
+
 /// Lowercase ASCII identifier from a draw.io stencil name.
 fn slug(name: &str) -> String {
     let mut out = String::new();
@@ -169,6 +209,9 @@ struct Convert<'a> {
     ids: &'a BTreeMap<String, String>,
     requires: BTreeSet<String>,
     notes: Vec<String>,
+    /// State setters found inside the last converted `<path>`, to be emitted
+    /// before it.
+    hoisted: Vec<Op>,
 }
 
 impl Convert<'_> {
@@ -200,24 +243,24 @@ impl Convert<'_> {
         let mut background = None;
         let mut foreground = Vec::new();
         if let Some(bg) = shape.child("background") {
-            let mut prelude_before_outline = false;
-            for child in &bg.children {
-                if background.is_none() {
-                    if let Some(op) = self.geometry(child) {
-                        background = Some(op);
-                        continue;
-                    }
-                    prelude_before_outline |= is_paint(&child.name);
-                } else if is_geometry(&child.name) {
+            let children = &bg.children;
+            let outline = children.iter().position(|c| is_geometry(&c.name));
+            let split = outline.unwrap_or(children.len());
+            if children[..split].iter().any(|c| is_paint(&c.name)) {
+                self.notes
+                    .push("background paints before its outline geometry".into());
+            }
+            foreground.extend(self.ops(&children[..split]));
+            if let Some(index) = outline {
+                background = self.geometry(&children[index]);
+                foreground.append(&mut self.hoisted);
+                let rest = &children[index + 1..];
+                if rest.iter().any(|c| is_geometry(&c.name)) {
                     self.notes.push(
                         "background has extra geometry; only the first is the outline".into(),
                     );
                 }
-                foreground.extend(self.ops(std::slice::from_ref(child)));
-            }
-            if prelude_before_outline {
-                self.notes
-                    .push("background paints before its outline geometry".into());
+                foreground.extend(self.ops(rest));
             }
         }
         if let Some(fg) = shape.child("foreground") {
@@ -313,18 +356,47 @@ impl Convert<'_> {
                 w: n(self, "w"),
                 h: n(self, "h"),
             },
-            "path" => Op::Path {
-                commands: self.path(e),
-            },
+            "path" => self.path(e),
             _ => return None,
         })
     }
 
-    fn path(&mut self, e: &Element) -> Vec<PathCmd> {
+    /// Converts a `<path>`. draw.io draws its children in the same canvas:
+    /// state setters apply at paint time and are hoisted before the path, and
+    /// a shape element replaces the path being built, as it does in draw.io.
+    fn path(&mut self, e: &Element) -> Op {
+        if e.attr("rounded") == Some("1") {
+            self.notes
+                .push("rounded path corners are drawn sharp".into());
+        }
         let mut commands = Vec::new();
+        let mut replaced: Option<Op> = None;
         for c in &e.children {
+            let name = c.name.as_str();
+            if is_state(name) {
+                let state = self.ops(std::slice::from_ref(c));
+                self.hoisted.extend(state);
+                continue;
+            }
+            if is_geometry(name) {
+                self.notes.push(format!(
+                    "<{name}> inside a path replaces the path, as in draw.io"
+                ));
+                let hoisted = std::mem::take(&mut self.hoisted);
+                replaced = self.geometry(c);
+                self.hoisted.splice(0..0, hoisted);
+                commands.clear();
+                continue;
+            }
+            if replaced.is_some() && is_path_command(name) {
+                continue;
+            }
+            if !is_known(name) {
+                self.ignored(name);
+                continue;
+            }
             let n = |cx: &mut Self, key| Expr::Num(cx.num(c, key));
-            let command = match c.name.as_str() {
+            let command = match name {
                 "move" => PathCmd::Move {
                     x: n(self, "x"),
                     y: n(self, "y"),
@@ -373,21 +445,83 @@ impl Convert<'_> {
             }
             commands.push(command);
         }
+        if let Some(op) = replaced {
+            return op;
+        }
         if commands.is_empty() {
             commands.push(PathCmd::Move {
                 x: Expr::Num(0.0),
                 y: Expr::Num(0.0),
             });
         }
-        commands
+        Op::Path { commands }
+    }
+
+    /// A `move`/`line`/... outside `<path>` extends the open path in draw.io,
+    /// or is ignored when no path is open.
+    fn stray_command(&mut self, e: &Element, open: Option<&mut Op>) {
+        let Some(Op::Path { commands }) = open else {
+            self.notes.push(format!(
+                "<{}> outside a path is ignored, as in draw.io",
+                e.name
+            ));
+            return;
+        };
+        let n = |cx: &mut Self, key| Expr::Num(cx.num(e, key));
+        commands.push(match e.name.as_str() {
+            "move" => PathCmd::Move {
+                x: n(self, "x"),
+                y: n(self, "y"),
+            },
+            "line" => PathCmd::Line {
+                x: n(self, "x"),
+                y: n(self, "y"),
+            },
+            "quad" => PathCmd::Quad {
+                x1: n(self, "x1"),
+                y1: n(self, "y1"),
+                x2: n(self, "x2"),
+                y2: n(self, "y2"),
+            },
+            "curve" => PathCmd::Curve {
+                x1: n(self, "x1"),
+                y1: n(self, "y1"),
+                x2: n(self, "x2"),
+                y2: n(self, "y2"),
+                x3: n(self, "x3"),
+                y3: n(self, "y3"),
+            },
+            "arc" => PathCmd::Arc {
+                rx: n(self, "rx"),
+                ry: n(self, "ry"),
+                x_axis_rotation: n(self, "x-axis-rotation"),
+                large_arc_flag: n(self, "large-arc-flag"),
+                sweep_flag: n(self, "sweep-flag"),
+                x: n(self, "x"),
+                y: n(self, "y"),
+            },
+            _ => PathCmd::Close,
+        });
     }
 
     fn ops(&mut self, elements: &[Element]) -> Vec<Op> {
         let mut ops = Vec::with_capacity(elements.len());
+        // Index of the path that later stray path commands extend.
+        let mut open: Option<usize> = None;
         for e in elements {
             if let Some(geometry) = self.geometry(e) {
+                ops.append(&mut self.hoisted);
+                open = matches!(geometry, Op::Path { .. }).then_some(ops.len());
                 ops.push(geometry);
                 continue;
+            }
+            if is_path_command(&e.name) {
+                let target = open.and_then(|i| ops.get_mut(i));
+                self.stray_command(e, target);
+                continue;
+            }
+            if is_paint(&e.name) || e.name == "include-shape" {
+                open = None;
             }
             let color = |cx: &mut Self| cx.color(e);
             let op = match e.name.as_str() {
@@ -399,13 +533,9 @@ impl Convert<'_> {
                 "strokecolor" => Op::StrokeColor { color: color(self) },
                 "fillcolor" => Op::FillColor { color: color(self) },
                 "fontcolor" => Op::FontColor { color: color(self) },
-                "alpha" => Op::Alpha {
-                    value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
-                },
-                "fillalpha" => Op::FillAlpha {
-                    value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
-                },
-                "strokealpha" => Op::StrokeAlpha {
+                // draw.io applies fillalpha and strokealpha as the global
+                // alpha; matching it keeps converted shapes looking the same.
+                "alpha" | "fillalpha" | "strokealpha" => Op::Alpha {
                     value: Expr::Num(self.num(e, "alpha").clamp(0.0, 1.0)),
                 },
                 "strokewidth" => Op::StrokeWidth {
@@ -500,8 +630,12 @@ impl Convert<'_> {
                         }
                     }
                 }
+                "image" => {
+                    self.unsupported("image");
+                    continue;
+                }
                 other => {
-                    self.unsupported(other);
+                    self.ignored(other);
                     continue;
                 }
             };
@@ -510,8 +644,16 @@ impl Convert<'_> {
         ops
     }
 
-    /// Declares an element the interpreter cannot draw, so the definition
-    /// refuses to render instead of silently dropping instructions.
+    /// draw.io's renderer ignores elements it does not know; so does the
+    /// conversion, with a diagnostic.
+    fn ignored(&mut self, element: &str) {
+        self.notes.push(format!(
+            "ignored unknown element <{element}>, as in draw.io"
+        ));
+    }
+
+    /// Declares an element draw.io draws but the interpreter cannot, so the
+    /// definition refuses to render instead of silently dropping it.
     fn unsupported(&mut self, element: &str) {
         if element == "image" {
             self.requires.insert(CAP_IMAGE.into());
