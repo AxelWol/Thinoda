@@ -243,6 +243,25 @@ with pending ink). The scene carries `text_labels` and their estimated bounds
 on `SceneGeometry::Polyline`; both renderers, hit testing, search and replace
 read them. Export writes `edgeLabel` vertex children with fresh ids.
 
+**As implemented in D7 (object data):** `CanvasObject.data:
+Option<Arc<ObjectData { link, tags, properties, placeholders }>>` holds
+draw.io's UserObject data (`thinoda_core::object_data`): at most 32 KiB, 256
+properties, 128 tags and an 8 KiB link; property names are XML attribute names
+other than id, label, tooltip, link, tags, placeholders and placeholder, and
+may not repeat a passthrough attribute. Empty data is stored as `None`. It
+needs native v44, board clipboard v37 and sheet clipboard v33; private XMind
+snapshots use `THINODA-XMIND-OBJECT-DATA-1`, and recovery uses
+`THINODA-RECOVERY-OBJECT-DATA-1` (`THINODA-RECOVERY-INK-OBJECT-DATA-1` with
+pending ink). Masked exports drop it. The tooltip is `alt_text`.
+
+**As implemented in D7 (placeholders):** text stays as written;
+`object_data::with_resolved_placeholders(canvas, object, page)` returns a
+borrowed object unless a label, connector label or description changes.
+Canvas paint (`paint_objects_in_band`) and export (`render::board::band_items`)
+call it, so culling, SVG/PNG/PDF and PowerPoint see resolved text while editing
+and draw.io export keep the template. No format gate: it uses the v44
+placeholder flag.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

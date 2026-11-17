@@ -463,6 +463,7 @@ pub(crate) fn editable_slide(
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::BelowMap)
     {
+        let object = &*object;
         draw.board_object(item, object, page, options.dark, visual);
     }
     for boundary in &layout.boundaries {
@@ -822,6 +823,7 @@ pub(crate) fn editable_slide(
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::AboveMap)
     {
+        let object = &*object;
         draw.board_object(item, object, page, options.dark, visual);
     }
     if sheet

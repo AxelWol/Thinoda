@@ -599,7 +599,7 @@ mod tests {
     fn placeholder_link_shows_a_cancelable_specific_warning() {
         let xml = concat!(
             r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
-            r#"<object id="shape" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object>"#,
+            r#"<object id="shape" label="Width %width% on %date%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object>"#,
             r#"</root></mxGraphModel>"#
         );
         let link = format!(
@@ -617,7 +617,7 @@ mod tests {
         assert!(h.query_all_by_role(Role::Label).any(|node| {
             node.value().is_some_and(|value| {
                 value.contains(t(
-                    "draw.io placeholders are not resolved and their data is not preserved",
+                    "Some draw.io placeholders, such as dates, page numbers or those in frames and topics, are not kept as live fields",
                 ))
             })
         }));

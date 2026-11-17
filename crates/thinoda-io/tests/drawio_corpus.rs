@@ -1089,14 +1089,19 @@ fn supplied_floorplan_chairs_draw_their_bundled_stencils() {
 }
 
 #[test]
-fn supplied_diagrams_report_unresolved_metadata_placeholders() {
+fn supplied_diagrams_resolve_object_placeholders() {
     let Some(dir) = corpus_dir() else {
         return;
     };
-    for (name, token) in [
-        ("C4.drawio", "%c4Name%"),
-        ("kanban-examples.drawio", "%status%"),
-        ("home-lab-example.drawio", "%subnet%"),
+    for (name, token, resolved, templates_lost) in [
+        ("C4.drawio", "%c4Name%", None, false),
+        ("kanban-examples.drawio", "%status%", None, false),
+        (
+            "home-lab-example.drawio",
+            "%subnet%",
+            Some("192.168.3.1"),
+            true,
+        ),
     ] {
         let path = dir.join(name);
         if !path.is_file() {
@@ -1104,31 +1109,55 @@ fn supplied_diagrams_report_unresolved_metadata_placeholders() {
         }
         let bytes = std::fs::read(path).unwrap();
         let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
-        assert!(
+        assert_eq!(
             report
                 .warnings
                 .contains(&thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported),
+            templates_lost,
             "{name}"
         );
         assert!(
-            report.workbook.sheets.iter().any(|sheet| {
-                sheet
-                    .topics
-                    .values()
-                    .any(|topic| topic.title.contains(token))
-                    || sheet
-                        .canvas
-                        .objects
-                        .iter()
-                        .any(|object| object.label().contains(token))
-            }),
-            "{name}: expected unresolved {token}"
+            report
+                .workbook
+                .sheets
+                .iter()
+                .all(|sheet| sheet.zones.iter().all(|zone| !zone.name.contains(token))),
+            "{name}: Zone names are resolved on import"
         );
-        assert!(matches!(
-            thinoda_io::import_bytes(Format::DrawIo, &bytes),
-            Err(IoError::ImportNeedsConfirmation(warnings))
-                if warnings.contains(&thinoda_io::ImportWarning::DrawioPlaceholdersUnsupported)
-        ));
+        let labels: Vec<String> = report
+            .workbook
+            .sheets
+            .iter()
+            .flat_map(|sheet| {
+                sheet.canvas.objects.iter().map(|object| {
+                    thinoda_core::object_data::with_resolved_placeholders(
+                        &sheet.canvas,
+                        object,
+                        Some(&sheet.title),
+                    )
+                    .label()
+                    .to_owned()
+                })
+            })
+            .collect();
+        assert!(
+            report.workbook.sheets.iter().any(|sheet| sheet
+                .canvas
+                .objects
+                .iter()
+                .any(|object| object.label().contains(token))),
+            "{name}: raw {token} is kept for editing and export"
+        );
+        assert!(
+            labels.iter().all(|label| !label.contains(token)),
+            "{name}: {token} must resolve"
+        );
+        if let Some(resolved) = resolved {
+            assert!(
+                labels.iter().any(|label| label.contains(resolved)),
+                "{name}"
+            );
+        }
         report.workbook.validate().unwrap();
     }
 }

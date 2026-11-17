@@ -1819,7 +1819,7 @@ mod tests {
     fn drawio_placeholders_require_consent_and_preserve_the_source() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("placeholder.drawio");
-        let xml = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="shape" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object></root></mxGraphModel>"#;
+        let xml = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="shape" label="Width %width% on %date%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object></root></mxGraphModel>"#;
         std::fs::write(&path, xml).unwrap();
         assert_eq!(
             OpenDoc::open(&path).err().unwrap(),

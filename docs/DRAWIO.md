@@ -70,7 +70,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Files | VSDX/VSD/VSSX, Gliffy, Lucid import | Missing | D13 |
 | Files | VSDX, JPEG/WebP/GIF export | Missing (SVG/PNG/PDF exist) | D13 |
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
-| Pages | Page links `data:page/id` | Approx. (plain link) | D7 |
+| Pages | Page links `data:page/id` | Native (navigates to the imported page) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Approx. (flattened; Below/Above bands only) | D8 |
 | Shapes | Core 16 + drawio 101 JS shapes | 31 native `ShapeKind`s + 66 JSON definitions; others approximate as rectangles | D5 ✅ |
 | Shapes | 9,090 XML stencils | 17 generic families bundled (81 packages, 2,238 shapes); vendor and platform families not yet available | D4 |
@@ -91,7 +91,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Approx. (lost on export) | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Approx. (cards native; shape labels partial) | D9 |
 | Text | Rich HTML labels, sub/superscript, lists | Approx. (plain text) | D9 |
-| Data | Custom properties, tooltips, links, placeholders, tags | Approx. (lost on export) | D7 |
+| Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Approx. (container tables SC4 roadmap) | D8 |
 | Layout | ELK flow/tree/radial/organic, circle, org chart | Missing for boards (mind-map layout is native) | D11 |
@@ -224,7 +224,10 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Routes segment, isometric, loop as editable routes
 - [x] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
 - [x] Multiple connector labels
-- [ ] Object links (URL, page), tooltips, custom properties, placeholders and tags, editable in the inspector
+- [x] Object links (URL, page), tooltips, custom properties, placeholders and tags, editable in the inspector
+  - [x] Object data model (link, tags, properties, placeholder flag), gates, draw.io round trip, inspector "Data" section, hover tooltip
+  - [x] Placeholder `%name%` resolution in canvas and exports (search matches the written text)
+  - [x] Page links (`data:page/id,`) navigate to the matching sheet
 
 ### D8 — Layers and tables
 
@@ -275,6 +278,9 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D7 page links | `data:page/id` links navigate to the sheet with the matching imported draw.io page id from the inspector ("Go to page" shows the target sheet title) and the link opener; missing pages warn; D7 complete |
+| 2026-11-17 | D7 placeholders | `%name%` placeholders resolve in canvas and exports from object data, scene containers, `id`, `width`, `height` and the page name; draw.io import copies values inherited from non-container ancestors, resolves Zone names, and warns only for templates it cannot keep live (C4, kanban and home-lab now import resolved) |
+| 2026-11-17 | D7 object data | draw.io link, tags, placeholders flag and custom properties import into per-object data instead of passthrough and export back; inspector "Data" edits link (Open link for http/mailto), tags, properties and the placeholder flag; canvas hover shows description and link; find matches tags and property values, replace edits values; native v44, board clipboard v37, sheet clipboard v33, new XMind and recovery envelopes |
 | 2026-11-17 | D7 connector labels | Relative edge-label children import as positioned connector labels and export as `edgeLabel` children; the main label keeps its x/y/offset; canvas, export, hits, search and replace see every label; inspector "Connector labels" adds, positions and removes them; native v43, board clipboard v36, sheet clipboard v32, new XMind and recovery envelopes |
 | 2026-11-17 | D7 edge shapes | flexArrow, taperedArrow, link, pipe, filledEdge and wire bodies port mxArrowConnector and Shapes.js; canvas, export, hits, bounds and lasso share them; inspector "Line shape" with widths and fill, style copy; native v42, board clipboard v35, sheet clipboard v31, new XMind and recovery envelopes |
 | 2026-11-17 | D7 segment, isometric, loop | Segmented (every waypoint fixes the next segment) and horizontal/vertical isometric routes port draw.io's SegmentConnector and IsometricConnector; floating self-loops route like draw.io's Loop on every route; route menu shows eleven routes; native v41, board clipboard v34, sheet clipboard v30, new XMind and recovery envelopes |
@@ -518,6 +524,52 @@ as a separate label instead of merging the text. Known approximations:
   dragged yet. A label cannot be emptied there; Remove label deletes it.
 - Sankey ribbons place their own flow label, so the section is hidden for
   them.
+
+**D7 object data.** Each attribute now has one owner: draw.io data
+attributes live in object data, everything else stays passthrough, and
+validation rejects a name in both, so export never writes one twice.
+Known approximations:
+
+- The tooltip is the object's description (`alt_text`); draw.io's separate
+  `tooltip` attribute and the description are one field.
+- Files saved as native v37-v43 keep link and placeholders in passthrough
+  attributes; they still export, but the inspector does not show them until
+  the diagram is re-imported.
+- Export writes link, tags, placeholders and properties before other
+  passthrough attributes, so attribute order differs from the source file;
+  `placeholders="0"` is dropped.
+- Only http(s) and mailto links open; page links navigate (see D7 page
+  links); other draw.io links (custom actions) are kept but not followed.
+- Tags are found but not replaced, since replacing could merge or empty tags.
+- Board cards still map links to the topic hyperlink.
+- Properties are renamed by removing and re-adding them.
+
+**D7 placeholders.** Labels keep the written `%name%`; canvas, SVG/PNG/PDF and
+PowerPoint resolve it at paint time with draw.io's pattern, `%%name%`
+escape and lookup order, and draw.io export writes the raw text back.
+Known approximations:
+
+- Ancestors are Thinoda scene containers. On import, values a draw.io
+  ancestor holds that does not become a container (Zones, groups, layers) are
+  copied into the object's own properties, so later edits to that ancestor do
+  not propagate.
+- Zone names resolve once on import and topic or card text stays literal; both
+  report the placeholder warning, as do dates, times, page numbers, page
+  count, file name, edge length, unit sizes and `placeholder` bindings, which
+  stay literal.
+- `width` and `height` are the stored frame, not rotated bounds; `id` is the
+  draw.io cell id when known.
+- Find and replace work on the written text, not the resolved text.
+
+**D7 page links.** `data:page/id,<id>` follows to the sheet whose imported
+`<diagram id>` matches, from the inspector's "Go to page" button and the
+link opener; an unknown page shows a warning instead of a browser launch.
+Export keeps imported page ids, so links round-trip. Known approximations:
+
+- Only sheets imported from draw.io carry a page id; sheets created in
+  Thinoda get one on export, so new page links must be typed as
+  `data:page/id,<id>` until a page picker exists.
+- Links resolve against the open document only, not other files.
 
 ## 5. Rubber-duck findings
 

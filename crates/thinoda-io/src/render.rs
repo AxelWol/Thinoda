@@ -600,6 +600,7 @@ fn svg_layout_with_fonts(
         ));
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::BelowMap) {
+        let object = &*object;
         let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
         out.push_str(&board_object_svg(
             item,
@@ -954,6 +955,7 @@ fn svg_layout_with_fonts(
         }
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::AboveMap) {
+        let object = &*object;
         let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
         out.push_str(&board_object_svg(
             item,

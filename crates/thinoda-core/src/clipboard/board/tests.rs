@@ -2467,6 +2467,42 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn object_data_board_clipboard_requires_version_thirty_seven() {
+    use crate::object_data::ObjectData;
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 20.0)),
+    );
+    shape.data = Some(std::sync::Arc::new(ObjectData {
+        link: Some("https://example.com".into()),
+        properties: vec![("owner".into(), "Ada".into())],
+        ..Default::default()
+    }));
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(OBJECT_DATA_BOARD_PREFIX));
+    let decoded = decode_board_payload(&encoded).unwrap();
+    assert_eq!(decoded, payload);
+    assert_eq!(
+        decoded.fragment.canvas.objects[0]
+            .data
+            .as_ref()
+            .unwrap()
+            .property("owner"),
+        Some("Ada")
+    );
+    let downgraded = encoded.replacen(OBJECT_DATA_BOARD_PREFIX, CONNECTOR_LABELS_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("object data requires board clipboard version 37")
+    );
+}
+
+#[test]
 fn connector_label_board_clipboard_requires_version_thirty_six() {
     use crate::board::{CanvasConnector, ConnectorLabelPlacement, Endpoint};
 

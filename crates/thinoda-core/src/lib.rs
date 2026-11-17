@@ -28,6 +28,7 @@ pub mod model;
 pub mod navigation;
 pub mod notes;
 pub mod numbering;
+pub mod object_data;
 pub mod outline;
 pub mod presentation;
 pub mod quick_styles;

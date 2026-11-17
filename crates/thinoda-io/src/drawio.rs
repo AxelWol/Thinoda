@@ -22,6 +22,7 @@ use std::sync::Arc;
 use thinoda_core::drawio_passthrough::{
     DrawioCellPassthrough as Passthrough, DrawioPagePassthrough,
 };
+use thinoda_core::object_data::ObjectData;
 use thinoda_core::{
     ApproxMeasure, Color, MAX_PRESENTATION_NAME_BYTES, MAX_ZONES, MIN_ZONE_SIZE, Rect, Sheet,
     TextAlign, TopicId, TopicShape, Vec2, Workbook, ZoneId,
@@ -1681,6 +1682,51 @@ fn read_cell(
     }
 }
 
+/// Moves link, tags, placeholders and custom properties of a `UserObject` into
+/// object data; attributes data cannot hold stay as passthrough, and so does
+/// everything when the data exceeds its bounds.
+fn split_object_data(
+    attributes: &[(String, String)],
+) -> (Option<Arc<ObjectData>>, Vec<(String, String)>) {
+    let mut data = ObjectData::default();
+    let mut rest = Vec::new();
+    for (name, value) in attributes {
+        match name.as_str() {
+            "link" if !value.trim().is_empty() => data.link = Some(value.clone()),
+            "link" => {}
+            "tags" => data.tags = ObjectData::parse_tags(value),
+            "placeholders" => data.placeholders = value == "1",
+            _ if thinoda_core::object_data::valid_property_name(name) => {
+                data.properties.push((name.clone(), value.clone()));
+            }
+            _ => rest.push((name.clone(), value.clone())),
+        }
+    }
+    if data.is_empty() {
+        return (None, rest);
+    }
+    if data.validate().is_err() {
+        return (None, attributes.to_vec());
+    }
+    (Some(Arc::new(data)), rest)
+}
+
+/// `UserObject` attributes written from object data, in import order.
+fn data_attributes(data: &ObjectData) -> Vec<(String, String)> {
+    let mut attributes = Vec::new();
+    if let Some(link) = &data.link {
+        attributes.push(("link".to_owned(), link.clone()));
+    }
+    if !data.tags.is_empty() {
+        attributes.push(("tags".to_owned(), data.tags_text()));
+    }
+    if data.placeholders {
+        attributes.push(("placeholders".to_owned(), "1".to_owned()));
+    }
+    attributes.extend(data.properties.iter().cloned());
+    attributes
+}
+
 fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Cell> {
     let Some(root) = model.child("root") else {
         return Vec::new();
@@ -1697,7 +1743,13 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
                 };
                 match element.attr("placeholders") {
                     Some("1") => {
-                        warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                        if ["label", "tooltip"].iter().any(|name| {
+                            element.attr(name).is_some_and(
+                                thinoda_core::object_data::uses_unresolved_drawio_variables,
+                            )
+                        }) {
+                            warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
+                        }
                     }
                     None | Some("0") => {}
                     Some(_) => {
@@ -2321,7 +2373,12 @@ impl<'a> PageImport<'a> {
     }
 
     /// Unknown style keys, attributes and the id of `cell` (architecture §3.1.1).
-    fn cell_passthrough(&mut self, cell: usize, object: &CanvasObject) -> Option<Arc<Passthrough>> {
+    fn cell_passthrough(
+        &mut self,
+        cell: usize,
+        object: &CanvasObject,
+        attributes: Vec<(String, String)>,
+    ) -> Option<Arc<Passthrough>> {
         let source = &self.cells[cell];
         let bound = object
             .stencil
@@ -2355,7 +2412,7 @@ impl<'a> PageImport<'a> {
                 && !source.id.chars().any(char::is_control))
             .then(|| source.id.clone()),
             style,
-            attributes: source.attributes.clone(),
+            attributes,
         };
         if passthrough.is_empty() {
             return None;
@@ -2530,6 +2587,78 @@ impl<'a> PageImport<'a> {
         false
     }
 
+    /// draw.io's lookup of placeholder `name` on `cell` and its ancestors, with
+    /// the index of the ancestor holding it.
+    fn placeholder_value(&self, cell: &Cell, name: &str) -> Option<(String, Option<usize>)> {
+        match name {
+            "id" => return Some((cell.id.clone(), None)),
+            "width" if cell.vertex => return Some((cell.geometry.width.to_string(), None)),
+            "height" if cell.vertex => return Some((cell.geometry.height.to_string(), None)),
+            _ => {}
+        }
+        let own = |cell: &Cell| {
+            cell.attributes
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        if let Some(value) = own(cell) {
+            return Some((value, None));
+        }
+        let mut parent = cell.parent.as_deref();
+        for _ in 0..self.cells.len() {
+            let &index = parent.and_then(|id| self.index.get(id))?;
+            let ancestor = &self.cells[index];
+            if let Some(value) = own(ancestor) {
+                return Some((value, Some(index)));
+            }
+            parent = ancestor.parent.as_deref();
+        }
+        None
+    }
+
+    fn replaces_placeholders(cell: &Cell) -> bool {
+        cell.attributes
+            .iter()
+            .any(|(name, value)| name == "placeholders" && value == "1")
+    }
+
+    /// `text` with `cell`'s placeholders resolved, for imports without a
+    /// data model (Zones).
+    fn resolved_cell_text<'t>(&self, cell: &Cell, text: &'t str) -> std::borrow::Cow<'t, str> {
+        if !Self::replaces_placeholders(cell) {
+            return std::borrow::Cow::Borrowed(text);
+        }
+        thinoda_core::object_data::replace_placeholders(text, |name| {
+            self.placeholder_value(cell, name).map(|(value, _)| value)
+        })
+    }
+
+    /// Values a placeholder of `cell` takes from a draw.io ancestor that does not
+    /// become a Thinoda scene container, copied so the label still resolves.
+    fn inherited_placeholder_values(&self, cell: usize) -> Vec<(String, String)> {
+        let own = &self.cells[cell];
+        if !Self::replaces_placeholders(own) {
+            return Vec::new();
+        }
+        let mut inherited: Vec<(String, String)> = Vec::new();
+        for text in [Some(own.value.as_str()), own.tooltip.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = thinoda_core::object_data::replace_placeholders(text, |name| {
+                if !inherited.iter().any(|(known, _)| known == name)
+                    && let Some((value, Some(holder))) = self.placeholder_value(own, name)
+                    && !matches!(self.items.get(&holder), Some(Item::Container(_)))
+                {
+                    inherited.push((name.to_owned(), value));
+                }
+                None
+            });
+        }
+        inherited
+    }
+
     fn add_object(
         &mut self,
         cell: usize,
@@ -2537,7 +2666,11 @@ impl<'a> PageImport<'a> {
         context: Context,
     ) -> Option<CanvasObjectId> {
         if self.passthrough_cells.insert(cell) {
-            object.drawio = self.cell_passthrough(cell, &object);
+            let mut attributes = self.cells[cell].attributes.clone();
+            attributes.extend(self.inherited_placeholder_values(cell));
+            let (data, rest) = split_object_data(&attributes);
+            object.data = data;
+            object.drawio = self.cell_passthrough(cell, &object, rest);
         }
         if let Some(stencil) = &object.stencil
             && stencil.package == crate::drawio_stencil::INLINE_PACKAGE_ID
@@ -2928,6 +3061,7 @@ impl<'a> PageImport<'a> {
             return None;
         }
         let label = self.label(cell);
+        let label = self.resolved_cell_text(cell, &label);
         let mut name: String = label
             .lines()
             .map(str::trim)
@@ -2987,9 +3121,6 @@ impl<'a> PageImport<'a> {
                     || kind == Kind::Line && style.connector_label_appearance_loss(false))
         {
             self.warn(ImportWarning::Formatting);
-        }
-        if cell.link.is_some() && !matches!(kind, Kind::Card(_)) {
-            self.warn(ImportWarning::Links);
         }
         let shape_object = |shape: ShapeKind, frame: Rect, rotation: f32, label: String| {
             let mut object = CanvasObject::shape(shape, frame);
@@ -3689,9 +3820,6 @@ impl<'a> PageImport<'a> {
         {
             self.warn(ImportWarning::Formatting);
         }
-        if cell.link.is_some() {
-            self.warn(ImportWarning::Links);
-        }
         let mut label = self.label(cell);
         let label_style_loss = !label.is_empty() && style.label_style_loss(true);
         let label_placement = self.edge_label_placement(&cell.geometry);
@@ -4268,9 +4396,30 @@ fn import_page(
                 .any(|(name, _)| !matches!(name.as_str(), "link" | "placeholders"))
     }) {
         // Only canvas objects keep unknown attributes; topics and cards drop
-        // them. Their `link` becomes the hyperlink, and placeholders already
-        // carry their own warning.
+        // them. Their `link` becomes the hyperlink, and placeholders are
+        // reported below.
         import.warn(ImportWarning::Other);
+    }
+    if import.cells.iter().enumerate().any(|(i, cell)| {
+        !import.passthrough_cells.contains(&i)
+            && cell
+                .attributes
+                .iter()
+                .any(|(name, value)| name == "placeholders" && value == "1")
+            && [Some(cell.value.as_str()), cell.tooltip.as_deref()]
+                .into_iter()
+                .flatten()
+                .any(|text| {
+                    matches!(
+                        thinoda_core::object_data::replace_placeholders(text, |_| Some(
+                            String::new()
+                        )),
+                        std::borrow::Cow::Owned(_)
+                    )
+                })
+    }) {
+        // Topics and cards show their text as written.
+        import.warn(ImportWarning::DrawioPlaceholdersUnsupported);
     }
     if let Some(extension) = model.attr("thinodaSankey") {
         import.apply_sankey(extension)?;
@@ -5455,7 +5604,13 @@ impl<'a> PageWriter<'a> {
         let (parent, origin) = self.parent(BoardMember::Object(id));
         let cell_id = self.cell_id(id);
         let drawio = object.drawio.as_deref();
-        self.attributes = drawio.map(|d| d.attributes.clone()).unwrap_or_default();
+        self.attributes = object
+            .data
+            .as_deref()
+            .map(data_attributes)
+            .unwrap_or_default();
+        self.attributes
+            .extend(drawio.map(|d| d.attributes.clone()).unwrap_or_default());
         match &object.kind {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();

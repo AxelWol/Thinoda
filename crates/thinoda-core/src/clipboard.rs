@@ -49,12 +49,15 @@ const EDGE_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-29\n";
 const SEGMENT_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-30\n";
 const EDGE_SHAPES_SHEET_PREFIX: &str = "THINODA-SHEET-31\n";
 const CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-32\n";
+const OBJECT_DATA_SHEET_PREFIX: &str = "THINODA-SHEET-33\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_connector_labels() {
+    let prefix = if sheet.has_object_data() {
+        OBJECT_DATA_SHEET_PREFIX
+    } else if sheet.has_connector_labels() {
         CONNECTOR_LABELS_SHEET_PREFIX
     } else if sheet.has_connector_edge_shapes() {
         EDGE_SHAPES_SHEET_PREFIX
@@ -144,6 +147,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
             text.strip_prefix(LINE_JUMPS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-28\r\n"))
                 .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(OBJECT_DATA_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-33\r\n"))
+                .map(|json| (33, json))
         })
         .or_else(|| {
             text.strip_prefix(CONNECTOR_LABELS_SHEET_PREFIX)
@@ -297,6 +305,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 33 && sheet.has_object_data() {
+        return Err("object data requires sheet clipboard version 33".into());
+    }
     if version < 32 && sheet.has_connector_labels() {
         return Err("connector labels require sheet clipboard version 32".into());
     }
@@ -1511,6 +1522,31 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn object_data_sheet_clipboard_requires_version_thirty_three() {
+        use crate::board::CanvasObject;
+        use crate::object_data::ObjectData;
+        let mut sheet = Sheet::new("Data", "Root");
+        let mut shape = CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 20.0)),
+        );
+        shape.data = Some(std::sync::Arc::new(ObjectData {
+            tags: vec!["web".into()],
+            ..Default::default()
+        }));
+        sheet.add_canvas_object(shape).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(OBJECT_DATA_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(OBJECT_DATA_SHEET_PREFIX, CONNECTOR_LABELS_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("object data requires sheet clipboard version 33")
+        );
     }
 
     #[test]

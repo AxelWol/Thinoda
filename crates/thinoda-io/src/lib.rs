@@ -403,7 +403,9 @@ pub enum ImportWarning {
     DrawioBackgroundAdjusted,
     /// A draw.io folded note's appearance was approximated.
     DrawioFoldedNotesApproximated,
-    /// draw.io placeholder resolution and its metadata are not represented.
+    /// Some draw.io placeholders are not live fields: global variables (dates,
+    /// page numbers, file name, lengths, unit sizes) and `placeholder` bindings
+    /// stay literal, frame names are resolved once, and topic text stays literal.
     DrawioPlaceholdersUnsupported,
     /// draw.io container child-layout behavior is only partially represented.
     DrawioSceneLayoutNotPreserved,

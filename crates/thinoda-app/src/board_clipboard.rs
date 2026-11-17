@@ -888,7 +888,7 @@ impl crate::app::ThinodaApp {
                             if outcome.unsupported_placeholders {
                                 lines.push(
                                     crate::i18n::t(
-                                        "draw.io placeholders are not resolved and their data is not preserved",
+                                        "Some draw.io placeholders, such as dates, page numbers or those in frames and topics, are not kept as live fields",
                                     )
                                     .to_owned(),
                                 );
@@ -3241,7 +3241,7 @@ mod tests {
 
         let text = concat!(
             r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
-            r#"<object id="shape" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object>"#,
+            r#"<object id="shape" label="Width %width% on %date%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></object>"#,
             r#"</root></mxGraphModel>"#
         );
         let (mut app, clipboard) = empty_board_app();
@@ -3251,10 +3251,10 @@ mod tests {
         app.exec(&ctx, Cmd::MenuPaste);
         assert_eq!(
             app.doc().unwrap().doc.sheet().canvas.objects[0].label(),
-            "Width %width%"
+            "Width %width% on %date%"
         );
         assert!(app.toasts.texts().any(|text| text.contains(crate::i18n::t(
-            "draw.io placeholders are not resolved and their data is not preserved"
+            "Some draw.io placeholders, such as dates, page numbers or those in frames and topics, are not kept as live fields"
         ))));
         app.exec(&ctx, Cmd::Canvas(Action::Undo));
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);

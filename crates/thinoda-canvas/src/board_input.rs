@@ -1912,6 +1912,29 @@ fn update_hover_shape(
         });
 }
 
+/// The draw.io tooltip of the hovered object: its description and its link.
+fn object_tooltip(
+    view: &MapView,
+    sheet: &Sheet,
+    scene: &Scene,
+    response: &Response,
+) -> Option<String> {
+    let pos = response.hover_pos()?;
+    let Some(SceneHit::Object(id)) = scene.hit_test(view.xf().sheet(pos)) else {
+        return None;
+    };
+    let object = sheet.canvas.object(id)?;
+    let lines: Vec<&str> = [
+        Some(object.alt_text.trim()),
+        object.data.as_ref().and_then(|data| data.link.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|line| !line.is_empty())
+    .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
 fn controls(view: &MapView, sheet: &Sheet, layout: &Layout, scene: &Scene) -> Vec<Control> {
     if !matches!(view.board_tool, BoardTool::Select | BoardTool::Shape(_))
         || view.editing.is_some()
@@ -4029,6 +4052,12 @@ pub(super) fn interact(
     }
     let over_controls = interact_controls(ui, doc, view, layout, scene, enabled, out);
     update_hover_shape(view, doc.sheet(), scene, response, over_controls);
+    if !over_controls
+        && view.board_input.gesture.is_none()
+        && let Some(tip) = object_tooltip(view, doc.sheet(), scene, response)
+    {
+        response.clone().on_hover_text(tip);
+    }
     let connecting = match view.board_input.gesture.as_ref().map(|drag| &drag.kind) {
         Some(GestureKind::Create {
             tool: BoardTool::Connector,

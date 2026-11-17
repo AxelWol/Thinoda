@@ -840,6 +840,11 @@ impl Sheet {
         self.canvas.has_connector_labels()
     }
 
+    /// Whether the sheet needs object-data-aware persistence.
+    pub fn has_object_data(&self) -> bool {
+        self.canvas.has_object_data()
+    }
+
     /// Whether the sheet needs draw.io segment-route-aware persistence.
     pub fn has_drawio_segment_routes(&self) -> bool {
         self.canvas.has_drawio_segment_routes()
@@ -2652,6 +2657,11 @@ impl Workbook {
     /// Whether any sheet needs connector-label-aware persistence.
     pub fn has_connector_labels(&self) -> bool {
         self.sheets.iter().any(Sheet::has_connector_labels)
+    }
+
+    /// Whether any sheet needs object-data-aware persistence.
+    pub fn has_object_data(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_object_data)
     }
 
     /// Whether any sheet needs draw.io segment-route-aware persistence.

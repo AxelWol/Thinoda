@@ -189,7 +189,7 @@ pub(crate) fn import_warning_label(warning: thinoda_io::ImportWarning) -> &'stat
             "draw.io folded notes may be flattened or simplified"
         }
         ImportWarning::DrawioPlaceholdersUnsupported => {
-            "draw.io placeholders are not resolved and their data is not preserved"
+            "Some draw.io placeholders, such as dates, page numbers or those in frames and topics, are not kept as live fields"
         }
         ImportWarning::DrawioSceneLayoutNotPreserved => {
             "draw.io container layout was only partially preserved; unsupported child-layout, margin, fill, or resize settings may change behavior"
@@ -1056,6 +1056,21 @@ const DE: &[(&str, &str)] = &[
         "Gebogene Verbinder behalten Linienbrücken, zeichnen sie aber nicht.",
     ),
     ("Tick jumps", "Strichbrücken"),
+    ("Go to page", "Zur Seite"),
+    (
+        "The linked page is not in this document",
+        "Die verlinkte Seite ist nicht in diesem Dokument",
+    ),
+    ("Page link", "Seitenlink"),
+    ("Tags", "Tags"),
+    ("Replace placeholders", "Platzhalter ersetzen"),
+    (
+        "Replace %name% in the text with property values",
+        "%name% im Text durch Eigenschaftswerte ersetzen",
+    ),
+    ("Remove property", "Eigenschaft entfernen"),
+    ("New property", "Neue Eigenschaft"),
+    ("Add property", "Eigenschaft hinzufügen"),
     ("Connector labels", "Verbindungsbeschriftungen"),
     ("Position main label", "Hauptbeschriftung positionieren"),
     ("Label text", "Beschriftungstext"),
@@ -1739,8 +1754,8 @@ const DE: &[(&str, &str)] = &[
         "Gefaltete draw.io-Notizen können abgeflacht oder vereinfacht werden",
     ),
     (
-        "draw.io placeholders are not resolved and their data is not preserved",
-        "draw.io-Platzhalter werden nicht aufgelöst und ihre Daten nicht übernommen",
+        "Some draw.io placeholders, such as dates, page numbers or those in frames and topics, are not kept as live fields",
+        "Manche draw.io-Platzhalter, etwa Datumsangaben, Seitenzahlen oder solche in Rahmen und Themen, bleiben keine dynamischen Felder",
     ),
     (
         "draw.io container layout was only partially preserved; unsupported child-layout, margin, fill, or resize settings may change behavior",
@@ -5633,6 +5648,15 @@ mod tests {
             "Draw a jump where this connector crosses connectors painted before it.",
             "Curved connectors keep line jumps but do not draw them.",
             "Tick jumps",
+            "Go to page",
+            "The linked page is not in this document",
+            "Page link",
+            "Tags",
+            "Replace placeholders",
+            "Replace %name% in the text with property values",
+            "Remove property",
+            "New property",
+            "Add property",
             "Connector labels",
             "Position main label",
             "Label text",
@@ -5728,7 +5752,7 @@ mod tests {
             "draw.io page background was approximated or omitted",
             "Page background may differ in draw.io",
             "draw.io folded notes may be flattened or simplified",
-            "draw.io placeholders are not resolved and their data is not preserved",
+            "Some draw.io placeholders, such as dates, page numbers or those in frames and topics, are not kept as live fields",
             "Cards may show folded corners in draw.io",
             "The first draw.io page has no pasteable items; additional pages were not pasted.",
             "The draw.io page has no pasteable items.",

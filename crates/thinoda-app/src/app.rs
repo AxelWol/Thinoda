@@ -2276,6 +2276,25 @@ impl ThinodaApp {
         }
     }
     pub fn open_link(&mut self, link: &str) {
+        if let Some(page) = thinoda_core::object_data::page_link_target(link) {
+            let index = self.doc().and_then(|doc| {
+                doc.doc.workbook().sheets.iter().position(|sheet| {
+                    sheet
+                        .drawio
+                        .as_ref()
+                        .and_then(|drawio| drawio.diagram_id.as_deref())
+                        == Some(page)
+                })
+            });
+            match index {
+                Some(index) => self.switch_sheet(index),
+                None => {
+                    self.toasts
+                        .warning(t("The linked page is not in this document"));
+                }
+            }
+            return;
+        }
         if let Err(e) = system::open_url(link) {
             self.toasts.error(format!("{link}: {e}"));
         }
@@ -5715,6 +5734,33 @@ mod tests {
         let d = app.doc().unwrap();
         assert_eq!(d.view.selection, vec![id]);
         assert!(!d.doc.sheet().topic(first).unwrap().collapsed);
+    }
+
+    #[test]
+    fn page_links_switch_to_the_linked_drawio_page() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let mut other = thinoda_core::Sheet::new("Network", "Anchor");
+        other.drawio = Some(std::sync::Arc::new(
+            thinoda_core::drawio_passthrough::DrawioPagePassthrough {
+                diagram_id: Some("page-2".into()),
+                ..Default::default()
+            },
+        ));
+        doc.doc.add_sheet(other).unwrap();
+        doc.doc.set_active(0);
+
+        app.open_link("data:page/id,page-2");
+        assert_eq!(app.doc().unwrap().doc.active_index(), 1);
+
+        app.switch_sheet(0);
+        app.open_link("data:page/id,missing");
+        assert_eq!(app.doc().unwrap().doc.active_index(), 0);
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text.contains(t("The linked page is not in this document")))
+        );
     }
 
     #[test]

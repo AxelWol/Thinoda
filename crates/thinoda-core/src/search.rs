@@ -38,6 +38,8 @@ pub struct SearchHit {
 pub enum CanvasMatchField {
     Label,
     AltText,
+    /// A tag or custom property value.
+    Data,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,6 +355,14 @@ pub fn search_canvas(
                 CanvasMatchField::Label
             } else if matches(&object.alt_text, needle, opts) {
                 CanvasMatchField::AltText
+            } else if object.data.as_ref().is_some_and(|data| {
+                data.tags.iter().any(|tag| matches(tag, needle, opts))
+                    || data
+                        .properties
+                        .iter()
+                        .any(|(_, value)| matches(value, needle, opts))
+            }) {
+                CanvasMatchField::Data
             } else {
                 return None;
             };
@@ -450,6 +460,18 @@ pub fn replace_in_canvas(
         }
         found.insert(object.id);
         count += replace_text(&mut object.alt_text, needle, replacement, opts);
+        // Tags are names, so only property values change.
+        if let Some(data) = &mut object.data {
+            let mut values = 0;
+            let mut changed = (**data).clone();
+            for (_, value) in &mut changed.properties {
+                values += replace_text(value, needle, replacement, opts);
+            }
+            if values > 0 {
+                *data = std::sync::Arc::new(changed);
+                count += values;
+            }
+        }
         let label = match &mut object.kind {
             CanvasObjectKind::Shape { label, .. } => Some(label),
             CanvasObjectKind::Connector(connector) => Some(&mut connector.label),

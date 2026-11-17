@@ -3507,6 +3507,17 @@ impl ThinodaApp {
         let gesture_active = doc.view.has_active_canvas_gesture();
         let mut edited = original.clone();
         let mut clear_waypoints = false;
+        let mut open_link = None;
+        let page_titles: Vec<(String, String)> = doc
+            .doc
+            .workbook()
+            .sheets
+            .iter()
+            .filter_map(|sheet| {
+                let page = sheet.drawio.as_ref()?.diagram_id.clone()?;
+                Some((page, sheet.title.clone()))
+            })
+            .collect();
         ui.label(
             egui::RichText::new(t(match &original.kind {
                 CanvasObjectKind::Shape { shape, .. } => shape_name(*shape),
@@ -3869,7 +3880,13 @@ impl ThinodaApp {
                     }
                 }
             }
+            if !matches!(edited.kind, CanvasObjectKind::Ink(_)) {
+                open_link = object_data_fields(ui, id, &mut edited, &page_titles);
+            }
         });
+        if let Some(link) = open_link {
+            self.open_link(&link);
+        }
         if edited != original || clear_waypoints {
             let result = (|| {
                 let doc = self
@@ -3884,6 +3901,7 @@ impl ThinodaApp {
                         current.rectangle_sides = edited.rectangle_sides;
                         current.double_ellipse_margin = edited.double_ellipse_margin;
                         current.stencil = edited.stencil;
+                        current.data = edited.data;
                         match (&mut current.kind, edited.kind) {
                             (
                                 CanvasObjectKind::Shape { shape, .. },
@@ -5235,6 +5253,125 @@ fn edge_shape_fields(
             t("This line shape keeps line jumps but does not draw them."),
         );
     }
+}
+
+/// The object's draw.io data: link, tags, custom properties and placeholders.
+/// Returns a link the user asked to open or a page link to follow;
+/// `pages` pairs draw.io page ids with sheet titles.
+fn object_data_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    object: &mut CanvasObject,
+    pages: &[(String, String)],
+) -> Option<String> {
+    use thinoda_core::object_data::{ObjectData, page_link_target, valid_property_name};
+    let mut open = None;
+    let original = object.data.as_deref().cloned().unwrap_or_default();
+    let mut data = original.clone();
+    let mut error = None;
+    egui::CollapsingHeader::new(t("Data"))
+        .id_salt(("board_object_data", id))
+        .default_open(!data.is_empty())
+        .show(ui, |ui| {
+            let mut link = data.link.clone().unwrap_or_default();
+            widgets::property_field(ui, t("Link"), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut link).hint_text("https://"))
+            });
+            data.link = (!link.trim().is_empty()).then_some(link);
+            if let Some(link) = &data.link {
+                if let Some(page) = page_link_target(link) {
+                    let title = pages
+                        .iter()
+                        .find(|(id, _)| id == page)
+                        .map(|(_, title)| title.as_str());
+                    widgets::caption(ui, format!("{}: {}", t("Page link"), title.unwrap_or(page)));
+                    if ui
+                        .add_enabled(title.is_some(), egui::Button::new(t("Go to page")))
+                        .clicked()
+                    {
+                        open = Some(link.clone());
+                    }
+                } else if ui
+                    .add_enabled(
+                        thinoda_platform::system::is_openable_url(link),
+                        egui::Button::new(t("Open Link")),
+                    )
+                    .clicked()
+                {
+                    open = Some(link.clone());
+                }
+            }
+            let tags_id = egui::Id::unique(("board_object_tags", id));
+            let mut tags = ui
+                .data_mut(|memory| memory.get_temp::<String>(tags_id))
+                .unwrap_or_else(|| data.tags_text());
+            let response = widgets::property_field(ui, t("Tags"), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut tags))
+            });
+            if response.changed() {
+                data.tags = ObjectData::parse_tags(&tags);
+            }
+            let focused = response.has_focus();
+            ui.data_mut(|memory| {
+                if focused {
+                    memory.insert_temp(tags_id, tags);
+                } else {
+                    memory.remove::<String>(tags_id);
+                }
+            });
+            ui.checkbox(&mut data.placeholders, t("Replace placeholders"))
+                .on_hover_text(t("Replace %name% in the text with property values"));
+            let mut remove = None;
+            for (index, (name, value)) in data.properties.iter_mut().enumerate() {
+                widgets::property_field(ui, name, |ui| {
+                    if ui
+                        .small_button(t("Remove"))
+                        .on_hover_text(t("Remove property"))
+                        .clicked()
+                    {
+                        remove = Some(index);
+                    }
+                    ui.add(egui::TextEdit::singleline(value).desired_width(140.0))
+                });
+            }
+            if let Some(index) = remove {
+                data.properties.remove(index);
+            }
+            let name_id = egui::Id::unique(("board_object_new_property", id));
+            let mut name = ui
+                .data_mut(|memory| memory.get_temp::<String>(name_id))
+                .unwrap_or_default();
+            let taken = |name: &str| {
+                data.property(name).is_some()
+                    || object
+                        .drawio
+                        .as_ref()
+                        .is_some_and(|drawio| drawio.attributes.iter().any(|(key, _)| key == name))
+            };
+            let addable = valid_property_name(name.trim()) && !taken(name.trim());
+            let mut add = false;
+            widgets::property_field(ui, t("New property"), |ui| {
+                add = ui
+                    .add_enabled(addable, egui::Button::new(t("Add property")))
+                    .clicked();
+                ui.add(egui::TextEdit::singleline(&mut name).desired_width(110.0))
+            });
+            if add {
+                data.properties
+                    .push((name.trim().to_owned(), String::new()));
+                name.clear();
+            }
+            ui.data_mut(|memory| memory.insert_temp(name_id, name));
+            if let Err(message) = data.validate() {
+                error = Some(message);
+            }
+        });
+    if let Some(message) = error {
+        widgets::caption(ui, message);
+    } else if data != original {
+        object.data = (!data.is_empty()).then(|| std::sync::Arc::new(data));
+    }
+    open
 }
 
 /// Positioned connector labels (draw.io edge-label children).
@@ -10332,6 +10469,118 @@ mod tests {
                 .alt_text,
             ""
         );
+    }
+
+    #[test]
+    fn object_data_inspector_edits_link_tags_and_properties() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .edit_sheet("Shape", |sheet| {
+                sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        BoardRect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1400.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Data").click();
+        harness.run_steps(3);
+        for (label, text) in [
+            ("Link", "https://example.com"),
+            ("Tags", "alpha beta alpha"),
+        ] {
+            harness
+                .get_by_role_and_label(egui::Role::TextInput, label)
+                .click();
+            harness.run_steps(2);
+            harness
+                .get_by_role_and_label(egui::Role::TextInput, label)
+                .type_text(text);
+            harness.run_steps(2);
+        }
+        assert!(
+            !harness
+                .get_by_label("Open Link")
+                .accesskit_node()
+                .is_disabled(),
+            "an https link can be opened"
+        );
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .type_text("owner");
+        harness.run_steps(2);
+        harness.get_by_label("Add property").click();
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "owner")
+            .click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "owner")
+            .type_text("ops");
+        harness.run_steps(2);
+        let data = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .data
+            .clone()
+            .expect("object data");
+        assert_eq!(data.link.as_deref(), Some("https://example.com"));
+        assert_eq!(data.tags, ["alpha", "beta"]);
+        assert_eq!(data.property("owner"), Some("ops"));
+        // A reserved or duplicate name cannot be added.
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "New property")
+            .type_text("owner");
+        harness.run_steps(2);
+        assert!(
+            harness
+                .get_by_label("Add property")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Remove").click();
+        harness.run_steps(3);
+        let data = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .data
+            .clone()
+            .expect("object data");
+        assert!(data.properties.is_empty());
     }
 
     #[test]

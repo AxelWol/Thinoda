@@ -413,6 +413,11 @@ impl CanvasLayer {
     pub fn has_drawio_passthrough(&self) -> bool {
         self.objects.iter().any(|object| object.drawio.is_some())
     }
+
+    /// Whether this layer needs object-data-aware persistence.
+    pub fn has_object_data(&self) -> bool {
+        self.objects.iter().any(|object| object.data.is_some())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -643,6 +648,9 @@ pub struct CanvasObject {
     /// Imported draw.io data without a Thinoda field, kept for round trips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drawio: Option<std::sync::Arc<crate::drawio_passthrough::DrawioCellPassthrough>>,
+    /// Link, tags, custom properties and the placeholder flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<std::sync::Arc<crate::object_data::ObjectData>>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -667,6 +675,7 @@ impl CanvasObject {
             double_ellipse_margin: None,
             stencil: None,
             drawio: None,
+            data: None,
         }
     }
 
@@ -2336,6 +2345,24 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             .validate()
             .map_err(|error| format!("canvas object {id}: {error}"))?;
     }
+    if let Some(data) = &object.data {
+        if data.is_empty() {
+            return Err(format!("canvas object {id} has empty object data"));
+        }
+        data.validate()
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+        // Each attribute has one owner, so export never writes a name twice.
+        if let Some(drawio) = &object.drawio
+            && drawio.attributes.iter().any(|(name, _)| {
+                matches!(name.as_str(), "link" | "tags" | "placeholders")
+                    || data.property(name).is_some()
+            })
+        {
+            return Err(format!(
+                "canvas object {id} has object data that repeats draw.io attributes"
+            ));
+        }
+    }
     let style = &object.style;
     if !valid_width(style.stroke_width) {
         return Err(format!("canvas object {id} has an invalid stroke width"));
@@ -2735,6 +2762,7 @@ pub(crate) fn mask_canvas(sheet: &mut Sheet) {
         // Package programs and metadata can contain private text; use the legacy fallback.
         object.stencil = None;
         object.drawio = None;
+        object.data = None;
         match &mut object.kind {
             CanvasObjectKind::Shape { label, .. } if !label.is_empty() => {
                 *label = format!("Shape {}", index + 1);

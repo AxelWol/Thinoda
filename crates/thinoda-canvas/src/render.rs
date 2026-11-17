@@ -762,6 +762,12 @@ fn paint_objects_in_band(
         let object = stencil_handle_preview
             .filter(|preview| preview.id == id)
             .unwrap_or(object);
+        let resolved = thinoda_core::object_data::with_resolved_placeholders(
+            &sheet.canvas,
+            object,
+            Some(&sheet.title),
+        );
+        let object = resolved.as_ref();
         if !object_in_viewport(object, item, xf.zoom, viewport) {
             continue;
         }

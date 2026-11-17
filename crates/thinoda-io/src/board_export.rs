@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 43;
+pub const NATIVE_FORMAT_VERSION: u64 = 44;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -33,10 +33,12 @@ pub const NATIVE_FORMAT_VERSION: u64 = 43;
 /// 37 draw.io round-trip passthrough, and 38 draw.io library connector markers,
 /// and 39 connector line jumps, and 40 draw.io edge routes, and 41 draw.io
 /// segment and isometric routes, and 42 connector edge shapes, and 43
-/// positioned and multiple connector labels.
+/// positioned and multiple connector labels, and 44 object data.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_connector_labels() {
+    if book.has_object_data() {
+        44
+    } else if book.has_connector_labels() {
         43
     } else if book.has_connector_edge_shapes() {
         42

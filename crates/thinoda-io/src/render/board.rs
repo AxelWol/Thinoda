@@ -2,7 +2,7 @@
 //! editable PowerPoint renderers. Objects are reduced to absolute, already rotated
 //! primitives so both back ends draw identical geometry from the shared core scene.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
@@ -120,7 +120,7 @@ pub(crate) fn band_items<'a>(
     sheet: &'a Sheet,
     scene: &'a Scene,
     band: SceneBand,
-) -> impl Iterator<Item = (&'a SceneItem, &'a CanvasObject)> + 'a {
+) -> impl Iterator<Item = (&'a SceneItem, Cow<'a, CanvasObject>)> + 'a {
     let objects: HashMap<_, _> = sheet
         .canvas
         .objects
@@ -135,7 +135,14 @@ pub(crate) fn band_items<'a>(
             let SceneId::Object(id) = item.id else {
                 return None;
             };
-            objects.get(&id).copied().map(|object| (item, object))
+            objects.get(&id).copied().map(|object| {
+                let object = thinoda_core::object_data::with_resolved_placeholders(
+                    &sheet.canvas,
+                    object,
+                    Some(&sheet.title),
+                );
+                (item, object)
+            })
         })
 }
 

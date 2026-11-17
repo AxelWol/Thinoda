@@ -65,7 +65,7 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
 fn drawio_placeholder_data_loss_requires_confirmation() {
     for tag in ["object", "UserObject"] {
         let xml = page(&format!(
-            r#"<{tag} id="a" label="Width %width%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></{tag}>"#
+            r#"<{tag} id="a" label="Width %width% on %date%" placeholders="1"><mxCell style="shape=rectangle;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell></{tag}>"#
         ));
         let report = load(&xml);
         assert_eq!(
@@ -75,7 +75,7 @@ fn drawio_placeholder_data_loss_requires_confirmation() {
         );
         assert_eq!(
             shapes(&report.workbook.sheets[0])[0].label(),
-            "Width %width%"
+            "Width %width% on %date%"
         );
         assert!(matches!(
             crate::import_bytes(Format::DrawIo, xml.as_bytes()),
@@ -9734,13 +9734,10 @@ fn drawio_passthrough_round_trips_unknown_style_attributes_and_ids() {
         "{:?}",
         drawio.style
     );
-    assert_eq!(
-        drawio.attributes,
-        [
-            ("owner".into(), "ops".into()),
-            ("placeholders".into(), "1".into())
-        ]
-    );
+    assert!(drawio.attributes.is_empty(), "{:?}", drawio.attributes);
+    let data = a.data.as_ref().unwrap();
+    assert_eq!(data.properties, [("owner".into(), "ops".into())]);
+    assert!(data.placeholders);
     let page = sheet.drawio.as_ref().unwrap();
     assert_eq!(page.diagram_id.as_deref(), Some("diag-1"));
     assert_eq!(page.model_attributes, [("futureFlag".into(), "on".into())]);
@@ -9748,7 +9745,7 @@ fn drawio_passthrough_round_trips_unknown_style_attributes_and_ids() {
     let native = crate::formats::native_export(&report.workbook).unwrap();
     let reopened = crate::formats::native_import(&native).unwrap();
     assert!(reopened.has_drawio_passthrough());
-    assert_eq!(crate::required_native_version(&reopened), 37);
+    assert_eq!(crate::required_native_version(&reopened), 44);
     let content = serde_json::to_vec(&reopened).unwrap();
     let old = crate::formats::archive(&[
         (
@@ -9766,7 +9763,7 @@ fn drawio_passthrough_round_trips_unknown_style_attributes_and_ids() {
     for needle in [
         "<diagram id=\"diag-1\"",
         "futureFlag=\"on\"",
-        "id=\"node-a\" owner=\"ops\" placeholders=\"1\"",
+        "id=\"node-a\" placeholders=\"1\" owner=\"ops\"",
         "customKey=alpha;",
         "id=\"e1\"",
         "anotherKey=7;",
@@ -9783,7 +9780,77 @@ fn drawio_passthrough_round_trips_unknown_style_attributes_and_ids() {
         .iter()
         .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("node-a"))
         .unwrap();
-    assert_eq!(a.drawio.as_ref().unwrap().attributes.len(), 2);
+    assert_eq!(a.data, reopened.sheets[0].canvas.objects[0].data);
+}
+
+#[test]
+fn drawio_object_data_imports_edits_and_exports() {
+    let xml = page(concat!(
+        r#"<UserObject label="Web" id="web" tooltip="Front door" link="https://example.com/web" tags="prod  web prod" subnet="10.0.0.0/24" placeholder="1"><mxCell style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell></UserObject>"#,
+        r#"<mxCell id="db" value="DB" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<UserObject label="reads" id="flow" link="data:page/id,page-2" protocol="tcp"><mxCell style="endArrow=classic;html=1;" edge="1" parent="1" source="web" target="db"><mxGeometry relative="1" as="geometry"/></mxCell></UserObject>"#,
+    ));
+    let report = load(&xml);
+    assert!(
+        !report.warnings.contains(&ImportWarning::Links),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = &report.workbook.sheets[0];
+    let source = |id: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(id))
+            .unwrap()
+    };
+    let web = source("web");
+    assert_eq!(web.alt_text, "Front door");
+    let data = web.data.as_ref().unwrap();
+    assert_eq!(data.link.as_deref(), Some("https://example.com/web"));
+    assert_eq!(data.tags, ["prod", "web"]);
+    assert_eq!(data.properties, [("subnet".into(), "10.0.0.0/24".into())]);
+    // `placeholder` has a draw.io meaning of its own and stays passthrough.
+    assert_eq!(
+        web.drawio.as_ref().unwrap().attributes,
+        [("placeholder".into(), "1".into())]
+    );
+    let flow = source("flow").data.as_ref().unwrap();
+    assert_eq!(flow.page_link(), Some("page-2"));
+    assert_eq!(flow.property("protocol"), Some("tcp"));
+    assert_eq!(source("db").data, None);
+
+    let mut book = report.workbook.clone();
+    let id = source("web").id;
+    let object = book.sheets[0].canvas.object_mut(id).unwrap();
+    let mut edited = (**object.data.as_ref().unwrap()).clone();
+    edited.tags = vec!["edited".into()];
+    edited.properties.push(("owner".into(), "Ada & Bob".into()));
+    object.data = Some(Arc::new(edited));
+    let out = String::from_utf8(export(&book).unwrap()).unwrap();
+    for needle in [
+        r#"tooltip="Front door""#,
+        r#"link="https://example.com/web" tags="edited" subnet="10.0.0.0/24" owner="Ada &amp; Bob" placeholder="1""#,
+        r#"link="data:page/id,page-2" protocol="tcp""#,
+    ] {
+        assert!(out.contains(needle), "missing {needle}: {out}");
+    }
+    let again = load(&out).workbook;
+    let reopened: Vec<_> = again.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .map(|o| o.data.clone())
+        .collect();
+    let expected: Vec<_> = book.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .map(|o| o.data.clone())
+        .collect();
+    assert_eq!(reopened, expected);
+    assert!(!book.masked_copy().has_object_data());
 }
 
 #[test]
