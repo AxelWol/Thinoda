@@ -1,3 +1,5 @@
+_Last updated: 2026-11-16 15:50:47 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Rubber-duck review: socio-technical concept and common swimlanes
 
 Date: 2026-11-13. Scope: [concept and phases](SOCIO-TECHNICAL.md),

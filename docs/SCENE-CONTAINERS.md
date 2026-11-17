@@ -1,3 +1,5 @@
+_Last updated: 2026-11-16 15:50:47 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Common nested containers and swimlanes
 
 Research and design: 2026-11-13. **Implementation in progress; SC0/SC1 remain

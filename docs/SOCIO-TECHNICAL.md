@@ -1,3 +1,5 @@
+_Last updated: 2026-11-16 15:50:47 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Socio-technical diagrams: research, concept and phased execution
 
 Research date: 2026-11-13. Status: **approved for staged implementation**.
