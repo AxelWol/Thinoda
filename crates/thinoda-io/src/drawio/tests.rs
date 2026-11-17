@@ -9898,6 +9898,94 @@ fn library_connector_markers_round_trip_and_require_native_version_thirty_eight(
 }
 
 #[test]
+fn drawio_edge_styles_round_trip_and_warn_only_when_approximated() {
+    let edge = |style: &str, points: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="endArrow=none;{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/>{points}</mxGeometry></mxCell>"#
+        ))
+    };
+    let hint = r#"<Array as="points"><mxPoint x="40" y="70"/><mxPoint x="60" y="80"/></Array>"#;
+    for (style, expected) in [
+        ("edgeStyle=elbowEdgeStyle;", ConnectorRoute::ElbowHorizontal),
+        (
+            "edgeStyle=elbowEdgeStyle;elbow=horizontal;",
+            ConnectorRoute::ElbowHorizontal,
+        ),
+        (
+            "edgeStyle=elbowEdgeStyle;elbow=vertical;",
+            ConnectorRoute::ElbowVertical,
+        ),
+        ("edgeStyle=sideToSideEdgeStyle;", ConnectorRoute::SideToSide),
+        (
+            "edgeStyle=topToBottomEdgeStyle;",
+            ConnectorRoute::TopToBottom,
+        ),
+        (
+            "edgeStyle=entityRelationEdgeStyle;",
+            ConnectorRoute::EntityRelation,
+        ),
+        (
+            "edgeStyle=entityRelationEdgeStyle;segment=30;",
+            ConnectorRoute::EntityRelation,
+        ),
+    ] {
+        // Waypoints are routing hints draw.io honours the same way.
+        let report = load(&edge(style, hint));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.route, expected, "{style}");
+        assert_eq!(connector.waypoints.len(), 2);
+        assert_eq!(feature_version(&report.workbook), 40);
+        let exported = export(&report.workbook).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&exported).contains("elbow=vertical"),
+            expected == ConnectorRoute::ElbowVertical
+        );
+        let restored = import(&exported).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+        let restored = connectors(&restored.workbook.sheets[0])[0];
+        assert_eq!(restored.route, expected, "{style}");
+        assert_eq!(restored.waypoints, connector.waypoints, "{style}");
+    }
+    // Routers Thinoda only approximates with its orthogonal elbow still warn,
+    // as do non-default entity-relation segments and hints on orthogonal edges.
+    for (style, points) in [
+        ("edgeStyle=segmentEdgeStyle;", ""),
+        ("edgeStyle=isometricEdgeStyle;", ""),
+        ("edgeStyle=loopEdgeStyle;", ""),
+        ("edgeStyle=entityRelationEdgeStyle;segment=12;", ""),
+        ("edgeStyle=orthogonalEdgeStyle;", hint),
+    ] {
+        let report = load(&edge(style, points));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+    let report = load(&edge("edgeStyle=segmentEdgeStyle;", ""));
+    assert_eq!(
+        connectors(&report.workbook.sheets[0])[0].route,
+        ConnectorRoute::Elbow
+    );
+    // Without a routed style the orientation key means nothing and is dropped.
+    let report = load(&edge("elbow=vertical;", ""));
+    assert_eq!(
+        connectors(&report.workbook.sheets[0])[0].route,
+        ConnectorRoute::Straight
+    );
+    assert!(
+        !String::from_utf8(export(&report.workbook).unwrap())
+            .unwrap()
+            .contains("elbow=")
+    );
+}
+
+#[test]
 fn line_jumps_round_trip_and_warn_for_unmodelled_jump_options() {
     use thinoda_core::board::{LineJumpStyle, LineJumps};
 

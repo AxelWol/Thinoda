@@ -51,6 +51,7 @@ const CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-29\n"
 const DRAWIO_PASSTHROUGH_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-30\n";
 const MARKER_LIBRARY_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-31\n";
 const LINE_JUMPS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-32\n";
+const EDGE_ROUTES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-33\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -69,7 +70,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_connector_line_jumps() {
+        if self.fragment.has_drawio_edge_routes() {
+            EDGE_ROUTES_BOARD_PREFIX
+        } else if self.fragment.has_connector_line_jumps() {
             LINE_JUMPS_BOARD_PREFIX
         } else if self.fragment.has_library_connector_markers() {
             MARKER_LIBRARY_BOARD_PREFIX
@@ -335,9 +338,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(LINE_JUMPS_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-32\r\n"))
-        .map(|json| (32, json))
+        .strip_prefix(EDGE_ROUTES_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-33\r\n"))
+        .map(|json| (33, json))
+        .or_else(|| {
+            text.strip_prefix(LINE_JUMPS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-32\r\n"))
+                .map(|json| (32, json))
+        })
         .or_else(|| {
             text.strip_prefix(MARKER_LIBRARY_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-31\r\n"))
@@ -499,6 +507,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         serde_json::from_str(json).map_err(|error| error.to_string())?;
     if version < 30 && payload.fragment.has_drawio_passthrough() {
         return Err("draw.io passthrough requires board clipboard version 30".into());
+    }
+    if version < 33 && payload.fragment.has_drawio_edge_routes() {
+        return Err("draw.io edge routes require board clipboard version 33".into());
     }
     if version < 32 && payload.fragment.has_connector_line_jumps() {
         return Err("connector line jumps require board clipboard version 32".into());

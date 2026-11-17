@@ -99,6 +99,8 @@ const MARKER_LIBRARY_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKER-LIBRARY-1
 const MARKER_LIBRARY_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKER-LIBRARY-1";
 const LINE_JUMPS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-LINE-JUMPS-1";
 const LINE_JUMPS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-LINE-JUMPS-1";
+const EDGE_ROUTES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-EDGE-ROUTES-1";
+const EDGE_ROUTES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-EDGE-ROUTES-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -120,7 +122,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_connector_line_jumps() {
+        tuple.serialize_element(if self.workbook.has_drawio_edge_routes() {
+            EDGE_ROUTES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_connector_line_jumps() {
             LINE_JUMPS_INK_WORKBOOK_VERSION
         } else if self.workbook.has_library_connector_markers() {
             MARKER_LIBRARY_INK_WORKBOOK_VERSION
@@ -242,7 +246,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_connector_line_jumps() {
+    let version = if workbook.has_drawio_edge_routes() {
+        EDGE_ROUTES_WORKBOOK_VERSION
+    } else if workbook.has_connector_line_jumps() {
         LINE_JUMPS_WORKBOOK_VERSION
     } else if workbook.has_library_connector_markers() {
         MARKER_LIBRARY_WORKBOOK_VERSION
@@ -331,6 +337,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_drawio_edge_routes() {
+                return Err(A::Error::custom(
+                    "draw.io edge routes require an edge-route-aware recovery workbook",
+                ));
+            }
             if workbook.has_connector_line_jumps() {
                 return Err(A::Error::custom(
                     "connector line jumps require a line-jump-aware recovery workbook",
@@ -466,6 +477,8 @@ where
                 && version != MARKER_LIBRARY_INK_WORKBOOK_VERSION
                 && version != LINE_JUMPS_WORKBOOK_VERSION
                 && version != LINE_JUMPS_INK_WORKBOOK_VERSION
+                && version != EDGE_ROUTES_WORKBOOK_VERSION
+                && version != EDGE_ROUTES_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -475,6 +488,32 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let edge_routes_envelope = version == EDGE_ROUTES_WORKBOOK_VERSION
+                || version == EDGE_ROUTES_INK_WORKBOOK_VERSION;
+            if workbook.has_drawio_edge_routes() != edge_routes_envelope {
+                return Err(A::Error::custom(
+                    "draw.io edge routes require an edge-route-aware recovery workbook",
+                ));
+            }
+            let version = match (
+                edge_routes_envelope,
+                workbook.has_connector_line_jumps(),
+                workbook.has_library_connector_markers(),
+                workbook.has_semantic_model(),
+                has_pending_ink,
+            ) {
+                (false, ..) => version,
+                (true, true, _, _, true) => LINE_JUMPS_INK_WORKBOOK_VERSION.to_owned(),
+                (true, true, _, _, false) => LINE_JUMPS_WORKBOOK_VERSION.to_owned(),
+                (true, false, true, _, true) => MARKER_LIBRARY_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, true, _, false) => MARKER_LIBRARY_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, true, true) => SEMANTIC_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, true, false) => SEMANTIC_WORKBOOK_VERSION.to_owned(),
+                (true, false, false, false, true) => {
+                    COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION.to_owned()
+                }
+                (true, false, false, false, false) => COLLAPSE_LAYOUT_WORKBOOK_VERSION.to_owned(),
+            };
             let line_jumps_envelope = version == LINE_JUMPS_WORKBOOK_VERSION
                 || version == LINE_JUMPS_INK_WORKBOOK_VERSION;
             if workbook.has_connector_line_jumps() != line_jumps_envelope {
@@ -2462,6 +2501,61 @@ mod lock_tests {
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn edge_routes_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorRoute, Endpoint, LineJumpStyle, LineJumps, Vec2,
+        };
+
+        for jumps in [false, true] {
+            let mut book = Workbook::default();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::ZERO),
+                Endpoint::Point(Vec2::new(100.0, 40.0)),
+            );
+            connector.route = ConnectorRoute::TopToBottom;
+            if jumps {
+                connector.line_jumps = Some(LineJumps::new(LineJumpStyle::Gap));
+            }
+            book.active_mut()
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION
+                    } else {
+                        EDGE_ROUTES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    LINE_JUMPS_INK_WORKBOOK_VERSION
+                } else {
+                    LINE_JUMPS_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
         }
     }
 

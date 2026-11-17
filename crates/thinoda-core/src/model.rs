@@ -825,6 +825,11 @@ impl Sheet {
         self.canvas.has_connector_line_jumps()
     }
 
+    /// Whether the sheet needs draw.io edge-route-aware persistence.
+    pub fn has_drawio_edge_routes(&self) -> bool {
+        self.canvas.has_drawio_edge_routes()
+    }
+
     /// Whether the sheet needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.canvas.has_shape_rounding()
@@ -2617,6 +2622,11 @@ impl Workbook {
     /// Whether any sheet needs line-jump-aware persistence.
     pub fn has_connector_line_jumps(&self) -> bool {
         self.sheets.iter().any(Sheet::has_connector_line_jumps)
+    }
+
+    /// Whether any sheet needs draw.io edge-route-aware persistence.
+    pub fn has_drawio_edge_routes(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_edge_routes)
     }
 
     /// Whether any sheet needs adjustable-corner-aware persistence.

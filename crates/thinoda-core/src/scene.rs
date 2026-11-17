@@ -1882,6 +1882,79 @@ impl EndTarget {
             })
             .unwrap_or_else(|| clip_to_rotated_rect(self.rect, self.rotation, toward))
     }
+
+    /// draw.io's orthogonal perimeter projection for routed edge styles: when
+    /// `next` lies within the target's horizontal or vertical span, the end
+    /// leaves the outline straight towards it instead of from the centre.
+    fn clip_orthogonal(&self, next: Vec2) -> Vec2 {
+        let rect = self.rect;
+        if self.rotation != 0.0 || rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+            return self.clip(next);
+        }
+        let max = rect.max();
+        let center = rect.center();
+        let within_x = (rect.min.x..=max.x).contains(&next.x);
+        let within_y = (rect.min.y..=max.y).contains(&next.y);
+        // Rectangular shapes use draw.io's rectangle perimeter unless a
+        // rounded perimeter is requested.
+        let rectangle_perimeter = self.shape.is_none_or(|(kind, rounding)| {
+            matches!(
+                kind,
+                ShapeKind::Rectangle
+                    | ShapeKind::RoundedRectangle
+                    | ShapeKind::Process
+                    | ShapeKind::PredefinedProcess
+            ) && !rounding.is_some_and(|rounding| rounding.rounded_perimeter)
+        });
+        if self.custom_outline.is_none() && rectangle_perimeter {
+            // Exactly mxPerimeter.RectanglePerimeter with `orthogonal` set.
+            let mut point = self.clip(next);
+            if within_x {
+                point.x = next.x;
+            } else if within_y {
+                point.y = next.y;
+            }
+            point.x = point.x.clamp(rect.min.x, max.x);
+            point.y = point.y.clamp(rect.min.y, max.y);
+            if next.x < rect.min.x {
+                point.x = rect.min.x;
+            } else if next.x > max.x {
+                point.x = max.x;
+            }
+            if next.y < rect.min.y {
+                point.y = rect.min.y;
+            } else if next.y > max.y {
+                point.y = max.y;
+            }
+            return point;
+        }
+        let origin = match (within_x, within_y) {
+            (true, false) => Vec2::new(next.x, center.y),
+            (false, true) => Vec2::new(center.x, next.y),
+            _ => return self.clip(next),
+        };
+        if origin == center {
+            return self.clip(next);
+        }
+        let outline = match (&self.custom_outline, self.shape) {
+            (Some(outline), _) if outline.len() >= 3 => outline.clone(),
+            (_, Some((kind, rounding))) => {
+                shape_geometry_with_rounding(kind, rect, 0.0, rounding).outline
+            }
+            _ => vec![
+                rect.min,
+                Vec2::new(max.x, rect.min.y),
+                max,
+                Vec2::new(rect.min.x, max.y),
+            ],
+        };
+        if point_in_polygon(origin, &outline)
+            && let Some(point) = clip_to_polygon(&outline, origin, next)
+        {
+            return point;
+        }
+        self.clip(next)
+    }
 }
 
 fn rounded_perimeter_corner(
@@ -2121,6 +2194,9 @@ fn clip_to_polygon(outline: &[Vec2], center: Vec2, toward: Vec2) -> Option<Vec2>
 }
 
 fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    if connector.route.is_drawio_edge_style() {
+        return drawio_edge_style_path(connector, a, b);
+    }
     if !connector.waypoints.is_empty() {
         return routed_waypoints(connector, a, b);
     }
@@ -2142,7 +2218,205 @@ fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<V
                 .map(|i| cubic(a, c1, c2, b, i as f32 / CURVE_SEGMENTS as f32))
                 .collect()
         }
+        ConnectorRoute::ElbowHorizontal
+        | ConnectorRoute::ElbowVertical
+        | ConnectorRoute::SideToSide
+        | ConnectorRoute::TopToBottom
+        | ConnectorRoute::EntityRelation => drawio_edge_style_path(connector, a, b),
     }
+}
+
+/// draw.io's default `segment` for entity-relation edges.
+const ENTITY_RELATION_SEGMENT: f32 = 30.0;
+
+fn rect_contains(rect: Rect, point: Vec2) -> bool {
+    let max = rect.max();
+    point.x >= rect.min.x && point.x <= max.x && point.y >= rect.min.y && point.y <= max.y
+}
+
+/// JavaScript's `Math.round`, which rounds halves towards positive infinity.
+fn js_round(value: f32) -> f32 {
+    (value + 0.5).floor()
+}
+
+/// Interior points of draw.io's `SideToSide` router (mxEdgeStyle.js).
+fn side_to_side_points(source: Rect, target: Rect, hint: Option<Vec2>) -> Vec<Vec2> {
+    let (source_max, target_max) = (source.max(), target.max());
+    let left = source.min.x.max(target.min.x);
+    let right = source_max.x.min(target_max.x);
+    let x = hint.map_or_else(|| js_round(right + (left - right) / 2.0), |hint| hint.x);
+    let mut y1 = source.center().y;
+    let mut y2 = target.center().y;
+    if let Some(hint) = hint {
+        if (source.min.y..=source_max.y).contains(&hint.y) {
+            y1 = hint.y;
+        }
+        if (target.min.y..=target_max.y).contains(&hint.y) {
+            y2 = hint.y;
+        }
+    }
+    let outside = |point| !rect_contains(source, point) && !rect_contains(target, point);
+    let mut points: Vec<Vec2> = [y1, y2]
+        .into_iter()
+        .map(|y| Vec2::new(x, y))
+        .filter(|&point| outside(point))
+        .collect();
+    if points.len() == 1 {
+        match hint {
+            Some(hint) => {
+                let point = Vec2::new(x, hint.y);
+                if outside(point) {
+                    points.push(point);
+                }
+            }
+            None => {
+                let top = source.min.y.max(target.min.y);
+                let bottom = source_max.y.min(target_max.y);
+                points.push(Vec2::new(x, top + (bottom - top) / 2.0));
+            }
+        }
+    }
+    points
+}
+
+/// Interior points of draw.io's `TopToBottom` router (mxEdgeStyle.js).
+fn top_to_bottom_points(source: Rect, target: Rect, hint: Option<Vec2>) -> Vec<Vec2> {
+    let (source_max, target_max) = (source.max(), target.max());
+    let top = source.min.y.max(target.min.y);
+    let bottom = source_max.y.min(target_max.y);
+    let x1 = hint
+        .filter(|hint| (source.min.x..=source_max.x).contains(&hint.x))
+        .map_or(source.center().x, |hint| hint.x);
+    let y = hint.map_or_else(|| js_round(bottom + (top - bottom) / 2.0), |hint| hint.y);
+    let x2 = hint
+        .filter(|hint| (target.min.x..=target_max.x).contains(&hint.x))
+        .map_or(target.center().x, |hint| hint.x);
+    let outside = |point| !rect_contains(source, point) && !rect_contains(target, point);
+    let mut points: Vec<Vec2> = [x1, x2]
+        .into_iter()
+        .map(|x| Vec2::new(x, y))
+        .filter(|&point| outside(point))
+        .collect();
+    if points.len() == 1 {
+        match hint {
+            Some(hint) => {
+                let point = Vec2::new(hint.x, y);
+                if outside(point) {
+                    points.push(point);
+                }
+            }
+            None => {
+                let left = source.min.x.max(target.min.x);
+                let right = source_max.x.min(target_max.x);
+                points.push(Vec2::new(left + (right - left) / 2.0, y));
+            }
+        }
+    }
+    points
+}
+
+/// draw.io's `ElbowConnector`: side-to-side unless the hint or the terminal
+/// overlap demands top-to-bottom, or `elbow=vertical` prefers it.
+fn elbow_points(source: Rect, target: Rect, hint: Option<Vec2>, vertical: bool) -> Vec<Vec2> {
+    let (source_max, target_max) = (source.max(), target.max());
+    let (force_vertical, force_horizontal) = match hint {
+        Some(hint) => {
+            let left = source.min.x.min(target.min.x);
+            let right = source_max.x.max(target_max.x);
+            let top = source.min.y.min(target.min.y);
+            let bottom = source_max.y.max(target_max.y);
+            (
+                hint.y < top || hint.y > bottom,
+                hint.x < left || hint.x > right,
+            )
+        }
+        None => {
+            let left = source.min.x.max(target.min.x);
+            let right = source_max.x.min(target_max.x);
+            let force_vertical = left == right;
+            let top = source.min.y.max(target.min.y);
+            let bottom = source_max.y.min(target_max.y);
+            (force_vertical, !force_vertical && top == bottom)
+        }
+    };
+    if !force_horizontal && (force_vertical || vertical) {
+        top_to_bottom_points(source, target, hint)
+    } else {
+        side_to_side_points(source, target, hint)
+    }
+}
+
+/// Interior points of draw.io's `EntityRelation` router, which leaves both
+/// terminals horizontally through a fixed-length segment and ignores hints.
+fn entity_relation_points(source: Rect, target: Rect) -> Vec<Vec2> {
+    let segment = ENTITY_RELATION_SEGMENT;
+    let (source_max, target_max) = (source.max(), target.max());
+    let source_left = target_max.x < source.min.x;
+    let target_left = source_max.x < target.min.x;
+    let x0 = if source_left {
+        source.min.x
+    } else {
+        source_max.x
+    };
+    let xe = if target_left {
+        target.min.x
+    } else {
+        target_max.x
+    };
+    let (y0, ye) = (source.center().y, target.center().y);
+    let departure = Vec2::new(x0 + if source_left { -segment } else { segment }, y0);
+    let arrival = Vec2::new(xe + if target_left { -segment } else { segment }, ye);
+    if source_left == target_left {
+        let x = if source_left {
+            x0.min(xe) - segment
+        } else {
+            x0.max(xe) + segment
+        };
+        vec![Vec2::new(x, y0), Vec2::new(x, ye)]
+    } else if (departure.x < arrival.x) == source_left {
+        let middle = y0 + (ye - y0) / 2.0;
+        vec![
+            departure,
+            Vec2::new(departure.x, middle),
+            Vec2::new(arrival.x, middle),
+            arrival,
+        ]
+    } else {
+        vec![departure, arrival]
+    }
+}
+
+/// Path of a connector using one of draw.io's routed edge styles. Like draw.io,
+/// only the first waypoint is a routing hint, and entity relations ignore it.
+fn drawio_edge_style_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let hint = connector
+        .route
+        .uses_waypoint_hint()
+        .then(|| connector.waypoints.first().copied())
+        .flatten();
+    let (source, target) = (a.rect, b.rect);
+    let interior = match connector.route {
+        ConnectorRoute::ElbowHorizontal => elbow_points(source, target, hint, false),
+        ConnectorRoute::ElbowVertical => elbow_points(source, target, hint, true),
+        ConnectorRoute::SideToSide => side_to_side_points(source, target, hint),
+        ConnectorRoute::TopToBottom => top_to_bottom_points(source, target, hint),
+        ConnectorRoute::EntityRelation => entity_relation_points(source, target),
+        ConnectorRoute::Straight | ConnectorRoute::Elbow | ConnectorRoute::Curve => Vec::new(),
+    };
+    // Like mxGraphView, the source end aims at the first route point (or the
+    // target centre) and the target end at the point preceding it.
+    let start = a.clip_orthogonal(interior.first().copied().unwrap_or(target.center()));
+    let end = b.clip_orthogonal(interior.last().copied().unwrap_or(start));
+    let mut points = Vec::with_capacity(interior.len() + 2);
+    push_distinct(&mut points, start);
+    for point in interior {
+        push_distinct(&mut points, point);
+    }
+    push_distinct(&mut points, end);
+    if points.len() == 1 {
+        points.push(points[0]);
+    }
+    points
 }
 
 fn push_distinct(points: &mut Vec<Vec2>, point: Vec2) {
@@ -2536,9 +2810,14 @@ pub fn connector_insert_handles(
     let Some((from, to)) = connector_targets(sheet, layout, connector) else {
         return Vec::new();
     };
+    if connector.route == ConnectorRoute::EntityRelation
+        || (connector.route.uses_waypoint_hint() && !connector.waypoints.is_empty())
+    {
+        return Vec::new();
+    }
     if connector.waypoints.is_empty() {
         let path = routed_path(connector, from, to);
-        if connector.route == ConnectorRoute::Curve {
+        if connector.route == ConnectorRoute::Curve || connector.route.uses_waypoint_hint() {
             return crate::board::polyline_midpoint(&path)
                 .map(|point| {
                     vec![ConnectorInsertHandle {

@@ -201,6 +201,42 @@ fn connector_options_keep_their_popup_on_a_tiny_canvas() {
 }
 
 #[test]
+fn connector_route_menu_offers_every_drawio_edge_style() {
+    let routes = [
+        ("Horizontal elbow", ConnectorRoute::ElbowHorizontal),
+        ("Vertical elbow", ConnectorRoute::ElbowVertical),
+        ("Side to side", ConnectorRoute::SideToSide),
+        ("Top to bottom", ConnectorRoute::TopToBottom),
+        ("Entity relation", ConnectorRoute::EntityRelation),
+    ];
+    let (app, id) = app_with_connector();
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    for (label, route) in routes {
+        if h.query_by_role_and_label(Role::Button, label).is_none() {
+            click(&mut h, Role::Button, "Connector route");
+        }
+        h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+        h.run_steps(4);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        click(&mut h, Role::Button, label);
+        assert_eq!(connector(h.state(), id).route, route, "{label}");
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before, "{label}");
+        assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+        assert_eq!(connector(h.state(), id).route, route, "{label}");
+    }
+    for (name, _) in routes {
+        for language in i18n::Lang::ALL {
+            let translation = i18n::t_in(language, name);
+            assert!(!translation.is_empty(), "{language:?} {name}");
+            if language != i18n::Lang::En {
+                assert_ne!(translation, name, "{language:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn connector_options_label_is_translated_in_every_supported_language() {
     for language in i18n::Lang::ALL {
         let translation = i18n::t_in(language, "Connector options");

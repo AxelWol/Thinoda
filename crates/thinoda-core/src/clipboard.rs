@@ -45,12 +45,15 @@ const SCENE_LAYOUT_SHEET_PREFIX: &str = "THINODA-SHEET-25\n";
 const SEMANTIC_SHEET_PREFIX: &str = "THINODA-SHEET-26\n";
 const MARKER_LIBRARY_SHEET_PREFIX: &str = "THINODA-SHEET-27\n";
 const LINE_JUMPS_SHEET_PREFIX: &str = "THINODA-SHEET-28\n";
+const EDGE_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-29\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_connector_line_jumps() {
+    let prefix = if sheet.has_drawio_edge_routes() {
+        EDGE_ROUTES_SHEET_PREFIX
+    } else if sheet.has_connector_line_jumps() {
         LINE_JUMPS_SHEET_PREFIX
     } else if sheet.has_library_connector_markers() {
         MARKER_LIBRARY_SHEET_PREFIX
@@ -132,6 +135,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
             text.strip_prefix(LINE_JUMPS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-28\r\n"))
                 .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(EDGE_ROUTES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-29\r\n"))
+                .map(|json| (29, json))
         })
         .or_else(|| {
             text.strip_prefix(MARKER_LIBRARY_SHEET_PREFIX)
@@ -265,6 +273,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 29 && sheet.has_drawio_edge_routes() {
+        return Err("draw.io edge routes require sheet clipboard version 29".into());
+    }
     if version < 28 && sheet.has_connector_line_jumps() {
         return Err("connector line jumps require sheet clipboard version 28".into());
     }
@@ -1467,6 +1478,34 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn edge_route_sheet_clipboard_requires_version_twenty_nine() {
+        use crate::Vec2;
+        use crate::board::{CanvasConnector, CanvasObject, ConnectorRoute, Endpoint};
+        let mut sheet = Sheet::new("Routes", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 40.0)),
+        );
+        connector.route = ConnectorRoute::EntityRelation;
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(EDGE_ROUTES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(EDGE_ROUTES_SHEET_PREFIX, LINE_JUMPS_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("edge routes require sheet clipboard version 29")
+        );
     }
 
     #[test]

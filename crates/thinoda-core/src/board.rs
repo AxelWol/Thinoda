@@ -329,6 +329,14 @@ impl CanvasLayer {
         })
     }
 
+    /// Whether this layer needs draw.io edge-route-aware persistence.
+    pub fn has_drawio_edge_routes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.route.is_drawio_edge_style())
+        })
+    }
+
     /// Whether this layer needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.objects.iter().any(|object| object.rounding.is_some())
@@ -1300,8 +1308,55 @@ impl ConnectorPort {
 pub enum ConnectorRoute {
     #[default]
     Straight,
+    /// draw.io's orthogonal edge style.
     Elbow,
     Curve,
+    /// draw.io's `elbowEdgeStyle`, preferring a side-to-side route.
+    ElbowHorizontal,
+    /// draw.io's `elbowEdgeStyle` with `elbow=vertical`.
+    ElbowVertical,
+    /// draw.io's `sideToSideEdgeStyle`.
+    SideToSide,
+    /// draw.io's `topToBottomEdgeStyle`.
+    TopToBottom,
+    /// draw.io's `entityRelationEdgeStyle`.
+    EntityRelation,
+}
+
+impl ConnectorRoute {
+    /// Every route in menu order.
+    pub const ALL: [Self; 8] = [
+        Self::Straight,
+        Self::Elbow,
+        Self::Curve,
+        Self::ElbowHorizontal,
+        Self::ElbowVertical,
+        Self::SideToSide,
+        Self::TopToBottom,
+        Self::EntityRelation,
+    ];
+
+    /// Whether this is one of draw.io's routed edge styles that needs
+    /// edge-route-aware persistence.
+    pub fn is_drawio_edge_style(self) -> bool {
+        matches!(
+            self,
+            Self::ElbowHorizontal
+                | Self::ElbowVertical
+                | Self::SideToSide
+                | Self::TopToBottom
+                | Self::EntityRelation
+        )
+    }
+
+    /// Whether the route uses only the first waypoint as a routing hint, as
+    /// draw.io's elbow styles do; entity-relation routes ignore waypoints.
+    pub fn uses_waypoint_hint(self) -> bool {
+        matches!(
+            self,
+            Self::ElbowHorizontal | Self::ElbowVertical | Self::SideToSide | Self::TopToBottom
+        )
+    }
 }
 
 /// Non-default connector marker shapes. A missing marker uses the legacy

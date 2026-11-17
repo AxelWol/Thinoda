@@ -72,6 +72,7 @@ const OWNED_STYLE_KEYS: &[&str] = &[
     "curved",
     "direction",
     "edgeStyle",
+    "elbow",
     "endArrow",
     "endFill",
     "endSize",
@@ -135,7 +136,6 @@ const OWNED_STYLE_KEYS: &[&str] = &[
 const DEPENDENT_STYLE_KEYS: &[(&str, &str)] = &[
     ("dashPattern", "dashed"),
     ("fixDash", "dashed"),
-    ("elbow", "edgeStyle"),
     ("jettySize", "edgeStyle"),
     ("orthogonalLoop", "edgeStyle"),
     ("gradientDirection", "gradientColor"),
@@ -3561,11 +3561,48 @@ impl<'a> PageImport<'a> {
                 return;
             }
         };
+        let edge_style = style.get("edgeStyle").filter(|value| !value.is_empty());
+        let route = if style.flag("curved") {
+            ConnectorRoute::Curve
+        } else {
+            match edge_style {
+                None | Some("none") => ConnectorRoute::Straight,
+                Some("elbowEdgeStyle") if style.get("elbow") == Some("vertical") => {
+                    ConnectorRoute::ElbowVertical
+                }
+                Some("elbowEdgeStyle") => ConnectorRoute::ElbowHorizontal,
+                Some("sideToSideEdgeStyle") => ConnectorRoute::SideToSide,
+                Some("topToBottomEdgeStyle") => ConnectorRoute::TopToBottom,
+                Some("entityRelationEdgeStyle") => ConnectorRoute::EntityRelation,
+                Some(_) => ConnectorRoute::Elbow,
+            }
+        };
+        // Routed styles Thinoda reproduces exactly keep their draw.io meaning,
+        // including the first-waypoint hint; any other router is approximated
+        // by Thinoda's orthogonal elbow.
+        let approximated_router = edge_style.is_some_and(|value| {
+            !matches!(
+                value,
+                "none"
+                    | "orthogonalEdgeStyle"
+                    | "elbowEdgeStyle"
+                    | "sideToSideEdgeStyle"
+                    | "topToBottomEdgeStyle"
+                    | "entityRelationEdgeStyle"
+            )
+        }) && !style.flag("curved");
         let routed_hints = !cell.geometry.points.is_empty()
+            && edge_style.is_some_and(|value| value != "none")
+            && !route.is_drawio_edge_style();
+        let custom_segment = route == ConnectorRoute::EntityRelation
             && style
-                .get("edgeStyle")
-                .is_some_and(|value| !value.is_empty() && value != "none");
-        if style.formatting_loss(true, false) || routed_hints {
+                .get("segment")
+                .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(30.0));
+        if style.formatting_loss(true, false)
+            || routed_hints
+            || approximated_router
+            || custom_segment
+        {
             self.warn(ImportWarning::Formatting);
         }
         if cell.link.is_some() {
@@ -3597,16 +3634,7 @@ impl<'a> PageImport<'a> {
         let mut connector = CanvasConnector::new(from, to);
         connector.from_port = self.connector_port(style, true, from, cell.source.as_deref());
         connector.to_port = self.connector_port(style, false, to, cell.target.as_deref());
-        connector.route = if style.flag("curved") {
-            ConnectorRoute::Curve
-        } else if style
-            .get("edgeStyle")
-            .is_some_and(|v| !v.is_empty() && v != "none")
-        {
-            ConnectorRoute::Elbow
-        } else {
-            ConnectorRoute::Straight
-        };
+        connector.route = route;
         connector.waypoints = self
             .translated_points(origin, cell.geometry.points.iter().copied())
             .into();
@@ -5365,6 +5393,17 @@ impl<'a> PageWriter<'a> {
                         if !connector.waypoints.is_empty() {
                             style.push_str("edgeStyle=none;");
                         }
+                    }
+                    ConnectorRoute::ElbowHorizontal => style.push_str("edgeStyle=elbowEdgeStyle;"),
+                    ConnectorRoute::ElbowVertical => {
+                        style.push_str("edgeStyle=elbowEdgeStyle;elbow=vertical;");
+                    }
+                    ConnectorRoute::SideToSide => style.push_str("edgeStyle=sideToSideEdgeStyle;"),
+                    ConnectorRoute::TopToBottom => {
+                        style.push_str("edgeStyle=topToBottomEdgeStyle;")
+                    }
+                    ConnectorRoute::EntityRelation => {
+                        style.push_str("edgeStyle=entityRelationEdgeStyle;");
                     }
                 }
                 let marker_name = |marker: Option<ConnectorMarker>| {

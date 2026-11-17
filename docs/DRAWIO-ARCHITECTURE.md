@@ -200,6 +200,15 @@ board clipboard v32 and sheet clipboard v28. Private XMind snapshots use
 derived jump paths on `SceneGeometry::Polyline`; renderers paint
 `connector_stroke_paths`, while hit testing keeps the plain stroke.
 
+**As implemented in D7 (edge routes):** `ConnectorRoute` gained
+`ElbowHorizontal`, `ElbowVertical`, `SideToSide`, `TopToBottom` and
+`EntityRelation` (`ConnectorRoute::ALL` is the menu order). They need native
+v40, board clipboard v33 and sheet clipboard v29. Private XMind snapshots use
+`THINODA-XMIND-EDGE-ROUTES-1`, and recovery uses
+`THINODA-RECOVERY-EDGE-ROUTES-1` (`THINODA-RECOVERY-INK-EDGE-ROUTES-1` with
+pending ink). `thinoda_core::scene` routes them before the waypoint path, using
+`waypoints[0]` as the hint when `uses_waypoint_hint` is true.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

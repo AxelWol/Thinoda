@@ -4917,11 +4917,10 @@ fn waypoint_harness(route: ConnectorRoute) -> (Harness<'static, State>, CanvasOb
 
 #[test]
 fn waypoint_drag_move_and_double_click_are_undoable_for_all_routes() {
-    for route in [
-        ConnectorRoute::Straight,
-        ConnectorRoute::Elbow,
-        ConnectorRoute::Curve,
-    ] {
+    for route in ConnectorRoute::ALL
+        .into_iter()
+        .filter(|&route| route != ConnectorRoute::EntityRelation)
+    {
         let (mut h, id) = waypoint_harness(route);
         let before = h.state().doc.workbook().clone();
         let handle = h.get_by_label("Add connector waypoint 1").rect().center();

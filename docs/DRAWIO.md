@@ -79,7 +79,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Libraries | Sidebar sections, search, More Shapes | Library browser with built-in sections, a "draw.io" group of the 17 bundled families (opt-in under More shapes, searchable), imported packages, scratchpad, `.mxlibrary` import; no vendor libraries | D4 |
 | Libraries | Vendor libraries (AWS, Azure, GCP, Cisco, ...) | Missing | D4 |
 | Connectors | Straight, orthogonal, elbow, curved | Native (Straight, Elbow, Curve) | — |
-| Connectors | entityRelation, segment, isometric, sideToSide, topToBottom, loop, libavoid | Approx. (elbow) | D7 |
+| Connectors | elbow (horizontal/vertical), entityRelation, sideToSide, topToBottom | Native (draw.io routers, first-waypoint hint) | D7 |
+| Connectors | segment, isometric, loop, libavoid | Approx. (elbow, warns) | D7 |
 | Connectors | 34 markers | 30 native; sysMLReqInt, sysMLProvInt and mermaid markers approximate | D7 |
 | Connectors | Line jumps | Native (arc, gap, sharp, line, size); `noJump` and `jumpLayers` warn | D7 |
 | Connectors | Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire | Approx. (line) | D7 |
@@ -218,7 +219,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 - [x] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
 - [x] Line jumps (arc, gap, sharp, line)
-- [ ] Routes entityRelation, segment, isometric, sideToSide, topToBottom, loop as editable routes
+- [x] Routes elbowEdgeStyle (horizontal and vertical), entityRelation, sideToSide, topToBottom as editable routes
+- [ ] Routes segment, isometric, loop as editable routes
 - [ ] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
 - [ ] Multiple connector labels
 - [ ] Object links (URL, page), tooltips, custom properties, placeholders and tags, editable in the inspector
@@ -272,6 +274,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D7 edge routes | Horizontal and vertical elbow, side-to-side, top-to-bottom and entity-relation routes follow draw.io's routers and orthogonal rectangle perimeter; first waypoint is the routing hint; route menu and inspector show all eight routes; native v40, board clipboard v33, sheet clipboard v29, new XMind and recovery envelopes |
 | 2026-11-17 | D7 line jumps | Connectors jump earlier-painted straight and elbow connectors with draw.io's arc, gap, sharp and line geometry and size; inspector and style copy; native v39, board clipboard v32, sheet clipboard v28, new XMind and recovery envelopes |
 | 2026-11-17 | D7 markers | 18 library markers (ER, box, cross, circle, circlePlus, async, openAsync, doubleBlock, SysML) are native, drawn from 1-3 parts; native v38, board clipboard v31, sheet clipboard v27, new XMind and recovery envelopes; menu translated |
 | 2026-11-17 | D6 | Board objects keep draw.io source ids, unknown style keys and UserObject attributes; sheets keep diagram ids, model attributes and tombstones. Native v37, board clipboard v30; export never overrides edited keys or reuses deleted ids |
@@ -428,6 +431,26 @@ remaining connectors draw without jumps. The UI rounds sizes to whole pixels
 because draw.io truncates `jumpSize`; fractional native values are kept until
 edited. The fuzz seed that expected `endArrow=cross` to warn now uses an unknown
 marker, since cross became native with the marker slice.
+
+**D7 edge routes.** The routers port mxEdgeStyle's ElbowConnector,
+SideToSide, TopToBottom and EntityRelation, including `Math.round` on the
+midpoint, the dropping of route points inside a terminal and the
+floating-terminal order (the target end aims at the computed source point when
+no route point remains). Rectangles, processes and rounded rectangles without
+a rounded perimeter use mxPerimeter.RectanglePerimeter's orthogonal branch
+exactly, so a diagonal neighbour ends in a corner. Other outlines use an
+orthogonal ray from the nearest centre line, which is close but not draw.io's
+per-perimeter rule. Like draw.io, the routers use unrotated bounds, only the
+first waypoint is a hint, and entity relations ignore waypoints. The extra
+waypoints are kept and the inspector says so, but the canvas still draws
+their handles. A hint route without waypoints offers one insert handle at the
+path midpoint, and dragging it creates the hint. `elbow` is now an owned key,
+so it no longer survives on edges without a routed style. `segment`,
+`isometric` and `loop` styles still import as Thinoda's orthogonal elbow with
+a formatting warning, as does an entity relation whose `segment` is not 30
+(the key stays in the passthrough). Hints on `orthogonalEdgeStyle` edges still
+warn, since Thinoda's elbow treats them as waypoints. Files that use a new
+route need native v40.
 
 ## 5. Rubber-duck findings
 

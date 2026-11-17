@@ -3684,11 +3684,7 @@ impl ThinodaApp {
                         egui::ComboBox::from_id_salt(("board_connector_route", id))
                             .selected_text(t(route_name(connector.route)))
                             .show_ui(ui, |ui| {
-                                for route in [
-                                    ConnectorRoute::Straight,
-                                    ConnectorRoute::Elbow,
-                                    ConnectorRoute::Curve,
-                                ] {
+                                for route in ConnectorRoute::ALL {
                                     ui.selectable_value(
                                         &mut connector.route,
                                         route,
@@ -3698,6 +3694,13 @@ impl ThinodaApp {
                             })
                             .response
                     });
+                    if connector.route == ConnectorRoute::EntityRelation
+                        && !connector.waypoints.is_empty()
+                    {
+                        widgets::caption(ui, t("Entity relation routes ignore waypoints; they are kept for other routes."));
+                    } else if connector.route.uses_waypoint_hint() && connector.waypoints.len() > 1 {
+                        widgets::caption(ui, t("This route uses only the first waypoint as its routing hint; later waypoints are kept but ignored."));
+                    }
                     line_jump_fields(ui, id, connector.route, &mut connector.line_jumps);
                     clear_waypoints = ui
                         .push_id(("clear-connector-waypoints", inspector_owner), |ui| {
@@ -4078,11 +4081,7 @@ fn connector_context_controls(
                 .max_height(max_height)
                 .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        for route in [
-                            ConnectorRoute::Straight,
-                            ConnectorRoute::Elbow,
-                            ConnectorRoute::Curve,
-                        ] {
+                        for route in ConnectorRoute::ALL {
                             if connector_route_tile(ui, route, properties.route)
                                 && (properties.mixed_route || route != properties.route)
                             {
@@ -4484,6 +4483,12 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
         let rect = response.rect.shrink(8.0);
         let start = egui::pos2(rect.left(), rect.bottom());
         let end = egui::pos2(rect.right(), rect.top());
+        let center = rect.center();
+        // draw.io edge styles show their two terminals, and the movable
+        // routing hint where the style honours one.
+        let terminal = |center: egui::Pos2| egui::Rect::from_center_size(center, vec2(8.0, 6.0));
+        let mut terminals: Vec<egui::Rect> = Vec::new();
+        let mut hint = None;
         let points = match route {
             ConnectorRoute::Straight => vec![start, end],
             ConnectorRoute::Elbow => vec![
@@ -4500,6 +4505,46 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
                     egui::pos2(x, egui::lerp(start.y..=end.y, smooth))
                 })
                 .collect(),
+            ConnectorRoute::ElbowHorizontal | ConnectorRoute::SideToSide => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0));
+                let b = terminal(egui::pos2(rect.right() - 4.0, rect.top() + 3.0));
+                terminals.extend([a, b]);
+                if route == ConnectorRoute::ElbowHorizontal {
+                    hint = Some(center);
+                }
+                vec![
+                    a.right_center(),
+                    egui::pos2(center.x, a.center().y),
+                    egui::pos2(center.x, b.center().y),
+                    b.left_center(),
+                ]
+            }
+            ConnectorRoute::ElbowVertical | ConnectorRoute::TopToBottom => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.top() + 3.0));
+                let b = terminal(egui::pos2(rect.right() - 4.0, rect.bottom() - 3.0));
+                terminals.extend([a, b]);
+                if route == ConnectorRoute::ElbowVertical {
+                    hint = Some(center);
+                }
+                vec![
+                    a.center_bottom(),
+                    egui::pos2(a.center().x, center.y),
+                    egui::pos2(b.center().x, center.y),
+                    b.center_top(),
+                ]
+            }
+            ConnectorRoute::EntityRelation => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.top() + 3.0));
+                let b = terminal(egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0));
+                terminals.extend([a, b]);
+                let x = rect.right() - 6.0;
+                vec![
+                    a.right_center(),
+                    egui::pos2(x, a.center().y),
+                    egui::pos2(x, b.center().y),
+                    b.right_center(),
+                ]
+            }
         };
         let palette = thinoda_ui::Palette::of_ui(ui);
         let color = if !ui.is_enabled() {
@@ -4509,8 +4554,19 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
         } else {
             palette.text
         };
+        for terminal in terminals {
+            ui.painter().rect_stroke(
+                terminal,
+                1.0,
+                egui::Stroke::new(1.0, color),
+                egui::StrokeKind::Inside,
+            );
+        }
         ui.painter()
             .add(egui::Shape::line(points, egui::Stroke::new(2.0, color)));
+        if let Some(hint) = hint {
+            ui.painter().circle_filled(hint, 2.5, color);
+        }
     }
     let keyboard = ui.is_enabled()
         && response.has_focus()
@@ -4895,6 +4951,11 @@ fn route_name(route: ConnectorRoute) -> &'static str {
         ConnectorRoute::Straight => "Straight",
         ConnectorRoute::Elbow => "Elbow",
         ConnectorRoute::Curve => "Curve",
+        ConnectorRoute::ElbowHorizontal => "Horizontal elbow",
+        ConnectorRoute::ElbowVertical => "Vertical elbow",
+        ConnectorRoute::SideToSide => "Side to side",
+        ConnectorRoute::TopToBottom => "Top to bottom",
+        ConnectorRoute::EntityRelation => "Entity relation",
     }
 }
 

@@ -41,11 +41,7 @@ fn fixed_connector_ports_follow_shape_geometry_for_every_route() {
         offset: Vec2::new(5.0, -3.0),
         perimeter: false,
     });
-    for route in [
-        ConnectorRoute::Straight,
-        ConnectorRoute::Elbow,
-        ConnectorRoute::Curve,
-    ] {
+    for route in ConnectorRoute::ALL {
         connector.route = route;
         for waypoints in [vec![], vec![Vec2::new(250.0, 180.0)]] {
             connector.waypoints = waypoints.into();
@@ -2689,4 +2685,192 @@ fn line_jump_size_round_trips_and_rejects_out_of_range_values() {
         c.line_jumps.as_mut().unwrap().size = 1000.0;
     }
     assert!(sheet.validate().unwrap_err().contains("line jump size"));
+}
+
+fn drawio_route(
+    source: Rect,
+    target: Rect,
+    route: ConnectorRoute,
+    waypoints: &[Vec2],
+) -> (Vec<Vec2>, Vec<ConnectorInsertHandle>) {
+    let mut sheet = Sheet::new("Routes", "Root");
+    let a = shape(&mut sheet, ShapeKind::Rectangle, source, Band::Above);
+    let b = shape(&mut sheet, ShapeKind::Rectangle, target, Band::Above);
+    let mut connector = CanvasConnector::new(Endpoint::Object(a), Endpoint::Object(b));
+    connector.route = route;
+    connector.waypoints = waypoints.to_vec().into();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    (
+        connector_path(&sheet, &layout, &connector),
+        connector_insert_handles(&sheet, &layout, &connector),
+    )
+}
+
+fn points(values: &[(f32, f32)]) -> Vec<Vec2> {
+    values.iter().map(|&(x, y)| Vec2::new(x, y)).collect()
+}
+
+#[test]
+fn side_to_side_and_top_to_bottom_match_drawio_routers() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let far = rect(300.0, 100.0, 100.0, 60.0);
+    let below = rect(200.0, 200.0, 100.0, 60.0);
+    let cases = [
+        (
+            far,
+            ConnectorRoute::SideToSide,
+            vec![],
+            points(&[(100.0, 30.0), (200.0, 30.0), (200.0, 130.0), (300.0, 130.0)]),
+        ),
+        // The hint moves the vertical segment and, within the source's
+        // vertical span, the source row as well.
+        (
+            far,
+            ConnectorRoute::SideToSide,
+            vec![Vec2::new(150.0, 40.0)],
+            points(&[(100.0, 40.0), (150.0, 40.0), (150.0, 130.0), (300.0, 130.0)]),
+        ),
+        // JavaScript's Math.round rounds the midpoint 200.5 up.
+        (
+            rect(301.0, 100.0, 100.0, 60.0),
+            ConnectorRoute::SideToSide,
+            vec![],
+            points(&[(100.0, 30.0), (201.0, 30.0), (201.0, 130.0), (301.0, 130.0)]),
+        ),
+        (
+            below,
+            ConnectorRoute::TopToBottom,
+            vec![],
+            points(&[(50.0, 60.0), (50.0, 130.0), (250.0, 130.0), (250.0, 200.0)]),
+        ),
+        // A hint whose x lies inside only the source moves just that column.
+        (
+            below,
+            ConnectorRoute::TopToBottom,
+            vec![Vec2::new(80.0, 100.0)],
+            points(&[(80.0, 60.0), (80.0, 100.0), (250.0, 100.0), (250.0, 200.0)]),
+        ),
+    ];
+    for (target, route, waypoints, expected) in cases {
+        let (path, _) = drawio_route(source, target, route, &waypoints);
+        assert_eq!(path, expected, "{route:?} {waypoints:?}");
+    }
+}
+
+#[test]
+fn side_to_side_drops_route_points_inside_terminals_like_drawio() {
+    let source = rect(0.0, 0.0, 100.0, 100.0);
+    // Only the target row survives; draw.io then repeats the hint row.
+    let (path, _) = drawio_route(
+        source,
+        rect(200.0, 50.0, 100.0, 100.0),
+        ConnectorRoute::SideToSide,
+        &[Vec2::new(50.0, 120.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[(50.0, 100.0), (50.0, 120.0), (200.0, 120.0)])
+    );
+    // Overlapping spans leave no route points: the source aims at the target
+    // centre and the target at the resulting source point, both orthogonally.
+    let (path, _) = drawio_route(
+        source,
+        rect(50.0, 150.0, 100.0, 100.0),
+        ConnectorRoute::SideToSide,
+        &[],
+    );
+    assert_eq!(path, points(&[(100.0, 100.0), (100.0, 150.0)]));
+}
+
+#[test]
+fn elbow_edge_style_chooses_its_router_like_drawio() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let target = rect(200.0, 200.0, 100.0, 60.0);
+    let side = points(&[(100.0, 30.0), (150.0, 30.0), (150.0, 230.0), (200.0, 230.0)]);
+    let vertical = points(&[(50.0, 60.0), (50.0, 130.0), (250.0, 130.0), (250.0, 200.0)]);
+    let cases = [
+        (target, ConnectorRoute::ElbowHorizontal, vec![], side),
+        (target, ConnectorRoute::ElbowVertical, vec![], vertical),
+        // Touching horizontal spans force the vertical router.
+        (
+            rect(100.0, 200.0, 100.0, 60.0),
+            ConnectorRoute::ElbowHorizontal,
+            vec![],
+            points(&[(50.0, 60.0), (50.0, 130.0), (150.0, 130.0), (150.0, 200.0)]),
+        ),
+        // A hint below both terminals forces top-to-bottom routing.
+        (
+            target,
+            ConnectorRoute::ElbowHorizontal,
+            vec![Vec2::new(150.0, 300.0)],
+            points(&[(50.0, 60.0), (50.0, 300.0), (250.0, 300.0), (250.0, 260.0)]),
+        ),
+        // A hint beside both terminals forces side-to-side routing.
+        (
+            target,
+            ConnectorRoute::ElbowVertical,
+            vec![Vec2::new(350.0, 100.0)],
+            points(&[(100.0, 30.0), (350.0, 30.0), (350.0, 230.0), (300.0, 230.0)]),
+        ),
+    ];
+    for (target, route, waypoints, expected) in cases {
+        let (path, _) = drawio_route(source, target, route, &waypoints);
+        assert_eq!(path, expected, "{route:?} {waypoints:?}");
+    }
+    // Only the first waypoint is a hint; draw.io ignores the rest.
+    let (path, handles) = drawio_route(
+        source,
+        target,
+        ConnectorRoute::ElbowHorizontal,
+        &[Vec2::new(150.0, 300.0), Vec2::new(900.0, 900.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[(50.0, 60.0), (50.0, 300.0), (250.0, 300.0), (250.0, 260.0)])
+    );
+    assert!(handles.is_empty());
+    let (path, handles) = drawio_route(source, target, ConnectorRoute::ElbowHorizontal, &[]);
+    assert_eq!(
+        handles,
+        vec![ConnectorInsertHandle {
+            point: crate::board::polyline_midpoint(&path).unwrap(),
+            insert_at: 0,
+        }]
+    );
+}
+
+#[test]
+fn entity_relation_matches_drawio_and_ignores_waypoints() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let cases = [
+        (
+            rect(300.0, 100.0, 100.0, 60.0),
+            points(&[(100.0, 30.0), (130.0, 30.0), (270.0, 130.0), (300.0, 130.0)]),
+        ),
+        // Both terminals on the same side share an outer vertical segment.
+        (
+            rect(50.0, 100.0, 100.0, 60.0),
+            points(&[(100.0, 30.0), (180.0, 30.0), (180.0, 130.0), (150.0, 130.0)]),
+        ),
+        // Segments that would cross fold back through the vertical midpoint.
+        (
+            rect(140.0, 100.0, 100.0, 60.0),
+            points(&[
+                (100.0, 30.0),
+                (130.0, 30.0),
+                (130.0, 80.0),
+                (110.0, 80.0),
+                (110.0, 130.0),
+                (140.0, 130.0),
+            ]),
+        ),
+    ];
+    for (target, expected) in cases {
+        for waypoints in [vec![], vec![Vec2::new(500.0, 500.0)]] {
+            let (path, handles) =
+                drawio_route(source, target, ConnectorRoute::EntityRelation, &waypoints);
+            assert_eq!(path, expected, "{target:?} {waypoints:?}");
+            assert!(handles.is_empty());
+        }
+    }
 }
