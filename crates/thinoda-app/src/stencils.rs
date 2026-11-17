@@ -434,6 +434,27 @@ enum TileAction {
     Unavailable(String),
 }
 
+/// Whether `text` is draw.io stencil XML (`<shapes>` or `<shape>` root)
+/// rather than an `<mxlibrary>` palette.
+fn is_stencil_xml(text: &str) -> bool {
+    let mut rest = text.trim_start();
+    while let Some(tail) = rest.strip_prefix('<') {
+        if tail.starts_with('?') || tail.starts_with('!') {
+            let Some(end) = tail.find('>') else {
+                return false;
+            };
+            rest = tail[end + 1..].trim_start();
+            continue;
+        }
+        let name: String = tail
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        return name == "shapes" || name == "shape";
+    }
+    false
+}
+
 fn parse_package(text: &str) -> Result<StencilPackage, String> {
     let package = StencilPackage::from_json(text).map_err(|error| error.to_string())?;
     if package.definitions.is_empty() {
@@ -552,6 +573,7 @@ impl StencilPanel {
             }
         });
         self.packages = packages;
+        self.sync_drawio_registry();
         if !self.imported.iter().any(|lib| lib.id == SCRATCHPAD_ID) {
             if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
                 messages.push(t("Too many stencil libraries; remove one first").to_owned());
@@ -780,6 +802,9 @@ impl StencilPanel {
         if text.trim_start().starts_with('{') {
             return self.import_package(text);
         }
+        if is_stencil_xml(text) {
+            return self.import_stencil_xml(title, text);
+        }
         if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
             return Err(t("Too many stencil libraries; remove one first").into());
         }
@@ -832,6 +857,71 @@ impl StencilPanel {
             .ok_or_else(|| t("Too many stencil libraries; remove one first").to_owned())
     }
 
+    /// Installs a draw.io stencil library (`<shapes>` XML, e.g. a vendor
+    /// family) as one or more packages whose draw.io aliases resolve shapes
+    /// in opened diagrams; returns the first ID and the unavailable count.
+    fn import_stencil_xml(&mut self, title: &str, text: &str) -> Result<(String, usize), String> {
+        let import = thinoda_io::drawio_stencil::import_drawio_stencil_library(text, title)
+            .map_err(|error| format!("{}: {error}", t("Not a valid draw.io stencil library")))?;
+        if self.library_count() + import.packages.len() > thinoda_platform::stencils::MAX_LIBRARIES
+        {
+            return Err(t("Too many stencil libraries; remove one first").into());
+        }
+        if import.packages.iter().any(|package| {
+            self.packages
+                .iter()
+                .any(|(_, installed)| installed.id == package.id)
+        }) {
+            return Err(t("A stencil package with this ID is already installed").into());
+        }
+        let saved = self.state.packages.len();
+        let mut installed = Vec::with_capacity(import.packages.len());
+        let mut unavailable = 0;
+        for package in import.packages {
+            let id = match self.next_library_id() {
+                Ok(id) => id,
+                Err(error) => {
+                    self.state.packages.truncate(saved);
+                    return Err(error);
+                }
+            };
+            unavailable += package
+                .definitions
+                .iter()
+                .filter(|definition| !definition.missing_capabilities().is_empty())
+                .count();
+            // Compact JSON: the converter sized each part for this form.
+            let json = match serde_json::to_string(&package) {
+                Ok(json) => json,
+                Err(error) => {
+                    self.state.packages.truncate(saved);
+                    return Err(error.to_string());
+                }
+            };
+            self.state.packages.push(SavedPackage {
+                id: id.clone(),
+                json,
+            });
+            installed.push((id, Arc::new(package)));
+        }
+        if let Err(error) = thinoda_platform::stencils::validate(&self.state) {
+            self.state.packages.truncate(saved);
+            return Err(saved_state_error(error));
+        }
+        let first = installed[0].0.clone();
+        self.packages.extend(installed);
+        self.sync_drawio_registry();
+        Ok((first, unavailable))
+    }
+
+    /// Publishes installed packages to the draw.io importer, so diagrams
+    /// using their `drawio.import` aliases open as stencils.
+    fn sync_drawio_registry(&self) {
+        thinoda_io::drawio_stencil::set_user_stencil_packages(
+            self.packages.iter().map(|(_, package)| Arc::clone(package)),
+        );
+    }
+
     fn import_package(&mut self, text: &str) -> Result<(String, usize), String> {
         if self.library_count() >= thinoda_platform::stencils::MAX_LIBRARIES {
             return Err(t("Too many stencil libraries; remove one first").into());
@@ -859,6 +949,7 @@ impl StencilPanel {
             return Err(saved_state_error(error));
         }
         self.packages.push((id.clone(), Arc::new(package)));
+        self.sync_drawio_registry();
         Ok((id, unavailable))
     }
 
@@ -884,6 +975,7 @@ impl StencilPanel {
         self.imported.retain(|library| library.id != id);
         self.state.packages.retain(|package| package.id != id);
         self.packages.retain(|(package_id, _)| package_id != id);
+        self.sync_drawio_registry();
         self.state.collapsed.retain(|collapsed| collapsed != id);
         self.invalidate(id);
     }

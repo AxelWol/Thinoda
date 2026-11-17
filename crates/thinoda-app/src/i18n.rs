@@ -4630,6 +4630,10 @@ const DE: &[(&str, &str)] = &[
         "Ein Schablonenpaket mit dieser ID ist bereits installiert",
     ),
     (
+        "Not a valid draw.io stencil library",
+        "Keine gültige draw.io-Schablonenbibliothek",
+    ),
+    (
         "Removing a library does not change existing objects",
         "Das Entfernen einer Bibliothek verändert vorhandene Objekte nicht",
     ),

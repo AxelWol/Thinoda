@@ -69,6 +69,39 @@ fn json_package_import_is_atomic_and_rejects_duplicate_or_builtin_ids() {
 }
 
 #[test]
+fn drawio_stencil_xml_installs_as_packages_that_resolve_drawio_shapes() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::Paths::from_root(dir.path());
+    paths.ensure().unwrap();
+    let mut panel = StencilPanel::default();
+    assert_eq!(panel.ensure_loaded(Some(&paths)), None);
+    let xml = r#"<?xml version="1.0"?>
+<shapes name="mxgraph.thinodaVendor"><shape name="Edge Router" w="40" h="20"><foreground><rect x="0" y="0" w="40" h="20"/><fillstroke/></foreground></shape></shapes>"#;
+    let (id, unavailable) = panel.import("Vendor", xml).unwrap();
+    assert_eq!((id.as_str(), unavailable), ("lib-1", 0));
+    assert_eq!(panel.packages[0].1.id, "user.drawio.thinodavendor");
+    assert!(panel.sections().iter().any(|section| section.id == id));
+    let alias = "mxgraph.thinodavendor.edge_router";
+    assert!(thinoda_io::drawio_stencil::maps_drawio_shape(alias));
+    assert!(
+        panel
+            .import("Vendor", xml)
+            .unwrap_err()
+            .contains("already installed")
+    );
+    assert!(panel.import("Broken", "<shapes name=\"x\"/>").is_err());
+    assert_eq!(panel.state.packages.len(), 1);
+    panel.save(Some(&paths)).unwrap();
+    thinoda_io::drawio_stencil::set_user_stencil_packages([]);
+    let mut restored = StencilPanel::default();
+    assert_eq!(restored.ensure_loaded(Some(&paths)), None);
+    assert_eq!(restored.packages.len(), 1);
+    assert!(thinoda_io::drawio_stencil::maps_drawio_shape(alias));
+    restored.remove_library(&id);
+    assert!(!thinoda_io::drawio_stencil::maps_drawio_shape(alias));
+}
+
+#[test]
 fn installed_packages_survive_reload_and_removal_does_not_change_pinned_objects() {
     let dir = tempfile::tempdir().unwrap();
     let paths = thinoda_platform::Paths::from_root(dir.path());

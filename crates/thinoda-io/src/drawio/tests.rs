@@ -9589,3 +9589,29 @@ fn stencil_import_keeps_orientation_and_unknown_fallback_shapes() {
     );
     assert_eq!(after.stencil, before.stencil);
 }
+
+#[test]
+fn installed_user_stencil_libraries_resolve_plain_drawio_shapes() {
+    let cell = r#"<mxCell id="x" style="shape=mxgraph.thinodauser.gear_box;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#;
+    let unresolved = load(&page(cell));
+    assert!(
+        unresolved
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes)
+    );
+    let library = crate::drawio_stencil::import_drawio_stencil_library(
+        r#"<shapes name="mxgraph.thinodaUser"><shape name="Gear Box" w="10" h="10"><foreground><rect x="0" y="0" w="10" h="10"/><fillstroke/></foreground></shape></shapes>"#,
+        "",
+    )
+    .unwrap();
+    crate::drawio_stencil::set_user_stencil_packages(
+        library.packages.into_iter().map(std::sync::Arc::new),
+    );
+    let sheet = clean(&page(cell));
+    let stencil = shapes(&sheet)[0].stencil.clone().expect("user stencil");
+    assert_eq!(stencil.package, "user.drawio.thinodauser");
+    assert!(thinoda_core::stencil_object::render(shapes(&sheet)[0]).is_some());
+    let exported = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
+    assert!(exported.contains("shape=mxgraph.thinodauser.gear_box;"));
+    crate::drawio_stencil::set_user_stencil_packages([]);
+}

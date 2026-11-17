@@ -329,3 +329,60 @@ fn every_drawio_stencil_element_converts_and_renders() {
     assert_eq!(connections.len(), 2);
     assert!(import.diagnostics.is_empty(), "{:?}", import.diagnostics);
 }
+
+#[test]
+fn stencil_libraries_alias_shapes_like_drawio_and_keep_includes_together() {
+    let xml = r#"<shapes name="mxgraph.ThinodaLib">
+<shape name="Dot" w="20" h="20"><foreground><ellipse x="0" y="0" w="20" h="20"/><fillstroke/></foreground></shape>
+<shape name="Big Box" w="100" h="50"><foreground><rect x="0" y="0" w="100" h="50"/><stroke/><include-shape name="Dot" x="40" y="15" w="20" h="20"/></foreground></shape>
+</shapes>"#;
+    let import = import_drawio_stencil_library(xml, "").unwrap();
+    assert_eq!(import.namespace.as_deref(), Some("mxgraph.ThinodaLib"));
+    let [package] = import.packages.as_slice() else {
+        panic!("one package");
+    };
+    assert_eq!(package.id, "user.drawio.thinodalib");
+    let aliases = package.extensions[IMPORT_EXTENSION].as_object().unwrap();
+    let big = aliases["mxgraph.thinodalib.big_box"].as_str().unwrap();
+    let definition = package.definition(big).unwrap();
+    assert_eq!(
+        definition.interchange["drawio"]["style"],
+        "shape=mxgraph.thinodalib.big_box;"
+    );
+    assert!(!definition.extensions.contains_key(SOURCE_EXTENSION));
+    assert!(aliases.contains_key("mxgraph.thinodalib.dot"));
+    package
+        .validate(&thinoda_core::stencil::Limits::DEFAULT)
+        .unwrap();
+}
+
+#[test]
+fn oversized_stencil_libraries_split_into_valid_parts() {
+    let limit = thinoda_core::stencil::Limits::DEFAULT.max_definitions;
+    let mut xml = String::from(r#"<shapes name="mxgraph.huge">"#);
+    // An include chain must stay inside one part.
+    xml.push_str(r#"<shape name="Base" w="10" h="10"><foreground><rect x="0" y="0" w="10" h="10"/><stroke/></foreground></shape>"#);
+    for i in 0..limit + 10 {
+        xml.push_str(&format!(
+            r#"<shape name="S{i}" w="10" h="10"><foreground><ellipse x="0" y="0" w="10" h="10"/><stroke/></foreground></shape>"#
+        ));
+    }
+    xml.push_str(r#"<shape name="Top" w="10" h="10"><foreground><include-shape name="Base" x="0" y="0" w="10" h="10"/></foreground></shape>"#);
+    xml.push_str("</shapes>");
+    let import = import_drawio_stencil_library(&xml, "Huge").unwrap();
+    assert!(import.packages.len() >= 2, "{}", import.packages.len());
+    let mut aliases = 0;
+    for (index, part) in import.packages.iter().enumerate() {
+        assert_eq!(part.id, format!("user.drawio.huge.part-{}", index + 1));
+        part.validate(&thinoda_core::stencil::Limits::DEFAULT)
+            .unwrap();
+        aliases += part.extensions[IMPORT_EXTENSION].as_object().unwrap().len();
+    }
+    assert_eq!(aliases, limit + 12);
+    let holder = import
+        .packages
+        .iter()
+        .find(|part| part.definition("top").is_some())
+        .unwrap();
+    assert!(holder.definition("base").is_some());
+}

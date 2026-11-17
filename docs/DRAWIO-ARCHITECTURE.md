@@ -516,8 +516,21 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
   task/event markers, sequence lifelines, tables, mockups, gradients and the
   remaining mxgraph libraries. These keep their classified fallback and
   disclosure.
-- **Next:** connect draw.io stencil-XML conversion to the installation picker,
-  add explicit revision-update previews for ST6 and implement ST5 legacy
+- **ST4 user libraries (D4):** a draw.io stencil library file (`<shapes
+  name="mxgraph.x">`, for example a vendor family) imported through the
+  library picker is converted by `import_drawio_stencil_library` into the
+  package `user.drawio.<x>`. Every shape gets draw.io's alias
+  `lowercase(namespace + ".") + lowercase(name with "_")` in the package's
+  `drawio.import` map and as its native draw.io style. Files beyond the package
+  limits, including the 4 MiB compact-JSON size that reload enforces, are split
+  into `user.drawio.<x>.part-N` packages; each definition stays with the
+  definitions it includes (aws4: two parts of 525 shapes, about 3 MB each).
+  The app publishes its installed packages to a process-wide registry
+  (`set_user_stencil_packages`) on load, import and removal. The importer
+  resolves plain shape names through it after the built-in maps and the bundle,
+  and explicit references through it after the bundle. Diagrams opened after
+  installing a library therefore show its shapes instead of placeholders.
+- **Next:** add explicit revision-update previews for ST6 and implement ST5 legacy
   migration. Extend the data-driven import map to further mxgraph libraries.
   Revisit workbook-global closure deduplication before adding larger
   third-party stencil libraries.

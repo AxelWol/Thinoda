@@ -198,10 +198,10 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 ### D4 — Vendor and platform libraries
 
-- [ ] Import a draw.io stencil XML file (any family, including vendor families) as a user library through the existing library import, with its aliases
-- [ ] Resolver interface so draw.io import also resolves installed user libraries; placeholders upgrade on reopen
-- [ ] Split stencil files that exceed package limits (aws4) into several packages
-- [ ] Optional user-triggered download of a pinned family (desktop) with SHA-256 verification and display of the applicable terms
+- [x] Import a draw.io stencil XML file (any family, including vendor families) as a user library through the existing library import, with its aliases
+- [x] Resolver interface so draw.io import also resolves installed user libraries; placeholders upgrade on reopen
+- [x] Split stencil files that exceed package limits (aws4) into several packages
+- [ ] Optional user-triggered download of a pinned family (desktop) with SHA-256 verification and display of the applicable terms — deferred (see the D4 critique)
 
 ### D5 — JS-coded draw.io shapes as JSON definitions
 
@@ -271,6 +271,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D4 | draw.io stencil XML imports as `user.drawio.<ns>` packages with draw.io aliases; installed libraries resolve opened diagrams; aws4 (1,050 shapes) installs as 2 parts in 0.2 s; pinned download deferred |
 | 2026-11-17 | Requests | Software template previews readable; re-toggled arrows scale with width (d34d271); shape and connector options edit multi-selections with one undo |
 | 2026-11-17 | D3 | Library browser lists the 17 bundled families (2,238 shapes) in an opt-in "draw.io" group; catalog search; one shared resource per inserted package; 11 new family names translated into 8 languages |
 | 2026-11-17 | D2 | 17 families bundled (81 packages, 2,238 shapes, about 854 KB); 253 cells in the example corpus now draw their stencils; approximate native kinds stay native; NOTICE and Apache text shipped |
@@ -336,6 +337,24 @@ with connectors). A mixed selection still has no ribbon, because the common
 attributes of a shape and a connector differ in meaning (fill vs. connector
 color). The controls show the primary (first selected) object's values rather
 than a "mixed" state, so a color swatch can mislead until a value is picked.
+
+**D4.** Vendor families stay opt-in and local: users import the stencil file
+they obtained (draw.io's `stencils/<family>.xml`), so Thinoda ships no vendor
+artwork and its terms stay with the user. The pinned download is deferred: it
+needs a network client and a terms screen per vendor in the desktop build, and
+importing the downloaded file already gives the same result. The resolver is a
+process-wide registry rather than a parameter of every import call. This keeps
+the many import entry points unchanged, but tests that install libraries must
+run single-threaded (the app suite already does). Built-in and bundled names
+win over user aliases, so an imported copy of a bundled family cannot change
+how bundled shapes draw. Within user libraries, the earlier one wins. Converting a whole file
+first and splitting afterwards holds the whole converted library in memory
+once, but keeps include groups exact. A first draft measured only
+`validate`, which does not bound bytes, so the stored parts (8.6 MB pretty
+JSON) would have failed to reload. Parts are now sized and stored as compact
+JSON, and a test reloads them. The bundle generator keeps its own alias code
+because it also strips licenses and revisions; the two derive aliases the same
+way.
 
 ## 5. Rubber-duck findings
 
