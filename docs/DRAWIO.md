@@ -81,7 +81,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Connectors | Straight, orthogonal, elbow, curved | Native (Straight, Elbow, Curve) | — |
 | Connectors | entityRelation, segment, isometric, sideToSide, topToBottom, loop, libavoid | Approx. (elbow) | D7 |
 | Connectors | 34 markers | 30 native; sysMLReqInt, sysMLProvInt and mermaid markers approximate | D7 |
-| Connectors | Line jumps | Missing | D7 |
+| Connectors | Line jumps | Native (arc, gap, sharp, line, size); `noJump` and `jumpLayers` warn | D7 |
 | Connectors | Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire | Approx. (line) | D7 |
 | Connectors | Fixed ports, waypoints, floating ends | Native | — |
 | Connectors | Multiple labels per edge | Approx. (merged) | D7 |
@@ -217,7 +217,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 ### D7 — Connectors, links and data
 
 - [x] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
-- [ ] Line jumps (arc, gap, sharp, line)
+- [x] Line jumps (arc, gap, sharp, line)
 - [ ] Routes entityRelation, segment, isometric, sideToSide, topToBottom, loop as editable routes
 - [ ] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
 - [ ] Multiple connector labels
@@ -272,6 +272,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D7 line jumps | Connectors jump earlier-painted straight and elbow connectors with draw.io's arc, gap, sharp and line geometry and size; inspector and style copy; native v39, board clipboard v32, sheet clipboard v28, new XMind and recovery envelopes |
 | 2026-11-17 | D7 markers | 18 library markers (ER, box, cross, circle, circlePlus, async, openAsync, doubleBlock, SysML) are native, drawn from 1-3 parts; native v38, board clipboard v31, sheet clipboard v27, new XMind and recovery envelopes; menu translated |
 | 2026-11-17 | D6 | Board objects keep draw.io source ids, unknown style keys and UserObject attributes; sheets keep diagram ids, model attributes and tombstones. Native v37, board clipboard v30; export never overrides edited keys or reuses deleted ids |
 | 2026-11-17 | D5 | 34 JSON definitions cover 35 JS-coded draw.io shapes (floorplan, mockup, BPMN, C4, lean mapping, callouts); choice parameters bind draw.io keyword styles both ways; every option evaluates at three sizes |
@@ -410,6 +411,23 @@ arrow with a formatting warning. A marker can now have up to three parts, so
 shapes (`is_fillable`); cross, ER bars and SysML lines ignore it. The menu grew
 to 31 entries and relies on its existing scroll area. Files that use a new
 marker need native v38, so older builds reject them.
+
+**D7 line jumps.** The geometry mirrors draw.io's `mxShape.addPoints`, including
+its quirks: the jump half-width is `(size − 2) / 2 + strokeWidth`, a crossing
+closer than that to the segment end or the previous skipped point is dropped,
+and the bump direction depends on the rounded segment direction. Arcs are cubic
+curves flattened into eight steps, so they are close but not pixel-identical.
+Jumps are computed once per scene from the paint order (Below band, topics,
+Above band); draw.io instead uses cell order within a layer and ignores
+`jumpLayers`, so mixed-band diagrams can differ. Curves neither jump nor are
+jumped, as in draw.io, and Sankey ribbons are excluded. `noJump` and
+`jumpLayers` stay in the passthrough with a formatting warning. Hit testing,
+lasso and single-object bounds use the plain stroke; only scene bounds include
+the bumps. Crossing tests are capped at four million per scene, after which the
+remaining connectors draw without jumps. The UI rounds sizes to whole pixels
+because draw.io truncates `jumpSize`; fractional native values are kept until
+edited. The fuzz seed that expected `endArrow=cross` to warn now uses an unknown
+marker, since cross became native with the marker slice.
 
 ## 5. Rubber-duck findings
 

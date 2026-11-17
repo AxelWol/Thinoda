@@ -712,6 +712,244 @@ pub fn connector_stroke_path(
     result
 }
 
+/// Jumped stroke of a connector crossing earlier connectors, already flattened.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineJumpGeometry {
+    pub style: crate::board::LineJumpStyle,
+    /// Open subpaths replacing the marker-trimmed stroke.
+    pub paths: Vec<Vec<Vec2>>,
+}
+
+/// Total segment-pair tests one scene may spend on line jumps.
+const LINE_JUMP_TEST_BUDGET: usize = 4_000_000;
+const LINE_JUMP_ARC_STEPS: usize = 8;
+
+/// Open subpaths a connector stroke is painted with, including line jumps.
+pub fn connector_stroke_paths(
+    points: &[Vec2],
+    markers: &[Option<ConnectorMarkerGeometry>; 2],
+    jumps: Option<&LineJumpGeometry>,
+) -> Vec<Vec<Vec2>> {
+    match jumps {
+        Some(jumps) => jumps.paths.clone(),
+        None => vec![connector_stroke_path(points, markers)],
+    }
+}
+
+/// Remove waypoints lying on the segment between their neighbours, like draw.io.
+fn merge_collinear(points: &[Vec2]) -> Vec<Vec2> {
+    let mut result: Vec<Vec2> = Vec::with_capacity(points.len());
+    for (index, &point) in points.iter().enumerate() {
+        if let (Some(&previous), Some(&next)) = (result.last(), points.get(index + 1))
+            && index > 0
+            && point_segment_distance_squared(point, previous, next) < 1.0
+        {
+            continue;
+        }
+        result.push(point);
+    }
+    result
+}
+
+fn dot(a: Vec2, b: Vec2) -> f32 {
+    a.x * b.x + a.y * b.y
+}
+
+fn point_segment_distance_squared(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let length = dot(ab, ab);
+    let t = if length <= f32::EPSILON {
+        0.0
+    } else {
+        (dot(p - a, ab) / length).clamp(0.0, 1.0)
+    };
+    let d = p - (a + ab * t);
+    dot(d, d)
+}
+
+fn segment_crossing(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<Vec2> {
+    let r = b - a;
+    let s = d - c;
+    let denominator = r.x * s.y - r.y * s.x;
+    if denominator.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ac = c - a;
+    let t = (ac.x * s.y - ac.y * s.x) / denominator;
+    let u = (ac.x * r.y - ac.y * r.x) / denominator;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| a + r * t)
+}
+
+fn near(a: Vec2, b: Vec2) -> bool {
+    (a.x - b.x).abs() <= 0.5 && (a.y - b.y).abs() <= 0.5
+}
+
+/// draw.io `jumpStyle` geometry: `stroke` jumps wherever it crosses `others`.
+/// Returns `None` when nothing is crossed or the jump would be invisible.
+pub fn line_jump_geometry(
+    stroke: &[Vec2],
+    others: &[&[Vec2]],
+    jumps: crate::board::LineJumps,
+    width: f32,
+    budget: &mut usize,
+) -> Option<LineJumpGeometry> {
+    use crate::board::LineJumpStyle;
+    let half = (jumps.size - 2.0) / 2.0 + width;
+    if half.is_nan() || half <= 0.0 || stroke.len() < 2 || others.is_empty() {
+        return None;
+    }
+    let stroke = merge_collinear(stroke);
+    let others: Vec<(Rect, Vec<Vec2>)> = others
+        .iter()
+        .filter_map(|points| {
+            let points = merge_collinear(points);
+            Some((points_bounds(&points)?.expand(0.5), points))
+        })
+        .collect();
+    let mut paths = Vec::new();
+    let mut current = vec![stroke[0]];
+    let mut jumped = false;
+    let mut last = stroke[0];
+    let half_squared = half * half;
+    for pair in stroke.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let segment = Rect::from_min_size(
+            Vec2::new(a.x.min(b.x), a.y.min(b.y)),
+            Vec2::new((a.x - b.x).abs(), (a.y - b.y).abs()),
+        )
+        .expand(0.5);
+        let mut crossings: Vec<(f32, Vec2)> = Vec::new();
+        for (bounds, points) in &others {
+            if !bounds.intersects(&segment) {
+                continue;
+            }
+            for other in points.windows(2) {
+                if *budget == 0 {
+                    break;
+                }
+                *budget -= 1;
+                if let Some(pt) = segment_crossing(a, b, other[0], other[1])
+                    && !near(pt, a)
+                    && !near(pt, b)
+                {
+                    crossings.push(((pt - a).length(), pt));
+                }
+            }
+        }
+        crossings.sort_by(|x, y| x.0.total_cmp(&y.0));
+        crossings.dedup_by(|later, earlier| near(later.1, earlier.1));
+        let mut direction = None;
+        for (_, pt) in crossings {
+            let distance_next = dot(b - pt, b - pt);
+            let distance_last = dot(last - pt, last - pt);
+            if distance_next <= half_squared || distance_last <= half_squared {
+                last = pt;
+                continue;
+            }
+            let n = *direction.get_or_insert_with(|| {
+                let delta = pt - last;
+                delta * (half / delta.length())
+            });
+            let p0 = pt - n;
+            let p1 = pt + n;
+            let flip = if n.x.round() < 0.0 || (n.x.round() == 0.0 && n.y.round() <= 0.0) {
+                1.0
+            } else {
+                -1.0
+            };
+            current.push(p0);
+            jumped = true;
+            match jumps.style {
+                LineJumpStyle::Sharp => {
+                    let offset = Vec2::new(-n.y * flip, n.x * flip);
+                    current.extend([p0 + offset, p1 + offset, p1]);
+                }
+                LineJumpStyle::Arc => {
+                    let flip = flip * 1.3;
+                    let offset = Vec2::new(-n.y * flip, n.x * flip);
+                    let (c0, c1) = (p0 + offset, p1 + offset);
+                    for step in 1..=LINE_JUMP_ARC_STEPS {
+                        let t = step as f32 / LINE_JUMP_ARC_STEPS as f32;
+                        let u = 1.0 - t;
+                        current.push(
+                            p0 * (u * u * u)
+                                + c0 * (3.0 * u * u * t)
+                                + c1 * (3.0 * u * t * t)
+                                + p1 * (t * t * t),
+                        );
+                    }
+                }
+                LineJumpStyle::Line => {
+                    let tick = Vec2::new(n.y * flip, -n.x * flip);
+                    paths.push(std::mem::take(&mut current));
+                    paths.push(vec![p0 + tick, p0 - tick]);
+                    paths.push(vec![p1 + tick, p1 - tick]);
+                    current.push(p1);
+                }
+                LineJumpStyle::Gap => {
+                    paths.push(std::mem::take(&mut current));
+                    current.push(p1);
+                }
+            }
+        }
+        current.push(b);
+        last = b;
+    }
+    if !jumped {
+        return None;
+    }
+    paths.push(current);
+    paths.retain(|path| path.len() >= 2);
+    Some(LineJumpGeometry {
+        style: jumps.style,
+        paths,
+    })
+}
+
+/// Apply draw.io line jumps in paint order: each jumping connector jumps over
+/// straight and elbow connectors painted before it; curves neither jump nor
+/// are jumped over.
+fn apply_line_jumps(
+    items: &mut [SceneItem],
+    jumpers: &[(usize, Option<crate::board::LineJumps>, f32)],
+) {
+    if jumpers.iter().all(|(_, jumps, _)| jumps.is_none()) {
+        return;
+    }
+    let mut budget = LINE_JUMP_TEST_BUDGET;
+    for (position, &(index, jumps, width)) in jumpers.iter().enumerate() {
+        let Some(jumps) = jumps else {
+            continue;
+        };
+        let geometry = {
+            let others: Vec<&[Vec2]> = jumpers[..position]
+                .iter()
+                .filter_map(|&(other, _, _)| match &items[other].geometry {
+                    SceneGeometry::Polyline { points, .. } => Some(points.as_slice()),
+                    _ => None,
+                })
+                .collect();
+            let SceneGeometry::Polyline {
+                points, markers, ..
+            } = &items[index].geometry
+            else {
+                continue;
+            };
+            let stroke = connector_stroke_path(points, markers);
+            line_jump_geometry(&stroke, &others, jumps, width, &mut budget)
+        };
+        if let Some(geometry) = geometry {
+            let item = &mut items[index];
+            if let SceneGeometry::Polyline { jumps, .. } = &mut item.geometry {
+                *jumps = Some(Box::new(geometry));
+            }
+            if let Some(bounds) = geometry_bounds(&item.geometry) {
+                item.bounds = item.bounds.union(&bounds);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneGeometry {
     /// Derived semantic flow, shared by canvas, export, bounds and hit testing.
@@ -744,6 +982,8 @@ pub enum SceneGeometry {
         /// Boxed so composite marker parts do not bloat every scene item.
         markers: Box<[Option<ConnectorMarkerGeometry>; 2]>,
         label_bounds: Option<Rect>,
+        /// draw.io line jumps over connectors painted earlier.
+        jumps: Option<Box<LineJumpGeometry>>,
     },
 }
 
@@ -1044,6 +1284,7 @@ fn build_scene_with_collapse<'a>(
     let mut connectors = ConnectorResolver::with_collapse(sheet, layout, collapse);
     let flow_values = crate::sankey::evaluate(sheet).unwrap_or_default();
     let ribbons = crate::sankey::ribbons_with_values(sheet, layout, &flow_values);
+    let mut jumpers = Vec::new();
     for zone in &sheet.zones {
         items.push(SceneItem {
             id: SceneId::Zone(zone.id),
@@ -1058,6 +1299,7 @@ fn build_scene_with_collapse<'a>(
         });
     }
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
+        let jumpers = &mut jumpers;
         for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
             let object = if let Some(collapse) = collapse {
                 let Some(object) = collapse.object(object.id) else {
@@ -1097,6 +1339,12 @@ fn build_scene_with_collapse<'a>(
                         });
                     }
                 } else {
+                    if let (CanvasObjectKind::Connector(c), SceneGeometry::Polyline { .. }) =
+                        (&object.kind, &item.geometry)
+                        && c.route != ConnectorRoute::Curve
+                    {
+                        jumpers.push((items.len(), c.line_jumps, c.width));
+                    }
                     items.push(item);
                 }
             }
@@ -1124,6 +1372,7 @@ fn build_scene_with_collapse<'a>(
         });
     }
     objects(Band::Above, &mut items);
+    apply_line_jumps(&mut items, &jumpers);
     let grid =
         (sheet.board.grid != GridKind::None).then_some((sheet.board.grid, sheet.board.grid_size));
     Scene { grid, items }
@@ -1200,6 +1449,7 @@ fn object_item(
                         )
                     }),
                 ]),
+                jumps: None,
                 points,
                 width: c.width,
             }
@@ -1320,11 +1570,17 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
             width,
             markers,
             label_bounds,
+            jumps,
             ..
         } => {
             let mut bounds = points_bounds(points)?.expand(width / 2.0);
             if let Some(label_bounds) = label_bounds {
                 bounds = bounds.union(label_bounds);
+            }
+            for path in jumps.iter().flat_map(|jumps| &jumps.paths) {
+                if let Some(path_bounds) = points_bounds(path) {
+                    bounds = bounds.union(&path_bounds.expand(width / 2.0));
+                }
             }
             for marker in markers
                 .iter()

@@ -9896,3 +9896,74 @@ fn library_connector_markers_round_trip_and_require_native_version_thirty_eight(
     ));
     assert!(crate::formats::native_import(&content).is_err());
 }
+
+#[test]
+fn line_jumps_round_trip_and_warn_for_unmodelled_jump_options() {
+    use thinoda_core::board::{LineJumpStyle, LineJumps};
+
+    let edge = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="e" style="endArrow=none;{style}" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+        ))
+    };
+    for (style, expected) in [
+        ("jumpStyle=arc;", Some(LineJumps::new(LineJumpStyle::Arc))),
+        (
+            "jumpStyle=gap;jumpSize=6;",
+            Some(LineJumps::new(LineJumpStyle::Gap)),
+        ),
+        (
+            "jumpStyle=sharp;jumpSize=12.9;",
+            Some(LineJumps {
+                style: LineJumpStyle::Sharp,
+                size: 12.0,
+            }),
+        ),
+        (
+            "jumpStyle=line;jumpSize=0;",
+            Some(LineJumps {
+                style: LineJumpStyle::Line,
+                size: 0.0,
+            }),
+        ),
+        // draw.io keeps but does not paint jumps on curves; so does Thinoda.
+        (
+            "jumpStyle=gap;curved=1;",
+            Some(LineJumps::new(LineJumpStyle::Gap)),
+        ),
+        ("jumpStyle=none;jumpSize=20;", None),
+    ] {
+        let report = load(&edge(style));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.line_jumps, expected, "{style}");
+        if expected.is_some() {
+            assert_eq!(feature_version(&report.workbook), 39);
+        }
+        let exported = export(&report.workbook).unwrap();
+        let restored = import(&exported).unwrap();
+        assert!(
+            restored.warnings.is_empty(),
+            "{style}: {:?}",
+            restored.warnings
+        );
+        assert_eq!(
+            connectors(&restored.workbook.sheets[0])[0].line_jumps,
+            expected
+        );
+    }
+    for style in [
+        "jumpStyle=wave;",
+        "jumpStyle=arc;jumpSize=1000;",
+        "jumpStyle=arc;jumpSize=big;",
+        "noJump=1;",
+        "jumpStyle=arc;jumpLayers=1;",
+    ] {
+        let report = load(&edge(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
+}

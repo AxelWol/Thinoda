@@ -820,6 +820,11 @@ impl Sheet {
         self.canvas.has_library_connector_markers()
     }
 
+    /// Whether the sheet needs line-jump-aware persistence.
+    pub fn has_connector_line_jumps(&self) -> bool {
+        self.canvas.has_connector_line_jumps()
+    }
+
     /// Whether the sheet needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.canvas.has_shape_rounding()
@@ -2607,6 +2612,11 @@ impl Workbook {
     /// Whether any sheet needs draw.io marker-library-aware persistence.
     pub fn has_library_connector_markers(&self) -> bool {
         self.sheets.iter().any(Sheet::has_library_connector_markers)
+    }
+
+    /// Whether any sheet needs line-jump-aware persistence.
+    pub fn has_connector_line_jumps(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_connector_line_jumps)
     }
 
     /// Whether any sheet needs adjustable-corner-aware persistence.

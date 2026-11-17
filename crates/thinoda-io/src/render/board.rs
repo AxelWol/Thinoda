@@ -9,7 +9,7 @@ use thinoda_core::{
         CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath, ShapeKind,
         rectangle_side_paths, rotate_around,
     },
-    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_path},
+    scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_paths},
 };
 
 use crate::VisualExportContext;
@@ -423,6 +423,7 @@ pub(crate) fn object_prims(
                 width,
                 markers,
                 color,
+                jumps,
                 ..
             },
         ) => {
@@ -438,7 +439,7 @@ pub(crate) fn object_prims(
             let paths = if unset {
                 thinoda_core::sankey::dash_segments(points)
             } else {
-                vec![connector_stroke_path(points, markers)]
+                connector_stroke_paths(points, markers, jumps.as_deref())
             };
             for path in paths {
                 out.push(Prim::Path {

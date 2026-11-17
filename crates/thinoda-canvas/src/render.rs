@@ -20,7 +20,7 @@ use thinoda_core::{
     },
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
-    scene::{Scene, SceneGeometry, build_scene, connector_stroke_path, topic_clip_zone},
+    scene::{Scene, SceneGeometry, build_scene, connector_stroke_paths, topic_clip_zone},
     theme::Theme,
 };
 
@@ -1770,6 +1770,7 @@ fn paint_canvas_object(
                 points,
                 markers,
                 color,
+                jumps,
                 ..
             },
         ) => {
@@ -1781,9 +1782,9 @@ fn paint_canvas_object(
             let color = opacity_color(color, object.style.opacity);
             let label_center = polyline_midpoint(points);
             let stroke = Stroke::new((connector.width * z).max(0.5), color);
-            let line: Vec<_> = connector_stroke_path(points, markers)
+            let lines: Vec<Vec<_>> = connector_stroke_paths(points, markers, jumps.as_deref())
                 .into_iter()
-                .map(|point| xf.pos(point))
+                .map(|path| path.into_iter().map(|point| xf.pos(point)).collect())
                 .collect();
             let unset = connector.sankey.is_some_and(|f| f.weight.is_none());
             if unset {
@@ -1794,7 +1795,9 @@ fn paint_canvas_object(
                     ));
                 }
             } else {
-                painter.add(Shape::line(line, stroke));
+                for line in lines {
+                    painter.add(Shape::line(line, stroke));
+                }
             }
             if points.len() >= 2 {
                 if connector.arrow_start {
@@ -5309,7 +5312,7 @@ mod tests {
                 }
             );
         }
-        let expected: Vec<_> = connector_stroke_path(points, markers)
+        let expected: Vec<_> = thinoda_core::scene::connector_stroke_path(points, markers)
             .into_iter()
             .map(|point| xf.pos(point))
             .collect();

@@ -192,6 +192,14 @@ board clipboard v31 and sheet clipboard v27. Private XMind snapshots use
 with pending ink). draw.io names map through one shared table in
 `thinoda_io::drawio`, used by import, export and the loss check.
 
+**As implemented in D7 (line jumps):** `CanvasConnector.line_jumps:
+Option<LineJumps { style, size }>` (size 0-999, default 6) needs native v39,
+board clipboard v32 and sheet clipboard v28. Private XMind snapshots use
+`THINODA-XMIND-LINE-JUMPS-1`, and recovery uses `THINODA-RECOVERY-LINE-JUMPS-1`
+(`THINODA-RECOVERY-INK-LINE-JUMPS-1` with pending ink). The scene stores the
+derived jump paths on `SceneGeometry::Polyline`; renderers paint
+`connector_stroke_paths`, while hit testing keeps the plain stroke.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

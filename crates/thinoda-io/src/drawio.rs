@@ -28,11 +28,12 @@ use thinoda_core::{
     board::{
         Band, BoardMember, CANVAS_LABEL_FONT_SIZE, CanvasConnector, CanvasGroupId, CanvasObject,
         CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
-        ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DrawioRectangleStencil,
-        Endpoint, GridKind, InkStroke, InkTool, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS,
-        MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH,
-        ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode, SheetRootMode,
-        normalize_rotation, rotate_around, valid_board_position, valid_connector_marker_size,
+        ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE,
+        DrawioRectangleStencil, Endpoint, GridKind, InkStroke, InkTool, LineJumpStyle, LineJumps,
+        MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE,
+        MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle, RectangleSides, ShapeKind, ShapeRounding,
+        ShapeRoundingMode, SheetRootMode, normalize_rotation, rotate_around, valid_board_position,
+        valid_connector_marker_size, valid_line_jump_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -93,6 +94,8 @@ const OWNED_STYLE_KEYS: &[&str] = &[
     "html",
     "image",
     "imageAspect",
+    "jumpSize",
+    "jumpStyle",
     "left",
     "locked",
     "margin",
@@ -1382,7 +1385,7 @@ impl Style {
             || differs_from("portConstraintRotation", 0.0)
             || differs_from("perimeterSpacing", 0.0)
             || (edge
-                && (self.get("jumpStyle").is_some_and(|v| v != "none")
+                && (self.line_jump_loss()
                     || ["startArrow", "endArrow"].iter().any(|key| {
                         self.get(key).is_some_and(|v| {
                             !matches!(v, "" | "none") && drawio_marker_kind(v).is_none()
@@ -1413,6 +1416,34 @@ impl Style {
                         .iter()
                         .any(|key| differs_from(key, 0.0))
                     || PORT_KEYS.iter().any(|key| self.get(key).is_some())))
+    }
+}
+
+impl Style {
+    fn line_jumps(&self) -> Option<LineJumps> {
+        let style = match self.get("jumpStyle")? {
+            "arc" => LineJumpStyle::Arc,
+            "gap" => LineJumpStyle::Gap,
+            "sharp" => LineJumpStyle::Sharp,
+            "line" => LineJumpStyle::Line,
+            _ => return None,
+        };
+        let mut jumps = LineJumps::new(style);
+        if self.get("jumpSize").is_some() {
+            // draw.io reads the size with parseInt.
+            jumps.size = self.num("jumpSize")?.trunc();
+            if !valid_line_jump_size(jumps.size) {
+                return None;
+            }
+        }
+        Some(jumps)
+    }
+
+    fn line_jump_loss(&self) -> bool {
+        let styled = self.get("jumpStyle").is_some_and(|v| v != "none");
+        (styled && self.line_jumps().is_none())
+            || self.flag("noJump")
+            || self.get("jumpLayers").is_some()
     }
 }
 
@@ -3587,6 +3618,7 @@ impl<'a> PageImport<'a> {
         connector.end_marker_size = style.marker_size("endArrow", "endSize");
         connector.start_marker_unfilled = style.marker_unfilled("startArrow", "startFill");
         connector.end_marker_unfilled = style.marker_unfilled("endArrow", "endFill");
+        connector.line_jumps = style.line_jumps();
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
@@ -5367,6 +5399,19 @@ impl<'a> PageWriter<'a> {
                 }
                 if connector.end_marker_unfilled {
                     style.push_str("endFill=0;");
+                }
+                if let Some(jumps) = connector.line_jumps {
+                    style.push_str("jumpStyle=");
+                    style.push_str(match jumps.style {
+                        LineJumpStyle::Arc => "arc",
+                        LineJumpStyle::Gap => "gap",
+                        LineJumpStyle::Sharp => "sharp",
+                        LineJumpStyle::Line => "line",
+                    });
+                    style.push(';');
+                    if jumps.size != DEFAULT_LINE_JUMP_SIZE {
+                        style.push_str(&format!("jumpSize={};", num(jumps.size)));
+                    }
                 }
                 color_keys(
                     &mut style,

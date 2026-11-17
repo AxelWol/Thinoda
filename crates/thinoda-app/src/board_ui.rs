@@ -6,8 +6,9 @@ use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
     ConnectorRoute, InkTool, ObjectStyle, ShapeKind, ShapeRoundingMode, TopicId,
     board::{
-        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, MAX_BOARD_COORDINATE,
-        MAX_CONNECTOR_MARKER_SIZE, MIN_CARD_SIZE,
+        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, LineJumpStyle,
+        LineJumps, MAX_BOARD_COORDINATE, MAX_CONNECTOR_MARKER_SIZE, MAX_LINE_JUMP_SIZE,
+        MIN_CARD_SIZE,
     },
     scene_layout::{
         ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide, StackAxis,
@@ -703,6 +704,7 @@ pub(crate) enum BoardStyleClipboard {
         end_marker_size: Option<f32>,
         start_marker_unfilled: bool,
         end_marker_unfilled: bool,
+        line_jumps: Option<LineJumps>,
     },
     Ink {
         style: ObjectStyle,
@@ -729,6 +731,7 @@ impl BoardStyleClipboard {
                 end_marker_size: connector.end_marker_size,
                 start_marker_unfilled: connector.start_marker_unfilled,
                 end_marker_unfilled: connector.end_marker_unfilled,
+                line_jumps: connector.line_jumps,
             },
             CanvasObjectKind::Ink(ink) => Self::Ink {
                 style: object.style,
@@ -765,6 +768,7 @@ impl BoardStyleClipboard {
                     end_marker_size,
                     start_marker_unfilled,
                     end_marker_unfilled,
+                    line_jumps,
                 },
                 CanvasObjectKind::Connector(connector),
             ) => {
@@ -780,6 +784,7 @@ impl BoardStyleClipboard {
                 connector.end_marker_size = end_marker_size;
                 connector.start_marker_unfilled = start_marker_unfilled;
                 connector.end_marker_unfilled = end_marker_unfilled;
+                connector.line_jumps = line_jumps;
             }
             (
                 Self::Ink {
@@ -3693,6 +3698,7 @@ impl ThinodaApp {
                             })
                             .response
                     });
+                    line_jump_fields(ui, id, connector.route, &mut connector.line_jumps);
                     clear_waypoints = ui
                         .push_id(("clear-connector-waypoints", inspector_owner), |ui| {
                             ui.add_enabled(
@@ -3883,6 +3889,7 @@ impl ThinodaApp {
                                 current.end_marker_size = value.end_marker_size;
                                 current.start_marker_unfilled = value.start_marker_unfilled;
                                 current.end_marker_unfilled = value.end_marker_unfilled;
+                                current.line_jumps = value.line_jumps;
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -5040,6 +5047,61 @@ fn marker_field(
     if marker.is_none() {
         *size = None;
         *unfilled = false;
+    }
+}
+
+fn line_jump_style_name(style: Option<LineJumpStyle>) -> &'static str {
+    match style {
+        None => "No line jumps",
+        Some(LineJumpStyle::Arc) => "Arc jumps",
+        Some(LineJumpStyle::Gap) => "Gap jumps",
+        Some(LineJumpStyle::Sharp) => "Sharp jumps",
+        Some(LineJumpStyle::Line) => "Tick jumps",
+    }
+}
+
+fn line_jump_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    route: ConnectorRoute,
+    jumps: &mut Option<LineJumps>,
+) {
+    let mut style = jumps.map(|jumps| jumps.style);
+    widgets::property_field(ui, t("Line jumps"), |ui| {
+        egui::ComboBox::from_id_salt(("board_connector_line_jumps", id))
+            .selected_text(t(line_jump_style_name(style)))
+            .show_ui(ui, |ui| {
+                for option in std::iter::once(None).chain(LineJumpStyle::ALL.map(Some)) {
+                    ui.selectable_value(&mut style, option, t(line_jump_style_name(option)));
+                }
+            })
+            .response
+    })
+    .on_hover_text(t(
+        "Draw a jump where this connector crosses connectors painted before it.",
+    ));
+    let size = jumps.map_or(DEFAULT_LINE_JUMP_SIZE, |jumps| jumps.size);
+    *jumps = style.map(|style| LineJumps { style, size });
+    if let Some(jumps) = jumps {
+        let changed = widgets::property_field(ui, t("Line jump size"), |ui| {
+            ui.add(
+                egui::DragValue::new(&mut jumps.size)
+                    .range(0.0..=MAX_LINE_JUMP_SIZE)
+                    .speed(0.5)
+                    .fixed_decimals(0),
+            )
+        })
+        .changed();
+        if changed {
+            // draw.io stores whole-pixel jump sizes.
+            jumps.size = jumps.size.round();
+        }
+        if route == ConnectorRoute::Curve {
+            widgets::caption(
+                ui,
+                t("Curved connectors keep line jumps but do not draw them."),
+            );
+        }
     }
 }
 
@@ -10962,6 +11024,96 @@ mod tests {
             current.end_marker.unwrap().kind,
             ConnectorMarkerKind::SysmlPackCont
         );
+    }
+
+    #[test]
+    fn connector_line_jump_inspector_is_accessible_undoable_and_copyable() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector.clone()))
+            .unwrap();
+        let other = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let jumps = |app: &ThinodaApp, id| {
+            let CanvasObjectKind::Connector(connector) = &app
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            connector.line_jumps
+        };
+        assert!(harness.query_by_label("Line jump size").is_none());
+        harness.get_by_label("Line jumps").click();
+        harness.run_steps(3);
+        harness.get_by_label("Sharp jumps").click();
+        harness.run_steps(3);
+        assert_eq!(
+            jumps(harness.state(), id),
+            Some(LineJumps::new(LineJumpStyle::Sharp))
+        );
+        harness.get_by_label("Line jump size").click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Line jump size").type_text("12.6");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        let expected = Some(LineJumps {
+            style: LineJumpStyle::Sharp,
+            size: 13.0,
+        });
+        assert_eq!(jumps(harness.state(), id), expected);
+        let style = {
+            let doc = harness.state().doc().unwrap();
+            BoardStyleClipboard::from_object(doc.doc.sheet().canvas.object(id).unwrap())
+        };
+        let mut pasted = harness
+            .state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(other)
+            .unwrap()
+            .clone();
+        style.apply(&mut pasted);
+        let CanvasObjectKind::Connector(pasted) = pasted.kind else {
+            panic!("expected connector");
+        };
+        assert_eq!(pasted.line_jumps, expected);
+        harness.get_by_label("Line jumps").click();
+        harness.run_steps(3);
+        harness.get_by_label("No line jumps").click();
+        harness.run_steps(3);
+        assert_eq!(jumps(harness.state(), id), None);
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        harness.run_steps(3);
+        assert_eq!(jumps(harness.state(), id), expected);
     }
 
     #[test]

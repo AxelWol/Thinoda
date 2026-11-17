@@ -322,6 +322,13 @@ impl CanvasLayer {
         })
     }
 
+    /// Whether this layer needs line-jump-aware persistence.
+    pub fn has_connector_line_jumps(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.line_jumps.is_some())
+        })
+    }
+
     /// Whether this layer needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.objects.iter().any(|object| object.rounding.is_some())
@@ -1400,6 +1407,62 @@ pub struct ConnectorMarker {
     pub kind: ConnectorMarkerKind,
 }
 
+/// How a connector crosses earlier connectors (draw.io `jumpStyle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineJumpStyle {
+    Arc,
+    Gap,
+    Sharp,
+    Line,
+}
+
+impl LineJumpStyle {
+    pub const ALL: [Self; 4] = [Self::Arc, Self::Gap, Self::Sharp, Self::Line];
+}
+
+/// draw.io's default `jumpSize`.
+pub const DEFAULT_LINE_JUMP_SIZE: f32 = 6.0;
+pub const MAX_LINE_JUMP_SIZE: f32 = 999.0;
+
+fn default_line_jump_size() -> f32 {
+    DEFAULT_LINE_JUMP_SIZE
+}
+
+fn is_default_line_jump_size(size: &f32) -> bool {
+    *size == DEFAULT_LINE_JUMP_SIZE
+}
+
+/// Jumps drawn where this connector crosses connectors painted before it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineJumps {
+    pub style: LineJumpStyle,
+    #[serde(
+        default = "default_line_jump_size",
+        skip_serializing_if = "is_default_line_jump_size"
+    )]
+    pub size: f32,
+}
+
+impl LineJumps {
+    pub fn new(style: LineJumpStyle) -> Self {
+        Self {
+            style,
+            size: DEFAULT_LINE_JUMP_SIZE,
+        }
+    }
+
+    pub fn is_valid(self) -> bool {
+        valid_line_jump_size(self.size)
+    }
+}
+
+/// Whether a draw.io `jumpSize` can be represented safely.
+pub fn valid_line_jump_size(size: f32) -> bool {
+    size.is_finite() && (0.0..=MAX_LINE_JUMP_SIZE).contains(&size)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanvasConnector {
     /// Explicit semantic flow; ordinary stroke widths never imply a weight.
@@ -1434,6 +1497,9 @@ pub struct CanvasConnector {
     pub start_marker_unfilled: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub end_marker_unfilled: bool,
+    /// Curved routes never jump, matching draw.io.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_jumps: Option<LineJumps>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1473,6 +1539,8 @@ struct StoredCanvasConnector {
     #[serde(default)]
     end_marker_unfilled: bool,
     #[serde(default)]
+    line_jumps: Option<LineJumps>,
+    #[serde(default)]
     label: String,
     #[serde(default)]
     color: Option<Color>,
@@ -1503,6 +1571,9 @@ impl<'de> Deserialize<'de> for CanvasConnector {
         {
             return Err(serde::de::Error::custom("invalid connector marker fill"));
         }
+        if stored.line_jumps.is_some_and(|jumps| !jumps.is_valid()) {
+            return Err(serde::de::Error::custom("invalid connector line jump size"));
+        }
         if !valid_connector_port(stored.from, stored.from_port)
             || !valid_connector_port(stored.to, stored.to_port)
         {
@@ -1524,6 +1595,7 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             end_marker_size: stored.end_marker_size,
             start_marker_unfilled: stored.start_marker_unfilled,
             end_marker_unfilled: stored.end_marker_unfilled,
+            line_jumps: stored.line_jumps,
             label: stored.label,
             color: stored.color,
             width: stored.width,
@@ -1561,6 +1633,7 @@ impl CanvasConnector {
             end_marker_size: None,
             start_marker_unfilled: false,
             end_marker_unfilled: false,
+            line_jumps: None,
             label: String::new(),
             color: None,
             width: default_connector_width(),
@@ -1943,6 +2016,9 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
                 || (c.end_marker_unfilled && c.end_marker.is_none())
             {
                 return Err(format!("connector {id} has an invalid marker fill"));
+            }
+            if c.line_jumps.is_some_and(|jumps| !jumps.is_valid()) {
+                return Err(format!("connector {id} has an invalid line jump size"));
             }
             if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
                 return Err(format!(

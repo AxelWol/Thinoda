@@ -2465,3 +2465,34 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
             .contains("library connector markers require board clipboard version 31")
     );
 }
+
+#[test]
+fn line_jump_board_clipboard_requires_version_thirty_two() {
+    use crate::board::{CanvasConnector, Endpoint, LineJumpStyle, LineJumps};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.line_jumps = Some(LineJumps {
+        style: LineJumpStyle::Line,
+        size: 12.0,
+    });
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LINE_JUMPS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(LINE_JUMPS_BOARD_PREFIX, MARKER_LIBRARY_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("line jumps require board clipboard version 32")
+    );
+    let invalid = encoded.replacen("\"size\":12.0", "\"size\":1000.0", 1);
+    assert_ne!(invalid, encoded);
+    assert!(decode_board_payload(&invalid).is_err());
+}

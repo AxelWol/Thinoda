@@ -63,6 +63,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "draw.io passthrough requires native format version 37".into(),
             ));
         }
+        if version < 39 && book.has_connector_line_jumps() {
+            return Err(IoError::NewerVersion(
+                "connector line jumps require native format version 39".into(),
+            ));
+        }
         if version < 38 && book.has_library_connector_markers() {
             return Err(IoError::NewerVersion(
                 "draw.io library connector markers require native format version 38".into(),
@@ -251,6 +256,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_connector_line_jumps() {
+            return Err(IoError::NewerVersion(
+                "connector line jumps require native format version 39".into(),
+            ));
+        }
         if book.has_library_connector_markers() {
             return Err(IoError::NewerVersion(
                 "draw.io library connector markers require native format version 38".into(),

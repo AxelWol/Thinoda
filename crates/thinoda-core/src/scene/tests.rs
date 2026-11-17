@@ -2295,6 +2295,7 @@ fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
             markers: Box::new([None, None]),
             label_bounds: None,
             color: None,
+            jumps: None,
         }
     );
 
@@ -2548,4 +2549,144 @@ fn library_marker_parts_drive_hit_testing_and_bounds() {
     );
     assert_eq!(scene.hit_test_tolerance(Vec2::new(88.0, 1.0), 0.0), None);
     assert!(sheet.has_library_connector_markers());
+}
+
+fn crossing_sheet(
+    first: Option<crate::board::LineJumps>,
+    second: Option<crate::board::LineJumps>,
+    second_route: ConnectorRoute,
+) -> (Sheet, CanvasObjectId, CanvasObjectId) {
+    let mut sheet = Sheet::new("Jumps", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut vertical = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(50.0, 0.0)),
+        Endpoint::Point(Vec2::new(50.0, 100.0)),
+    );
+    vertical.arrow_end = false;
+    vertical.line_jumps = first;
+    let mut horizontal = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 50.0)),
+        Endpoint::Point(Vec2::new(100.0, 50.0)),
+    );
+    horizontal.arrow_end = false;
+    horizontal.route = second_route;
+    horizontal.line_jumps = second;
+    let first = sheet
+        .add_canvas_object(CanvasObject::connector(vertical))
+        .unwrap();
+    let second = sheet
+        .add_canvas_object(CanvasObject::connector(horizontal))
+        .unwrap();
+    (sheet, first, second)
+}
+
+fn jump_paths(scene: &Scene, id: CanvasObjectId) -> Option<Vec<Vec<Vec2>>> {
+    let SceneGeometry::Polyline { jumps, .. } = &scene.item(SceneId::Object(id)).unwrap().geometry
+    else {
+        panic!("connector polyline");
+    };
+    jumps.as_ref().map(|jumps| jumps.paths.clone())
+}
+
+#[test]
+fn line_jumps_follow_drawio_geometry_for_each_style() {
+    use crate::board::{LineJumpStyle, LineJumps};
+
+    // Width 2 and size 6 give draw.io's half jump of (6 - 2) / 2 + 2 = 4.
+    let p = Vec2::new;
+    for (style, expected) in [
+        (
+            LineJumpStyle::Sharp,
+            vec![vec![
+                p(0.0, 50.0),
+                p(46.0, 50.0),
+                p(46.0, 46.0),
+                p(54.0, 46.0),
+                p(54.0, 50.0),
+                p(100.0, 50.0),
+            ]],
+        ),
+        (
+            LineJumpStyle::Gap,
+            vec![
+                vec![p(0.0, 50.0), p(46.0, 50.0)],
+                vec![p(54.0, 50.0), p(100.0, 50.0)],
+            ],
+        ),
+        (
+            LineJumpStyle::Line,
+            vec![
+                vec![p(0.0, 50.0), p(46.0, 50.0)],
+                vec![p(46.0, 54.0), p(46.0, 46.0)],
+                vec![p(54.0, 54.0), p(54.0, 46.0)],
+                vec![p(54.0, 50.0), p(100.0, 50.0)],
+            ],
+        ),
+    ] {
+        let (sheet, _, id) =
+            crossing_sheet(None, Some(LineJumps::new(style)), ConnectorRoute::Straight);
+        let (_, built) = scene(&sheet);
+        assert_eq!(jump_paths(&built, id), Some(expected), "{style:?}");
+    }
+
+    let (sheet, _, id) = crossing_sheet(
+        None,
+        Some(LineJumps::new(LineJumpStyle::Arc)),
+        ConnectorRoute::Straight,
+    );
+    let (_, built) = scene(&sheet);
+    let paths = jump_paths(&built, id).unwrap();
+    assert_eq!(paths.len(), 1);
+    let path = &paths[0];
+    assert_eq!(path.first(), Some(&p(0.0, 50.0)));
+    assert_eq!(path.last(), Some(&p(100.0, 50.0)));
+    // The arc bulges upward for a left-to-right line, 0.75 * 1.3 * 4 at its apex.
+    let apex = path
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!((apex - (50.0 - 3.9)).abs() < 1e-4, "{apex}");
+    let bounds = built.item(SceneId::Object(id)).unwrap().bounds;
+    assert!(bounds.min.y <= apex - 1.0);
+}
+
+#[test]
+fn line_jumps_only_cross_earlier_straight_or_elbow_connectors() {
+    use crate::board::{LineJumpStyle, LineJumps};
+
+    let jumps = Some(LineJumps::new(LineJumpStyle::Gap));
+    // The first connector has nothing painted before it to jump over.
+    let (sheet, first, second) = crossing_sheet(jumps, None, ConnectorRoute::Straight);
+    let (_, built) = scene(&sheet);
+    assert_eq!(jump_paths(&built, first), None);
+    assert_eq!(jump_paths(&built, second), None);
+    // Curves neither jump nor are jumped over, matching draw.io.
+    let (sheet, first, second) = crossing_sheet(jumps, jumps, ConnectorRoute::Curve);
+    let (_, built) = scene(&sheet);
+    assert_eq!(jump_paths(&built, first), None);
+    assert_eq!(jump_paths(&built, second), None);
+    // A jump too close to the stroke end is skipped, leaving the plain stroke.
+    let mut big = LineJumps::new(LineJumpStyle::Gap);
+    big.size = 200.0;
+    let (sheet, _, second) = crossing_sheet(None, Some(big), ConnectorRoute::Straight);
+    let (_, built) = scene(&sheet);
+    assert_eq!(jump_paths(&built, second), None);
+    assert!(sheet.has_connector_line_jumps());
+}
+
+#[test]
+fn line_jump_size_round_trips_and_rejects_out_of_range_values() {
+    use crate::board::{LineJumpStyle, LineJumps};
+
+    let mut jumps = LineJumps::new(LineJumpStyle::Arc);
+    assert_eq!(serde_json::to_string(&jumps).unwrap(), r#"{"style":"arc"}"#);
+    jumps.size = 12.0;
+    let json = serde_json::to_string(&jumps).unwrap();
+    assert_eq!(serde_json::from_str::<LineJumps>(&json).unwrap(), jumps);
+    let (mut sheet, _, id) = crossing_sheet(None, Some(jumps), ConnectorRoute::Straight);
+    sheet.validate().unwrap();
+    if let Some(CanvasObjectKind::Connector(c)) = sheet.canvas.object_mut(id).map(|o| &mut o.kind) {
+        c.line_jumps.as_mut().unwrap().size = 1000.0;
+    }
+    assert!(sheet.validate().unwrap_err().contains("line jump size"));
 }
