@@ -2290,6 +2290,7 @@ fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
             width: connector.width,
             markers: Box::new([None, None]),
             label_bounds: None,
+            text_labels: Vec::new(),
             color: None,
             jumps: None,
             body: None,
@@ -3206,4 +3207,35 @@ fn only_wire_and_filled_edges_draw_line_jumps() {
         };
         assert_eq!(found.is_some(), jumps, "{kind:?}");
     }
+}
+
+#[test]
+fn positioned_connector_labels_are_hit_and_bounded_away_from_the_path() {
+    use crate::board::{ConnectorLabel, ConnectorLabelPlacement};
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.extra_labels.push(ConnectorLabel {
+        text: "far".into(),
+        placement: ConnectorLabelPlacement {
+            along: 0.0,
+            orthogonal: -60.0,
+            offset: Vec2::ZERO,
+        },
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(50.0, 60.0), 0.0),
+        Some(SceneHit::Object(id))
+    );
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(50.0, 30.0), 0.0), None);
+    let bounds = scene.item(SceneId::Object(id)).unwrap().bounds;
+    assert!(bounds.contains(Vec2::new(50.0, 65.0)));
 }

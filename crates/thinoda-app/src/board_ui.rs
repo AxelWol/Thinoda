@@ -6,8 +6,10 @@ use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, ConnectorMarker, ConnectorMarkerKind,
     ConnectorRoute, InkTool, ObjectStyle, ShapeKind, ShapeRoundingMode, TopicId,
     board::{
-        BoardMember, DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, EdgeShape,
-        EdgeShapeKind, LineJumpStyle, LineJumps, MAX_BOARD_COORDINATE, MAX_CONNECTOR_MARKER_SIZE,
+        BoardMember, CanvasConnector, ConnectorLabel, ConnectorLabelPlacement,
+        DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, EdgeShape, EdgeShapeKind,
+        LineJumpStyle, LineJumps, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS,
+        MAX_CONNECTOR_LABEL_OFFSET, MAX_CONNECTOR_LABELS, MAX_CONNECTOR_MARKER_SIZE,
         MAX_EDGE_SHAPE_WIDTH, MAX_LINE_JUMP_SIZE, MIN_CARD_SIZE,
     },
     scene_layout::{
@@ -3771,6 +3773,9 @@ impl ThinodaApp {
                     });
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
                     if connector.sankey.is_none() {width_field(ui, &mut connector.width);}
+                    if connector.sankey.is_none() {
+                        connector_label_fields(ui, id, connector);
+                    }
                 }
                 CanvasObjectKind::Ink(ink) => {
                     color_field(ui, "Stroke", &mut ink.color);
@@ -3899,6 +3904,8 @@ impl ThinodaApp {
                                 current.end_marker_unfilled = value.end_marker_unfilled;
                                 current.line_jumps = value.line_jumps;
                                 current.edge_shape = value.edge_shape;
+                                current.label_placement = value.label_placement;
+                                current.extra_labels = value.extra_labels;
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -5227,6 +5234,85 @@ fn edge_shape_fields(
             ui,
             t("This line shape keeps line jumps but does not draw them."),
         );
+    }
+}
+
+/// Positioned connector labels (draw.io edge-label children).
+fn connector_label_fields(ui: &mut Ui, id: CanvasObjectId, connector: &mut CanvasConnector) {
+    ui.separator();
+    ui.strong(t("Connector labels"));
+    let mut positioned = connector.label_placement.is_some();
+    if ui
+        .checkbox(&mut positioned, t("Position main label"))
+        .changed()
+    {
+        connector.label_placement = positioned.then(ConnectorLabelPlacement::default);
+    }
+    if let Some(placement) = &mut connector.label_placement {
+        ui.push_id(("main-connector-label", id), |ui| {
+            label_placement_fields(ui, placement)
+        });
+    }
+    let mut remove = None;
+    for (index, label) in connector.extra_labels.iter_mut().enumerate() {
+        ui.push_id(("connector-label", id, index), |ui| {
+            ui.separator();
+            let previous = label.text.clone();
+            widgets::property_field(ui, t("Label text"), |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut label.text)
+                        .desired_rows(1)
+                        .char_limit(MAX_BOARD_TEXT_CHARS),
+                )
+                .on_hover_text(t("Use Remove label to delete a label."))
+            });
+            if label.text.is_empty() {
+                label.text = previous;
+            }
+            label_placement_fields(ui, &mut label.placement);
+            if ui.button(t("Remove label")).clicked() {
+                remove = Some(index);
+            }
+        });
+    }
+    if let Some(index) = remove {
+        connector.extra_labels.remove(index);
+    }
+    if ui
+        .add_enabled(
+            connector.extra_labels.len() < MAX_CONNECTOR_LABELS,
+            egui::Button::new(t("Add label")),
+        )
+        .clicked()
+    {
+        connector.extra_labels.push(ConnectorLabel {
+            text: t("Label").to_owned(),
+            placement: ConnectorLabelPlacement {
+                orthogonal: -16.0,
+                ..ConnectorLabelPlacement::default()
+            },
+        });
+    }
+}
+
+fn label_placement_fields(ui: &mut Ui, placement: &mut ConnectorLabelPlacement) {
+    let limit = MAX_CONNECTOR_LABEL_OFFSET;
+    widgets::property_field(ui, t("Label position"), |ui| {
+        ui.add(egui::Slider::new(&mut placement.along, -1.0..=1.0).fixed_decimals(2))
+    });
+    for (label, value) in [
+        ("Label distance", &mut placement.orthogonal),
+        ("Label offset X", &mut placement.offset.x),
+        ("Label offset Y", &mut placement.offset.y),
+    ] {
+        widgets::property_field(ui, t(label), |ui| {
+            ui.add(
+                egui::DragValue::new(value)
+                    .range(-limit..=limit)
+                    .speed(0.5)
+                    .max_decimals(1),
+            )
+        });
     }
 }
 
@@ -11143,6 +11229,63 @@ mod tests {
             current.end_marker.unwrap().kind,
             ConnectorMarkerKind::SysmlPackCont
         );
+    }
+
+    #[test]
+    fn connector_inspector_adds_positions_and_removes_labels() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let id = doc
+            .doc
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1600.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        let connector = |harness: &Harness<'_, ThinodaApp>| {
+            let CanvasObjectKind::Connector(current) = &harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .kind
+            else {
+                panic!("expected connector");
+            };
+            current.clone()
+        };
+        harness.get_by_label("Position main label").click();
+        harness.run_steps(3);
+        assert_eq!(
+            connector(&harness).label_placement,
+            Some(ConnectorLabelPlacement::default())
+        );
+        harness.get_by_label("Add label").click();
+        harness.run_steps(3);
+        let current = connector(&harness);
+        assert_eq!(current.extra_labels.len(), 1);
+        assert_eq!(current.extra_labels[0].text, "Label");
+        assert!(current.extra_labels[0].placement.is_valid());
+        harness.get_by_label("Remove label").click();
+        harness.run_steps(3);
+        assert!(connector(&harness).extra_labels.is_empty());
+        assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(connector(&harness).extra_labels.len(), 1);
     }
 
     #[test]

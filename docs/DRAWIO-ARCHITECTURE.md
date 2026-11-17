@@ -230,6 +230,19 @@ after markers are computed; bands and rails replace the stroke and merged
 heads. Both renderers, hit testing, bounds and the lasso read that body;
 sankey connectors ignore it.
 
+**As implemented in D7 (connector labels):** `CanvasConnector.label_placement:
+Option<ConnectorLabelPlacement { along, orthogonal, offset }>` positions the
+main label, and `extra_labels: Vec<ConnectorLabel { text, placement }>` (up to
+64, non-empty text) hold draw.io's relative edge-label children. Placement
+ports mxGraphView.getPoint: `along` runs -1..1 over the routed length,
+`orthogonal` sits left of travel, and `offset` is added last. They need native
+v43, board clipboard v36 and sheet clipboard v32; private XMind snapshots use
+`THINODA-XMIND-CONNECTOR-LABELS-1`, and recovery uses
+`THINODA-RECOVERY-CONNECTOR-LABELS-1` (`THINODA-RECOVERY-INK-CONNECTOR-LABELS-1`
+with pending ink). The scene carries `text_labels` and their estimated bounds
+on `SceneGeometry::Polyline`; both renderers, hit testing, search and replace
+read them. Export writes `edgeLabel` vertex children with fresh ids.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

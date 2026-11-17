@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 42;
+pub const NATIVE_FORMAT_VERSION: u64 = 43;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -32,10 +32,13 @@ pub const NATIVE_FORMAT_VERSION: u64 = 42;
 /// 35 stack cross-axis fill, and 36 typed socio-technical meaning, and
 /// 37 draw.io round-trip passthrough, and 38 draw.io library connector markers,
 /// and 39 connector line jumps, and 40 draw.io edge routes, and 41 draw.io
-/// segment and isometric routes, and 42 connector edge shapes.
+/// segment and isometric routes, and 42 connector edge shapes, and 43
+/// positioned and multiple connector labels.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_connector_edge_shapes() {
+    if book.has_connector_labels() {
+        43
+    } else if book.has_connector_edge_shapes() {
         42
     } else if book.has_drawio_segment_routes() {
         41
@@ -497,7 +500,7 @@ fn connector_label_compositing_differs(object: &CanvasObject) -> bool {
     let CanvasObjectKind::Connector(connector) = &object.kind else {
         return false;
     };
-    if connector.label.is_empty() {
+    if connector.label.is_empty() && connector.extra_labels.is_empty() {
         return false;
     }
     object.style.text_color.is_some_and(|color| {
@@ -678,13 +681,13 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
                 final_state_appearance +=
                     usize::from(visible_outline || visible_fill || visible_label);
             }
-            let opacity_differs = !object.label().is_empty()
+            let opacity_differs = object.label_texts().any(|label| !label.is_empty())
                 && object.style.opacity < 1.0
                 && object.style.text_color.is_none_or(|color| color.a > 0);
             let connector_label_differs = matches!(
                 &object.kind,
                 CanvasObjectKind::Connector(connector)
-                    if !connector.label.is_empty()
+                    if (!connector.label.is_empty() || !connector.extra_labels.is_empty())
                         && (object.style.text_color.is_none()
                             || connector_label_compositing_differs(object))
             );

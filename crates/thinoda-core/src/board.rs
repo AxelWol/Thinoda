@@ -344,6 +344,13 @@ impl CanvasLayer {
         })
     }
 
+    /// Whether this layer needs connector-label-aware persistence.
+    pub fn has_connector_labels(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.has_positioned_labels())
+        })
+    }
+
     /// Whether this layer needs draw.io segment-route-aware persistence.
     pub fn has_drawio_segment_routes(&self) -> bool {
         self.objects.iter().any(|object| {
@@ -702,6 +709,15 @@ impl CanvasObject {
             CanvasObjectKind::Connector(c) => &c.label,
             CanvasObjectKind::Ink(_) => "",
         }
+    }
+
+    /// The label followed by any further connector labels.
+    pub fn label_texts(&self) -> impl Iterator<Item = &str> {
+        let extra = match &self.kind {
+            CanvasObjectKind::Connector(c) => c.extra_labels.as_slice(),
+            _ => &[],
+        };
+        std::iter::once(self.label()).chain(extra.iter().map(|label| label.text.as_str()))
     }
 
     /// Axis-aligned bounds of the rotated frame (connectors: their stored frame).
@@ -1716,6 +1732,121 @@ pub fn valid_edge_shape_width(width: f32) -> bool {
     width.is_finite() && (0.0..=MAX_EDGE_SHAPE_WIDTH).contains(&width)
 }
 
+/// Most labels a connector keeps beside its main label.
+pub const MAX_CONNECTOR_LABELS: usize = 64;
+/// Largest label distance from its path, keeping derived geometry finite.
+pub const MAX_CONNECTOR_LABEL_OFFSET: f32 = 100_000.0;
+
+/// draw.io relative edge-label geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct ConnectorLabelPlacement {
+    /// -1 at the start of the routed path, 0 halfway and 1 at its end.
+    #[serde(default)]
+    pub along: f32,
+    /// Distance from the path; positive values sit left of the travel direction.
+    #[serde(default)]
+    pub orthogonal: f32,
+    /// Absolute offset added after `along` and `orthogonal`.
+    #[serde(default)]
+    pub offset: Vec2,
+}
+
+impl ConnectorLabelPlacement {
+    pub fn is_valid(self) -> bool {
+        let distance = |value: f32| value.is_finite() && value.abs() <= MAX_CONNECTOR_LABEL_OFFSET;
+        self.along.is_finite()
+            && (-1.0..=1.0).contains(&self.along)
+            && distance(self.orthogonal)
+            && distance(self.offset.x)
+            && distance(self.offset.y)
+    }
+}
+
+/// An additional positioned connector label, like a draw.io edge-label child.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ConnectorLabel {
+    pub text: String,
+    #[serde(default)]
+    pub placement: ConnectorLabelPlacement,
+}
+
+fn valid_connector_labels(
+    placement: Option<ConnectorLabelPlacement>,
+    labels: &[ConnectorLabel],
+) -> bool {
+    placement.is_none_or(ConnectorLabelPlacement::is_valid)
+        && labels.len() <= MAX_CONNECTOR_LABELS
+        && labels.iter().all(|label| {
+            !label.text.is_empty()
+                && label.text.chars().count() <= MAX_BOARD_TEXT_CHARS
+                && label.placement.is_valid()
+        })
+}
+
+/// Size the exports give a connector label, as a centred frame around `anchor`.
+pub fn approx_connector_label_bounds(anchor: Vec2, text: &str) -> Rect {
+    const SIZE: f32 = 12.0;
+    let lines = text.lines().count().max(1);
+    let longest = text
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(1);
+    Rect::from_center_size(
+        anchor,
+        Vec2::new(
+            longest as f32 * SIZE * 0.6 + 8.0,
+            lines as f32 * SIZE * 1.25 + 4.0,
+        ),
+    )
+}
+
+/// Port of draw.io's `mxGraphView.getPoint` for relative edge-label geometry.
+pub fn connector_label_point(points: &[Vec2], placement: ConnectorLabelPlacement) -> Option<Vec2> {
+    let first = *points.first()?;
+    let offset = placement.offset;
+    if points.len() < 2 {
+        return Some(first + offset);
+    }
+    let mut lengths = Vec::with_capacity(points.len());
+    let mut total = 0.0f32;
+    lengths.push(0.0);
+    for pair in points.windows(2) {
+        total += (pair[1] - pair[0]).length();
+        lengths.push(total);
+    }
+    // draw.io rounds the distance and the point lengths in model units.
+    let dist = ((placement.along / 2.0 + 0.5) * total).round();
+    let mut index = 1;
+    let mut hi = points.len() - 1;
+    while index < hi {
+        let mid = (index + hi) / 2;
+        if dist >= lengths[mid].round() {
+            index = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    let p0 = points[index - 1];
+    let pe = points[index];
+    let segment = lengths[index] - lengths[index - 1];
+    let delta = pe - p0;
+    let (factor, nx, ny) = if segment == 0.0 {
+        (0.0, 0.0, 0.0)
+    } else {
+        (
+            (dist - lengths[index - 1]) / segment,
+            delta.y / segment,
+            delta.x / segment,
+        )
+    };
+    let gy = placement.orthogonal;
+    Some(Vec2::new(
+        p0.x + delta.x * factor + nx * gy + offset.x,
+        p0.y + delta.y * factor - ny * gy + offset.y,
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanvasConnector {
     /// Explicit semantic flow; ordinary stroke widths never imply a weight.
@@ -1758,6 +1889,12 @@ pub struct CanvasConnector {
     pub edge_shape: Option<EdgeShape>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
+    /// Where the main label sits; `None` keeps it halfway along the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_placement: Option<ConnectorLabelPlacement>,
+    /// Further positioned labels, like draw.io edge-label children.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_labels: Vec<ConnectorLabel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
     #[serde(default = "default_connector_width")]
@@ -1801,6 +1938,10 @@ struct StoredCanvasConnector {
     #[serde(default)]
     label: String,
     #[serde(default)]
+    label_placement: Option<ConnectorLabelPlacement>,
+    #[serde(default)]
+    extra_labels: Vec<ConnectorLabel>,
+    #[serde(default)]
     color: Option<Color>,
     #[serde(default = "default_connector_width")]
     width: f32,
@@ -1835,6 +1976,9 @@ impl<'de> Deserialize<'de> for CanvasConnector {
         if stored.edge_shape.is_some_and(|shape| !shape.is_valid()) {
             return Err(serde::de::Error::custom("invalid connector edge shape"));
         }
+        if !valid_connector_labels(stored.label_placement, &stored.extra_labels) {
+            return Err(serde::de::Error::custom("invalid connector labels"));
+        }
         if !valid_connector_port(stored.from, stored.from_port)
             || !valid_connector_port(stored.to, stored.to_port)
         {
@@ -1859,6 +2003,8 @@ impl<'de> Deserialize<'de> for CanvasConnector {
             line_jumps: stored.line_jumps,
             edge_shape: stored.edge_shape,
             label: stored.label,
+            label_placement: stored.label_placement,
+            extra_labels: stored.extra_labels,
             color: stored.color,
             width: stored.width,
         })
@@ -1898,9 +2044,34 @@ impl CanvasConnector {
             line_jumps: None,
             edge_shape: None,
             label: String::new(),
+            label_placement: None,
+            extra_labels: Vec::new(),
             color: None,
             width: default_connector_width(),
         }
+    }
+
+    /// Whether labels need connector-label-aware persistence.
+    pub fn has_positioned_labels(&self) -> bool {
+        self.label_placement.is_some() || !self.extra_labels.is_empty()
+    }
+
+    /// Non-empty labels with their anchors on the routed `points`.
+    pub fn label_anchors<'a>(&'a self, points: &[Vec2]) -> Vec<(&'a str, Vec2)> {
+        let mut anchors = Vec::with_capacity(1 + self.extra_labels.len());
+        if !self.label.is_empty() {
+            let anchor = match self.label_placement {
+                Some(placement) => connector_label_point(points, placement),
+                None => polyline_midpoint(points),
+            };
+            anchors.extend(anchor.map(|anchor| (self.label.as_str(), anchor)));
+        }
+        for label in &self.extra_labels {
+            if let Some(anchor) = connector_label_point(points, label.placement) {
+                anchors.push((label.text.as_str(), anchor));
+            }
+        }
+        anchors
     }
 
     pub fn set_arrow_start(&mut self, enabled: bool) {
@@ -2286,6 +2457,9 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             if c.edge_shape.is_some_and(|shape| !shape.is_valid()) {
                 return Err(format!("connector {id} has an invalid edge shape"));
             }
+            if !valid_connector_labels(c.label_placement, &c.extra_labels) {
+                return Err(format!("connector {id} has invalid labels"));
+            }
             if c.waypoints.len() > MAX_CONNECTOR_WAYPOINTS {
                 return Err(format!(
                     "connector {id} exceeds {MAX_CONNECTOR_WAYPOINTS} waypoints"
@@ -2565,8 +2739,13 @@ pub(crate) fn mask_canvas(sheet: &mut Sheet) {
             CanvasObjectKind::Shape { label, .. } if !label.is_empty() => {
                 *label = format!("Shape {}", index + 1);
             }
-            CanvasObjectKind::Connector(c) if !c.label.is_empty() => {
-                c.label = format!("Connector {}", index + 1);
+            CanvasObjectKind::Connector(c) => {
+                if !c.label.is_empty() {
+                    c.label = format!("Connector {}", index + 1);
+                }
+                for (n, label) in c.extra_labels.iter_mut().enumerate() {
+                    label.text = format!("Connector {} label {}", index + 1, n + 2);
+                }
             }
             _ => {}
         }

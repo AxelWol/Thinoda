@@ -993,6 +993,8 @@ pub enum SceneGeometry {
         /// Boxed so composite marker parts do not bloat every scene item.
         markers: Box<[Option<ConnectorMarkerGeometry>; 2]>,
         label_bounds: Option<Rect>,
+        /// Estimated frames of positioned labels, which may sit away from the path.
+        text_labels: Vec<Rect>,
         /// draw.io line jumps over connectors painted earlier.
         jumps: Option<Box<LineJumpGeometry>>,
         /// draw.io body shape replacing or overpainting the plain stroke.
@@ -1036,6 +1038,7 @@ impl SceneGeometry {
                 width,
                 markers,
                 label_bounds,
+                text_labels,
                 body,
                 ..
             } => {
@@ -1044,7 +1047,8 @@ impl SceneGeometry {
                     .map_or(*width, |body| body.stroke_width(*width))
                     / 2.0
                     + tolerance;
-                let label_hit = label_bounds.is_some_and(|r| r.expand(tolerance).contains(p));
+                let label_hit = label_bounds.is_some_and(|r| r.expand(tolerance).contains(p))
+                    || text_labels.iter().any(|r| r.expand(tolerance).contains(p));
                 match body.as_deref() {
                     Some(EdgeBody::Rails(rails)) => {
                         return label_hit
@@ -1490,6 +1494,7 @@ fn object_item(
                         &crate::sankey::flow_label(c, 0.0),
                     )
                 }),
+                text_labels: positioned_label_bounds(c, &points),
                 markers,
                 jumps: None,
                 body,
@@ -1580,6 +1585,20 @@ pub fn object_clip_at(sheet: &Sheet, object: CanvasObjectId, center: Vec2) -> Op
         .map(|zone| zone.frame)
 }
 
+/// Estimated frames of labels placed away from the default midpoint; the
+/// renderers measure text exactly, so these only widen hit testing and bounds.
+fn positioned_label_bounds(c: &CanvasConnector, points: &[Vec2]) -> Vec<Rect> {
+    if !c.has_positioned_labels() {
+        return Vec::new();
+    }
+    let skip_main = c.label_placement.is_none() && !c.label.is_empty();
+    c.label_anchors(points)
+        .into_iter()
+        .skip(usize::from(skip_main))
+        .map(|(text, anchor)| crate::board::approx_connector_label_bounds(anchor, text))
+        .collect()
+}
+
 fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
     match geometry {
         SceneGeometry::Rect { rect, rotation } => Some(rotated_bounds(*rect, *rotation)),
@@ -1613,6 +1632,7 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
             width,
             markers,
             label_bounds,
+            text_labels,
             jumps,
             body,
             ..
@@ -1638,6 +1658,9 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
             }
             if let Some(label_bounds) = label_bounds {
                 bounds = bounds.union(label_bounds);
+            }
+            for label in text_labels {
+                bounds = bounds.union(label);
             }
             for path in jumps.iter().flat_map(|jumps| &jumps.paths) {
                 if let Some(path_bounds) = points_bounds(path) {

@@ -7428,13 +7428,24 @@ fn nested_geometry_groups_containers_and_edge_labels() {
     assert_eq!(zone.name, "Pool");
     assert_eq!(zone.objects.len(), 3, "inside, pin and the free edge");
     let links = connectors(sheet);
-    let deferred = links.iter().find(|c| c.label == "edge label").unwrap();
+    let deferred = links
+        .iter()
+        .find(|c| {
+            c.extra_labels
+                .first()
+                .is_some_and(|l| l.text == "edge label")
+        })
+        .unwrap();
+    assert_eq!(deferred.extra_labels[0].placement.along, -0.2);
     assert_eq!(
         (deferred.from, deferred.to),
         (Endpoint::Object(a), Endpoint::Object(inside))
     );
     assert!(!deferred.arrow_end);
-    let free = links.iter().find(|c| c.label.is_empty()).unwrap();
+    let free = links
+        .iter()
+        .find(|c| c.label.is_empty() && c.extra_labels.is_empty())
+        .unwrap();
     assert_eq!(free.from, Endpoint::Point(Vec2::new(500.0, 0.0)));
     assert_eq!(free.to, Endpoint::Point(Vec2::new(510.0, 10.0)));
 }
@@ -10178,6 +10189,99 @@ fn edge_shapes_round_trip_and_warn_for_unrepresentable_parameters() {
             report.warnings.contains(&ImportWarning::Formatting),
             "{style}: {:?}",
             report.warnings
+        );
+    }
+}
+
+#[test]
+fn connector_labels_import_positioned_and_round_trip() {
+    use thinoda_core::board::{ConnectorLabel, ConnectorLabelPlacement};
+
+    let child = |id: &str, value: &str, style: &str, geometry: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{value}" style="{style}" vertex="1" connectable="0" parent="e"><mxGeometry {geometry} as="geometry"><mxPoint x="3" y="-4" as="offset"/></mxGeometry></mxCell>"#
+        )
+    };
+    let label_style = "edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontColor=#000000;";
+    let xml = page(&format!(
+        r##"<mxCell id="e" value="main" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry x="0.5" y="-10" relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/><mxPoint x="1" y="2" as="offset"/></mxGeometry></mxCell>{}{}"##,
+        child("c1", "1", label_style, r#"x="-0.8" y="6" relative="1""#),
+        child(
+            "c2",
+            "n",
+            label_style,
+            r#"x="1" width="20" height="10" relative="1""#
+        ),
+    ));
+    let sheet = clean(&xml);
+    let connector = connectors(&sheet)[0];
+    assert_eq!(connector.label, "main");
+    assert_eq!(
+        connector.label_placement,
+        Some(ConnectorLabelPlacement {
+            along: 0.5,
+            orthogonal: -10.0,
+            offset: Vec2::new(1.0, 2.0),
+        })
+    );
+    assert_eq!(
+        connector.extra_labels,
+        vec![
+            ConnectorLabel {
+                text: "1".into(),
+                placement: ConnectorLabelPlacement {
+                    along: -0.8,
+                    orthogonal: 6.0,
+                    offset: Vec2::new(3.0, -4.0),
+                },
+            },
+            ConnectorLabel {
+                text: "n".into(),
+                placement: ConnectorLabelPlacement {
+                    along: 1.0,
+                    orthogonal: 0.0,
+                    offset: Vec2::new(13.0, 1.0),
+                },
+            },
+        ]
+    );
+    let book = load(&xml).workbook;
+    assert_eq!(feature_version(&book), 43);
+    let exported = export(&book).unwrap();
+    let restored = import(&exported).unwrap();
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    let back = connectors(&restored.workbook.sheets[0])[0];
+    assert_eq!(back.label_placement, connector.label_placement);
+    assert_eq!(back.extra_labels, connector.extra_labels);
+
+    // Clamped positions, absolute children and styled children are disclosed.
+    for extra in [
+        child("c", "x", label_style, r#"x="2" relative="1""#),
+        child(
+            "c",
+            "x",
+            label_style,
+            r#"x="10" y="10" width="5" height="5""#,
+        ),
+        child(
+            "c",
+            "x",
+            &format!("{label_style}fontStyle=1;"),
+            r#"relative="1""#,
+        ),
+        child(
+            "c",
+            "x",
+            "edgeLabel;fontSize=11;fontColor=#000000;",
+            r#"relative="1""#,
+        ),
+    ] {
+        let xml = page(&format!(
+            r##"<mxCell id="e" style="endArrow=none;strokeColor=#000;fontColor=#000000;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>{extra}"##
+        ));
+        assert!(
+            load(&xml).warnings.contains(&ImportWarning::Formatting),
+            "{extra}"
         );
     }
 }

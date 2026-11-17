@@ -828,11 +828,20 @@ fn object_visible_bounds(
             } else {
                 0.0
             };
-            let label_margin = if connector.label.is_empty() {
+            let longest = std::iter::once(connector.label.as_str())
+                .chain(
+                    connector
+                        .extra_labels
+                        .iter()
+                        .map(|label| label.text.as_str()),
+                )
+                .map(|label| label.chars().count())
+                .max()
+                .unwrap_or(0);
+            let label_margin = if longest == 0 {
                 0.0
             } else {
-                connector.label.chars().count() as f32 * CANVAS_LABEL_FONT_SIZE * zoom_scale
-                    + 8.0 * zoom_scale
+                longest as f32 * CANVAS_LABEL_FONT_SIZE * zoom_scale + 8.0 * zoom_scale
             };
             arrow_margin.max(label_margin)
         }
@@ -1877,9 +1886,25 @@ fn paint_canvas_object(
                         );
                     }
                 }
-                if (!connector.label.is_empty() || unset) && editing_board_object != Some(object.id)
-                {
-                    let mid = xf.pos(label_center.expect("a connector path has points"));
+                let editing = editing_board_object == Some(object.id);
+                let mut labels: Vec<(String, thinoda_core::Vec2, bool)> = Vec::new();
+                if unset && !editing {
+                    labels.push((
+                        thinoda_core::sankey::flow_label(connector, 0.0),
+                        label_center.expect("a connector path has points"),
+                        true,
+                    ));
+                }
+                let skip_main = usize::from(!connector.label.is_empty() && (unset || editing));
+                labels.extend(
+                    connector
+                        .label_anchors(points)
+                        .into_iter()
+                        .skip(skip_main)
+                        .map(|(text, anchor)| (text.to_owned(), anchor, false)),
+                );
+                for (label, anchor, flow) in labels {
+                    let mid = xf.pos(anchor);
                     let font = opts.label_font(z);
                     let text_color = object
                         .style
@@ -1893,12 +1918,7 @@ fn paint_canvas_object(
                     } else {
                         background
                     };
-                    let label = if unset {
-                        thinoda_core::sankey::flow_label(connector, 0.0)
-                    } else {
-                        connector.label.clone()
-                    };
-                    let galley = if unset {
+                    let galley = if flow {
                         painter.layout(label, FontId::proportional(12.0 * z), text_color, 200.0 * z)
                     } else {
                         painter.layout_no_wrap(label, font, text_color)

@@ -346,7 +346,10 @@ pub fn search_canvas(
         .objects
         .iter()
         .filter_map(|object| {
-            let field = if matches(object.label(), needle, opts) {
+            let field = if object
+                .label_texts()
+                .any(|label| matches(label, needle, opts))
+            {
                 CanvasMatchField::Label
             } else if matches(&object.alt_text, needle, opts) {
                 CanvasMatchField::AltText
@@ -454,6 +457,15 @@ pub fn replace_in_canvas(
         };
         if let Some(label) = label {
             count += replace_text(label, needle, replacement, opts);
+        }
+        if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+            for label in &mut connector.extra_labels {
+                count += replace_text(&mut label.text, needle, replacement, opts);
+            }
+            // A label replaced by nothing disappears, as an emptied main label does.
+            connector
+                .extra_labels
+                .retain(|label| !label.text.is_empty());
         }
     }
     if let Some(id) = wanted.difference(&found).next() {

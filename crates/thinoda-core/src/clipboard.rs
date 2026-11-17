@@ -48,12 +48,15 @@ const LINE_JUMPS_SHEET_PREFIX: &str = "THINODA-SHEET-28\n";
 const EDGE_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-29\n";
 const SEGMENT_ROUTES_SHEET_PREFIX: &str = "THINODA-SHEET-30\n";
 const EDGE_SHAPES_SHEET_PREFIX: &str = "THINODA-SHEET-31\n";
+const CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-32\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_connector_edge_shapes() {
+    let prefix = if sheet.has_connector_labels() {
+        CONNECTOR_LABELS_SHEET_PREFIX
+    } else if sheet.has_connector_edge_shapes() {
         EDGE_SHAPES_SHEET_PREFIX
     } else if sheet.has_drawio_segment_routes() {
         SEGMENT_ROUTES_SHEET_PREFIX
@@ -141,6 +144,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
             text.strip_prefix(LINE_JUMPS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-28\r\n"))
                 .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(CONNECTOR_LABELS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-32\r\n"))
+                .map(|json| (32, json))
         })
         .or_else(|| {
             text.strip_prefix(EDGE_SHAPES_SHEET_PREFIX)
@@ -289,6 +297,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 32 && sheet.has_connector_labels() {
+        return Err("connector labels require sheet clipboard version 32".into());
+    }
     if version < 31 && sheet.has_connector_edge_shapes() {
         return Err("connector edge shapes require sheet clipboard version 31".into());
     }
@@ -1500,6 +1511,39 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn connector_label_sheet_clipboard_requires_version_thirty_two() {
+        use crate::Vec2;
+        use crate::board::{
+            CanvasConnector, CanvasObject, ConnectorLabel, ConnectorLabelPlacement, Endpoint,
+        };
+        let mut sheet = Sheet::new("Labels", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 40.0)),
+        );
+        connector.extra_labels.push(ConnectorLabel {
+            text: "1..n".into(),
+            placement: ConnectorLabelPlacement {
+                along: -0.8,
+                orthogonal: 10.0,
+                offset: Vec2::ZERO,
+            },
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(CONNECTOR_LABELS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(CONNECTOR_LABELS_SHEET_PREFIX, EDGE_SHAPES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("connector labels require sheet clipboard version 32")
+        );
     }
 
     #[test]

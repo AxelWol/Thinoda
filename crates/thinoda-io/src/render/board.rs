@@ -517,13 +517,23 @@ pub(crate) fn object_prims(
                     out.push(arrowhead(points[1], points[0], width, color));
                 }
             }
-            if !connector.label.trim().is_empty() || unset {
-                let mid = midpoint(points);
-                let label = if unset {
-                    thinoda_core::sankey::flow_label(connector, 0.0)
-                } else {
-                    connector.label.clone()
-                };
+            let mut labels: Vec<(String, Vec2)> = Vec::new();
+            if unset {
+                labels.push((
+                    thinoda_core::sankey::flow_label(connector, 0.0),
+                    midpoint(points),
+                ));
+            }
+            let skip_main = usize::from(!connector.label.is_empty() && unset);
+            labels.extend(
+                connector
+                    .label_anchors(points)
+                    .into_iter()
+                    .skip(skip_main)
+                    .filter(|(text, _)| !text.trim().is_empty())
+                    .map(|(text, anchor)| (text.to_owned(), anchor)),
+            );
+            for (label, mid) in labels {
                 let lines = wrap(&label, 200.0, 12.0);
                 let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1);
                 let size = Vec2::new(

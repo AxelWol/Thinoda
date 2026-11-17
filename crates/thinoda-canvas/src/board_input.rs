@@ -5838,11 +5838,15 @@ fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) ->
                 label_rect.size,
             )
         }
-        CanvasObjectKind::Connector(_) => {
+        CanvasObjectKind::Connector(connector) => {
             let point = match &item.geometry {
-                SceneGeometry::Polyline { points, .. } => {
-                    polyline_midpoint(points).unwrap_or(item.bounds.center())
-                }
+                SceneGeometry::Polyline { points, .. } => connector
+                    .label_placement
+                    .and_then(|placement| {
+                        thinoda_core::board::connector_label_point(points, placement)
+                    })
+                    .or_else(|| polyline_midpoint(points))
+                    .unwrap_or(item.bounds.center()),
                 _ => item.bounds.center(),
             };
             thinoda_core::Rect::from_center_size(point, Vec2::new(140.0, 40.0))

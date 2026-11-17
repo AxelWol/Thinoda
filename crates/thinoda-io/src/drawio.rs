@@ -27,14 +27,15 @@ use thinoda_core::{
     TextAlign, TopicId, TopicShape, Vec2, Workbook, ZoneId,
     board::{
         Band, BoardMember, CANVAS_LABEL_FONT_SIZE, CanvasConnector, CanvasGroupId, CanvasObject,
-        CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorMarker, ConnectorMarkerKind,
-        ConnectorPort, ConnectorRoute, DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE,
-        DrawioRectangleStencil, EdgeShape, EdgeShapeKind, Endpoint, GridKind, InkStroke, InkTool,
-        LineJumpStyle, LineJumps, MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_GRID_SIZE,
-        MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE, MIN_STROKE_WIDTH, ObjectStyle,
-        RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode, SheetRootMode,
-        normalize_rotation, rotate_around, valid_board_position, valid_connector_marker_size,
-        valid_edge_shape_width, valid_line_jump_size,
+        CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorLabel, ConnectorLabelPlacement,
+        ConnectorMarker, ConnectorMarkerKind, ConnectorPort, ConnectorRoute,
+        DEFAULT_CONNECTOR_MARKER_SIZE, DEFAULT_LINE_JUMP_SIZE, DrawioRectangleStencil, EdgeShape,
+        EdgeShapeKind, Endpoint, GridKind, InkStroke, InkTool, LineJumpStyle, LineJumps,
+        MAX_BOARD_COORDINATE, MAX_BOARD_TEXT_CHARS, MAX_CONNECTOR_LABEL_OFFSET,
+        MAX_CONNECTOR_LABELS, MAX_GRID_SIZE, MAX_STROKE_WIDTH, MIN_CARD_SIZE, MIN_GRID_SIZE,
+        MIN_STROKE_WIDTH, ObjectStyle, RectangleSides, ShapeKind, ShapeRounding, ShapeRoundingMode,
+        SheetRootMode, normalize_rotation, rotate_around, valid_board_position,
+        valid_connector_marker_size, valid_edge_shape_width, valid_line_jump_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
     layout_sheet,
@@ -1530,6 +1531,29 @@ struct Cell {
     tooltip: Option<String>,
     /// `UserObject` attributes without a first-class field, including `link`.
     attributes: Vec<(String, String)>,
+}
+
+/// Whether an edge-label child looks different from the connector's own label,
+/// which is how Thinoda draws every connector label.
+fn child_label_style_loss(child: &Style, edge: &Style) -> bool {
+    child.suppress_defaults
+        || child.tokens.iter().any(|token| token != "edgeLabel")
+        || child.num("fontSize") != Some(CANVAS_LABEL_FONT_SIZE)
+        || child.text_color() != edge.text_color()
+        || child.get("labelBackgroundColor") == Some("none")
+        || child.map.iter().any(|(key, value)| !match key.as_str() {
+            "html"
+            | "resizable"
+            | "points"
+            | "fontSize"
+            | "fontColor"
+            | "textOpacity"
+            | "labelBackgroundColor" => true,
+            "align" => matches!(value.as_str(), "" | "center"),
+            "verticalAlign" => matches!(value.as_str(), "" | "middle"),
+            "fontStyle" => matches!(value.as_str(), "" | "0"),
+            _ => false,
+        })
 }
 
 fn number(element: &Element, key: &str) -> Option<f32> {
@@ -3670,12 +3694,35 @@ impl<'a> PageImport<'a> {
         }
         let mut label = self.label(cell);
         let label_style_loss = !label.is_empty() && style.label_style_loss(true);
+        let label_placement = self.edge_label_placement(&cell.geometry);
+        let mut extra_labels = Vec::new();
         for child in self.children[index].clone() {
             let child = &cells[child];
             if child.vertex && child.visible {
                 let text = self.label(child);
-                if !text.is_empty() {
-                    // Folding child labels loses their independent positions and styles.
+                if text.is_empty() {
+                    continue;
+                }
+                if child.geometry.relative && !child.geometry.invalid_frame {
+                    if extra_labels.len() >= MAX_CONNECTOR_LABELS {
+                        self.warn(ImportWarning::Other);
+                        continue;
+                    }
+                    if child_label_style_loss(&child.style, style) {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    let g = &child.geometry;
+                    let placement = self.label_placement(
+                        g.x,
+                        g.y,
+                        g.offset.unwrap_or(Vec2::ZERO) + Vec2::new(g.width, g.height) * 0.5,
+                    );
+                    extra_labels.push(ConnectorLabel {
+                        text: truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings),
+                        placement,
+                    });
+                } else {
+                    // Absolute children have no edge-relative position; fold them.
                     self.warn(ImportWarning::Formatting);
                     if !label.is_empty() {
                         label.push('\n');
@@ -3709,6 +3756,10 @@ impl<'a> PageImport<'a> {
         connector.line_jumps = style.line_jumps();
         connector.edge_shape = edge_shape;
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
+        if !connector.label.is_empty() {
+            connector.label_placement = label_placement;
+        }
+        connector.extra_labels = extra_labels;
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
         let mut object = CanvasObject::connector(connector);
@@ -3719,6 +3770,36 @@ impl<'a> PageImport<'a> {
         if self.add_object(index, object, context).is_some() && detached {
             self.warn(ImportWarning::DetachedConnectors);
         }
+    }
+
+    /// The draw.io position of an edge's own label, unless it is the midpoint.
+    fn edge_label_placement(&mut self, geometry: &Geometry) -> Option<ConnectorLabelPlacement> {
+        let offset = geometry.offset.unwrap_or(Vec2::ZERO);
+        if !geometry.relative {
+            // mxGraph places absolute edge labels at the end-point midpoint.
+            if offset != Vec2::ZERO {
+                self.warn(ImportWarning::Formatting);
+            }
+            return None;
+        }
+        (geometry.x != 0.0 || geometry.y != 0.0 || offset != Vec2::ZERO)
+            .then(|| self.label_placement(geometry.x, geometry.y, offset))
+    }
+
+    fn label_placement(&mut self, x: f32, y: f32, offset: Vec2) -> ConnectorLabelPlacement {
+        let clamp = |value: f32, limit: f32| value.clamp(-limit, limit);
+        let placement = ConnectorLabelPlacement {
+            along: x.clamp(-1.0, 1.0),
+            orthogonal: clamp(y, MAX_CONNECTOR_LABEL_OFFSET),
+            offset: Vec2::new(
+                clamp(offset.x, MAX_CONNECTOR_LABEL_OFFSET),
+                clamp(offset.y, MAX_CONNECTOR_LABEL_OFFSET),
+            ),
+        };
+        if placement.along != x || placement.orthogonal != y || placement.offset != offset {
+            self.warn(ImportWarning::Formatting);
+        }
+        placement
     }
 
     fn finish(mut self) -> Sheet {
@@ -4810,6 +4891,10 @@ struct PageWriter<'a> {
     cell_ids: HashMap<CanvasObjectId, String>,
     /// Preserved UserObject attributes for the next cell written.
     attributes: Vec<(String, String)>,
+    /// Position of the next edge's own label, unless it is the midpoint.
+    label_placement: Option<ConnectorLabelPlacement>,
+    /// Every cell id written or reserved, for generated label cell ids.
+    used_ids: HashSet<String>,
 }
 
 /// Cell ids of canvas objects: the imported draw.io id when it is still unique
@@ -4933,6 +5018,8 @@ impl<'a> PageWriter<'a> {
             written: HashSet::new(),
             cell_ids: HashMap::new(),
             attributes: Vec::new(),
+            label_placement: None,
+            used_ids: HashSet::new(),
         };
         let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
         reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
@@ -4961,6 +5048,8 @@ impl<'a> PageWriter<'a> {
                 .map(|s| format!("s{}", s.id.0)),
         );
         writer.cell_ids = object_cell_ids(sheet, &reserved);
+        reserved.extend(writer.cell_ids.values().cloned());
+        writer.used_ids = reserved;
         for zone in &sheet.zones {
             for object in &zone.objects {
                 writer.object_zone.insert(*object, zone.id);
@@ -5178,8 +5267,23 @@ impl<'a> PageWriter<'a> {
             }
             geometry.push_str("</Array>");
         }
+        let mut position = String::new();
+        if let Some(placement) = self.label_placement.take() {
+            for (key, value) in [("x", placement.along), ("y", placement.orthogonal)] {
+                if value != 0.0 {
+                    position.push_str(&format!(" {key}=\"{}\"", num(value)));
+                }
+            }
+            if placement.offset != Vec2::ZERO {
+                geometry.push_str(&format!(
+                    "<mxPoint x=\"{}\" y=\"{}\" as=\"offset\"/>",
+                    num(placement.offset.x),
+                    num(placement.offset.y)
+                ));
+            }
+        }
         let cell = format!(
-            "style=\"{}\" edge=\"1\" parent=\"{parent}\"{terminals}><mxGeometry relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>",
+            "style=\"{}\" edge=\"1\" parent=\"{parent}\"{terminals}><mxGeometry{position} relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>",
             esc(style)
         );
         let label = esc(&html(label));
@@ -5195,6 +5299,45 @@ impl<'a> PageWriter<'a> {
             };
             self.out.push_str(&format!(
                 "<UserObject label=\"{label}\"{tooltip} id=\"{id}\"{extra}><mxCell {cell}</UserObject>\n"
+            ));
+        }
+    }
+
+    /// Writes further connector labels as draw.io edge-label children.
+    fn edge_labels(&mut self, edge_id: &str, labels: &[ConnectorLabel], text_color: Option<Color>) {
+        for (n, label) in labels.iter().enumerate() {
+            let mut id = format!("{edge_id}-label-{}", n + 1);
+            while self.used_ids.contains(&id) {
+                id.push('x');
+            }
+            self.used_ids.insert(id.clone());
+            let mut style = format!(
+                "edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize={};",
+                num(CANVAS_LABEL_FONT_SIZE)
+            );
+            color_keys(&mut style, "fontColor", "textOpacity", text_color);
+            let placement = label.placement;
+            let mut position = String::new();
+            for (key, value) in [("x", placement.along), ("y", placement.orthogonal)] {
+                if value != 0.0 {
+                    position.push_str(&format!(" {key}=\"{}\"", num(value)));
+                }
+            }
+            let offset = if placement.offset == Vec2::ZERO {
+                String::new()
+            } else {
+                format!(
+                    "<mxPoint x=\"{}\" y=\"{}\" as=\"offset\"/>",
+                    num(placement.offset.x),
+                    num(placement.offset.y)
+                )
+            };
+            self.out.push_str(&format!(
+                "<mxCell id=\"{}\" value=\"{}\" style=\"{}\" vertex=\"1\" connectable=\"0\" parent=\"{}\"><mxGeometry{position} relative=\"1\" as=\"geometry\">{offset}</mxGeometry></mxCell>\n",
+                esc(&id),
+                esc(&html(&label.text)),
+                esc(&style),
+                esc(edge_id)
             ));
         }
     }
@@ -5620,6 +5763,9 @@ impl<'a> PageWriter<'a> {
                     }
                 }
                 passthrough_style(&mut style, drawio);
+                self.label_placement = connector
+                    .label_placement
+                    .filter(|_| connector.sankey.is_none() && !connector.label.is_empty());
                 self.edge(
                     &cell_id,
                     &if connector.sankey.is_some() {
@@ -5637,6 +5783,7 @@ impl<'a> PageWriter<'a> {
                     &connector.waypoints,
                     &object.alt_text,
                 );
+                self.edge_labels(&cell_id, &connector.extra_labels, object.style.text_color);
             }
             CanvasObjectKind::Ink(ink) => {
                 let mut style = String::from(match ink.tool {

@@ -86,7 +86,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Connectors | Line jumps | Native (arc, gap, sharp, line, size); `noJump` and `jumpLayers` warn | D7 |
 | Connectors | Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire | Native (D7) | D7 |
 | Connectors | Fixed ports, waypoints, floating ends | Native | — |
-| Connectors | Multiple labels per edge | Approx. (merged) | D7 |
+| Connectors | Multiple labels per edge | Native (D7) | D7 |
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Approx. (lost on export) | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Approx. (cards native; shape labels partial) | D9 |
@@ -223,7 +223,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Routes elbowEdgeStyle (horizontal and vertical), entityRelation, sideToSide, topToBottom as editable routes
 - [x] Routes segment, isometric, loop as editable routes
 - [x] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
-- [ ] Multiple connector labels
+- [x] Multiple connector labels
 - [ ] Object links (URL, page), tooltips, custom properties, placeholders and tags, editable in the inspector
 
 ### D8 — Layers and tables
@@ -275,6 +275,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D7 connector labels | Relative edge-label children import as positioned connector labels and export as `edgeLabel` children; the main label keeps its x/y/offset; canvas, export, hits, search and replace see every label; inspector "Connector labels" adds, positions and removes them; native v43, board clipboard v36, sheet clipboard v32, new XMind and recovery envelopes |
 | 2026-11-17 | D7 edge shapes | flexArrow, taperedArrow, link, pipe, filledEdge and wire bodies port mxArrowConnector and Shapes.js; canvas, export, hits, bounds and lasso share them; inspector "Line shape" with widths and fill, style copy; native v42, board clipboard v35, sheet clipboard v31, new XMind and recovery envelopes |
 | 2026-11-17 | D7 segment, isometric, loop | Segmented (every waypoint fixes the next segment) and horizontal/vertical isometric routes port draw.io's SegmentConnector and IsometricConnector; floating self-loops route like draw.io's Loop on every route; route menu shows eleven routes; native v41, board clipboard v34, sheet clipboard v30, new XMind and recovery envelopes |
 | 2026-11-17 | D7 edge routes | Horizontal and vertical elbow, side-to-side, top-to-bottom and entity-relation routes follow draw.io's routers and orthogonal rectangle perimeter; first waypoint is the routing hint; route menu and inspector show all eight routes; native v40, board clipboard v33, sheet clipboard v29, new XMind and recovery envelopes |
@@ -498,6 +499,25 @@ approximations:
 - Line jumps draw only for wire and filledEdge, like draw.io; the inspector
   says so instead of hiding the setting.
 - The inspector edits one connector; multi-selection uses style copy.
+
+**D7 connector labels.** Placement ports draw.io's getPoint over the routed
+path, so labels follow route changes, and the label editor opens at the
+positioned main label. The corpus seed with an edge-label child now keeps it
+as a separate label instead of merging the text. Known approximations:
+
+- Label bounds are estimates (12 px lines, 7.2 px per character); exports
+  and hit testing share the estimate, but long labels may differ slightly
+  from the painted text.
+- An unpositioned main label still stays out of scene bounds, as before; the
+  lasso ignores labels.
+- Child labels inherit the connector's font, colour and background; children
+  with their own font size, colour, alignment or style import with a
+  Formatting warning, and absolute-positioned children are still merged into
+  the main label.
+- Extra labels are edited in the inspector, not on the canvas, and cannot be
+  dragged yet. A label cannot be emptied there; Remove label deletes it.
+- Sankey ribbons place their own flow label, so the section is hidden for
+  them.
 
 ## 5. Rubber-duck findings
 
