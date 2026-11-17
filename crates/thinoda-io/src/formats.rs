@@ -58,6 +58,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "socio-technical data requires native format version 36".into(),
             ));
         }
+        if version < 37 && book.has_drawio_passthrough() {
+            return Err(IoError::NewerVersion(
+                "draw.io passthrough requires native format version 37".into(),
+            ));
+        }
         if version >= 3 {
             crate::native_resources::hydrate(&mut z, &manifest_bytes, &mut book)?;
         } else if book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {

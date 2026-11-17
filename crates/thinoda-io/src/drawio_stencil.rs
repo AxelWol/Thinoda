@@ -6,7 +6,7 @@
 //! refuses to render with an explicit diagnostic instead of drawing silently
 //! wrong geometry.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use serde_json::Value;
@@ -980,6 +980,42 @@ pub(crate) fn native_style(stencil: &StencilRef) -> Option<String> {
 
 /// Package of stencils converted from cells' inline `shape=stencil(...)`.
 pub(crate) const INLINE_PACKAGE_ID: &str = "drawio.inline";
+
+/// draw.io style keys whose value the stencil reference owns: the definition's
+/// native style keys and its bound parameter keys.
+pub(crate) fn bound_style_keys(stencil: &StencilRef) -> HashSet<String> {
+    let mut keys = HashSet::new();
+    let Some((_, definition)) = stencil.resolve() else {
+        return keys;
+    };
+    let Some(binding) = drawio_binding(definition) else {
+        return keys;
+    };
+    if let Some(style) = binding.get("style").and_then(Value::as_str) {
+        keys.extend(
+            style
+                .split(';')
+                .filter_map(|part| part.split_once('='))
+                .map(|(key, _)| key.trim().to_owned()),
+        );
+    }
+    if let Some(bindings) = binding.get("parameters").and_then(Value::as_object) {
+        for binding in bindings.values() {
+            match binding {
+                Value::String(key) => {
+                    keys.insert(key.clone());
+                }
+                Value::Object(choice) => {
+                    if let Some(key) = choice.get("style").and_then(Value::as_str) {
+                        keys.insert(key.to_owned());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    keys
+}
 
 /// draw.io keys for bound parameters plus the lossless reference keys.
 pub(crate) fn reference_style(stencil: &StencilRef) -> String {

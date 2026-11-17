@@ -58,8 +58,8 @@ trademarks.
 ## 2. Gap analysis
 
 Status: **Native** = modelled and editable; **Approx.** = imported/rendered
-approximately with a warning; **Preserved** = kept in a passthrough envelope
-(none yet: the envelope is planned in D6); **Missing** = lost or rejected. "Plan" names the phase that closes the gap.
+approximately with a warning; **Preserved** = kept in the passthrough envelope
+(D6: unknown style keys, attributes and ids of board objects); **Missing** = lost or rejected. "Plan" names the phase that closes the gap.
 
 | Area | draw.io feature | Thinoda today | Plan |
 |---|---|---|---|
@@ -209,10 +209,10 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
 - [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
-### D6 — Ownership and passthrough envelope
+### D6 — Ownership and passthrough envelope ✅
 
-- [ ] Source ids, unknown style keys and attributes kept per object and sheet (architecture §3.1.1), with copy/delete semantics and diagnostics
-- [ ] Round-trip tests for unknown data through native save, clipboard and draw.io export
+- [x] Source ids, unknown style keys and attributes kept per object and sheet (architecture §3.1.1), with copy/delete semantics and diagnostics
+- [x] Round-trip tests for unknown data through native save, clipboard and draw.io export
 
 ### D7 — Connectors, links and data
 
@@ -272,6 +272,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D6 | Board objects keep draw.io source ids, unknown style keys and UserObject attributes; sheets keep diagram ids, model attributes and tombstones. Native v37, board clipboard v30; export never overrides edited keys or reuses deleted ids |
 | 2026-11-17 | D5 | 34 JSON definitions cover 35 JS-coded draw.io shapes (floorplan, mockup, BPMN, C4, lean mapping, callouts); choice parameters bind draw.io keyword styles both ways; every option evaluates at three sizes |
 | 2026-11-17 | D4 | draw.io stencil XML imports as `user.drawio.<ns>` packages with draw.io aliases; installed libraries resolve opened diagrams; aws4 (1,050 shapes) installs as 2 parts in 0.2 s; pinned download deferred |
 | 2026-11-17 | Requests | Software template previews readable; re-toggled arrows scale with width (d34d271); shape and connector options edit multi-selections with one undo |
@@ -379,6 +380,23 @@ shape. These remain rectangle fallbacks with the usual warning. All new titles
 are translated into the eight UI languages. Choice options show readable
 labels (for example "Intermediate catching") while import and export keep
 draw.io's keywords. Parameter labels and option names are English only.
+
+**D6.** Ownership is a conservative superset: every key Thinoda reads or
+writes for any object kind is owned and never passed through, so a few keys
+that would be safe to keep are dropped. Keys that depend on an owned key
+(`dashPattern` on `dashed`, `gradientDirection` on `gradientColor`, ...) are
+dropped when the owner is missing or off, so a cleared gradient never comes
+back. Only canvas objects carry passthrough; cards, topics and zones are
+regenerated, so their ids and unknown keys are lost, as before. Tombstones
+cover only cells that became objects, because topic and zone ids change on
+every import. Export gives a source id priority over a generated `o{id}`
+(except for Sankey connectors, whose extension addresses `o{id}`), so a
+renumbered re-import is idempotent. Unmappable cells are still dropped with a
+warning; storing them as opaque objects belongs to D10, as do workbook-level
+`mxfile` metadata and cut-once provenance. Named style tokens are not kept.
+Because almost every imported cell has an id, a file saved after a draw.io
+import needs native v37, so older Thinoda versions cannot open it. A shape
+`link` is preserved but still warns until D7 makes links editable.
 
 ## 5. Rubber-duck findings
 

@@ -16,6 +16,7 @@ mod board_semantics;
 pub mod clipboard;
 pub mod custom_theme;
 pub mod document;
+pub mod drawio_passthrough;
 pub mod edit;
 pub mod equations;
 pub mod fim;

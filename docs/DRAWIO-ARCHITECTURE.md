@@ -175,6 +175,16 @@ Rules (each backed by a test):
 8. **Non-draw.io documents** never get these fields; a native sheet saved to draw.io gets
    fresh ids and default envelope.
 
+**As implemented in D6** (`thinoda_core::drawio_passthrough`, native v37, board
+clipboard v30): objects carry `DrawioCellPassthrough { source_id, style, attributes }`
+and sheets carry `DrawioPagePassthrough { diagram_id, model_attributes, cell_ids }`.
+Deviations from the rules above: the workbook level, opaque objects for unmappable cells
+and cut-once provenance are deferred to D10, so every clipboard copy clears `source_id`.
+Tombstones (`cell_ids`) list only cells that became canvas objects, because topic and
+zone ids are regenerated on each import. Export prefers a stored source id over the
+generated `o{id}` (Sankey connectors always use `o{id}`), which keeps renumbered
+re-imports stable. Object passthrough is an immutable `Arc`, shared across undo snapshots.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

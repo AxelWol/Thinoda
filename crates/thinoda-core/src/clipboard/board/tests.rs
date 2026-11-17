@@ -2383,3 +2383,46 @@ fn destination_with_exhausted_entity_ids_is_rejected_without_allocation() {
         assert_eq!(target, before);
     }
 }
+
+#[test]
+fn drawio_passthrough_board_clipboard_requires_version_thirty_and_drops_source_ids() {
+    use crate::Rect;
+    use crate::drawio_passthrough::DrawioCellPassthrough;
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+    );
+    shape.drawio = Some(std::sync::Arc::new(DrawioCellPassthrough {
+        source_id: Some("node-a".into()),
+        style: vec![("customKey".into(), "1".into())],
+        attributes: vec![("owner".into(), "ops".into())],
+    }));
+    let id = source.add_canvas_object(shape).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(DRAWIO_PASSTHROUGH_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(
+        DRAWIO_PASSTHROUGH_BOARD_PREFIX,
+        CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX,
+        1,
+    );
+    assert!(decode_board_payload(&downgraded).is_err());
+    let mut destination = Sheet::new("Destination", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(10.0, 20.0)).unwrap();
+    let drawio = destination
+        .canvas
+        .object(pasted.objects[0])
+        .unwrap()
+        .drawio
+        .clone()
+        .unwrap();
+    assert_eq!(drawio.source_id, None);
+    assert_eq!(drawio.style, [("customKey".to_string(), "1".to_string())]);
+    assert_eq!(
+        drawio.attributes,
+        [("owner".to_string(), "ops".to_string())]
+    );
+}

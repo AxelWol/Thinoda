@@ -44,6 +44,19 @@ fn connectors(sheet: &Sheet) -> Vec<&CanvasConnector> {
         .collect()
 }
 
+/// Native version an import needs for its features, ignoring the draw.io
+/// passthrough (ids, unknown keys) that every imported page now carries.
+fn feature_version(book: &Workbook) -> u64 {
+    let mut book = book.clone();
+    for sheet in &mut book.sheets {
+        sheet.drawio = None;
+        for object in &mut sheet.canvas.objects {
+            object.drawio = None;
+        }
+    }
+    crate::required_native_version(&book)
+}
+
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
     Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h))
 }
@@ -86,12 +99,11 @@ fn drawio_placeholder_data_loss_requires_confirmation() {
     assert_eq!(load(&malformed).warnings, vec![ImportWarning::Other]);
 
     let bound_label = disabled.replace(r#"placeholders="0""#, r#"placeholder="status""#);
+    // The unknown attribute itself is preserved, so only the placeholder
+    // behavior is reported.
     assert_eq!(
         load(&bound_label).warnings,
-        vec![
-            ImportWarning::DrawioPlaceholdersUnsupported,
-            ImportWarning::Other
-        ]
+        vec![ImportWarning::DrawioPlaceholdersUnsupported]
     );
 }
 
@@ -1019,7 +1031,7 @@ fn final_state_import_preserves_editable_geometry_colors_and_connectors() {
     assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
     assert!(connectors(sheet)[0].from_port.is_some());
     report.workbook.validate().unwrap();
-    assert_eq!(crate::required_native_version(&report.workbook), 24);
+    assert_eq!(feature_version(&report.workbook), 24);
     let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
     assert!(exported.contains("shape=endState;perimeter=ellipsePerimeter;"));
     let reimported = load(&exported);
@@ -1134,7 +1146,7 @@ fn double_ellipse_import_preserves_inset_rotation_and_connectors() {
         );
         let native =
             export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
-        assert_eq!(crate::required_native_version(&report.workbook), 21);
+        assert_eq!(feature_version(&report.workbook), 21);
         assert_eq!(
             crate::import_bytes(Format::Thinoda, &native).unwrap(),
             report.workbook
@@ -2262,7 +2274,7 @@ fn flowchart_annotation_imports_as_an_editable_open_bracket() {
     assert_eq!(connectors(sheet)[0].from, Endpoint::Object(bracket.id));
     assert_eq!(connectors(sheet)[0].to, Endpoint::Object(objects[1].id));
     report.workbook.validate().unwrap();
-    assert_eq!(crate::required_native_version(&report.workbook), 20);
+    assert_eq!(feature_version(&report.workbook), 20);
     assert!(matches!(
         crate::import_bytes(Format::DrawIo, xml.as_bytes()),
         Err(IoError::ImportNeedsConfirmation(warnings))
@@ -4135,7 +4147,7 @@ fn drawio_standard_rounding_imports_and_exports_arc_modes() {
             shapes(&report.workbook.sheets[0])[0].rounding,
             Some(expected)
         );
-        assert_eq!(crate::required_native_version(&report.workbook), 23);
+        assert_eq!(feature_version(&report.workbook), 23);
         let exported = export(&report.workbook).unwrap();
         let text = std::str::from_utf8(&exported).unwrap();
         assert!(
@@ -6328,7 +6340,7 @@ fn marker_fills_round_trip_independently_for_every_supported_shape() {
                 assert_eq!(connector.start_marker_size, Some(12.5));
                 assert_eq!(connector.end_marker_size, Some(0.0));
                 assert_eq!(
-                    crate::required_native_version(&report.workbook),
+                    feature_version(&report.workbook),
                     if matches!(kind, "baseDash" | "dash") {
                         18
                     } else if kind == "halfCircle" {
@@ -6396,7 +6408,7 @@ fn custom_marker_sizes_round_trip_for_every_supported_shape() {
             assert_eq!(connector.start_marker_size, (size != 6.0).then_some(size));
             assert_eq!(connector.end_marker_size, Some(12.5));
             assert_eq!(
-                crate::required_native_version(&report.workbook),
+                feature_version(&report.workbook),
                 if matches!(kind, "baseDash" | "dash") {
                     18
                 } else if kind == "halfCircle" {
@@ -6476,7 +6488,7 @@ fn supported_connector_markers_round_trip_with_both_ends() {
                 marker(start)
             );
             assert_eq!(connector.end_marker.map(|value| value.kind), marker(end));
-            let native_version = crate::required_native_version(&report.workbook);
+            let native_version = feature_version(&report.workbook);
             assert_eq!(
                 native_version,
                 if [marker(start), marker(end)]
@@ -6547,7 +6559,7 @@ fn drawio_default_classic_and_legacy_triangle_are_distinct() {
             ConnectorMarkerKind::Classic,
             "{style}"
         );
-        assert_eq!(crate::required_native_version(&report.workbook), 12);
+        assert_eq!(feature_version(&report.workbook), 12);
     }
     let no_default = load(&cell(";"));
     let connector = connectors(&no_default.workbook.sheets[0])[0];
@@ -6828,7 +6840,7 @@ fn attached_fixed_connector_ports_survive_file_link_and_clipboard_conversion() {
             perimeter: true,
         })
     );
-    assert_eq!(crate::required_native_version(&report.workbook), 22);
+    assert_eq!(feature_version(&report.workbook), 22);
     let paste = crate::drawio_clipboard::decode(&xml).unwrap();
     assert!(paste.warnings.is_empty(), "{:?}", paste.warnings);
     let link = format!("#R{}", crate::drawio_clipboard::encode_uri_component(&xml));
@@ -7098,7 +7110,7 @@ fn fixed_connector_port_offsets_and_invalid_constraints_are_disclosed() {
         let report = load(&cells(style, source));
         assert_eq!(report.warnings, vec![ImportWarning::Formatting], "{style}");
         assert_eq!(connectors(&report.workbook.sheets[0])[0].from_port, None);
-        assert_ne!(crate::required_native_version(&report.workbook), 22);
+        assert_ne!(feature_version(&report.workbook), 22);
     }
 }
 
@@ -9218,7 +9230,7 @@ fn waypoint_connector_positions_survive_moves_and_format_round_trips() {
     book.active_mut()
         .move_canvas_objects(&[dot], delta)
         .unwrap();
-    assert_eq!(crate::required_native_version(&book), 22);
+    assert_eq!(feature_version(&book), 22);
     for format in [Format::Thinoda, Format::DrawIo] {
         let bytes =
             crate::export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
@@ -9679,4 +9691,133 @@ fn installed_user_stencil_libraries_resolve_plain_drawio_shapes() {
     let exported = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
     assert!(exported.contains("shape=mxgraph.thinodauser.gear_box;"));
     crate::drawio_stencil::set_user_stencil_packages([]);
+}
+
+#[test]
+fn drawio_passthrough_round_trips_unknown_style_attributes_and_ids() {
+    let xml = page(concat!(
+        r#"<UserObject label="A" id="node-a" owner="ops" placeholders="1"><mxCell style="rounded=0;whiteSpace=wrap;html=1;customKey=alpha;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell></UserObject>"#,
+        r#"<mxCell id="e1" value="B" style="ellipse;whiteSpace=wrap;html=1;anotherKey=7;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="edge-1" style="endArrow=classic;html=1;edgeKey=x;" edge="1" parent="1" source="node-a" target="e1"><mxGeometry relative="1" as="geometry"/></mxCell>"#,
+    ));
+    let xml = xml
+        .replace("<diagram name=\"P\">", "<diagram id=\"diag-1\" name=\"P\">")
+        .replace("<mxGraphModel>", "<mxGraphModel futureFlag=\"on\">");
+    let report = load(&xml);
+    let sheet = &report.workbook.sheets[0];
+    let a = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("node-a"))
+        .unwrap();
+    let drawio = a.drawio.as_ref().unwrap();
+    assert!(
+        drawio.style.contains(&("customKey".into(), "alpha".into())),
+        "{:?}",
+        drawio.style
+    );
+    assert!(
+        !drawio.style.iter().any(|(k, _)| k == "fillColor"),
+        "{:?}",
+        drawio.style
+    );
+    assert_eq!(
+        drawio.attributes,
+        [
+            ("owner".into(), "ops".into()),
+            ("placeholders".into(), "1".into())
+        ]
+    );
+    let page = sheet.drawio.as_ref().unwrap();
+    assert_eq!(page.diagram_id.as_deref(), Some("diag-1"));
+    assert_eq!(page.model_attributes, [("futureFlag".into(), "on".into())]);
+
+    let native = crate::formats::native_export(&report.workbook).unwrap();
+    let reopened = crate::formats::native_import(&native).unwrap();
+    assert!(reopened.has_drawio_passthrough());
+    assert_eq!(crate::required_native_version(&reopened), 37);
+    let content = serde_json::to_vec(&reopened).unwrap();
+    let old = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":2,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&old),
+        Err(IoError::NewerVersion(_))
+    ));
+    let out = String::from_utf8(export(&reopened).unwrap()).unwrap();
+    for needle in [
+        "<diagram id=\"diag-1\"",
+        "futureFlag=\"on\"",
+        "id=\"node-a\" owner=\"ops\" placeholders=\"1\"",
+        "customKey=alpha;",
+        "id=\"e1\"",
+        "anotherKey=7;",
+        "id=\"edge-1\"",
+        "edgeKey=x;",
+        "source=\"node-a\" target=\"e1\"",
+    ] {
+        assert!(out.contains(needle), "missing {needle}: {out}");
+    }
+    let again = load(&out);
+    let a = again.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("node-a"))
+        .unwrap();
+    assert_eq!(a.drawio.as_ref().unwrap().attributes.len(), 2);
+}
+
+#[test]
+fn drawio_passthrough_never_overrides_edits_or_reuses_ids() {
+    let xml = page(concat!(
+        r#"<mxCell id="t1" value="A" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=1 4;fillColor=#ff0000;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="gone" value="B" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let mut book = load(&xml).workbook;
+    let sheet = &mut book.sheets[0];
+    let removed = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some("gone"))
+        .unwrap()
+        .id;
+    sheet.canvas.objects.retain(|o| o.id != removed);
+    let first = &mut sheet.canvas.objects[0];
+    first.style.fill = None;
+    let mut copy = first.clone();
+    copy.drawio = Passthrough::for_copy(&copy.drawio);
+    assert!(copy.drawio.as_ref().is_none_or(|d| d.source_id.is_none()));
+    let out = String::from_utf8(export(&book).unwrap()).unwrap();
+    assert!(!out.contains("fillColor=#ff0000"), "{out}");
+    assert!(out.contains("dashed=1;dashPattern=1 4;"), "{out}");
+    assert!(!out.contains("id=\"gone\""), "{out}");
+    // `t1` is reserved for topics, so the shape falls back to its own id.
+    assert!(!out.contains("id=\"t1\""), "{out}");
+    let masked = book.masked_copy();
+    assert!(!masked.has_drawio_passthrough());
+}
+
+#[test]
+fn passthrough_style_keeps_generated_keys_and_drops_orphans() {
+    let drawio = Passthrough {
+        source_id: None,
+        style: vec![
+            ("strokeColor".into(), "#ff0000".into()),
+            ("dashPattern".into(), "1 4".into()),
+            ("jettySize".into(), "auto".into()),
+            ("custom".into(), "1".into()),
+        ],
+        attributes: Vec::new(),
+    };
+    let mut style = String::from("edgeStyle=none;strokeColor=#000000;");
+    passthrough_style(&mut style, Some(&drawio));
+    assert_eq!(style, "edgeStyle=none;strokeColor=#000000;custom=1;");
 }

@@ -670,6 +670,9 @@ impl Subtree {
 pub struct Sheet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sankey: Option<crate::sankey::SankeySettings>,
+    /// Imported draw.io page data without a Thinoda field, kept for round trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio: Option<std::sync::Arc<crate::drawio_passthrough::DrawioPagePassthrough>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fim: Option<crate::fim::FimDocument>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -732,6 +735,7 @@ impl Sheet {
         topics.insert(root, Topic::new(root, root_title));
         Self {
             sankey: None,
+            drawio: None,
             fim: None,
             semantic: None,
             title: title.into(),
@@ -838,6 +842,10 @@ impl Sheet {
 
     pub fn has_stencils(&self) -> bool {
         self.canvas.has_stencils()
+    }
+
+    pub fn has_drawio_passthrough(&self) -> bool {
+        self.drawio.is_some() || self.canvas.has_drawio_passthrough()
     }
 
     pub fn has_scene_hierarchy(&self) -> bool {
@@ -2625,6 +2633,10 @@ impl Workbook {
         self.sheets.iter().any(Sheet::has_stencils)
     }
 
+    pub fn has_drawio_passthrough(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_drawio_passthrough)
+    }
+
     pub fn has_scene_hierarchy(&self) -> bool {
         self.sheets.iter().any(Sheet::has_scene_hierarchy)
     }
@@ -2697,6 +2709,7 @@ impl Workbook {
         copy.metadata = Metadata::default();
         for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
             sheet.fim = None;
+            sheet.drawio = None;
             sheet.resources = Default::default();
             sheet.title = format!("Sheet {}", sheet_index + 1);
             sheet.theme.font_family = None;

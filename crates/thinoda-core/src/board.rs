@@ -363,6 +363,10 @@ impl CanvasLayer {
     pub fn has_stencils(&self) -> bool {
         self.objects.iter().any(|object| object.stencil.is_some())
     }
+
+    pub fn has_drawio_passthrough(&self) -> bool {
+        self.objects.iter().any(|object| object.drawio.is_some())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -590,6 +594,9 @@ pub struct CanvasObject {
     /// Data-defined drawing of a shape; `kind`'s shape is the legacy fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stencil: Option<crate::stencil_object::StencilRef>,
+    /// Imported draw.io data without a Thinoda field, kept for round trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawio: Option<std::sync::Arc<crate::drawio_passthrough::DrawioCellPassthrough>>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -613,6 +620,7 @@ impl CanvasObject {
             rectangle_sides: None,
             double_ellipse_margin: None,
             stencil: None,
+            drawio: None,
         }
     }
 
@@ -1741,6 +1749,14 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
         return Err(format!("canvas object {id} has an invalid rotation"));
     }
     valid_text(&object.alt_text, "alt text")?;
+    if let Some(drawio) = &object.drawio {
+        if drawio.is_empty() {
+            return Err(format!("canvas object {id} has empty draw.io data"));
+        }
+        drawio
+            .validate()
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+    }
     let style = &object.style;
     if !valid_width(style.stroke_width) {
         return Err(format!("canvas object {id} has an invalid stroke width"));
@@ -1947,6 +1963,13 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     let mut group_counts: HashMap<CanvasGroupId, usize> = HashMap::new();
     let mut total_points = 0usize;
     let mut total_waypoints = 0usize;
+    let mut drawio_bytes = sheet.drawio.as_ref().map_or(0, |page| page.byte_len());
+    if let Some(page) = &sheet.drawio {
+        if page.is_empty() {
+            return Err("sheet has empty draw.io data".into());
+        }
+        page.validate()?;
+    }
     for o in &canvas.objects {
         if ids
             .insert(o.id, matches!(o.kind, CanvasObjectKind::Shape { .. }))
@@ -1955,6 +1978,12 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             return Err(format!("duplicate canvas object id {}", o.id));
         }
         validate_object(o)?;
+        if let Some(drawio) = &o.drawio {
+            drawio_bytes = drawio_bytes.saturating_add(drawio.byte_len());
+            if drawio_bytes > crate::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES {
+                return Err("draw.io passthrough of the sheet is too large".into());
+            }
+        }
         if let CanvasObjectKind::Ink(ink) = &o.kind {
             total_points = total_points.saturating_add(ink.points.len());
             if total_points > MAX_TOTAL_INK_POINTS {
@@ -2117,6 +2146,7 @@ pub(crate) fn mask_canvas(sheet: &mut Sheet) {
         object.alt_text.clear();
         // Package programs and metadata can contain private text; use the legacy fallback.
         object.stencil = None;
+        object.drawio = None;
         match &mut object.kind {
             CanvasObjectKind::Shape { label, .. } if !label.is_empty() => {
                 *label = format!("Shape {}", index + 1);

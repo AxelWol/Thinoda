@@ -18,6 +18,10 @@ use cssparser::{ParseError, Parser, ParserInput};
 use cssparser_color::{Color as CssColor, RgbaLegacy, hsl_to_rgb, hwb_to_rgb};
 use quick_xml::events::{BytesStart, Event};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+use thinoda_core::drawio_passthrough::{
+    DrawioCellPassthrough as Passthrough, DrawioPagePassthrough,
+};
 use thinoda_core::{
     ApproxMeasure, Color, MAX_PRESENTATION_NAME_BYTES, MAX_ZONES, MIN_ZONE_SIZE, Rect, Sheet,
     TextAlign, TopicId, TopicShape, Vec2, Workbook, ZoneId,
@@ -50,6 +54,89 @@ const MAX_PAGES: usize = 1_000;
 /// Nesting depth of cells (parent references), independent of XML depth.
 const MAX_CELL_DEPTH: usize = 256;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// Ownership table, revision 1 (architecture §3.1.1): style keys that first-class
+/// fields represent or that import consumes. They are never kept as passthrough,
+/// so a cleared field cannot be resurrected by its source value. Every `thinoda*`
+/// key is owned as well.
+const OWNED_STYLE_KEYS: &[&str] = &[
+    "absoluteArcSize",
+    "allowGaps",
+    "anchorPointDirection",
+    "arcSize",
+    "bottom",
+    "childLayout",
+    "collapsible",
+    "container",
+    "curved",
+    "direction",
+    "edgeStyle",
+    "endArrow",
+    "endFill",
+    "endSize",
+    "entryDx",
+    "entryDy",
+    "entryPerimeter",
+    "entryX",
+    "entryY",
+    "exitDx",
+    "exitDy",
+    "exitPerimeter",
+    "exitX",
+    "exitY",
+    "fill",
+    "fillColor",
+    "fillOpacity",
+    "fontColor",
+    "horizontal",
+    "horizontalStack",
+    "html",
+    "image",
+    "imageAspect",
+    "left",
+    "locked",
+    "margin",
+    "marginBottom",
+    "marginLeft",
+    "marginRight",
+    "marginTop",
+    "opacity",
+    "perimeter",
+    "perimeterSpacing",
+    "resizeLast",
+    "resizeParent",
+    "resizeParentMax",
+    "right",
+    "rotation",
+    "rounded",
+    "roundedPerimeter",
+    "rSize",
+    "shape",
+    "size",
+    "stackBorder",
+    "stackSpacing",
+    "startArrow",
+    "startFill",
+    "startSize",
+    "strokeColor",
+    "strokeOpacity",
+    "strokeWidth",
+    "swimlaneFillColor",
+    "textOpacity",
+    "top",
+    "whiteSpace",
+];
+
+/// Passthrough keys that only mean something next to another key; dropped on
+/// export when that key is absent, so an edit cannot leave an orphan behind.
+const DEPENDENT_STYLE_KEYS: &[(&str, &str)] = &[
+    ("dashPattern", "dashed"),
+    ("fixDash", "dashed"),
+    ("elbow", "edgeStyle"),
+    ("jettySize", "edgeStyle"),
+    ("orthogonalLoop", "edgeStyle"),
+    ("gradientDirection", "gradientColor"),
+];
 
 fn invalid(message: &str) -> IoError {
     IoError::Invalid(message.into())
@@ -519,6 +606,7 @@ pub(crate) fn import_html(bytes: &[u8]) -> Result<ImportReport, IoError> {
 
 struct Page {
     name: String,
+    id: Option<String>,
     model: Element,
 }
 
@@ -543,6 +631,7 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
     match root.name.as_str() {
         "mxGraphModel" => Ok(vec![Page {
             name: String::new(),
+            id: None,
             model: root,
         }]),
         "mxfile" => {
@@ -552,6 +641,14 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
                     return Err(invalid("draw.io document has too many pages"));
                 }
                 let name = diagram.attr("name").unwrap_or_default().to_owned();
+                let id = diagram
+                    .attr("id")
+                    .filter(|id| {
+                        !id.is_empty()
+                            && id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+                            && !id.chars().any(char::is_control)
+                    })
+                    .map(str::to_owned);
                 let model = match diagram
                     .children
                     .iter()
@@ -570,7 +667,7 @@ fn read_pages(bytes: &[u8]) -> Result<Vec<Page>, IoError> {
                         model
                     }
                 };
-                pages.push(Page { name, model });
+                pages.push(Page { name, id, model });
             }
             if pages.is_empty() {
                 return Err(invalid("draw.io document contains no pages"));
@@ -749,6 +846,8 @@ enum ConstraintPerimeter {
 struct Style {
     tokens: Vec<String>,
     map: HashMap<String, String>,
+    /// Explicit `key=value` keys in source order, for passthrough.
+    order: Vec<String>,
     suppress_defaults: bool,
     partial_sides: [Option<String>; 4],
     constraint_perimeter: ConstraintPerimeter,
@@ -785,9 +884,11 @@ impl Style {
                             _ => ConstraintPerimeter::Unknown,
                         };
                     }
-                    style
-                        .map
-                        .insert(key.trim().to_owned(), value.trim().to_owned());
+                    let key = key.trim();
+                    if !style.map.contains_key(key) {
+                        style.order.push(key.to_owned());
+                    }
+                    style.map.insert(key.to_owned(), value.trim().to_owned());
                 }
                 None => {
                     // Named styles are merged in order; defaultEdge restores its end marker.
@@ -1387,6 +1488,8 @@ struct Cell {
     geometry: Geometry,
     link: Option<String>,
     tooltip: Option<String>,
+    /// `UserObject` attributes without a first-class field, including `link`.
+    attributes: Vec<(String, String)>,
 }
 
 fn number(element: &Element, key: &str) -> Option<f32> {
@@ -1510,6 +1613,7 @@ fn read_cell(
         geometry: read_geometry(inner.child("mxGeometry"), warnings),
         link: owned(user.and_then(|u| u.attr("link"))),
         tooltip: owned(user.and_then(|u| u.attr("tooltip"))),
+        attributes: Vec::new(),
     }
 }
 
@@ -1539,15 +1643,34 @@ fn read_cells(model: &Element, warnings: &mut BTreeSet<ImportWarning>) -> Vec<Ce
                 if element.attr("placeholder").is_some() {
                     warnings.insert(ImportWarning::DrawioPlaceholdersUnsupported);
                 }
-                if element.attrs.iter().any(|(key, _)| {
-                    !matches!(
-                        key.as_str(),
-                        "id" | "label" | "link" | "tooltip" | "placeholders"
-                    )
+                let attributes: Vec<(String, String)> = element
+                    .attrs
+                    .iter()
+                    .filter(|(key, _)| {
+                        !thinoda_core::drawio_passthrough::RESERVED_ATTRIBUTES
+                            .contains(&key.as_str())
+                    })
+                    .cloned()
+                    .collect();
+                if attributes.iter().any(|(key, value)| {
+                    !thinoda_core::drawio_passthrough::valid_attribute_name(key)
+                        || value
+                            .chars()
+                            .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
                 }) {
                     warnings.insert(ImportWarning::Other);
                 }
-                read_cell(element, inner, Some(element), warnings)
+                let mut cell = read_cell(element, inner, Some(element), warnings);
+                cell.attributes = attributes
+                    .into_iter()
+                    .filter(|(key, value)| {
+                        thinoda_core::drawio_passthrough::valid_attribute_name(key)
+                            && !value
+                                .chars()
+                                .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+                    })
+                    .collect();
+                cell
             }
             _ => {
                 warnings.insert(ImportWarning::Other);
@@ -2113,6 +2236,9 @@ struct PageImport<'a> {
         )>,
     >,
     bundled_stencils: Option<BundledStencils>,
+    /// Cells whose passthrough was already given to an object.
+    passthrough_cells: HashSet<usize>,
+    passthrough_bytes: usize,
 }
 
 /// Per bundled draw.io package id: the page's closure and, once an object
@@ -2128,6 +2254,56 @@ type BundledStencils = HashMap<
 impl<'a> PageImport<'a> {
     fn warn(&mut self, warning: ImportWarning) {
         self.warnings.insert(warning);
+    }
+
+    /// Unknown style keys, attributes and the id of `cell` (architecture §3.1.1).
+    fn cell_passthrough(&mut self, cell: usize, object: &CanvasObject) -> Option<Arc<Passthrough>> {
+        let source = &self.cells[cell];
+        let bound = object
+            .stencil
+            .as_ref()
+            .map(crate::drawio_stencil::bound_style_keys)
+            .unwrap_or_default();
+        let sankey = source.style.flag("thinodaSankeyEdge");
+        let style = source
+            .style
+            .order
+            .iter()
+            .filter(|key| {
+                !OWNED_STYLE_KEYS.contains(&key.as_str())
+                    && !key.starts_with("thinoda")
+                    && !bound.contains(key.as_str())
+                    && !(sankey && key.as_str() == "dashed")
+            })
+            .filter_map(|key| {
+                let value = source.style.get(key)?;
+                (thinoda_core::drawio_passthrough::valid_style_key(key)
+                    && thinoda_core::drawio_passthrough::valid_style_value(value))
+                .then(|| (key.clone(), value.to_owned()))
+            })
+            .collect();
+        let passthrough = Passthrough {
+            source_id: (!source.id.starts_with('\u{0}')
+                && !matches!(source.id.as_str(), "0" | "1")
+                && source.id.len() <= thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+                && !source.id.chars().any(char::is_control))
+            .then(|| source.id.clone()),
+            style,
+            attributes: source.attributes.clone(),
+        };
+        if passthrough.is_empty() {
+            return None;
+        }
+        let bytes = passthrough.byte_len();
+        if passthrough.validate().is_err()
+            || self.passthrough_bytes + bytes
+                > thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2
+        {
+            self.warn(ImportWarning::Other);
+            return None;
+        }
+        self.passthrough_bytes += bytes;
+        Some(Arc::new(passthrough))
     }
 
     fn label(&mut self, cell: &Cell) -> String {
@@ -2294,6 +2470,9 @@ impl<'a> PageImport<'a> {
         mut object: CanvasObject,
         context: Context,
     ) -> Option<CanvasObjectId> {
+        if self.passthrough_cells.insert(cell) {
+            object.drawio = self.cell_passthrough(cell, &object);
+        }
         if let Some(stencil) = &object.stencil
             && stencil.package == crate::drawio_stencil::INLINE_PACKAGE_ID
             && stencil.package_resource.is_none()
@@ -3904,12 +4083,111 @@ fn import_page(
         adaptive_fixed_colors: !matches!(model.attr("adaptiveColors"), Some("simple" | "none")),
         inline_stencils: None,
         bundled_stencils: None,
+        passthrough_cells: HashSet::new(),
+        passthrough_bytes: 0,
     };
     import.run();
+    if import.cells.iter().enumerate().any(|(i, cell)| {
+        !import.passthrough_cells.contains(&i)
+            && cell
+                .attributes
+                .iter()
+                .any(|(name, _)| !matches!(name.as_str(), "link" | "placeholders"))
+    }) {
+        // Only canvas objects keep unknown attributes; topics and cards drop
+        // them. Their `link` becomes the hyperlink, and placeholders already
+        // carry their own warning.
+        import.warn(ImportWarning::Other);
+    }
     if let Some(extension) = model.attr("thinodaSankey") {
         import.apply_sankey(extension)?;
     }
-    Ok(import.finish())
+    let object_cells: HashSet<usize> = import
+        .items
+        .iter()
+        .filter(|(_, item)| matches!(item, Item::Object(_)))
+        .map(|(index, _)| *index)
+        .collect();
+    let drawio = page_passthrough(page, &cells, &object_cells);
+    let mut sheet = import.finish();
+    sheet.drawio = drawio;
+    Ok(sheet)
+}
+
+/// Unknown `mxGraphModel` attributes the exporter writes from first-class fields
+/// or as fixed values.
+const OWNED_MODEL_ATTRIBUTES: &[&str] = &[
+    "dx",
+    "dy",
+    "grid",
+    "gridSize",
+    "thinodaGrid",
+    "thinodaSnap",
+    "thinodaSankey",
+    "background",
+    "backgroundImage",
+    "guides",
+    "tooltips",
+    "connect",
+    "arrows",
+    "fold",
+    "page",
+    "pageScale",
+    "pageWidth",
+    "pageHeight",
+    "math",
+    "shadow",
+    "adaptiveColors",
+];
+
+/// Page-level passthrough. `cell_ids` records the cells that became canvas
+/// objects, so the exporter never hands a deleted object's id to another cell.
+fn page_passthrough(
+    page: &Page,
+    cells: &[Cell],
+    object_cells: &HashSet<usize>,
+) -> Option<Arc<DrawioPagePassthrough>> {
+    let budget = thinoda_core::drawio_passthrough::MAX_SHEET_PASSTHROUGH_BYTES / 2;
+    let mut drawio = DrawioPagePassthrough {
+        diagram_id: page.id.clone(),
+        model_attributes: page
+            .model
+            .attrs
+            .iter()
+            .filter(|(name, value)| {
+                !OWNED_MODEL_ATTRIBUTES.contains(&name.as_str())
+                    && thinoda_core::drawio_passthrough::valid_attribute_name(name)
+                    && !value
+                        .chars()
+                        .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+            })
+            .cloned()
+            .collect(),
+        cell_ids: Vec::new(),
+    };
+    let mut seen = HashSet::new();
+    drawio
+        .model_attributes
+        .retain(|(name, _)| seen.insert(name.clone()));
+    let mut bytes = drawio.byte_len();
+    for (index, cell) in cells.iter().enumerate() {
+        let id = &cell.id;
+        if !object_cells.contains(&index)
+            || id.starts_with('\u{0}')
+            || matches!(id.as_str(), "0" | "1")
+            || id.len() > thinoda_core::drawio_passthrough::MAX_SOURCE_ID_BYTES
+            || id.chars().any(char::is_control)
+            || drawio.cell_ids.len() >= thinoda_core::drawio_passthrough::MAX_PAGE_CELL_IDS
+        {
+            continue;
+        }
+        bytes += id.len();
+        if bytes > budget {
+            break;
+        }
+        drawio.cell_ids.push(id.clone());
+    }
+    (!drawio.is_empty() && drawio.validate().is_ok()).then(|| Arc::new(drawio))
 }
 
 /// Imports every page of a draw.io document as a Freeform board sheet.
@@ -4363,6 +4641,41 @@ fn common_keys(out: &mut String, style: &ObjectStyle, rotation: f32, locked: boo
     }
 }
 
+/// Appends a cell's preserved draw.io style keys after the generated ones.
+/// Generated keys always win, and dependent keys are dropped when the key they
+/// refine is gone (e.g. `dashPattern` once the line is no longer dashed).
+fn passthrough_style(out: &mut String, drawio: Option<&Passthrough>) {
+    let Some(drawio) = drawio.filter(|drawio| !drawio.style.is_empty()) else {
+        return;
+    };
+    let mut present: HashMap<String, String> = out
+        .split(';')
+        .filter_map(|entry| entry.split_once('='))
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect();
+    let rest: Vec<_> = drawio
+        .style
+        .iter()
+        .filter(|(key, _)| !present.contains_key(key))
+        .collect();
+    for (key, value) in &rest {
+        present.insert(key.clone(), value.clone());
+    }
+    for (key, value) in rest {
+        let orphan = DEPENDENT_STYLE_KEYS
+            .iter()
+            .find(|(dependent, _)| dependent == key)
+            .is_some_and(|(_, owner)| {
+                present
+                    .get(*owner)
+                    .is_none_or(|value| matches!(value.as_str(), "0" | "none" | ""))
+            });
+        if !orphan {
+            out.push_str(&format!("{key}={value};"));
+        }
+    }
+}
+
 enum Terminal {
     Cell(String),
     Point(Vec2),
@@ -4401,6 +4714,67 @@ struct PageWriter<'a> {
     groups: HashMap<CanvasGroupId, (String, Rect)>,
     written_groups: HashSet<CanvasGroupId>,
     written: HashSet<BoardMember>,
+    /// draw.io cell id of each canvas object.
+    cell_ids: HashMap<CanvasObjectId, String>,
+    /// Preserved UserObject attributes for the next cell written.
+    attributes: Vec<(String, String)>,
+}
+
+/// Cell ids of canvas objects: the imported draw.io id when it is still unique
+/// and not one of the ids generated for other cells (`reserved`), otherwise
+/// `o{id}`. Ids of deleted source cells are never reused, so external
+/// references to them cannot silently retarget. Sankey edges keep `o{id}`,
+/// which their native extension reattaches by.
+fn object_cell_ids(sheet: &Sheet, reserved: &HashSet<String>) -> HashMap<CanvasObjectId, String> {
+    let tombstones: HashSet<&str> = sheet
+        .drawio
+        .iter()
+        .flat_map(|page| page.cell_ids.iter().map(String::as_str))
+        .collect();
+    let sankey = |object: &CanvasObject| matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some());
+    let mut ids = HashMap::new();
+    let mut used = reserved.clone();
+    for object in sheet.canvas.objects.iter().filter(|object| sankey(object)) {
+        let id = format!("o{}", object.id.0);
+        used.insert(id.clone());
+        ids.insert(object.id, id);
+    }
+    for object in &sheet.canvas.objects {
+        let Some(source) = object
+            .drawio
+            .as_ref()
+            .and_then(|drawio| drawio.source_id.as_ref())
+        else {
+            continue;
+        };
+        if !ids.contains_key(&object.id) && used.insert(source.clone()) {
+            ids.insert(object.id, source.clone());
+        }
+    }
+    for object in &sheet.canvas.objects {
+        if ids.contains_key(&object.id) {
+            continue;
+        }
+        let base = format!("o{}", object.id.0);
+        let mut id = base.clone();
+        let mut n = 1;
+        while used.contains(&id) || tombstones.contains(id.as_str()) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        used.insert(id.clone());
+        ids.insert(object.id, id);
+    }
+    ids
+}
+
+impl<'a> PageWriter<'a> {
+    fn cell_id(&self, id: CanvasObjectId) -> String {
+        self.cell_ids
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| format!("o{}", id.0))
+    }
 }
 
 impl<'a> PageWriter<'a> {
@@ -4465,7 +4839,36 @@ impl<'a> PageWriter<'a> {
             groups: HashMap::new(),
             written_groups: HashSet::new(),
             written: HashSet::new(),
+            cell_ids: HashMap::new(),
+            attributes: Vec::new(),
         };
+        let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
+        reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
+        reserved.extend(sheet.zones.iter().map(|zone| format!("z{}", zone.id.0)));
+        reserved.extend(sheet.canvas.groups.iter().map(|g| format!("g{}", g.id.0)));
+        reserved.extend(
+            writer
+                .layout
+                .boundaries
+                .iter()
+                .map(|b| format!("b{}", b.id.0)),
+        );
+        reserved.extend((0..writer.layout.connectors.len()).map(|n| format!("e{n}")));
+        reserved.extend(
+            writer
+                .layout
+                .relationships
+                .iter()
+                .map(|r| format!("r{}", r.id.0)),
+        );
+        reserved.extend(
+            writer
+                .layout
+                .summaries
+                .iter()
+                .map(|s| format!("s{}", s.id.0)),
+        );
+        writer.cell_ids = object_cell_ids(sheet, &reserved);
         for zone in &sheet.zones {
             for object in &zone.objects {
                 writer.object_zone.insert(*object, zone.id);
@@ -4555,7 +4958,7 @@ impl<'a> PageWriter<'a> {
                         .map(|object| object.rect.min)
                 })
                 .unwrap_or(Vec2::ZERO);
-            return (format!("o{}", parent.0), origin);
+            return (self.cell_id(*parent), origin);
         }
         if let Some(group) = self.member_group(member) {
             return (format!("g{}", group.0), self.groups[&group].1.min);
@@ -4623,6 +5026,8 @@ impl<'a> PageWriter<'a> {
         };
         let label = esc(&html(label));
         let style = esc(style);
+        let extra = self.take_attributes();
+        let user = user.or_else(|| (!extra.is_empty()).then_some(("", "")));
         match user {
             Some((tooltip, link)) => {
                 self.out.push_str(&format!("<UserObject label=\"{label}\" id=\"{id}\""));
@@ -4632,6 +5037,7 @@ impl<'a> PageWriter<'a> {
                 if !link.is_empty() {
                     self.out.push_str(&format!(" link=\"{}\"", esc(link)));
                 }
+                self.out.push_str(&extra);
                 self.out.push_str(&format!(
                     "><mxCell style=\"{style}\" vertex=\"1\" parent=\"{parent}\"{collapsed}>{geometry}</mxCell></UserObject>\n"
                 ));
@@ -4685,15 +5091,28 @@ impl<'a> PageWriter<'a> {
             esc(style)
         );
         let label = esc(&html(label));
-        if tooltip.is_empty() {
+        let extra = self.take_attributes();
+        if tooltip.is_empty() && extra.is_empty() {
             self.out
                 .push_str(&format!("<mxCell id=\"{id}\" value=\"{label}\" {cell}\n"));
         } else {
+            let tooltip = if tooltip.is_empty() {
+                String::new()
+            } else {
+                format!(" tooltip=\"{}\"", esc(tooltip))
+            };
             self.out.push_str(&format!(
-                "<UserObject label=\"{label}\" tooltip=\"{}\" id=\"{id}\"><mxCell {cell}</UserObject>\n",
-                esc(tooltip)
+                "<UserObject label=\"{label}\"{tooltip} id=\"{id}\"{extra}><mxCell {cell}</UserObject>\n"
             ));
         }
+    }
+
+    /// Escaped ` name="value"` text of the pending preserved attributes.
+    fn take_attributes(&mut self) -> String {
+        std::mem::take(&mut self.attributes)
+            .into_iter()
+            .map(|(name, value)| format!(" {name}=\"{}\"", esc(&value)))
+            .collect()
     }
 
     fn terminal(&self, end: Endpoint) -> Terminal {
@@ -4701,7 +5120,7 @@ impl<'a> PageWriter<'a> {
             Endpoint::Point(p) => Terminal::Point(p),
             Endpoint::Object(id) => match self.sheet.canvas.object(id) {
                 Some(object) if matches!(object.kind, CanvasObjectKind::Shape { .. }) => {
-                    Terminal::Cell(format!("o{}", id.0))
+                    Terminal::Cell(self.cell_id(id))
                 }
                 Some(object) if object.is_connector() => {
                     Terminal::Point(self.connector_midpoints.get(&id).copied().unwrap_or_else(
@@ -4799,7 +5218,9 @@ impl<'a> PageWriter<'a> {
             return;
         };
         let (parent, origin) = self.parent(BoardMember::Object(id));
-        let cell_id = format!("o{}", id.0);
+        let cell_id = self.cell_id(id);
+        let drawio = object.drawio.as_deref();
+        self.attributes = drawio.map(|d| d.attributes.clone()).unwrap_or_default();
         match &object.kind {
             CanvasObjectKind::Shape { shape, label } => {
                 let mut style = String::new();
@@ -4913,6 +5334,7 @@ impl<'a> PageWriter<'a> {
                     object.locked,
                     object.band,
                 );
+                passthrough_style(&mut style, drawio);
                 let user = (!object.alt_text.is_empty()).then_some((object.alt_text.as_str(), ""));
                 self.vertex_with_alternate_bounds(
                     &cell_id,
@@ -5069,6 +5491,7 @@ impl<'a> PageWriter<'a> {
                         ));
                     }
                 }
+                passthrough_style(&mut style, drawio);
                 self.edge(
                     &cell_id,
                     &if connector.sankey.is_some() {
@@ -5096,6 +5519,7 @@ impl<'a> PageWriter<'a> {
                 color_keys(&mut style, "strokeColor", "strokeOpacity", Some(ink.color));
                 style.push_str(&format!("strokeWidth={};", num(ink.width)));
                 common_keys(&mut style, &object.style, 0.0, object.locked, object.band);
+                passthrough_style(&mut style, drawio);
                 let center = object.rect.center();
                 let points: Vec<Vec2> = ink
                     .points
@@ -5130,10 +5554,16 @@ impl<'a> PageWriter<'a> {
                     }
                     geometry.push_str("</Array>");
                 }
-                self.out.push_str(&format!(
-                    "<mxCell id=\"{cell_id}\" value=\"\" style=\"{}\" edge=\"1\" parent=\"{parent}\"><mxGeometry relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>\n",
+                let cell = format!(
+                    "style=\"{}\" edge=\"1\" parent=\"{parent}\"><mxGeometry relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>",
                     esc(&style)
-                ));
+                );
+                let extra = self.take_attributes();
+                self.out.push_str(&if extra.is_empty() {
+                    format!("<mxCell id=\"{cell_id}\" value=\"\" {cell}\n")
+                } else {
+                    format!("<UserObject label=\"\" id=\"{cell_id}\"{extra}><mxCell {cell}</UserObject>\n")
+                });
             }
         }
     }
@@ -5393,7 +5823,34 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
         ));
     }
     let mut out = String::from("<mxfile host=\"Thinoda\" type=\"device\">\n");
+    let mut diagram_ids = HashSet::new();
+    let kept_ids: Vec<Option<String>> = sheets
+        .iter()
+        .map(|sheet| {
+            sheet
+                .drawio
+                .as_ref()
+                .and_then(|page| page.diagram_id.clone())
+                .filter(|id| diagram_ids.insert(id.clone()))
+        })
+        .collect();
     for (index, sheet) in sheets.into_iter().enumerate() {
+        let diagram_id = kept_ids[index].clone().unwrap_or_else(|| {
+            let base = format!("thinoda-page-{}", index + 1);
+            let mut id = base.clone();
+            let mut n = 1;
+            while !diagram_ids.insert(id.clone()) {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
+            id
+        });
+        let model_attributes: String = sheet
+            .drawio
+            .iter()
+            .flat_map(|page| &page.model_attributes)
+            .map(|(name, value)| format!(" {name}=\"{}\"", esc(value)))
+            .collect();
         let (grid, thinoda_grid) = match sheet.board.grid {
             GridKind::None => (0, "none"),
             GridKind::Dots => (1, "dots"),
@@ -5418,8 +5875,8 @@ fn export_sheets<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Result<Stri
             })
             .unwrap_or_default();
         out.push_str(&format!(
-            "<diagram id=\"thinoda-page-{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\"{background}{sankey} guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\">\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
-            index + 1,
+            "<diagram id=\"{}\" name=\"{}\">\n<mxGraphModel dx=\"0\" dy=\"0\" grid=\"{grid}\" gridSize=\"{}\" thinodaGrid=\"{thinoda_grid}\" thinodaSnap=\"{thinoda_snap}\"{background}{sankey} guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"0\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\"{model_attributes}>\n<root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
+            esc(&diagram_id),
             esc(&sheet.title),
             num(sheet.board.grid_size),
         ));

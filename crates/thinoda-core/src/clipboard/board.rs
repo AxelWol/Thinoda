@@ -8,6 +8,7 @@ use crate::board::{
     BoardMember, CanvasGroupId, CanvasObjectId, CanvasObjectKind, Endpoint, MAX_CANVAS_OBJECTS,
     SheetRootMode,
 };
+use crate::drawio_passthrough::DrawioCellPassthrough;
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{ApproxMeasure, Layout, layout_sheet};
 use crate::model::{Sheet, Subtree, Topic, TopicId, valid_position};
@@ -47,6 +48,7 @@ const GROW_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-26\n";
 const FIT_PARENT_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-27\n";
 const DISTRIBUTE_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-28\n";
 const CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-29\n";
+const DRAWIO_PASSTHROUGH_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-30\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -65,7 +67,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_scene_cross_axis_fill() {
+        if self.fragment.has_drawio_passthrough() {
+            DRAWIO_PASSTHROUGH_BOARD_PREFIX
+        } else if self.fragment.has_scene_cross_axis_fill() {
             CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX
         } else if self.fragment.has_scene_distribute_resize() {
             DISTRIBUTE_LAYOUT_BOARD_PREFIX
@@ -325,9 +329,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-29\r\n"))
-        .map(|json| (29, json))
+        .strip_prefix(DRAWIO_PASSTHROUGH_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-30\r\n"))
+        .map(|json| (30, json))
+        .or_else(|| {
+            text.strip_prefix(CROSS_AXIS_FILL_LAYOUT_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-29\r\n"))
+                .map(|json| (29, json))
+        })
         .or_else(|| {
             text.strip_prefix(DISTRIBUTE_LAYOUT_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-28\r\n"))
@@ -472,6 +481,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let mut payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 30 && payload.fragment.has_drawio_passthrough() {
+        return Err("draw.io passthrough requires board clipboard version 30".into());
+    }
     if version < 25 && payload.fragment.has_scene_fill_last_resize() {
         return Err("fill-last stack resizing requires board clipboard version 25".into());
     }
@@ -1031,6 +1043,7 @@ fn copy_prepared_board_selection(
                 }
             }
         }
+        object.drawio = DrawioCellPassthrough::for_copy(&object.drawio);
         fragment.canvas.objects.push(object);
     }
     fragment.canvas.card_states = sheet
@@ -1531,6 +1544,7 @@ pub fn paste_board_selection(
     for original in &source.canvas.objects {
         let mut object = original.clone();
         object.id = map_object(original.id)?;
+        object.drawio = DrawioCellPassthrough::for_copy(&object.drawio);
         object.group = object.group.map(map_group).transpose()?;
         object.rect = object.rect.translate(delta);
         match &mut object.kind {
