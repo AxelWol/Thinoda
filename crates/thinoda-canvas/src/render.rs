@@ -824,7 +824,7 @@ fn object_visible_bounds(
         CanvasObjectKind::Connector(connector) => {
             let zoom_scale = (1.0 / zoom.max(f32::EPSILON)).max(1.0);
             let arrow_margin = if connector.arrow_start || connector.arrow_end {
-                12.0 * zoom_scale
+                (12.0 * zoom_scale).max(thinoda_core::board::legacy_arrow_size(connector.width))
             } else {
                 0.0
             };
@@ -1805,7 +1805,7 @@ fn paint_canvas_object(
                             painter,
                             xf.pos(points[1]),
                             xf.pos(points[0]),
-                            (9.0 * z).max(4.0),
+                            (thinoda_core::board::legacy_arrow_size(connector.width) * z).max(4.0),
                             color,
                         );
                     }
@@ -1819,7 +1819,7 @@ fn paint_canvas_object(
                             painter,
                             xf.pos(points[n - 2]),
                             xf.pos(points[n - 1]),
-                            (9.0 * z).max(4.0),
+                            (thinoda_core::board::legacy_arrow_size(connector.width) * z).max(4.0),
                             color,
                         );
                     }
@@ -5159,6 +5159,70 @@ mod tests {
             &shape.shape,
             Shape::Path(path) if path.fill == color32(Color::rgb(240, 200, 80))
         )));
+    }
+
+    #[test]
+    fn retoggled_arrow_on_a_thick_connector_stays_wider_than_the_line() {
+        use thinoda_core::{
+            CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint, SheetRootMode,
+        };
+
+        let mut sheet = Sheet::new("Arrow", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(200.0, 0.0)),
+        );
+        connector.width = 8.0;
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::Classic,
+        });
+        connector.set_arrow_end(false);
+        connector.set_arrow_end(true);
+        assert!(connector.end_marker.is_none());
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let xf = Xf {
+            origin: pos2(50.0, 100.0),
+            zoom: 1.0,
+        };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_map(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &sheet,
+                    &layout,
+                    xf,
+                    &PaintOptions::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let tip = xf.pos(Vec2::new(200.0, 0.0));
+        let head = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Path(path) if path.closed && path.points.first() == Some(&tip) => Some(path),
+                _ => None,
+            })
+            .expect("the re-enabled end arrow is painted");
+        let half_width = head
+            .points
+            .iter()
+            .map(|point| (point.y - tip.y).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            half_width > 8.0,
+            "arrowhead {half_width} hides under the line"
+        );
     }
 
     #[test]

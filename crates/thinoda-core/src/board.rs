@@ -40,6 +40,12 @@ pub const MIN_STROKE_WIDTH: f32 = 0.1;
 pub const MAX_STROKE_WIDTH: f32 = 200.0;
 /// draw.io marker size in board units, before adding the stroke width.
 pub const DEFAULT_CONNECTOR_MARKER_SIZE: f32 = 6.0;
+
+/// Length of the legacy (marker-less) arrowhead in sheet units; it grows with the line so
+/// thick connectors keep a visible tip in every renderer.
+pub fn legacy_arrow_size(width: f32) -> f32 {
+    6.0 + width.max(0.0) * 2.0
+}
 pub const MAX_CONNECTOR_MARKER_SIZE: f32 = 999.0;
 pub const MIN_GRID_SIZE: f32 = 4.0;
 pub const MAX_GRID_SIZE: f32 = 512.0;

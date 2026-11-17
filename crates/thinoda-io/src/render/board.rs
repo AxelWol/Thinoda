@@ -542,7 +542,7 @@ fn arrowhead(from: Vec2, tip: Vec2, width: f32, color: Color) -> Prim {
         Vec2::new(1.0, 0.0)
     };
     let normal = Vec2::new(-dir.y, dir.x);
-    let size = 6.0 + width * 2.0;
+    let size = thinoda_core::board::legacy_arrow_size(width);
     let base = Vec2::new(tip.x - dir.x * size, tip.y - dir.y * size);
     Prim::Path {
         points: vec![
