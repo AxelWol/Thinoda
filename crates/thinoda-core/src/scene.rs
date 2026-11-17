@@ -2194,6 +2194,9 @@ fn clip_to_polygon(outline: &[Vec2], center: Vec2, toward: Vec2) -> Option<Vec2>
 }
 
 fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    if is_drawio_loop(connector) {
+        return loop_path(connector, a, b);
+    }
     if connector.route.is_drawio_edge_style() {
         return drawio_edge_style_path(connector, a, b);
     }
@@ -2222,8 +2225,61 @@ fn routed_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<V
         | ConnectorRoute::ElbowVertical
         | ConnectorRoute::SideToSide
         | ConnectorRoute::TopToBottom
-        | ConnectorRoute::EntityRelation => drawio_edge_style_path(connector, a, b),
+        | ConnectorRoute::EntityRelation
+        | ConnectorRoute::Segment
+        | ConnectorRoute::IsometricHorizontal
+        | ConnectorRoute::IsometricVertical => drawio_edge_style_path(connector, a, b),
     }
+}
+
+/// draw.io's default grid size, the `segment` of its loop router.
+const LOOP_SEGMENT: f32 = 10.0;
+
+/// Whether draw.io's `Loop` router replaces the edge style, as it does for
+/// floating self-loops with fewer than two waypoints (mxGraphView's
+/// `isLoopStyleEnabled`).
+fn is_drawio_loop(connector: &CanvasConnector) -> bool {
+    connector.from == connector.to
+        && !matches!(connector.from, Endpoint::Point(_))
+        && connector.waypoints.len() < 2
+        && connector.from_port.is_none()
+        && connector.to_port.is_none()
+}
+
+/// The two bends of draw.io's `Loop` router with its default west direction:
+/// a loop beside the right edge, or through the first waypoint as a hint.
+fn loop_points(source: Rect, hint: Option<Vec2>) -> [Vec2; 2] {
+    let center = source.center();
+    let max = source.max();
+    let hint = hint.filter(|&hint| !rect_contains(source, hint));
+    let (x, dx, y, dy) = match hint {
+        Some(hint) if (source.min.x..=max.x).contains(&hint.x) => (
+            center.x,
+            (center.x - hint.x).abs().max(LOOP_SEGMENT),
+            hint.y,
+            0.0,
+        ),
+        Some(hint) => (
+            hint.x,
+            0.0,
+            center.y,
+            (center.y - hint.y).abs().max(LOOP_SEGMENT),
+        ),
+        None => (max.x + 2.0 * LOOP_SEGMENT, 0.0, center.y, LOOP_SEGMENT),
+    };
+    [Vec2::new(x - dx, y - dy), Vec2::new(x + dx, y + dy)]
+}
+
+/// A self-loop routed like draw.io: through the loop bends, smoothed for curves.
+fn loop_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
+    let mut looped = connector.clone();
+    looped.waypoints = loop_points(a.rect, connector.waypoints.first().copied())
+        .to_vec()
+        .into();
+    if looped.route != ConnectorRoute::Curve {
+        looped.route = ConnectorRoute::Straight;
+    }
+    routed_waypoints(&looped, a, b)
 }
 
 /// draw.io's default `segment` for entity-relation edges.
@@ -2386,8 +2442,191 @@ fn entity_relation_points(source: Rect, target: Rect) -> Vec<Vec2> {
     }
 }
 
+/// Interior points of draw.io's `SegmentConnector`, where each waypoint fixes
+/// the position of the next segment, alternating between horizontal and
+/// vertical segments. Zero-sized terminals are fixed points, like draw.io's
+/// absolute terminal points.
+fn segment_points(source: Rect, target: Rect, waypoints: &[Vec2]) -> Vec<Vec2> {
+    const TOLERANCE: f32 = 1.0;
+    let fixed = |rect: Rect| (rect.size == Vec2::ZERO).then(|| rect.center());
+    let (p0, pe) = (fixed(source), fixed(target));
+    let (source_max, target_max) = (source.max(), target.max());
+    let outside_y = |rect: Rect, max: Vec2, y: f32| y < rect.min.y || y > max.y;
+    let outside_x = |rect: Rect, max: Vec2, x: f32| x < rect.min.x || x > max.x;
+    let mut temp = Vec::new();
+    let mut horizontal = true;
+    let mut pt = source.center();
+    let mut hint = pt;
+    if !waypoints.is_empty() {
+        let mut hints = waypoints.to_vec();
+        if (hints[0].x - pt.x).abs() < TOLERANCE {
+            hints[0].x = pt.x;
+        }
+        if (hints[0].y - pt.y).abs() < TOLERANCE {
+            hints[0].y = pt.y;
+        }
+        if let Some(pe) = pe {
+            let last = hints.last_mut().expect("hints are not empty");
+            if (last.x - pe.x).abs() < TOLERANCE {
+                last.x = pe.x;
+            }
+            if (last.y - pe.y).abs() < TOLERANCE {
+                last.y = pe.y;
+            }
+        }
+        hint = hints[0];
+        // Orientation of the first segment from alignment with fixed points or
+        // the terminal channels, trying the source end and then the target end.
+        let (mut terminal, mut channel, mut current, mut current_hint) =
+            (p0.is_none(), source, p0, hint);
+        for end in 0..2 {
+            let fixed_vertical = current.is_some_and(|point| point.x == current_hint.x);
+            let fixed_horizontal = current.is_some_and(|point| point.y == current_hint.y);
+            let channel_max = channel.max();
+            let in_horizontal_channel =
+                terminal && (channel.min.y..=channel_max.y).contains(&current_hint.y);
+            let in_vertical_channel =
+                terminal && (channel.min.x..=channel_max.x).contains(&current_hint.x);
+            let horizontal_channel =
+                fixed_horizontal || (current.is_none() && in_horizontal_channel);
+            let vertical_channel = fixed_vertical || (current.is_none() && in_vertical_channel);
+            let ambiguous =
+                (horizontal_channel && vertical_channel) || (fixed_vertical && fixed_horizontal);
+            if !(end == 0 && ambiguous) && (vertical_channel || horizontal_channel) {
+                horizontal = if end == 1 && hints.len() % 2 == 1 {
+                    vertical_channel
+                } else {
+                    horizontal_channel
+                };
+                break;
+            }
+            (terminal, channel, current) = (pe.is_none(), target, pe);
+            current_hint = *hints.last().expect("hints are not empty");
+            if fixed_vertical && fixed_horizontal {
+                hints.remove(0);
+            }
+        }
+        if horizontal && p0.map_or(outside_y(source, source_max, hint.y), |p0| p0.y != hint.y) {
+            temp.push(Vec2::new(pt.x, hint.y));
+        } else if !horizontal
+            && p0.map_or(outside_x(source, source_max, hint.x), |p0| p0.x != hint.x)
+        {
+            temp.push(Vec2::new(hint.x, pt.y));
+        }
+        if horizontal {
+            pt.y = hint.y;
+        } else {
+            pt.x = hint.x;
+        }
+        for &next in &hints {
+            horizontal = !horizontal;
+            hint = next;
+            if horizontal {
+                pt.y = hint.y;
+            } else {
+                pt.x = hint.x;
+            }
+            temp.push(pt);
+        }
+    }
+    let last = pe.unwrap_or(target.center());
+    if horizontal && pe.map_or(outside_y(target, target_max, hint.y), |pe| pe.y != hint.y) {
+        temp.push(Vec2::new(last.x, hint.y));
+    } else if !horizontal && pe.map_or(outside_x(target, target_max, hint.x), |pe| pe.x != hint.x) {
+        temp.push(Vec2::new(hint.x, last.y));
+    }
+    // Bends inside a floating terminal are dropped.
+    if p0.is_none() {
+        let inside = temp
+            .iter()
+            .take_while(|&&point| rect_contains(source, point))
+            .count();
+        temp.drain(..inside);
+    }
+    if pe.is_none() {
+        while temp
+            .last()
+            .is_some_and(|&point| rect_contains(target, point))
+        {
+            temp.pop();
+        }
+    }
+    let mut result: Vec<Vec2> = Vec::with_capacity(temp.len());
+    for point in temp {
+        let point = Vec2::new(
+            js_round(point.x * 10.0) / 10.0,
+            js_round(point.y * 10.0) / 10.0,
+        );
+        if result.last().is_none_or(|last| {
+            (last.x - point.x).abs() >= TOLERANCE || (last.y - point.y).abs() >= TOLERANCE
+        }) {
+            result.push(point);
+        }
+    }
+    if let Some(pe) = pe
+        && result.last().is_some_and(|last| {
+            (last.x - pe.x).abs() <= TOLERANCE && (last.y - pe.y).abs() <= TOLERANCE
+        })
+    {
+        result.pop();
+        if let Some(last) = result.last_mut() {
+            if (last.x - pe.x).abs() < TOLERANCE {
+                last.x = pe.x;
+            }
+            if (last.y - pe.y).abs() < TOLERANCE {
+                last.y = pe.y;
+            }
+        }
+    }
+    result
+}
+
+/// Interior points of draw.io's `IsometricConnector`: from the source centre
+/// along one isometric axis and then the other to the hint (or the midpoint),
+/// then on along the second axis, leaving the last span to the target on the
+/// first axis. Bends that coincide with a terminal centre are dropped so
+/// that the ends still leave along an axis.
+fn isometric_points(source: Rect, target: Rect, hint: Option<Vec2>, vertical: bool) -> Vec<Vec2> {
+    let (p0, pe) = (source.center(), target.center());
+    let angle = |degrees: f32| {
+        let radians = degrees.to_radians();
+        Vec2::new(radians.cos(), radians.sin())
+    };
+    let (a, b) = (angle(-30.0), angle(-150.0));
+    let mut result = Vec::with_capacity(3);
+    let mut last = p0;
+    let mut line_to = |to: Vec2, both: bool| {
+        let c = to - last;
+        let h = (b.y * c.x - b.x * c.y) / (a.x * b.y - a.y * b.x);
+        let v = (a.y * c.x - a.x * c.y) / (a.y * b.x - a.x * b.y);
+        let (first, second) = if vertical {
+            (b * v, a * h)
+        } else {
+            (a * h, b * v)
+        };
+        if both {
+            last = last + first;
+            result.push(last);
+        }
+        last = last + second;
+        result.push(last);
+    };
+    let hint = hint.unwrap_or(p0 + (pe - p0) * 0.5);
+    line_to(hint, true);
+    line_to(pe, false);
+    let near = |p: Vec2, q: Vec2| (p - q).length() < 1e-3;
+    let mut points: Vec<Vec2> = Vec::with_capacity(result.len());
+    for point in result {
+        if !near(point, p0) && !near(point, pe) && points.last().is_none_or(|&l| !near(l, point)) {
+            points.push(point);
+        }
+    }
+    points
+}
+
 /// Path of a connector using one of draw.io's routed edge styles. Like draw.io,
-/// only the first waypoint is a routing hint, and entity relations ignore it.
+/// only the first waypoint is a routing hint for elbow and isometric styles,
+/// segment routes use every waypoint, and entity relations ignore them.
 fn drawio_edge_style_path(connector: &CanvasConnector, a: EndTarget, b: EndTarget) -> Vec<Vec2> {
     let hint = connector
         .route
@@ -2401,12 +2640,27 @@ fn drawio_edge_style_path(connector: &CanvasConnector, a: EndTarget, b: EndTarge
         ConnectorRoute::SideToSide => side_to_side_points(source, target, hint),
         ConnectorRoute::TopToBottom => top_to_bottom_points(source, target, hint),
         ConnectorRoute::EntityRelation => entity_relation_points(source, target),
+        ConnectorRoute::Segment => segment_points(source, target, &connector.waypoints),
+        ConnectorRoute::IsometricHorizontal => isometric_points(source, target, hint, false),
+        ConnectorRoute::IsometricVertical => isometric_points(source, target, hint, true),
         ConnectorRoute::Straight | ConnectorRoute::Elbow | ConnectorRoute::Curve => Vec::new(),
     };
     // Like mxGraphView, the source end aims at the first route point (or the
-    // target centre) and the target end at the point preceding it.
-    let start = a.clip_orthogonal(interior.first().copied().unwrap_or(target.center()));
-    let end = b.clip_orthogonal(interior.last().copied().unwrap_or(start));
+    // target centre) and the target end at the point preceding it. Isometric
+    // routes are not orthogonal, so their ends clip from the centre.
+    let orthogonal = !matches!(
+        connector.route,
+        ConnectorRoute::IsometricHorizontal | ConnectorRoute::IsometricVertical
+    );
+    let clip = |end: &EndTarget, next: Vec2| {
+        if orthogonal {
+            end.clip_orthogonal(next)
+        } else {
+            end.clip(next)
+        }
+    };
+    let start = clip(&a, interior.first().copied().unwrap_or(target.center()));
+    let end = clip(&b, interior.last().copied().unwrap_or(start));
     let mut points = Vec::with_capacity(interior.len() + 2);
     push_distinct(&mut points, start);
     for point in interior {
@@ -2810,14 +3064,16 @@ pub fn connector_insert_handles(
     let Some((from, to)) = connector_targets(sheet, layout, connector) else {
         return Vec::new();
     };
-    if connector.route == ConnectorRoute::EntityRelation
-        || (connector.route.uses_waypoint_hint() && !connector.waypoints.is_empty())
+    let looped = is_drawio_loop(connector);
+    let hinted = connector.route.uses_waypoint_hint() || connector.route == ConnectorRoute::Segment;
+    if (connector.route == ConnectorRoute::EntityRelation && !looped)
+        || ((hinted || looped) && !connector.waypoints.is_empty())
     {
         return Vec::new();
     }
     if connector.waypoints.is_empty() {
         let path = routed_path(connector, from, to);
-        if connector.route == ConnectorRoute::Curve || connector.route.uses_waypoint_hint() {
+        if connector.route == ConnectorRoute::Curve || hinted || looped {
             return crate::board::polyline_midpoint(&path)
                 .map(|point| {
                     vec![ConnectorInsertHandle {

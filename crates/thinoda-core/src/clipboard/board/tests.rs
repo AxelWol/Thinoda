@@ -2467,6 +2467,31 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn segment_route_board_clipboard_requires_version_thirty_four() {
+    use crate::board::{CanvasConnector, ConnectorRoute, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 40.0)),
+    );
+    connector.route = ConnectorRoute::Segment;
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(SEGMENT_ROUTES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(SEGMENT_ROUTES_BOARD_PREFIX, EDGE_ROUTES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("segment routes require board clipboard version 34")
+    );
+}
+
+#[test]
 fn edge_route_board_clipboard_requires_version_thirty_three() {
     use crate::board::{CanvasConnector, ConnectorRoute, Endpoint};
 

@@ -2874,3 +2874,134 @@ fn entity_relation_matches_drawio_and_ignores_waypoints() {
         }
     }
 }
+
+#[test]
+fn segment_route_matches_drawio_segment_connector() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let target = rect(200.0, 200.0, 100.0, 60.0);
+    // Without waypoints, the route leaves horizontally and bends once.
+    let (path, handles) = drawio_route(source, target, ConnectorRoute::Segment, &[]);
+    assert_eq!(
+        path,
+        points(&[(100.0, 30.0), (250.0, 30.0), (250.0, 200.0)])
+    );
+    assert_eq!(handles.len(), 1);
+    // A waypoint fixes a horizontal and the following vertical segment.
+    let (path, handles) = drawio_route(
+        source,
+        target,
+        ConnectorRoute::Segment,
+        &[Vec2::new(150.0, 100.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[
+            (50.0, 60.0),
+            (50.0, 100.0),
+            (150.0, 100.0),
+            (150.0, 230.0),
+            (200.0, 230.0)
+        ])
+    );
+    assert!(handles.is_empty());
+    // Every waypoint counts, alternating the segment orientation; the last
+    // horizontal segment then runs to the target centre.
+    let (path, _) = drawio_route(
+        source,
+        target,
+        ConnectorRoute::Segment,
+        &[Vec2::new(150.0, 100.0), Vec2::new(350.0, 150.0)],
+    );
+    assert_eq!(
+        path,
+        points(&[
+            (50.0, 60.0),
+            (50.0, 100.0),
+            (150.0, 100.0),
+            (150.0, 150.0),
+            (250.0, 150.0),
+            (250.0, 200.0)
+        ])
+    );
+}
+
+#[test]
+fn isometric_routes_follow_thirty_degree_axes() {
+    let source = rect(0.0, 0.0, 100.0, 60.0);
+    let target = rect(200.0, 200.0, 100.0, 60.0);
+    let near = |a: Vec2, b: Vec2| (a - b).length() < 0.1;
+    for (route, bends) in [
+        (
+            ConnectorRoute::IsometricHorizontal,
+            [(13.4, 51.13), (150.0, 130.0), (286.6, 208.87)],
+        ),
+        (
+            ConnectorRoute::IsometricVertical,
+            [(186.6, 108.87), (150.0, 130.0), (113.4, 151.13)],
+        ),
+    ] {
+        let (path, handles) = drawio_route(source, target, route, &[]);
+        assert_eq!(path.len(), 5, "{route:?} {path:?}");
+        for (point, expected) in path[1..4].iter().zip(points(&bends)) {
+            assert!(near(*point, expected), "{route:?} {path:?}");
+        }
+        let slope = 30f32.to_radians().tan();
+        for pair in path.windows(2) {
+            let delta = pair[1] - pair[0];
+            assert!(
+                (delta.y.abs() - delta.x.abs() * slope).abs() < 0.1,
+                "{route:?} {path:?}"
+            );
+        }
+        assert_eq!(handles.len(), 1);
+        // The first waypoint moves the middle bend.
+        let (path, handles) = drawio_route(source, target, route, &[Vec2::new(150.0, 200.0)]);
+        assert!(
+            path.iter().any(|&p| near(p, Vec2::new(150.0, 200.0))),
+            "{path:?}"
+        );
+        assert!(handles.is_empty());
+    }
+}
+
+#[test]
+fn self_loops_route_like_drawio_loop() {
+    let looped = |route: ConnectorRoute, waypoints: &[Vec2]| {
+        let mut sheet = Sheet::new("Loops", "Root");
+        let a = shape(
+            &mut sheet,
+            ShapeKind::Rectangle,
+            rect(0.0, 0.0, 100.0, 60.0),
+            Band::Above,
+        );
+        let mut connector = CanvasConnector::new(Endpoint::Object(a), Endpoint::Object(a));
+        connector.route = route;
+        connector.waypoints = waypoints.to_vec().into();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        (
+            connector_path(&sheet, &layout, &connector),
+            connector_insert_handles(&sheet, &layout, &connector),
+        )
+    };
+    for route in [
+        ConnectorRoute::Straight,
+        ConnectorRoute::Elbow,
+        ConnectorRoute::EntityRelation,
+    ] {
+        // Without a hint the loop sits beside the right edge.
+        let (path, handles) = looped(route, &[]);
+        assert_eq!(path.len(), 4, "{route:?} {path:?}");
+        assert_eq!(path[1..3], points(&[(120.0, 20.0), (120.0, 40.0)]));
+        assert_eq!((path[0].x, path[3].x), (100.0, 100.0));
+        assert_eq!(handles.len(), 1);
+        // A hint above the shape loops over it.
+        let (path, handles) = looped(route, &[Vec2::new(50.0, -40.0)]);
+        assert_eq!(path[1..3], points(&[(40.0, -40.0), (60.0, -40.0)]));
+        assert_eq!((path[0].y, path[3].y), (0.0, 0.0));
+        assert!(handles.is_empty());
+    }
+    // A curved loop stays smooth but passes through the loop bends.
+    let (path, _) = looped(ConnectorRoute::Curve, &[]);
+    assert!(path.len() > 4);
+    assert!(path.iter().all(|p| p.x >= 99.0));
+}

@@ -208,6 +208,9 @@ fn connector_route_menu_offers_every_drawio_edge_style() {
         ("Side to side", ConnectorRoute::SideToSide),
         ("Top to bottom", ConnectorRoute::TopToBottom),
         ("Entity relation", ConnectorRoute::EntityRelation),
+        ("Segmented", ConnectorRoute::Segment),
+        ("Horizontal isometric", ConnectorRoute::IsometricHorizontal),
+        ("Vertical isometric", ConnectorRoute::IsometricVertical),
     ];
     let (app, id) = app_with_connector();
     let mut h = harness(app, vec2(1000.0, 700.0));

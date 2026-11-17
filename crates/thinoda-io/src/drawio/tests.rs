@@ -9928,6 +9928,15 @@ fn drawio_edge_styles_round_trip_and_warn_only_when_approximated() {
             "edgeStyle=entityRelationEdgeStyle;segment=30;",
             ConnectorRoute::EntityRelation,
         ),
+        ("edgeStyle=segmentEdgeStyle;", ConnectorRoute::Segment),
+        (
+            "edgeStyle=isometricEdgeStyle;",
+            ConnectorRoute::IsometricHorizontal,
+        ),
+        (
+            "edgeStyle=isometricEdgeStyle;elbow=vertical;",
+            ConnectorRoute::IsometricVertical,
+        ),
     ] {
         // Waypoints are routing hints draw.io honours the same way.
         let report = load(&edge(style, hint));
@@ -9935,11 +9944,21 @@ fn drawio_edge_styles_round_trip_and_warn_only_when_approximated() {
         let connector = connectors(&report.workbook.sheets[0])[0];
         assert_eq!(connector.route, expected, "{style}");
         assert_eq!(connector.waypoints.len(), 2);
-        assert_eq!(feature_version(&report.workbook), 40);
+        assert_eq!(
+            feature_version(&report.workbook),
+            if expected.is_segment_or_isometric() {
+                41
+            } else {
+                40
+            }
+        );
         let exported = export(&report.workbook).unwrap();
         assert_eq!(
             String::from_utf8_lossy(&exported).contains("elbow=vertical"),
-            expected == ConnectorRoute::ElbowVertical
+            matches!(
+                expected,
+                ConnectorRoute::ElbowVertical | ConnectorRoute::IsometricVertical
+            )
         );
         let restored = import(&exported).unwrap();
         assert!(
@@ -9954,8 +9973,6 @@ fn drawio_edge_styles_round_trip_and_warn_only_when_approximated() {
     // Routers Thinoda only approximates with its orthogonal elbow still warn,
     // as do non-default entity-relation segments and hints on orthogonal edges.
     for (style, points) in [
-        ("edgeStyle=segmentEdgeStyle;", ""),
-        ("edgeStyle=isometricEdgeStyle;", ""),
         ("edgeStyle=loopEdgeStyle;", ""),
         ("edgeStyle=entityRelationEdgeStyle;segment=12;", ""),
         ("edgeStyle=orthogonalEdgeStyle;", hint),
@@ -9967,7 +9984,7 @@ fn drawio_edge_styles_round_trip_and_warn_only_when_approximated() {
             report.warnings
         );
     }
-    let report = load(&edge("edgeStyle=segmentEdgeStyle;", ""));
+    let report = load(&edge("edgeStyle=loopEdgeStyle;", ""));
     assert_eq!(
         connectors(&report.workbook.sheets[0])[0].route,
         ConnectorRoute::Elbow
@@ -9983,6 +10000,29 @@ fn drawio_edge_styles_round_trip_and_warn_only_when_approximated() {
             .unwrap()
             .contains("elbow=")
     );
+}
+
+#[test]
+fn self_loops_import_silently_unless_the_loop_is_customised() {
+    let looped = |style: &str| {
+        page(&format!(
+            r#"<mxCell id="v" value="" style="rounded=0;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell><mxCell id="e" style="endArrow=none;{style}" edge="1" parent="1" source="v" target="v"><mxGeometry relative="1" as="geometry"/></mxCell>"#
+        ))
+    };
+    for style in ["", "direction=west;segment=10;"] {
+        let report = load(&looped(style));
+        assert!(report.warnings.is_empty(), "{style}: {:?}", report.warnings);
+        let connector = connectors(&report.workbook.sheets[0])[0];
+        assert_eq!(connector.from, connector.to);
+    }
+    for style in ["direction=north;", "segment=20;"] {
+        let report = load(&looped(style));
+        assert!(
+            report.warnings.contains(&ImportWarning::Formatting),
+            "{style}: {:?}",
+            report.warnings
+        );
+    }
 }
 
 #[test]

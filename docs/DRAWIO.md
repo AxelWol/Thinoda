@@ -80,7 +80,8 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Libraries | Vendor libraries (AWS, Azure, GCP, Cisco, ...) | Missing | D4 |
 | Connectors | Straight, orthogonal, elbow, curved | Native (Straight, Elbow, Curve) | — |
 | Connectors | elbow (horizontal/vertical), entityRelation, sideToSide, topToBottom | Native (draw.io routers, first-waypoint hint) | D7 |
-| Connectors | segment, isometric, loop, libavoid | Approx. (elbow, warns) | D7 |
+| Connectors | segment, isometric, self-loop | Native (draw.io routers; loops automatic, custom loop direction/size warn) | D7 |
+| Connectors | libavoid and other routers | Approx. (elbow, warns) | D7 |
 | Connectors | 34 markers | 30 native; sysMLReqInt, sysMLProvInt and mermaid markers approximate | D7 |
 | Connectors | Line jumps | Native (arc, gap, sharp, line, size); `noJump` and `jumpLayers` warn | D7 |
 | Connectors | Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire | Approx. (line) | D7 |
@@ -220,7 +221,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
 - [x] Line jumps (arc, gap, sharp, line)
 - [x] Routes elbowEdgeStyle (horizontal and vertical), entityRelation, sideToSide, topToBottom as editable routes
-- [ ] Routes segment, isometric, loop as editable routes
+- [x] Routes segment, isometric, loop as editable routes
 - [ ] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
 - [ ] Multiple connector labels
 - [ ] Object links (URL, page), tooltips, custom properties, placeholders and tags, editable in the inspector
@@ -274,6 +275,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D7 segment, isometric, loop | Segmented (every waypoint fixes the next segment) and horizontal/vertical isometric routes port draw.io's SegmentConnector and IsometricConnector; floating self-loops route like draw.io's Loop on every route; route menu shows eleven routes; native v41, board clipboard v34, sheet clipboard v30, new XMind and recovery envelopes |
 | 2026-11-17 | D7 edge routes | Horizontal and vertical elbow, side-to-side, top-to-bottom and entity-relation routes follow draw.io's routers and orthogonal rectangle perimeter; first waypoint is the routing hint; route menu and inspector show all eight routes; native v40, board clipboard v33, sheet clipboard v29, new XMind and recovery envelopes |
 | 2026-11-17 | D7 line jumps | Connectors jump earlier-painted straight and elbow connectors with draw.io's arc, gap, sharp and line geometry and size; inspector and style copy; native v39, board clipboard v32, sheet clipboard v28, new XMind and recovery envelopes |
 | 2026-11-17 | D7 markers | 18 library markers (ER, box, cross, circle, circlePlus, async, openAsync, doubleBlock, SysML) are native, drawn from 1-3 parts; native v38, board clipboard v31, sheet clipboard v27, new XMind and recovery envelopes; menu translated |
@@ -451,6 +453,28 @@ a formatting warning, as does an entity relation whose `segment` is not 30
 (the key stays in the passthrough). Hints on `orthogonalEdgeStyle` edges still
 warn, since Thinoda's elbow treats them as waypoints. Files that use a new
 route need native v40.
+
+**D7 segment, isometric and loop routes.** `segment_points` ports
+SegmentConnector line by line: the first segment's orientation comes from the
+hint's alignment with fixed terminal points or the terminal channels, every
+waypoint then fixes the next segment, and bends inside floating terminals
+are dropped. Like draw.io, the coordinate a segment does not use is ignored, so
+the last hint's x is irrelevant when its segment is horizontal. Channel bounds
+are assumed to be the terminal bounds (draw.io's `getChannelBounds` is the
+same for plain vertices). Only zero-sized terminals (points) count as fixed,
+because Thinoda's ports are not pinned through the route. Isometric routes
+decompose each leg onto draw.io's -30°/-150° axes and clip their ends from
+the centre, not orthogonally. Self-loops do not get a new route: as with
+draw.io's `isLoopStyleEnabled`, a connector whose both ends are the same
+object or topic, without ports and with fewer than two waypoints, uses the
+Loop router's west direction and grid-size segment on every route (curves stay
+smooth through the loop bends), and the first waypoint is the loop hint. Before
+this slice self-loops drew as a dot at the shape centre. draw.io's loop
+`direction` and `segment` are not modelled, so non-default values warn. The
+route label is "Segmented" because "Segment" reads the same in several
+locales. A segment route offers one insert handle until it has a waypoint;
+further segments are added by dragging waypoints, not by draw.io's
+per-segment handles. New routes need native v41.
 
 ## 5. Rubber-duck findings
 

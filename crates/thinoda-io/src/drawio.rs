@@ -3574,6 +3574,11 @@ impl<'a> PageImport<'a> {
                 Some("sideToSideEdgeStyle") => ConnectorRoute::SideToSide,
                 Some("topToBottomEdgeStyle") => ConnectorRoute::TopToBottom,
                 Some("entityRelationEdgeStyle") => ConnectorRoute::EntityRelation,
+                Some("segmentEdgeStyle") => ConnectorRoute::Segment,
+                Some("isometricEdgeStyle") if style.get("elbow") == Some("vertical") => {
+                    ConnectorRoute::IsometricVertical
+                }
+                Some("isometricEdgeStyle") => ConnectorRoute::IsometricHorizontal,
                 Some(_) => ConnectorRoute::Elbow,
             }
         };
@@ -3589,6 +3594,8 @@ impl<'a> PageImport<'a> {
                     | "sideToSideEdgeStyle"
                     | "topToBottomEdgeStyle"
                     | "entityRelationEdgeStyle"
+                    | "segmentEdgeStyle"
+                    | "isometricEdgeStyle"
             )
         }) && !style.flag("curved");
         let routed_hints = !cell.geometry.points.is_empty()
@@ -3598,10 +3605,21 @@ impl<'a> PageImport<'a> {
             && style
                 .get("segment")
                 .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(30.0));
+        // Thinoda draws self-loops like draw.io's default `Loop` router; other
+        // loop directions and sizes are not kept.
+        let custom_loop = from == to
+            && !matches!(from, Endpoint::Point(_))
+            && (style
+                .get("direction")
+                .is_some_and(|value| !value.is_empty() && value != "west")
+                || style
+                    .get("segment")
+                    .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(10.0)));
         if style.formatting_loss(true, false)
             || routed_hints
             || approximated_router
             || custom_segment
+            || custom_loop
         {
             self.warn(ImportWarning::Formatting);
         }
@@ -5404,6 +5422,13 @@ impl<'a> PageWriter<'a> {
                     }
                     ConnectorRoute::EntityRelation => {
                         style.push_str("edgeStyle=entityRelationEdgeStyle;");
+                    }
+                    ConnectorRoute::Segment => style.push_str("edgeStyle=segmentEdgeStyle;"),
+                    ConnectorRoute::IsometricHorizontal => {
+                        style.push_str("edgeStyle=isometricEdgeStyle;");
+                    }
+                    ConnectorRoute::IsometricVertical => {
+                        style.push_str("edgeStyle=isometricEdgeStyle;elbow=vertical;");
                     }
                 }
                 let marker_name = |marker: Option<ConnectorMarker>| {

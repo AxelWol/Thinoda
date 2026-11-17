@@ -63,6 +63,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "draw.io passthrough requires native format version 37".into(),
             ));
         }
+        if version < 41 && book.has_drawio_segment_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io segment routes require native format version 41".into(),
+            ));
+        }
         if version < 40 && book.has_drawio_edge_routes() {
             return Err(IoError::NewerVersion(
                 "draw.io edge routes require native format version 40".into(),
@@ -261,6 +266,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_drawio_segment_routes() {
+            return Err(IoError::NewerVersion(
+                "draw.io segment routes require native format version 41".into(),
+            ));
+        }
         if book.has_drawio_edge_routes() {
             return Err(IoError::NewerVersion(
                 "draw.io edge routes require native format version 40".into(),

@@ -209,6 +209,16 @@ v40, board clipboard v33 and sheet clipboard v29. Private XMind snapshots use
 pending ink). `thinoda_core::scene` routes them before the waypoint path, using
 `waypoints[0]` as the hint when `uses_waypoint_hint` is true.
 
+**As implemented in D7 (segment, isometric, loop):** `ConnectorRoute` gained
+`Segment`, `IsometricHorizontal` and `IsometricVertical`
+(`is_segment_or_isometric`); `has_drawio_edge_routes` excludes them and
+`has_drawio_segment_routes` gates them with native v41, board clipboard v34,
+sheet clipboard v30, `THINODA-XMIND-SEGMENT-ROUTES-1` and
+`THINODA-RECOVERY-SEGMENT-ROUTES-1` / `THINODA-RECOVERY-INK-SEGMENT-ROUTES-1`.
+Each newer envelope maps down to the next older one its content selects, so
+older checks still run. Segment routes use every waypoint. Self-loops are
+derived, not persisted: `routed_path` checks `is_drawio_loop` first.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

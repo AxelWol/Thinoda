@@ -333,7 +333,15 @@ impl CanvasLayer {
     pub fn has_drawio_edge_routes(&self) -> bool {
         self.objects.iter().any(|object| {
             matches!(&object.kind, CanvasObjectKind::Connector(c)
-                if c.route.is_drawio_edge_style())
+                if c.route.is_drawio_edge_style() && !c.route.is_segment_or_isometric())
+        })
+    }
+
+    /// Whether this layer needs draw.io segment-route-aware persistence.
+    pub fn has_drawio_segment_routes(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if c.route.is_segment_or_isometric())
         })
     }
 
@@ -1321,11 +1329,19 @@ pub enum ConnectorRoute {
     TopToBottom,
     /// draw.io's `entityRelationEdgeStyle`.
     EntityRelation,
+    /// draw.io's `segmentEdgeStyle`, whose waypoints place alternating
+    /// horizontal and vertical segments.
+    Segment,
+    /// draw.io's `isometricEdgeStyle`, leaving horizontally along the
+    /// isometric axes.
+    IsometricHorizontal,
+    /// draw.io's `isometricEdgeStyle` with `elbow=vertical`.
+    IsometricVertical,
 }
 
 impl ConnectorRoute {
     /// Every route in menu order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 11] = [
         Self::Straight,
         Self::Elbow,
         Self::Curve,
@@ -1334,10 +1350,13 @@ impl ConnectorRoute {
         Self::SideToSide,
         Self::TopToBottom,
         Self::EntityRelation,
+        Self::Segment,
+        Self::IsometricHorizontal,
+        Self::IsometricVertical,
     ];
 
-    /// Whether this is one of draw.io's routed edge styles that needs
-    /// edge-route-aware persistence.
+    /// Whether this is one of draw.io's routed edge styles, computed by a
+    /// port of its router rather than Thinoda's own routes.
     pub fn is_drawio_edge_style(self) -> bool {
         matches!(
             self,
@@ -1346,15 +1365,30 @@ impl ConnectorRoute {
                 | Self::SideToSide
                 | Self::TopToBottom
                 | Self::EntityRelation
+        ) || self.is_segment_or_isometric()
+    }
+
+    /// Whether this is draw.io's segment or isometric edge style, which need
+    /// segment-route-aware persistence.
+    pub fn is_segment_or_isometric(self) -> bool {
+        matches!(
+            self,
+            Self::Segment | Self::IsometricHorizontal | Self::IsometricVertical
         )
     }
 
     /// Whether the route uses only the first waypoint as a routing hint, as
-    /// draw.io's elbow styles do; entity-relation routes ignore waypoints.
+    /// draw.io's elbow and isometric styles do; entity-relation routes ignore
+    /// waypoints and segment routes use all of them.
     pub fn uses_waypoint_hint(self) -> bool {
         matches!(
             self,
-            Self::ElbowHorizontal | Self::ElbowVertical | Self::SideToSide | Self::TopToBottom
+            Self::ElbowHorizontal
+                | Self::ElbowVertical
+                | Self::SideToSide
+                | Self::TopToBottom
+                | Self::IsometricHorizontal
+                | Self::IsometricVertical
         )
     }
 }

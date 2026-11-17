@@ -4545,6 +4545,37 @@ fn connector_route_tile(ui: &mut Ui, route: ConnectorRoute, current: ConnectorRo
                     b.right_center(),
                 ]
             }
+            ConnectorRoute::Segment => {
+                let a = terminal(egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0));
+                let b = terminal(egui::pos2(rect.right() - 4.0, rect.top() + 3.0));
+                terminals.extend([a, b]);
+                let (x1, x2) = (center.x - 5.0, center.x + 5.0);
+                hint = Some(egui::pos2(x1, center.y));
+                vec![
+                    a.right_center(),
+                    egui::pos2(x1, a.center().y),
+                    egui::pos2(x1, center.y),
+                    egui::pos2(x2, center.y),
+                    egui::pos2(x2, b.center().y),
+                    b.left_center(),
+                ]
+            }
+            ConnectorRoute::IsometricHorizontal | ConnectorRoute::IsometricVertical => {
+                // Spans along the 30° isometric axes, the first one longer.
+                let slope = 30f32.to_radians().tan();
+                let span = rect.width() - 6.0;
+                let rise = |dx: f32| dx * slope;
+                let (first_dx, start_x) = if route == ConnectorRoute::IsometricHorizontal {
+                    (span, rect.left())
+                } else {
+                    (-span, rect.right())
+                };
+                let start = egui::pos2(start_x, rect.bottom());
+                let bend = start + vec2(first_dx, -rise(span));
+                let end = bend + vec2(-first_dx.signum() * 6.0, -rise(6.0));
+                hint = Some(bend);
+                vec![start, bend, end]
+            }
         };
         let palette = thinoda_ui::Palette::of_ui(ui);
         let color = if !ui.is_enabled() {
@@ -4956,6 +4987,9 @@ fn route_name(route: ConnectorRoute) -> &'static str {
         ConnectorRoute::SideToSide => "Side to side",
         ConnectorRoute::TopToBottom => "Top to bottom",
         ConnectorRoute::EntityRelation => "Entity relation",
+        ConnectorRoute::Segment => "Segmented",
+        ConnectorRoute::IsometricHorizontal => "Horizontal isometric",
+        ConnectorRoute::IsometricVertical => "Vertical isometric",
     }
 }
 
