@@ -26,6 +26,9 @@ use thinoda_core::{
 
 pub(crate) const RELATIONSHIP_SEGMENTS: usize = 32;
 
+/// Thumbnail labels scale with the sheet down to this size so they never outgrow their shapes.
+pub const THUMBNAIL_MIN_LABEL_SIZE: f32 = 2.5;
+
 pub(crate) fn shape_label_font_size(zoom: f32) -> f32 {
     (CANVAS_LABEL_FONT_SIZE * zoom).max(7.0)
 }
@@ -78,6 +81,19 @@ pub struct PaintOptions<'a> {
     pub omit_zones: bool,
     /// Show the interactive board grid. Thumbnails omit it by default.
     pub show_grid: bool,
+    /// Smallest on-screen shape/connector label size; `None` keeps the readable canvas floor.
+    /// Thumbnails pass a lower floor so labels stay proportional to their shapes.
+    pub min_label_size: Option<f32>,
+}
+
+impl PaintOptions<'_> {
+    fn label_font(&self, zoom: f32) -> FontId {
+        let size = match self.min_label_size {
+            Some(min) => (CANVAS_LABEL_FONT_SIZE * zoom).max(min),
+            None => shape_label_font_size(zoom),
+        };
+        FontId::proportional(size)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -142,6 +158,7 @@ pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: 
         xf,
         &PaintOptions {
             dark,
+            min_label_size: Some(THUMBNAIL_MIN_LABEL_SIZE),
             ..Default::default()
         },
         &scene,
@@ -1529,7 +1546,7 @@ fn paint_stencil_object(
     }
     let text_rect = thinoda_core::stencil_object::label_rect(object, render);
     let text_color = opacity_color(text_color, object.style.opacity);
-    let font = FontId::proportional(shape_label_font_size(z));
+    let font = opts.label_font(z);
     let galley = painter.layout_no_wrap(label.clone(), font, text_color);
     let center = xf.pos(rotate_around(
         text_rect.center(),
@@ -1638,7 +1655,7 @@ fn paint_canvas_object(
                     object.style.effective_shape_stroke_width(),
                     object.double_ellipse_margin,
                 );
-                let font = FontId::proportional(shape_label_font_size(z));
+                let font = opts.label_font(z);
                 let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
                 let text_color = opacity_color(text_color, object.style.opacity);
                 let galley = painter.layout_no_wrap(label.clone(), font, text_color);
@@ -1810,7 +1827,7 @@ fn paint_canvas_object(
                 if (!connector.label.is_empty() || unset) && editing_board_object != Some(object.id)
                 {
                     let mid = xf.pos(label_center.expect("a connector path has points"));
-                    let font = FontId::proportional(shape_label_font_size(z));
+                    let font = opts.label_font(z);
                     let text_color = object
                         .style
                         .text_color
@@ -2639,6 +2656,22 @@ fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnail_labels_scale_below_the_interactive_floor() {
+        let canvas = PaintOptions::default();
+        let thumbnail = PaintOptions {
+            min_label_size: Some(THUMBNAIL_MIN_LABEL_SIZE),
+            ..Default::default()
+        };
+        assert_eq!(canvas.label_font(0.05).size, 7.0);
+        assert_eq!(thumbnail.label_font(0.05).size, THUMBNAIL_MIN_LABEL_SIZE);
+        assert_eq!(
+            thumbnail.label_font(0.25).size,
+            CANVAS_LABEL_FONT_SIZE * 0.25
+        );
+        assert_eq!(thumbnail.label_font(1.0).size, canvas.label_font(1.0).size);
+    }
 
     #[test]
     fn sankey_scale_legend_is_painted_only_when_enabled() {

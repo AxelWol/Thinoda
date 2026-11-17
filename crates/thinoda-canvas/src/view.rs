@@ -2518,6 +2518,7 @@ impl MapCanvas {
             selected_object: view.selected_object,
             omit_zones: false,
             show_grid: true,
+            min_label_size: None,
         };
         let paint_scene = build_scene(sheet, &layout);
         paint_map_scene(

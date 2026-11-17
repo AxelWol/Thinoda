@@ -150,7 +150,9 @@ fn paint_board_thumbnail(
             r.left_top() + vec2(3.0, 2.0),
             egui::Align2::LEFT_TOP,
             &zone.name,
-            egui::FontId::proportional((14.0 * zoom).clamp(5.0, 9.0)),
+            egui::FontId::proportional(
+                (14.0 * zoom).clamp(thinoda_canvas::THUMBNAIL_MIN_LABEL_SIZE, 9.0),
+            ),
             title_color,
         );
     }
@@ -163,6 +165,7 @@ fn paint_board_thumbnail(
             dark,
             accent: thinoda_ui::Palette::of(painter.ctx()).accent,
             omit_zones: true,
+            min_label_size: Some(thinoda_canvas::THUMBNAIL_MIN_LABEL_SIZE),
             ..Default::default()
         },
     );
@@ -292,6 +295,34 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "gpu-tests")]
+    #[test]
+    fn renders_software_template_previews() {
+        let entries: Vec<&TemplateInfo> = thinoda_core::templates::TEMPLATES
+            .iter()
+            .filter(|t| t.category == thinoda_core::templates::TemplateCategory::Software)
+            .collect();
+        for dark in [false, true] {
+            let mut choice = None;
+            let mut h = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(560.0, 140.0))
+                .with_pixels_per_point(2.0)
+                .build_ui(|ui| {
+                    ui.ctx().set_visuals(if dark {
+                        egui::Visuals::dark()
+                    } else {
+                        egui::Visuals::light()
+                    });
+                    cards(ui, &entries, &mut choice, false);
+                });
+            h.run_steps(3);
+            let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .join(format!("template-software-{dark}.png"));
+            h.render().unwrap().save(output).unwrap();
+        }
+    }
 
     #[test]
     fn previews_match_every_template_and_are_cached_per_language_and_appearance() {
