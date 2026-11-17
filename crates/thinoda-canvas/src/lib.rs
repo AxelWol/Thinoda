@@ -44,6 +44,7 @@ pub mod minimap;
 pub mod pen_input;
 mod relationship_editing;
 mod render;
+mod shape_effects;
 mod topic_drag;
 #[cfg(test)]
 mod topic_ordering_tests;

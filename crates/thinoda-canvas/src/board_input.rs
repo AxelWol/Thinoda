@@ -810,7 +810,12 @@ fn connection_points_for_item(
                 thinoda_core::stencil_object::ports(object, render)
                     .into_iter()
                     .map(|position| {
-                        let local = rotate_around(position, rect.center(), -rotation);
+                        let local = thinoda_core::shape_style::unplace(
+                            &object.style,
+                            position,
+                            rect,
+                            rotation,
+                        );
                         let port = ConnectorPort {
                             position: Vec2::new(
                                 (local.x - rect.min.x) / rect.size.x,
@@ -835,8 +840,11 @@ fn connection_points_for_item(
                         offset: Vec2::ZERO,
                         perimeter: true,
                     };
-                    let position = thinoda_core::scene::fixed_connector_port_position(
-                        rect, rotation, shape, port,
+                    let flip = object.map_or((false, false), |object| {
+                        (object.style.flip_h, object.style.flip_v)
+                    });
+                    let position = thinoda_core::scene::fixed_flipped_connector_port_position(
+                        rect, rotation, shape, flip, port,
                     );
                     (port, position)
                 })
@@ -2128,7 +2136,7 @@ fn selection_controls(
                         point,
                         ..
                     }) if *active_id == id && *active_index == index => *point,
-                    _ => render.to_sheet(handle.at, object.rect, object.rotation),
+                    _ => thinoda_core::stencil_object::local_to_sheet(object, render, handle.at),
                 };
                 list.push(Control {
                     item,

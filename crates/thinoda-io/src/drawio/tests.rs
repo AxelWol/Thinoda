@@ -62,6 +62,118 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
 }
 
 #[test]
+fn drawio_shape_effects_import_natively_and_round_trip() {
+    use thinoda_core::shape_style::{DashPattern, GradientDirection};
+    let xml = page(concat!(
+        r#"<mxCell id="a" value="A" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;dashed=1;dashPattern=8 4 1 4;fixDash=1;gradientColor=#0000FF;gradientDirection=east;shadow=1;glass=1;flipH=1;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" style="triangle;whiteSpace=wrap;html=1;fillColor=#FF0000;strokeColor=#000000;fillStyle=cross-hatch;flipH=1;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="40" height="80" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="c" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;dashed=1;" vertex="1" parent="1"><mxGeometry x="300" y="10" width="40" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(
+        !report.warnings.contains(&ImportWarning::Formatting),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = &report.workbook.sheets[0];
+    let by_id = |id: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(id))
+            .unwrap()
+    };
+    let a = by_id("a");
+    let dash = a.style.dash.unwrap();
+    assert_eq!(
+        dash.pattern,
+        DashPattern::new(&[8.0, 4.0, 1.0, 4.0]).unwrap()
+    );
+    assert!(dash.fixed);
+    let gradient = a.style.gradient.unwrap();
+    assert_eq!(gradient.color, Color::rgb(0, 0, 255));
+    assert_eq!(gradient.direction, GradientDirection::East);
+    assert!(a.style.shadow && a.style.glass && a.style.flip_h && !a.style.flip_v);
+    for object in [a, by_id("b"), by_id("c")] {
+        let style = &object.drawio.as_ref().unwrap().style;
+        assert!(
+            style
+                .iter()
+                .all(|(key, _)| !SHAPE_EFFECT_STYLE_KEYS.contains(&key.as_str())),
+            "{style:?}"
+        );
+    }
+    // The east-pointing triangle is a turned native triangle, so draw.io's
+    // horizontal flip is the frame's vertical one.
+    let b = by_id("b");
+    assert_eq!(
+        b.style.fill_pattern,
+        thinoda_core::board::FillPattern::CrossHatch
+    );
+    assert!(!b.style.flip_h && b.style.flip_v);
+    assert_eq!(
+        by_id("c").style.dash.unwrap().pattern,
+        DashPattern::default()
+    );
+    assert_eq!(feature_version(&report.workbook), 47);
+
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    for needle in [
+        "dashed=1;dashPattern=8 4 1 4;fixDash=1;gradientColor=#0000FF;gradientDirection=east;shadow=1;glass=1;flipH=1;",
+        "fillStyle=cross-hatch;flipV=1;",
+    ] {
+        assert!(exported.contains(needle), "{needle} in {exported}");
+    }
+    let reopened = load(&exported);
+    let objects = |book: &Workbook| {
+        book.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .map(|o| (o.rect, o.rotation, o.style))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(objects(&reopened.workbook), objects(&report.workbook));
+}
+
+#[test]
+fn drawio_shape_effects_keep_unmapped_values_and_warn() {
+    let xml = page(concat!(
+        r#"<mxCell id="a" style="rounded=0;html=1;fillColor=#FFFFFF;strokeColor=#000000;fillStyle=zigzag;" vertex="1" parent="1"><mxGeometry width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="b" style="rounded=0;html=1;fillColor=#FFFFFF;strokeColor=#000000;fillStyle=future;gradientColor=#00FF00;gradientDirection=diagonal;" vertex="1" parent="1"><mxGeometry x="100" width="80" height="40" as="geometry"/></mxCell>"#,
+        r#"<mxCell id="t" value="Text" style="text;html=1;shadow=1;" vertex="1" parent="1"><mxGeometry x="200" width="80" height="40" as="geometry"/></mxCell>"#,
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let sheet = &report.workbook.sheets[0];
+    let style = |index: usize| {
+        let object = &sheet.canvas.objects[index];
+        (object.style, object.drawio.as_ref().unwrap().style.clone())
+    };
+    let (a, a_rest) = style(0);
+    assert_eq!(a.fill_pattern, thinoda_core::board::FillPattern::ZigzagLine);
+    assert!(a_rest.contains(&("fillStyle".into(), "zigzag".into())));
+    let (b, b_rest) = style(1);
+    assert!(b.fill_pattern.is_solid() && b.gradient.is_none());
+    for key in ["fillStyle", "gradientColor", "gradientDirection"] {
+        assert!(b_rest.iter().any(|(k, _)| k == key), "{key}: {b_rest:?}");
+    }
+    let (t, t_rest) = style(2);
+    assert!(!t.shadow);
+    assert!(t_rest.contains(&("shadow".into(), "1".into())));
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    for needle in [
+        "fillStyle=zigzag-line;",
+        "fillStyle=future;",
+        "gradientDirection=diagonal;",
+        "shadow=1;",
+    ] {
+        assert!(exported.contains(needle), "{needle} in {exported}");
+    }
+}
+
+#[test]
 fn drawio_placeholder_data_loss_requires_confirmation() {
     for tag in ["object", "UserObject"] {
         let xml = page(&format!(
@@ -4382,7 +4494,7 @@ fn mockup_rectangle_radius_and_inherited_color_report_approximations() {
             "##fff",
             "light-dark(#aabbcc,#ddeeff)",
         ] {
-            if value == "red" && key != "gradientColor" {
+            if value == "red" {
                 continue;
             }
             let xml = page(&format!(
@@ -7143,7 +7255,7 @@ fn fixed_connector_port_perimeter_and_orientation_differences_are_disclosed() {
         ("shape=mxgraph.basic.star;", false, false),
         ("shape=waypoint;", false, true),
         ("triangle;direction=north;", false, true),
-        ("ellipse;flipH=1;", false, true),
+        ("ellipse;flipH=1;", false, false),
     ] {
         for source in [true, false] {
             let xml = diagram(target_style, perimeter, source);
@@ -8386,7 +8498,7 @@ fn notes_text_lines_directions_and_user_objects() {
 fn unsupported_content_is_reported_not_dropped_silently() {
     let xml = page(
         r#"
-        <mxCell id="d" value="Dashed" style="rounded=0;dashed=1;" vertex="1" parent="1"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
+        <mxCell id="d" value="Patterned" style="rounded=0;fillStyle=future;" vertex="1" parent="1"><mxGeometry width="10" height="10" as="geometry"/></mxCell>
         <mxCell id="k" value="Unknown" style="shape=mxgraph.aws4.lambda;" vertex="1" parent="1"><mxGeometry y="20" width="10" height="10" as="geometry"/></mxCell>
         <mxCell id="i" style="shape=image;image=https://example.com/a.png;" vertex="1" parent="1"><mxGeometry y="40" width="10" height="10" as="geometry"/></mxCell>
         <mxCell id="h" value="Hidden" vertex="1" visible="0" parent="1"><mxGeometry y="60" width="10" height="10" as="geometry"/></mxCell>

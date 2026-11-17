@@ -1224,8 +1224,24 @@ fn board_object_svg(
     visual: VisualExportContext,
 ) -> String {
     let mut out = format!("<g class=\"canvas-object\" id=\"object-{}\">", object.id.0);
+    let mut gradients = 0;
     for prim in board::object_prims(item, object, background, dark, visual) {
         match prim {
+            board::Prim::Gradient { points, paint } => {
+                let Some(first) = points.first() else {
+                    continue;
+                };
+                let id = format!("shape-paint-{}-{gradients}", object.id.0);
+                gradients += 1;
+                out.push_str(&shape_paint_svg(&id, &paint));
+                let mut d = format!("M {}", xy(*first));
+                for point in &points[1..] {
+                    d.push_str(&format!(" L {}", xy(*point)));
+                }
+                out.push_str(&format!(
+                    "<path d=\"{d} Z\" fill=\"url(#{id})\" stroke=\"none\"/>"
+                ));
+            }
             board::Prim::Path {
                 points,
                 closed,
@@ -1374,6 +1390,39 @@ fn board_object_svg(
     }
     out.push_str("</g>");
     out
+}
+
+/// A `userSpaceOnUse` SVG gradient definition for a shape paint.
+fn shape_paint_svg(id: &str, paint: &thinoda_core::shape_style::ShapePaint) -> String {
+    use thinoda_core::shape_style::ShapePaint;
+    let stop = |offset: u8, color: Color| {
+        format!(
+            "<stop offset=\"{offset}\" stop-color=\"#{:02x}{:02x}{:02x}\" stop-opacity=\"{:.4}\"/>",
+            color.r,
+            color.g,
+            color.b,
+            f32::from(color.a) / 255.0
+        )
+    };
+    let stops = format!("{}{}", stop(0, paint.start()), stop(1, paint.end()));
+    match *paint {
+        ShapePaint::Linear { from, to, .. } => format!(
+            "<defs><linearGradient id=\"{id}\" gradientUnits=\"userSpaceOnUse\" x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\">{stops}</linearGradient></defs>",
+            from.x, from.y, to.x, to.y
+        ),
+        ShapePaint::Radial {
+            center,
+            radii,
+            rotation,
+            ..
+        } => format!(
+            "<defs><radialGradient id=\"{id}\" gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\" gradientTransform=\"translate({:.2} {:.2}) rotate({rotation:.2}) scale({:.2} {:.2})\">{stops}</radialGradient></defs>",
+            center.x,
+            center.y,
+            radii.x.max(0.01),
+            radii.y.max(0.01)
+        ),
+    }
 }
 
 fn colored_marker_svg(id: &str, r: thinoda_core::Rect, color: Color) -> String {

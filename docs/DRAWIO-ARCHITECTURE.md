@@ -701,6 +701,18 @@ The proposals below remain the wider target, not a claim of shipped hierarchy.
 | Metadata | Per-object `link: Option<Link>` (`Url` w/ scheme allow-list, `Sheet(SheetId)`, `Action(raw)` preserved-only), `tooltip`, `properties: Vec<(String,String)>`, `tags`, `placeholders`. |
 | Sheet | `DiagramPage { page_size, page_scale, grid, background, background_image, math, adaptive_colors }` in `BoardSettings`. |
 
+*As implemented in D9 (shape style):* `ObjectStyle` gains `dash: Option<ShapeDash
+{ pattern: DashPattern, fixed }>`, `gradient: Option<ShapeGradient { color, direction }>`
+(north/south/east/west/radial), `fill_pattern: FillPattern` (solid, hatch,
+cross-hatch, dots, dashed, zigzag-line), `shadow`, `glass`, `flip_h` and `flip_v`,
+valid only on shapes. Fill and stroke opacity stay folded into colour alpha and
+`direction` stays folded into geometry, so no separate fields were added. The
+core `shape_style` module owns mirroring (before rotation, about the frame centre;
+labels are not mirrored), dash splitting and gradient, pattern and glass
+geometry, shared by canvas, SVG/PNG/PDF and PPTX; the scene mirrors fixed ports.
+Gates: native v47, sheet clipboard v36, board clipboard v40, XMind
+`THINODA-XMIND-SHAPE-STYLES-1`, recovery `THINODA-RECOVERY-SHAPE-STYLES-1`.
+
 #### 3.2.3 Connector marker migration (compatibility-critical)
 - Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
   triangles; add optional `start_marker`/`end_marker` fields for exact draw.io

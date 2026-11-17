@@ -1876,6 +1876,8 @@ struct EndTarget {
     rotation: f32,
     shape: Option<(ShapeKind, Option<ShapeRounding>)>,
     custom_outline: Option<Vec<Vec2>>,
+    /// Horizontal and vertical mirroring applied before the rotation.
+    flip: (bool, bool),
 }
 
 impl EndTarget {
@@ -1885,7 +1887,17 @@ impl EndTarget {
             rotation,
             shape: None,
             custom_outline: None,
+            flip: (false, false),
         }
+    }
+
+    /// Places an unrotated, unmirrored frame point.
+    fn place(&self, point: Vec2) -> Vec2 {
+        rotate_around(
+            crate::shape_style::mirror(point, self.rect, self.flip.0, self.flip.1),
+            self.rect.center(),
+            self.rotation,
+        )
     }
 
     fn with_port(self, port: Option<ConnectorPort>) -> Self {
@@ -1912,12 +1924,12 @@ impl EndTarget {
                         projected = corner + delta * (radius / length);
                     }
                 }
-                rotate_around(projected, self.rect.center(), self.rotation)
+                self.place(projected)
             } else {
-                self.clip(rotate_around(point, self.rect.center(), self.rotation))
+                self.clip(self.place(point))
             }
         } else {
-            rotate_around(point, self.rect.center(), self.rotation)
+            self.place(point)
         };
         Self::boxed(Rect::from_center_size(point, Vec2::ZERO), 0.0)
     }
@@ -2119,15 +2131,65 @@ pub fn fixed_connector_port_position(
     shape: Option<(ShapeKind, Option<ShapeRounding>)>,
     port: ConnectorPort,
 ) -> Vec2 {
+    fixed_flipped_connector_port_position(rect, rotation, shape, (false, false), port)
+}
+
+/// [`fixed_connector_port_position`] on a shape mirrored by `flip` (h, v).
+pub fn fixed_flipped_connector_port_position(
+    rect: Rect,
+    rotation: f32,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    flip: (bool, bool),
+    port: ConnectorPort,
+) -> Vec2 {
     EndTarget {
         rect,
         rotation,
         shape,
-        custom_outline: None,
+        custom_outline: flipped_outline(rect, rotation, shape, flip),
+        flip,
     }
     .with_port(Some(port))
     .rect
     .center()
+}
+
+/// The mirrored outline of an asymmetric built-in shape, for perimeter clips.
+fn flipped_outline(
+    rect: Rect,
+    rotation: f32,
+    shape: Option<(ShapeKind, Option<ShapeRounding>)>,
+    flip: (bool, bool),
+) -> Option<Vec<Vec2>> {
+    let (kind, rounding) = shape?;
+    if !(flip.0 || flip.1)
+        || rounding.is_some()
+        || matches!(
+            kind,
+            ShapeKind::Rectangle
+                | ShapeKind::RoundedRectangle
+                | ShapeKind::Process
+                | ShapeKind::PredefinedProcess
+                | ShapeKind::Ellipse
+                | ShapeKind::DoubleEllipse
+                | ShapeKind::FinalState
+                | ShapeKind::Diamond
+        )
+    {
+        return None;
+    }
+    let style = crate::board::ObjectStyle {
+        flip_h: flip.0,
+        flip_v: flip.1,
+        ..Default::default()
+    };
+    Some(
+        shape_geometry_with_rounding(kind, rect, 0.0, None)
+            .outline
+            .into_iter()
+            .map(|point| crate::shape_style::place(&style, point, rect, rotation))
+            .collect(),
+    )
 }
 
 /// draw.io applies a constraint to the unrotated perimeter before rotating it.
@@ -2970,17 +3032,19 @@ impl<'a> ConnectorResolver<'a> {
                         0.0,
                     ))
                 } else {
+                    let shape = match &object.kind {
+                        CanvasObjectKind::Shape { shape, .. } => Some((*shape, object.rounding)),
+                        _ => None,
+                    };
+                    let flip = (object.style.flip_h, object.style.flip_v);
                     Some(EndTarget {
                         rect: object.rect,
                         rotation: object.rotation,
-                        shape: match &object.kind {
-                            CanvasObjectKind::Shape { shape, .. } => {
-                                Some((*shape, object.rounding))
-                            }
-                            _ => None,
-                        },
+                        shape,
                         custom_outline: crate::stencil_object::render(object)
-                            .map(|render| crate::stencil_object::geometry(object, &render).outline),
+                            .map(|render| crate::stencil_object::geometry(object, &render).outline)
+                            .or_else(|| flipped_outline(object.rect, object.rotation, shape, flip)),
+                        flip,
                     })
                 }
             }

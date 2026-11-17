@@ -1875,6 +1875,7 @@ fn drawio_rounded_perimeter_matches_floating_and_fixed_ports() {
         rotation: 0.0,
         shape: Some((ShapeKind::RoundedRectangle, Some(rounding))),
         custom_outline: None,
+        flip: (false, false),
     };
     let toward = Vec2::new(220.0, 20.0);
     assert!((target.clip(toward) - Vec2::new(104.4259, 120.1642)).length() < 0.001);
@@ -1948,6 +1949,7 @@ fn drawio_standard_rectangle_clips_very_thin_frames() {
                 }),
             )),
             custom_outline: None,
+            flip: (false, false),
         };
         let endpoint = target.clip(Vec2::new(0.000_001, 51.0));
         assert!(
@@ -1975,6 +1977,7 @@ fn drawio_rounded_perimeter_is_stable_for_wide_frames() {
             }),
         )),
         custom_outline: None,
+        flip: (false, false),
     };
     let endpoint = target.clip(Vec2::new(1_000_000.0, 2.0));
     assert!(
@@ -2001,6 +2004,7 @@ fn drawio_fixed_rounded_port_handles_subpixel_corner_radii() {
             }),
         )),
         custom_outline: None,
+        flip: (false, false),
     };
     let endpoint = target
         .with_port(Some(ConnectorPort {
@@ -3238,4 +3242,28 @@ fn positioned_connector_labels_are_hit_and_bounded_away_from_the_path() {
     assert_eq!(scene.hit_test_tolerance(Vec2::new(50.0, 30.0), 0.0), None);
     let bounds = scene.item(SceneId::Object(id)).unwrap().bounds;
     assert!(bounds.contains(Vec2::new(50.0, 65.0)));
+}
+
+#[test]
+fn flipped_shapes_mirror_fixed_ports_and_their_perimeter() {
+    let rect = Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 50.0));
+    let port = ConnectorPort {
+        position: Vec2::new(0.25, 0.0),
+        offset: Vec2::ZERO,
+        perimeter: true,
+    };
+    let at = |flip, shape| fixed_flipped_connector_port_position(rect, 0.0, shape, flip, port);
+    assert_eq!(at((false, false), None), Vec2::new(25.0, 0.0));
+    assert_eq!(at((true, false), None), Vec2::new(75.0, 0.0));
+    assert_eq!(at((false, true), None), Vec2::new(25.0, 50.0));
+    // A right triangle's slanted side follows the mirror, so the projected
+    // perimeter point moves with it.
+    let triangle = Some((ShapeKind::Triangle, None));
+    let plain = at((false, false), triangle);
+    let flipped = at((false, true), triangle);
+    assert!((plain.x - flipped.x).abs() < 0.01, "{plain:?} {flipped:?}");
+    assert!(
+        (plain.y - (50.0 - flipped.y)).abs() < 0.01,
+        "{plain:?} {flipped:?}"
+    );
 }

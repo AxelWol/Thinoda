@@ -43,6 +43,7 @@ pub mod scene_table;
 pub mod schedule;
 pub mod search;
 pub mod semantic;
+pub mod shape_style;
 pub mod stencil;
 pub mod stencil_object;
 pub mod templates;

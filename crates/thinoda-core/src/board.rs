@@ -8,6 +8,7 @@
 use crate::geometry::{Color, Rect, Vec2};
 use crate::model::{PresentationSource, Sheet, Topic, TopicId, ZoneId, id_type, valid_position};
 use crate::scene_hierarchy::{SceneHierarchy, SceneStructure};
+pub use crate::shape_style::{FillPattern, ShapeDash, ShapeGradient};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -423,6 +424,13 @@ impl CanvasLayer {
     pub fn has_object_data(&self) -> bool {
         self.objects.iter().any(|object| object.data.is_some())
     }
+
+    /// Whether this layer needs shape-style-aware persistence.
+    pub fn has_shape_styles(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.style.has_shape_style_effects())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -463,6 +471,22 @@ pub struct ObjectStyle {
     pub text_color: Option<Color>,
     pub stroke_width: f32,
     pub opacity: f32,
+    /// Shape-only effects; see [`crate::shape_style`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dash: Option<ShapeDash>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<ShapeGradient>,
+    #[serde(skip_serializing_if = "FillPattern::is_solid")]
+    pub fill_pattern: FillPattern,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub shadow: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub glass: bool,
+    /// Mirrors the geometry (not the label text) about the frame centre.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flip_h: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flip_v: bool,
 }
 
 impl Default for ObjectStyle {
@@ -473,11 +497,34 @@ impl Default for ObjectStyle {
             text_color: None,
             stroke_width: 2.0,
             opacity: 1.0,
+            dash: None,
+            gradient: None,
+            fill_pattern: FillPattern::Solid,
+            shadow: false,
+            glass: false,
+            flip_h: false,
+            flip_v: false,
         }
     }
 }
 
 impl ObjectStyle {
+    /// Whether any shape-only effect is set.
+    pub fn has_shape_style_effects(&self) -> bool {
+        self.dash.is_some()
+            || self.gradient.is_some()
+            || !self.fill_pattern.is_solid()
+            || self.shadow
+            || self.glass
+            || self.flip_h
+            || self.flip_v
+    }
+
+    /// Whether the geometry is mirrored.
+    pub fn is_flipped(&self) -> bool {
+        self.flip_h || self.flip_v
+    }
+
     /// Width used for a shape's automatic outline when neither color is set.
     pub fn effective_shape_stroke_width(&self) -> f32 {
         if self.stroke.is_none() && self.fill.is_none() {
@@ -577,6 +624,28 @@ impl Default for RectangleSides {
             right: true,
             bottom: true,
             left: true,
+        }
+    }
+}
+
+impl RectangleSides {
+    /// The sides as painted after mirroring the frame.
+    pub fn flipped(self, flip_h: bool, flip_v: bool) -> Self {
+        let (left, right) = if flip_h {
+            (self.right, self.left)
+        } else {
+            (self.left, self.right)
+        };
+        let (top, bottom) = if flip_v {
+            (self.bottom, self.top)
+        } else {
+            (self.top, self.bottom)
+        };
+        Self {
+            top,
+            right,
+            bottom,
+            left,
         }
     }
 }
@@ -1239,6 +1308,27 @@ pub fn object_shape_geometry(object: &CanvasObject) -> Option<ShapeGeometry> {
     if let Some(render) = crate::stencil_object::render(object) {
         return Some(crate::stencil_object::geometry(object, &render));
     }
+    if object.style.is_flipped() {
+        let geometry = shape_geometry_with_style(
+            *shape,
+            object.rect,
+            0.0,
+            object.rounding,
+            object.style.effective_shape_stroke_width(),
+            object.double_ellipse_margin,
+        );
+        let place = |point: Vec2| {
+            crate::shape_style::place(&object.style, point, object.rect, object.rotation)
+        };
+        return Some(ShapeGeometry {
+            outline: geometry.outline.into_iter().map(place).collect(),
+            details: geometry
+                .details
+                .into_iter()
+                .map(|detail| detail.into_iter().map(place).collect())
+                .collect(),
+        });
+    }
     Some(shape_geometry_with_style(
         *shape,
         object.rect,
@@ -1249,6 +1339,27 @@ pub fn object_shape_geometry(object: &CanvasObject) -> Option<ShapeGeometry> {
     ))
 }
 
+/// Unrotated `rect` mirrored by the object's flips about its frame centre.
+pub fn flipped_frame_rect(object: &CanvasObject, rect: Rect) -> Rect {
+    if !object.style.is_flipped() {
+        return rect;
+    }
+    let a = crate::shape_style::mirror(
+        rect.min,
+        object.rect,
+        object.style.flip_h,
+        object.style.flip_v,
+    );
+    let b = crate::shape_style::mirror(
+        rect.max(),
+        object.rect,
+        object.style.flip_h,
+        object.style.flip_v,
+    );
+    let min = Vec2::new(a.x.min(b.x), a.y.min(b.y));
+    Rect::from_min_size(min, rect.size)
+}
+
 /// Unrotated label area of a shape object, from its stencil when that resolves.
 pub fn object_label_rect(object: &CanvasObject) -> Option<Rect> {
     let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
@@ -1257,11 +1368,14 @@ pub fn object_label_rect(object: &CanvasObject) -> Option<Rect> {
     if let Some(render) = crate::stencil_object::render(object) {
         return Some(crate::stencil_object::label_rect(object, &render));
     }
-    Some(shape_label_rect_with_style(
-        *shape,
-        object.rect,
-        object.style.effective_shape_stroke_width(),
-        object.double_ellipse_margin,
+    Some(flipped_frame_rect(
+        object,
+        shape_label_rect_with_style(
+            *shape,
+            object.rect,
+            object.style.effective_shape_stroke_width(),
+            object.double_ellipse_margin,
+        ),
     ))
 }
 
@@ -2378,6 +2492,15 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
     }
     if !style.opacity.is_finite() || !(0.0..=1.0).contains(&style.opacity) {
         return Err(format!("canvas object {id} has an invalid opacity"));
+    }
+    if style.has_shape_style_effects() && !matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+        return Err(format!(
+            "canvas object {id} has shape style effects but is not a shape"
+        ));
+    }
+    if let Some(dash) = style.dash {
+        crate::shape_style::DashPattern::new(dash.pattern.values())
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
     }
     if let Some(rounding) = object.rounding
         && (!matches!(

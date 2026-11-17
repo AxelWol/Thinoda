@@ -151,7 +151,8 @@ fn stencil_handle_drag_updates_its_parameter_and_is_undoable() {
     let object =
         thinoda_core::stencil_object::new_object(package, definition, Vec2::new(100.0, 100.0));
     let render = thinoda_core::stencil_object::render(&object).unwrap();
-    let start = render.to_sheet(render.handles[0].at, object.rect, object.rotation);
+    let start =
+        thinoda_core::stencil_object::local_to_sheet(&object, &render, render.handles[0].at);
     let end = start + Vec2::new(12.0, 0.0);
     let mut sheet = board();
     let id = sheet.add_canvas_object(object).unwrap();

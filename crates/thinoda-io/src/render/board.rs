@@ -12,6 +12,7 @@ use thinoda_core::{
     scene::{
         EdgeBody, Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_paths,
     },
+    shape_style::{self, FillPaint, ShapePaint},
 };
 
 use crate::VisualExportContext;
@@ -35,6 +36,11 @@ pub(crate) enum Prim {
         paths: Vec<RectangleSidePath>,
         stroke: Color,
         width: f32,
+    },
+    /// Closed polygon filled with a gradient (shape fills and glass).
+    Gradient {
+        points: Vec<Vec2>,
+        paint: ShapePaint,
     },
     /// Circular connector marker in sheet coordinates.
     Circle {
@@ -188,17 +194,86 @@ pub(crate) fn object_prims(
             .unwrap_or_else(|| Color::highest_contrast_on(under));
         let slots = thinoda_core::stencil_object::slots(object, automatic_stroke, font);
         let (paths, texts) = thinoda_core::stencil_object::primitives(object, render, &slots);
+        let style = &object.style;
+        let closed_subpaths = |path: &thinoda_core::stencil_object::StencilPrimitive| {
+            path.subpaths
+                .iter()
+                .filter(|(points, closed)| *closed && points.len() >= 3)
+                .map(|(points, _)| points.clone())
+                .collect::<Vec<_>>()
+        };
+        if style.shadow {
+            for path in &paths {
+                let fills = if path.fill.is_some() {
+                    closed_subpaths(path)
+                } else {
+                    Vec::new()
+                };
+                shadow_prims(
+                    &mut out,
+                    &fills,
+                    &path.subpaths,
+                    path.stroke.as_ref().map_or(0.0, |stroke| stroke.width),
+                    opacity,
+                );
+            }
+        }
+        let effect_fill = style.gradient.is_some() || !style.fill_pattern.is_solid();
         for path in paths {
+            let mut fill = path.fill;
+            if path.styled_fill
+                && effect_fill
+                && let Some(color) = fill.take()
+            {
+                let paint = shape_style::fill_paint(style, object.rect, object.rotation, color);
+                fill_prims(
+                    &mut out,
+                    &closed_subpaths(&path),
+                    &paint,
+                    object,
+                    style.effective_shape_stroke_width(),
+                );
+            }
+            let dash = path
+                .stroke
+                .as_ref()
+                .and_then(|s| s.dash.clone())
+                .filter(|dash| dash.len() >= 2);
             let stroke = path.stroke.map(|s| (s.color, s.width));
             for (points, closed) in path.subpaths {
+                if let (Some(dash), Some(stroke)) = (&dash, stroke) {
+                    if closed && fill.is_some() {
+                        out.push(Prim::Path {
+                            points: points.clone(),
+                            closed,
+                            fill,
+                            stroke: None,
+                            round: false,
+                        });
+                    }
+                    dashed_prims(&mut out, &points, closed, dash, stroke);
+                    continue;
+                }
                 out.push(Prim::Path {
                     points,
                     closed,
-                    fill: if closed { path.fill } else { None },
+                    fill: if closed { fill } else { None },
                     stroke,
                     round: false,
                 });
             }
+        }
+        if style.glass {
+            let outline = thinoda_core::stencil_object::geometry(object, render).outline;
+            glass_prims(
+                &mut out,
+                object,
+                &outline,
+                style
+                    .stroke
+                    .is_some()
+                    .then(|| style.effective_shape_stroke_width()),
+            );
         }
         for text in texts {
             let lines: Vec<String> = text.text.split('\n').map(str::to_owned).collect();
@@ -267,7 +342,39 @@ pub(crate) fn object_prims(
             } else {
                 object.style.stroke_width.max(0.0)
             };
+            let style = &object.style;
             let stroke = stroke_color.map(|c| (c, width));
+            let dash = stroke.and_then(|(_, width)| shape_style::dash_lengths(style, width));
+            let fill_polygons = shape_style::builtin_fill_polygons(object, outline, details);
+            if style.shadow {
+                let fills = if fill.is_some_and(|fill| fill.a > 0) {
+                    fill_polygons.clone()
+                } else {
+                    Vec::new()
+                };
+                let strokes = if stroke.is_some() {
+                    shape_style::builtin_stroke_paths(object, outline, details)
+                } else {
+                    Vec::new()
+                };
+                shadow_prims(&mut out, &fills, &strokes, width, opacity);
+            }
+            let fill = match fill {
+                Some(color)
+                    if color.a > 0
+                        && (style.gradient.is_some() || !style.fill_pattern.is_solid()) =>
+                {
+                    let paint = shape_style::fill_paint(style, object.rect, object.rotation, color);
+                    fill_prims(&mut out, &fill_polygons, &paint, object, width);
+                    None
+                }
+                fill => fill,
+            };
+            let dashed_stroke = stroke;
+            let stroke = if dash.is_some() { None } else { stroke };
+            let sides = object
+                .rectangle_sides
+                .map(|sides| sides.flipped(style.flip_h, style.flip_v));
             if *shape == ShapeKind::FinalState {
                 for detail in details {
                     out.push(Prim::Path {
@@ -285,7 +392,7 @@ pub(crate) fn object_prims(
                     stroke,
                     round: false,
                 });
-            } else if let Some(sides) = object.rectangle_sides {
+            } else if let Some(sides) = sides {
                 out.push(Prim::Path {
                     points: outline.clone(),
                     closed: true,
@@ -320,6 +427,7 @@ pub(crate) fn object_prims(
                         fill: None,
                         stroke: if *shape == ShapeKind::DoubleEllipse
                             || visual.automatic_board_stroke.is_some()
+                            || dash.is_some()
                         {
                             stroke
                         } else {
@@ -329,6 +437,18 @@ pub(crate) fn object_prims(
                     });
                 }
             }
+            if let (Some(dash), Some(stroke)) = (&dash, dashed_stroke) {
+                for (points, closed) in shape_style::builtin_stroke_paths(object, outline, details)
+                {
+                    dashed_prims(&mut out, &points, closed, dash, stroke);
+                }
+            }
+            glass_prims(
+                &mut out,
+                object,
+                outline,
+                dashed_stroke.map(|(_, width)| width),
+            );
             if !label.trim().is_empty() {
                 let rect = thinoda_core::board::object_label_rect(object).unwrap_or(object.rect);
                 let under = object.style.fill.map_or(background, |f| f.over(background));
@@ -574,6 +694,138 @@ pub(crate) fn object_prims(
         _ => {}
     }
     out
+}
+
+/// Offset, recoloured copies of filled polygons and stroked paths, beneath the shape.
+fn shadow_prims(
+    out: &mut Vec<Prim>,
+    fills: &[Vec<Vec2>],
+    strokes: &[(Vec<Vec2>, bool)],
+    width: f32,
+    opacity: f32,
+) {
+    let color = shape_style::shadow_color(opacity);
+    let shift = |points: &[Vec2]| -> Vec<Vec2> {
+        points
+            .iter()
+            .map(|p| *p + shape_style::SHADOW_OFFSET)
+            .collect()
+    };
+    for polygon in fills.iter().filter(|p| p.len() >= 3) {
+        out.push(Prim::Path {
+            points: shift(polygon),
+            closed: true,
+            fill: Some(color),
+            stroke: None,
+            round: false,
+        });
+    }
+    if width > 0.0 {
+        for (points, closed) in strokes.iter().filter(|(p, _)| p.len() >= 2) {
+            out.push(Prim::Path {
+                points: shift(points),
+                closed: *closed,
+                fill: None,
+                stroke: Some((color, width)),
+                round: false,
+            });
+        }
+    }
+}
+
+/// Gradient polygons or pattern marks for a non-solid styled fill.
+fn fill_prims(
+    out: &mut Vec<Prim>,
+    polygons: &[Vec<Vec2>],
+    paint: &FillPaint,
+    object: &CanvasObject,
+    stroke_width: f32,
+) {
+    match paint {
+        FillPaint::Solid(color) => {
+            for polygon in polygons {
+                out.push(Prim::Path {
+                    points: polygon.clone(),
+                    closed: true,
+                    fill: Some(*color),
+                    stroke: None,
+                    round: false,
+                });
+            }
+        }
+        FillPaint::Gradient(paint) => {
+            for polygon in polygons.iter().filter(|p| p.len() >= 3) {
+                out.push(Prim::Gradient {
+                    points: polygon.clone(),
+                    paint: *paint,
+                });
+            }
+        }
+        FillPaint::Pattern(color, pattern) => {
+            let marks = shape_style::pattern_marks(
+                polygons,
+                object.rect,
+                object.rotation,
+                *pattern,
+                stroke_width,
+            );
+            for line in marks.lines {
+                out.push(Prim::Path {
+                    points: line,
+                    closed: false,
+                    fill: None,
+                    stroke: Some((*color, marks.width)),
+                    round: false,
+                });
+            }
+            for center in marks.dots {
+                out.push(Prim::Circle {
+                    center,
+                    radius: marks.dot_radius,
+                    fill: Some(*color),
+                    stroke: Color::TRANSPARENT,
+                    width: 0.0,
+                });
+            }
+        }
+    }
+}
+
+/// The visible dashes of a stroked path.
+fn dashed_prims(
+    out: &mut Vec<Prim>,
+    points: &[Vec2],
+    closed: bool,
+    dash: &[f32],
+    stroke: (Color, f32),
+) {
+    for points in shape_style::dash_polyline(points, closed, dash) {
+        out.push(Prim::Path {
+            points,
+            closed: false,
+            fill: None,
+            stroke: Some(stroke),
+            round: false,
+        });
+    }
+}
+
+fn glass_prims(
+    out: &mut Vec<Prim>,
+    object: &CanvasObject,
+    outline: &[Vec2],
+    stroke_width: Option<f32>,
+) {
+    if let Some((points, paint)) = shape_style::glass(
+        &object.style,
+        object.rect,
+        object.rotation,
+        outline,
+        stroke_width,
+    ) && points.len() >= 3
+    {
+        out.push(Prim::Gradient { points, paint });
+    }
 }
 
 fn marker_primitive(

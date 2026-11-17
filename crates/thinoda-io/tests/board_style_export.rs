@@ -158,3 +158,108 @@ fn default_card_fills_and_automatic_text_match_the_canvas_in_each_mode() {
         assert!(xml.contains(&format!("val=\"{}\"", &sticky_fill.to_hex()[1..])));
     }
 }
+
+#[test]
+fn shape_effects_render_in_svg_png_pdf_and_powerpoint() {
+    use thinoda_core::shape_style::{FillPattern, GradientDirection, ShapeDash, ShapeGradient};
+    let build = |effects: bool| {
+        let mut sheet = Sheet::new("Board", "Anchor");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let edits: [fn(&mut ObjectStyle); 6] = [
+            |s| s.dash = Some(ShapeDash::default()),
+            |s| {
+                s.gradient = Some(ShapeGradient {
+                    color: Color::rgb(0, 0, 255),
+                    direction: GradientDirection::East,
+                })
+            },
+            |s| {
+                s.gradient = Some(ShapeGradient {
+                    color: Color::rgb(0, 255, 0),
+                    direction: GradientDirection::Radial,
+                })
+            },
+            |s| {
+                s.shadow = true;
+                s.glass = true;
+            },
+            |s| s.fill_pattern = FillPattern::CrossHatch,
+            |s| s.flip_h = true,
+        ];
+        for (index, edit) in edits.into_iter().enumerate() {
+            let mut shape = CanvasObject::shape(
+                if index == 5 {
+                    ShapeKind::Triangle
+                } else {
+                    ShapeKind::Rectangle
+                },
+                Rect::from_min_size(Vec2::new(index as f32 * 150.0, 0.0), Vec2::new(120.0, 80.0)),
+            );
+            shape.style.fill = Some(Color::rgb(250, 200, 100));
+            shape.style.stroke = Some(Color::BLACK);
+            if effects {
+                edit(&mut shape.style);
+            }
+            sheet.add_canvas_object(shape).unwrap();
+        }
+        let card = sheet
+            .add_card(
+                "Card",
+                Vec2::new(0.0, 120.0),
+                Card::new(CardKind::Text, Vec2::new(100.0, 40.0)),
+            )
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "All",
+                PresentationSource::Branch(card),
+                Rect::from_min_size(Vec2::new(-50.0, -50.0), Vec2::new(1000.0, 200.0)),
+            )
+            .unwrap();
+        sheet
+    };
+    let plain = build(false);
+    let styled = build(true);
+    let book = Workbook::new(styled.clone());
+    book.validate().unwrap();
+    let native =
+        export_bytes_with_consent(&book, Format::Thinoda, &ExportOptions::default(), true).unwrap();
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+
+    let svg = |sheet: &Sheet| {
+        String::from_utf8(
+            export_bytes_with_consent(
+                &Workbook::new(sheet.clone()),
+                Format::Svg,
+                &ExportOptions::default(),
+                true,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let (before, after) = (svg(&plain), svg(&styled));
+    assert!(after.contains("<linearGradient") && after.contains("<radialGradient"));
+    assert!(!before.contains("Gradient"));
+    // Dash segments, pattern marks, shadow and glass add primitives.
+    assert!(after.matches("<path").count() > before.matches("<path").count() + 20);
+    assert!(after.contains("#00000040"), "shadow colour");
+
+    for format in [Format::Png, Format::Pdf] {
+        let bytes = |sheet: &Sheet| {
+            export_bytes_with_consent(
+                &Workbook::new(sheet.clone()),
+                format,
+                &ExportOptions::default(),
+                true,
+            )
+            .unwrap()
+        };
+        assert_ne!(bytes(&plain), bytes(&styled), "{format:?}");
+    }
+    let plain_slide =
+        slide_xml(&export_presentation_pptx(&plain, &ExportOptions::default()).unwrap());
+    let slide = slide_xml(&export_presentation_pptx(&styled, &ExportOptions::default()).unwrap());
+    assert!(slide.contains("<a:gradFill") && !plain_slide.contains("<a:gradFill"));
+    assert!(slide.len() > plain_slide.len());
+}

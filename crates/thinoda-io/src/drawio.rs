@@ -144,6 +144,21 @@ const OWNED_STYLE_KEYS: &[&str] = &[
 /// passthrough because stencils may bind them.
 const EDGE_SHAPE_STYLE_KEYS: &[&str] = &["width", "startWidth", "endWidth"];
 
+/// Shape style effects Thinoda owns on imported built-in and stencil shapes;
+/// other cells keep them as passthrough.
+const SHAPE_EFFECT_STYLE_KEYS: &[&str] = &[
+    "dashed",
+    "dashPattern",
+    "fixDash",
+    "gradientColor",
+    "gradientDirection",
+    "shadow",
+    "glass",
+    "fillStyle",
+    "flipH",
+    "flipV",
+];
+
 /// Passthrough keys that only mean something next to another key; dropped on
 /// export when that key is absent, so an edit cannot leave an orphan behind.
 const DEPENDENT_STYLE_KEYS: &[(&str, &str)] = &[
@@ -1334,7 +1349,9 @@ impl Style {
     }
 
     /// Visual details without a Thinoda equivalent.
-    fn formatting_loss(&self, edge: bool, card_text_alignment: bool) -> bool {
+    /// `shape_effects` marks cells whose dash, gradient, shadow, glass and
+    /// flips map to native shape style (see [`shape_effects`]).
+    fn formatting_loss(&self, edge: bool, card_text_alignment: bool, shape_effects: bool) -> bool {
         const FLAGS: [&str; 7] = [
             "dashed", "shadow", "glass", "sketch", "flipH", "flipV", "comic",
         ];
@@ -1353,9 +1370,11 @@ impl Style {
                 .is_some_and(|_| self.num(key).is_none_or(|value| value != default))
         };
         (self.get("shape").is_some() && !self.tokens.is_empty())
-            || FLAGS
-                .iter()
-                .any(|key| self.flag(key) && !(*key == "dashed" && self.flag("thinodaSankeyEdge")))
+            || FLAGS.iter().any(|key| {
+                self.flag(key)
+                    && !(*key == "dashed" && self.flag("thinodaSankeyEdge"))
+                    && !(shape_effects && SHAPE_EFFECT_STYLE_KEYS.contains(key))
+            })
             || self.get("fontColor") == Some("none")
             || self.color_appearance_loss("fillColor", "fillOpacity")
             || self.color_appearance_loss("strokeColor", "strokeOpacity")
@@ -1377,7 +1396,7 @@ impl Style {
                         .contains(&width)
                 })
             })
-            || colored("gradientColor")
+            || (!shape_effects && colored("gradientColor"))
             || colored("labelBackgroundColor")
             || colored("labelBorderColor")
             || self.get("fontFamily").is_some()
@@ -2252,7 +2271,81 @@ fn object_style(style: &Style) -> ObjectStyle {
         text_color: style.text_color(),
         stroke_width: style.stroke_width(),
         opacity: style.opacity(),
+        ..Default::default()
     }
+}
+
+/// Maps draw.io's shape effects onto `object`, returning the keys it owns and
+/// whether anything was only approximated. `swap_flips` exchanges `flipH` and
+/// `flipV` for frames turned a quarter by `direction` (as draw.io's `mxShape`).
+fn shape_effects(
+    style: &Style,
+    object: &mut CanvasObject,
+    swap_flips: bool,
+) -> (Vec<&'static str>, bool) {
+    use thinoda_core::shape_style::{DashPattern, GradientDirection};
+    let mut owned = vec!["dashed", "shadow", "glass", "flipH", "flipV"];
+    let mut approximate = false;
+    if style.flag("dashed") {
+        let pattern = match style.get("dashPattern") {
+            None | Some("") => Some(DashPattern::default()),
+            Some(text) => DashPattern::parse(text),
+        };
+        if let Some(pattern) = pattern {
+            object.style.dash = Some(thinoda_core::board::ShapeDash {
+                pattern,
+                fixed: style.flag("fixDash"),
+            });
+            owned.extend(["dashPattern", "fixDash"]);
+        } else {
+            approximate = true;
+            object.style.dash = Some(thinoda_core::board::ShapeDash {
+                fixed: style.flag("fixDash"),
+                ..Default::default()
+            });
+            owned.push("fixDash");
+        }
+    }
+    match style.get("gradientColor") {
+        None | Some("" | "none") => owned.extend(["gradientColor", "gradientDirection"]),
+        Some(value) => {
+            approximate |= parse_style_color(value).is_some_and(|parsed| parsed.approximate);
+            let direction = match style.get("gradientDirection") {
+                None | Some("") => Some(GradientDirection::South),
+                Some(name) => GradientDirection::from_drawio(name),
+            };
+            match (style.color("gradientColor", "fillOpacity"), direction) {
+                (Some(color), Some(direction)) => {
+                    object.style.gradient =
+                        Some(thinoda_core::board::ShapeGradient { color, direction });
+                    owned.extend(["gradientColor", "gradientDirection"]);
+                }
+                _ => approximate = true,
+            }
+        }
+    }
+    match style.get("fillStyle") {
+        None | Some("") => owned.push("fillStyle"),
+        Some(name) => match thinoda_core::board::FillPattern::from_drawio(name) {
+            Some((pattern, approximated)) => {
+                object.style.fill_pattern = pattern;
+                approximate |= approximated;
+                if !approximated {
+                    owned.push("fillStyle");
+                }
+            }
+            None => approximate = true,
+        },
+    }
+    object.style.shadow = style.flag("shadow");
+    object.style.glass = style.flag("glass");
+    let (flip_h, flip_v) = (style.flag("flipH"), style.flag("flipV"));
+    (object.style.flip_h, object.style.flip_v) = if swap_flips {
+        (flip_v, flip_h)
+    } else {
+        (flip_h, flip_v)
+    };
+    (owned, approximate)
 }
 
 /// Resolves visible light-theme fallbacks while reporting lost adaptive styling.
@@ -2362,6 +2455,8 @@ struct PageImport<'a> {
     bundled_stencils: Option<BundledStencils>,
     /// Cells whose passthrough was already given to an object.
     passthrough_cells: HashSet<usize>,
+    /// Style keys mapped by [`shape_effects`], per cell.
+    shape_effect_keys: HashMap<usize, Vec<&'static str>>,
     passthrough_bytes: usize,
     /// Layers locked only after import, so grouping and locking can still edit them.
     locked_layers: Vec<thinoda_core::BoardLayerId>,
@@ -2397,6 +2492,7 @@ impl<'a> PageImport<'a> {
             .unwrap_or_default();
         let sankey = source.style.flag("thinodaSankeyEdge");
         let edge = matches!(object.kind, CanvasObjectKind::Connector(_));
+        let effects = self.shape_effect_keys.get(&cell);
         let style = source
             .style
             .order
@@ -2407,6 +2503,7 @@ impl<'a> PageImport<'a> {
                     && !bound.contains(key.as_str())
                     && !(sankey && key.as_str() == "dashed")
                     && !(edge && EDGE_SHAPE_STYLE_KEYS.contains(&key.as_str()))
+                    && !effects.is_some_and(|owned| owned.contains(&key.as_str()))
             })
             .filter_map(|key| {
                 let value = source.style.get(key)?;
@@ -2921,7 +3018,12 @@ impl<'a> PageImport<'a> {
             .any(|&c| cells[c].visible && (cells[c].vertex || cells[c].edge));
         let kind = classify(&cell.style);
         let card_text_alignment = matches!(kind, Kind::Card(CardKind::Sticky | CardKind::Text));
-        if cell.style.formatting_loss(false, card_text_alignment) {
+        let effects = matches!(kind, Kind::Shape(..) | Kind::Approx(..))
+            && cell.style.get("childLayout") != Some("tableLayout");
+        if cell
+            .style
+            .formatting_loss(false, card_text_alignment, effects)
+        {
             self.warn(ImportWarning::Formatting);
         }
         if matches!(cell.style.shape(), "note" | "note2") && !cell.style.draws_stencil() {
@@ -3614,12 +3716,15 @@ impl<'a> PageImport<'a> {
                 } else {
                     rect
                 };
-                if style.flag("flipH") || style.flag("flipV") {
-                    self.warn(ImportWarning::Formatting);
-                }
                 let rotation = direction + style.rotation();
                 let mut object = shape_object(ShapeKind::Rectangle, frame, rotation, label);
                 object.stencil = style.stencil();
+                let (owned, approximate) =
+                    shape_effects(style, &mut object, direction % 180.0 == 90.0);
+                self.shape_effect_keys.insert(index, owned);
+                if approximate {
+                    self.warn(ImportWarning::Formatting);
+                }
                 object
             }
             Kind::Shape(shape, base, symmetric) | Kind::Approx(shape, base, symmetric) => {
@@ -3638,6 +3743,11 @@ impl<'a> PageImport<'a> {
                 };
                 let rotation = total + style.rotation();
                 let mut object = shape_object(shape, frame, rotation, label);
+                let (owned, approximate) = shape_effects(style, &mut object, total % 180.0 == 90.0);
+                self.shape_effect_keys.insert(index, owned);
+                if approximate {
+                    self.warn(ImportWarning::Formatting);
+                }
                 if let Some(stencil) = mockup_rectangle_stencil(style) {
                     object.rounding = Some(ShapeRounding {
                         radius: style.get("rSize").map_or(10.0, mockup_radius),
@@ -4098,6 +4208,15 @@ impl<'a> PageImport<'a> {
             .is_some_and(|value| !matches!(value, "" | "east"))
             || ["flipH", "flipV", "stencilFlipH", "stencilFlipV"]
                 .iter()
+                .filter(|key| {
+                    // Native flips mirror ports exactly as draw.io does.
+                    !(matches!(**key, "flipH" | "flipV")
+                        && matches!(endpoint, Endpoint::Object(id)
+                        if self.sheet.canvas.object(id).is_some_and(|object| {
+                            object.style.flip_h == style.flag("flipH")
+                                && object.style.flip_v == style.flag("flipV")
+                        })))
+                })
                 .any(|key| {
                     style
                         .get(key)
@@ -4165,7 +4284,7 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         let origin = context.origin;
         if let Some(tool) = style.get("thinodaInk") {
-            if style.formatting_loss(true, false)
+            if style.formatting_loss(true, false, false)
                 || style.start_arrow()
                 || style.end_arrow()
                 || !matches!(style.connector_port(true), Ok(None))
@@ -4282,7 +4401,7 @@ impl<'a> PageImport<'a> {
                     .get("segment")
                     .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(10.0)));
         let (edge_shape, edge_shape_loss) = style.edge_shape();
-        if style.formatting_loss(true, false)
+        if style.formatting_loss(true, false, false)
             || routed_hints
             || approximated_router
             || custom_segment
@@ -4862,6 +4981,7 @@ fn import_page(
         inline_stencils: None,
         bundled_stencils: None,
         passthrough_cells: HashSet::new(),
+        shape_effect_keys: HashMap::new(),
         passthrough_bytes: 0,
         locked_layers: Vec::new(),
     };
@@ -5438,6 +5558,50 @@ fn common_keys(out: &mut String, style: &ObjectStyle, rotation: f32, locked: boo
     }
     if band == Band::Below {
         out.push_str("thinodaBand=below;");
+    }
+}
+
+/// draw.io keys for a shape's native effects. Thinoda frames are never turned
+/// by `direction` on export, so the flips are written as stored.
+fn shape_effect_style(out: &mut String, style: &ObjectStyle) {
+    if let Some(dash) = style.dash {
+        out.push_str("dashed=1;");
+        if dash.pattern != thinoda_core::shape_style::DashPattern::default() {
+            out.push_str(&format!("dashPattern={};", dash.pattern.to_drawio()));
+        }
+        if dash.fixed {
+            out.push_str("fixDash=1;");
+        }
+    }
+    if let Some(gradient) = style.gradient {
+        color_keys(
+            out,
+            "gradientColor",
+            "",
+            Some(Color {
+                a: 255,
+                ..gradient.color
+            }),
+        );
+        if gradient.direction != thinoda_core::shape_style::GradientDirection::South {
+            out.push_str(&format!(
+                "gradientDirection={};",
+                gradient.direction.drawio_name()
+            ));
+        }
+    }
+    if !style.fill_pattern.is_solid() {
+        out.push_str(&format!("fillStyle={};", style.fill_pattern.drawio_name()));
+    }
+    for (key, set) in [
+        ("shadow", style.shadow),
+        ("glass", style.glass),
+        ("flipH", style.flip_h),
+        ("flipV", style.flip_v),
+    ] {
+        if set {
+            out.push_str(&format!("{key}=1;"));
+        }
     }
 }
 
@@ -6406,6 +6570,7 @@ impl<'a> PageWriter<'a> {
                     object.locked,
                     object.band,
                 );
+                shape_effect_style(&mut style, style_ref);
                 passthrough_style(&mut style, drawio);
                 let user = (!object.alt_text.is_empty()).then_some((object.alt_text.as_str(), ""));
                 // draw.io keeps a table cell's own slot size as its alternate bounds.

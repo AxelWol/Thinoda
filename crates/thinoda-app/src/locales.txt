@@ -2384,3 +2384,22 @@ Column width|Ancho de columna|Largeur de colonne|Kolonnebredde|Kolombreedte|Larg
 Row stripes|Filas alternas|Lignes alternées|Rækkestriber|Rijstrepen|Linhas alternadas|Righe alternate|Paski wierszy
 Column stripes|Columnas alternas|Colonnes alternées|Kolonnestriber|Kolomstrepen|Colunas alternadas|Colonne alternate|Paski kolumn
 Select cells to delete, merge or resize rows and columns.|Selecciona celdas para eliminar, combinar o redimensionar filas y columnas.|Sélectionnez des cellules pour supprimer, fusionner ou redimensionner des lignes et colonnes.|Vælg celler for at slette, flette eller ændre størrelse på rækker og kolonner.|Selecteer cellen om rijen en kolommen te verwijderen, samen te voegen of te vergroten of verkleinen.|Selecione células para excluir, mesclar ou redimensionar linhas e colunas.|Seleziona le celle per eliminare, unire o ridimensionare righe e colonne.|Zaznacz komórki, aby usuwać, scalać lub zmieniać rozmiar wierszy i kolumn.
+Shape style|Estilo de forma|Style de forme|Formstil|Vormstijl|Estilo da forma|Stile forma|Styl kształtu
+Dashed outline|Contorno discontinuo|Contour en tirets|Stiplet kontur|Gestippelde omtrek|Contorno tracejado|Contorno tratteggiato|Kontur przerywany
+Dash pattern|Patrón de guiones|Motif de tirets|Stiplingsmønster|Streepjespatroon|Padrão de traços|Motivo tratteggio|Wzór kresek
+Fixed dash length|Longitud de guion fija|Longueur de tiret fixe|Fast stiplængde|Vaste streeplengte|Comprimento de traço fixo|Lunghezza tratto fissa|Stała długość kreski
+Gradient|Degradado|Dégradé|Gradient|Kleurverloop|Gradiente|Sfumatura|Gradient
+Gradient direction|Dirección del degradado|Direction du dégradé|Gradientretning|Richting kleurverloop|Direção do gradiente|Direzione sfumatura|Kierunek gradientu
+Gradient color|Color del degradado|Couleur du dégradé|Gradientfarve|Verloopkleur|Cor do gradiente|Colore sfumatura|Kolor gradientu
+Radial|Radial|Radial|Radial|Radiaal|Radial|Radiale|Promienisty
+Fill pattern|Patrón de relleno|Motif de remplissage|Fyldmønster|Vulpatroon|Padrão de preenchimento|Motivo riempimento|Wzór wypełnienia
+Solid|Sólido|Uni|Massiv|Effen|Sólido|Pieno|Jednolity
+Hatch|Sombreado|Hachures|Skravering|Arcering|Hachurado|Tratteggio|Kreskowanie
+Cross-hatch|Sombreado cruzado|Hachures croisées|Krydsskravering|Kruisarcering|Hachurado cruzado|Tratteggio incrociato|Kreskowanie krzyżowe
+Dots|Puntos|Points|Prikker|Stippen|Pontos|Punti|Kropki
+Dashed|Discontinuo|Tirets|Stiplet|Gestippeld|Tracejado|Tratteggiato|Przerywany
+Zigzag|Zigzag|Zigzag|Zigzag|Zigzag|Ziguezague|Zigzag|Zygzak
+Shadow|Sombra|Ombre|Skygge|Schaduw|Sombra|Ombra|Cień
+Glass|Efecto cristal|Effet verre|Glaseffekt|Glaseffect|Efeito vidro|Effetto vetro|Efekt szkła
+Flip horizontally|Voltear horizontalmente|Retourner horizontalement|Spejlvend vandret|Horizontaal spiegelen|Inverter horizontalmente|Capovolgi orizzontalmente|Odwróć w poziomie
+Flip vertically|Voltear verticalmente|Retourner verticalement|Spejlvend lodret|Verticaal spiegelen|Inverter verticalmente|Capovolgi verticalmente|Odwróć w pionie

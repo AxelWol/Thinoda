@@ -447,7 +447,7 @@ pub fn geometry(object: &CanvasObject, render: &StencilRender) -> ShapeGeometry 
     let map = |points: &[Vec2]| -> Vec<Vec2> {
         points
             .iter()
-            .map(|p| render.to_sheet(*p, object.rect, object.rotation))
+            .map(|p| local_to_sheet(object, render, *p))
             .collect()
     };
     let mut outlines = render.outline.iter().filter(|s| s.points.len() > 2);
@@ -473,7 +473,21 @@ pub fn geometry(object: &CanvasObject, render: &StencilRender) -> ShapeGeometry 
 pub fn label_rect(object: &CanvasObject, render: &StencilRender) -> Rect {
     let min = render.to_sheet(render.label.min, object.rect, 0.0);
     let max = render.to_sheet(render.label.max(), object.rect, 0.0);
-    Rect::from_min_size(min, max - min)
+    crate::board::flipped_frame_rect(object, Rect::from_min_size(min, max - min))
+}
+
+/// Maps an instance-local point to the sheet: scaled into the frame, mirrored
+/// by the style's flips, then rotated.
+pub fn local_to_sheet(object: &CanvasObject, render: &StencilRender, point: Vec2) -> Vec2 {
+    if !object.style.is_flipped() {
+        return render.to_sheet(point, object.rect, object.rotation);
+    }
+    crate::shape_style::place(
+        &object.style,
+        render.to_sheet(point, object.rect, 0.0),
+        object.rect,
+        object.rotation,
+    )
 }
 
 /// Colors a renderer resolves for the object's named style slots. `None`
@@ -514,6 +528,8 @@ pub struct StencilPrimitive {
     /// Points with their closed flag; closed subpaths are filled together.
     pub subpaths: Vec<(Vec<Vec2>, bool)>,
     pub fill: Option<Color>,
+    /// The fill comes from the object's fill slot, so gradients and patterns apply.
+    pub styled_fill: bool,
     pub stroke: Option<StencilStroke>,
 }
 
@@ -554,7 +570,7 @@ pub fn primitives(
     render: &StencilRender,
     slots: &StencilSlots,
 ) -> (Vec<StencilPrimitive>, Vec<StencilText>) {
-    let to_sheet = |p: Vec2| render.to_sheet(p, object.rect, object.rotation);
+    let to_sheet = |p: Vec2| local_to_sheet(object, render, p);
     let paths = render
         .paths
         .iter()
@@ -564,17 +580,30 @@ pub fn primitives(
                 .as_ref()
                 .and_then(|f| resolve(&f.color, slots).map(|c| faded(c, f.alpha * slots.opacity)))
                 .filter(|c| c.a > 0);
+            let styled_fill = fill.is_some()
+                && path.fill.as_ref().is_some_and(|f| {
+                    matches!(&f.color, PaintRef::Style(slot) if slot == "fill" || slot == "background")
+                });
             let stroke = path.stroke.as_ref().and_then(|s| {
                 let color = faded(resolve(&s.color, slots)?, s.alpha * slots.opacity);
                 (color.a > 0 && s.width > 0.0).then(|| StencilStroke {
                     color,
                     width: s.width,
-                    dash: (s.dashed == Some(true)).then(|| {
-                        s.dash_pattern
-                            .iter()
-                            .map(|d| (d * s.width).max(0.5))
-                            .collect()
-                    }),
+                    dash: if s.dashed == Some(true) {
+                        Some(
+                            s.dash_pattern
+                                .iter()
+                                .map(|d| (d * s.width).max(0.5))
+                                .collect(),
+                        )
+                    } else if s.dashed.is_none() {
+                        object
+                            .style
+                            .dash
+                            .map(|dash| dash.lengths(s.width))
+                    } else {
+                        None
+                    },
                 })
             });
             (fill.is_some() || stroke.is_some()).then(|| StencilPrimitive {
@@ -585,6 +614,7 @@ pub fn primitives(
                     .map(|s| (s.points.iter().copied().map(to_sheet).collect(), s.closed))
                     .collect(),
                 fill,
+                styled_fill,
                 stroke,
             })
         })
@@ -613,7 +643,7 @@ pub fn ports(object: &CanvasObject, render: &StencilRender) -> Vec<Vec2> {
     render
         .ports
         .iter()
-        .map(|port| render.to_sheet(port.at, object.rect, object.rotation))
+        .map(|port| local_to_sheet(object, render, port.at))
         .collect()
 }
 
@@ -637,7 +667,7 @@ pub fn drag_handle(
         stroke_width: f64::from(object.style.effective_shape_stroke_width()),
         parameters: &parameters,
     };
-    let local = crate::board::rotate_around(pointer, object.rect.center(), -object.rotation)
+    let local = crate::shape_style::unplace(&object.style, pointer, object.rect, object.rotation)
         - object.rect.min;
     package
         .drag_handle(&definition.id, handle_index, &instance, local)

@@ -3519,7 +3519,7 @@ impl ThinodaApp {
             return table;
         }
         if doc.view.board_selection.len() != 1 || !doc.view.selection.is_empty() {
-            if !table {
+            if !self.board_shape_style_properties(ui) && !table {
                 widgets::caption(ui, t("Select one board object to edit its properties."));
             }
             return true;
@@ -3981,6 +3981,7 @@ impl ThinodaApp {
                 self.toasts.error(error);
             }
         }
+        self.board_shape_style_properties(ui);
         self.board_structure_properties(ui);
         true
     }

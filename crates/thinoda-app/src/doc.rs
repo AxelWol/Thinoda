@@ -1661,8 +1661,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let current =
             include_str!("../../thinoda-io/tests/fixtures/published-rectangle.drawio.html")
-                .replace("rounded=0;", "rounded=0;dashed=1;");
-        let xml = r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="Legacy" style="rounded=0;dashed=1;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#;
+                .replace("rounded=0;", "rounded=0;fillStyle=future;");
+        let xml = r#"<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="v" value="Legacy" style="rounded=0;fillStyle=future;" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#;
         let encoded: String = xml.bytes().map(|byte| format!("%{byte:02X}")).collect();
         let legacy = format!(r#"<div class="mxgraph"><div>{encoded}</div></div>"#);
 

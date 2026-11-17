@@ -1,6 +1,7 @@
 //! Painting of a laid-out sheet.
 
 use crate::measure::BOLD_WIDTH;
+use crate::shape_effects;
 use crate::view::ObjectSelection;
 use egui::{
     Align, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2,
@@ -21,6 +22,7 @@ use thinoda_core::{
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
     scene::{EdgeBody, Scene, SceneGeometry, build_scene, connector_stroke_paths, topic_clip_zone},
+    shape_style,
     theme::Theme,
 };
 
@@ -1478,8 +1480,49 @@ fn paint_stencil_object(
         core_color(text_color),
     );
     let (paths, texts) = thinoda_core::stencil_object::primitives(object, render, &slots);
+    let style = &object.style;
+    let closed_subpaths =
+        |path: &thinoda_core::stencil_object::StencilPrimitive| -> Vec<Vec<Vec2>> {
+            path.subpaths
+                .iter()
+                .filter(|(points, closed)| *closed && points.len() >= 3)
+                .map(|(points, _)| points.clone())
+                .collect()
+        };
+    if style.shadow {
+        for path in &paths {
+            let fills = if path.fill.is_some() {
+                closed_subpaths(path)
+            } else {
+                Vec::new()
+            };
+            shape_effects::paint_shadow(
+                painter,
+                &fills,
+                &path.subpaths,
+                path.stroke.as_ref().map_or(0.0, |stroke| stroke.width),
+                style.opacity,
+                xf,
+            );
+        }
+    }
+    let effect_fill = style.gradient.is_some() || !style.fill_pattern.is_solid();
     for path in &paths {
-        if let Some(fill) = path.fill.map(color32) {
+        if path.styled_fill
+            && effect_fill
+            && let Some(fill) = path.fill
+        {
+            let paint = shape_style::fill_paint(style, object.rect, object.rotation, fill);
+            shape_effects::paint_fill(
+                painter,
+                &closed_subpaths(path),
+                &paint,
+                object.rect,
+                object.rotation,
+                style.effective_shape_stroke_width(),
+                xf,
+            );
+        } else if let Some(fill) = path.fill.map(color32) {
             for (points, closed) in &path.subpaths {
                 if !closed || points.len() < 3 {
                     continue;
@@ -1512,28 +1555,25 @@ fn paint_stencil_object(
             continue;
         };
         let egui_stroke = Stroke::new((stroke.width * z).max(0.5), color32(stroke.color));
+        let dash = stroke.dash.as_deref().filter(|dash| dash.len() >= 2);
         for (points, closed) in &path.subpaths {
-            let mut screen: Vec<_> = points.iter().map(|p| xf.pos(*p)).collect();
-            match &stroke.dash {
-                Some(dash) if dash.len() >= 2 => {
-                    if *closed && let Some(first) = screen.first().copied() {
-                        screen.push(first);
-                    }
-                    painter.extend(Shape::dashed_line(
-                        &screen,
-                        egui_stroke,
-                        (dash[0] * z).max(1.0),
-                        (dash[1] * z).max(1.0),
-                    ));
-                }
-                _ if *closed => {
-                    painter.add(Shape::closed_line(screen, egui_stroke));
-                }
-                _ => {
-                    painter.add(Shape::line(screen, egui_stroke));
-                }
-            }
+            shape_effects::stroke_path(painter, points, *closed, dash, egui_stroke, xf, Vec2::ZERO);
         }
+    }
+    if style.glass {
+        let outline = thinoda_core::stencil_object::geometry(object, render).outline;
+        shape_effects::paint_glass(
+            painter,
+            style,
+            object.rect,
+            object.rotation,
+            &outline,
+            style
+                .stroke
+                .is_some()
+                .then(|| style.effective_shape_stroke_width()),
+            xf,
+        );
     }
     for text in &texts {
         let font = FontId::proportional((text.size * z).max(1.0));
@@ -1627,6 +1667,60 @@ fn paint_canvas_object(
             } else {
                 Stroke::NONE
             };
+            let style = &object.style;
+            let stroke_width = style.effective_shape_stroke_width();
+            let dash = (stroke != Stroke::NONE)
+                .then(|| shape_style::dash_lengths(style, stroke_width))
+                .flatten();
+            let sides = object
+                .rectangle_sides
+                .map(|sides| sides.flipped(style.flip_h, style.flip_v));
+            let fill_polygons = shape_style::builtin_fill_polygons(object, outline, details);
+            let outline_paths = || shape_style::builtin_stroke_paths(object, outline, details);
+            if style.shadow {
+                let fills = if fill == Color32::TRANSPARENT {
+                    Vec::new()
+                } else {
+                    fill_polygons.clone()
+                };
+                let strokes = if stroke == Stroke::NONE {
+                    Vec::new()
+                } else {
+                    outline_paths()
+                };
+                shape_effects::paint_shadow(
+                    painter,
+                    &fills,
+                    &strokes,
+                    stroke.width / z,
+                    style.opacity,
+                    xf,
+                );
+            }
+            let fill = if fill != Color32::TRANSPARENT
+                && (style.gradient.is_some() || !style.fill_pattern.is_solid())
+            {
+                let paint = shape_style::fill_paint(
+                    style,
+                    object.rect,
+                    object.rotation,
+                    shape_effects::core_color(fill),
+                );
+                shape_effects::paint_fill(
+                    painter,
+                    &fill_polygons,
+                    &paint,
+                    object.rect,
+                    object.rotation,
+                    stroke_width,
+                    xf,
+                );
+                Color32::TRANSPARENT
+            } else {
+                fill
+            };
+            let dashed_stroke = stroke;
+            let stroke = if dash.is_some() { Stroke::NONE } else { stroke };
             let points: Vec<_> = outline.iter().copied().map(|p| xf.pos(p)).collect();
             let triangulation = shape_fill(*shape);
             if *shape == ShapeKind::FinalState {
@@ -1638,7 +1732,7 @@ fn paint_canvas_object(
                     ));
                 }
                 painter.add(Shape::closed_line(points, stroke));
-            } else if let Some(sides) = object.rectangle_sides {
+            } else if let Some(sides) = sides {
                 painter.add(Shape::convex_polygon(points, fill, Stroke::NONE));
                 paint_rectangle_sides(painter, object, sides, xf, stroke);
             } else if triangulation.convex {
@@ -1666,12 +1760,37 @@ fn paint_canvas_object(
                     ));
                 }
             }
+            if let Some(dash) = &dash {
+                for (points, closed) in outline_paths() {
+                    shape_effects::stroke_path(
+                        painter,
+                        &points,
+                        closed,
+                        Some(dash),
+                        dashed_stroke,
+                        xf,
+                        Vec2::ZERO,
+                    );
+                }
+            }
+            shape_effects::paint_glass(
+                painter,
+                style,
+                object.rect,
+                object.rotation,
+                outline,
+                (dashed_stroke != Stroke::NONE).then_some(stroke_width),
+                xf,
+            );
             if !label.is_empty() && editing_board_object != Some(object.id) {
-                let text_rect = shape_label_rect_with_style(
-                    *shape,
-                    object.rect,
-                    object.style.effective_shape_stroke_width(),
-                    object.double_ellipse_margin,
+                let text_rect = thinoda_core::board::flipped_frame_rect(
+                    object,
+                    shape_label_rect_with_style(
+                        *shape,
+                        object.rect,
+                        object.style.effective_shape_stroke_width(),
+                        object.double_ellipse_margin,
+                    ),
                 );
                 let font = opts.label_font(z);
                 let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);

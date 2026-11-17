@@ -2467,6 +2467,32 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn shape_style_board_clipboard_requires_version_forty() {
+    let mut source = Sheet::new("Source", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    object.style.fill = Some(crate::Color::WHITE);
+    object.style.gradient = Some(crate::board::ShapeGradient {
+        color: crate::Color::BLACK,
+        direction: crate::shape_style::GradientDirection::East,
+    });
+    object.style.fill_pattern = crate::board::FillPattern::Dots;
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(SHAPE_STYLES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(SHAPE_STYLES_BOARD_PREFIX, TABLES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("shape styles require board clipboard version 40")
+    );
+}
+
+#[test]
 fn table_board_clipboard_requires_version_thirty_nine_and_remaps_cells() {
     let mut source = Sheet::new("Source", "Root");
     let table = source

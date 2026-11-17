@@ -1834,7 +1834,7 @@ mod tests {
     fn dropped_drawio_png_requires_consent_for_import_losses() {
         let dir = tempfile::tempdir().unwrap();
         let diagram = dir.path().join("lossy.drawio.png");
-        let bytes = encoded_drawio("dashed=1;");
+        let bytes = encoded_drawio("fillStyle=future;");
         std::fs::write(&diagram, &bytes).unwrap();
         let mut app = ThinodaApp::headless();
         let root = app.doc().unwrap().doc.sheet().root;

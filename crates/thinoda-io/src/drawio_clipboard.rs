@@ -344,7 +344,7 @@ mod tests {
         assert!(pasted.warnings.is_empty(), "{:?}", pasted.warnings);
         assert_eq!(kinds(&pasted.payload), (2, 1));
 
-        let unsupported = adjusted.replace("rounded=1;", "rounded=1;dashed=1;");
+        let unsupported = adjusted.replace("rounded=1;", "rounded=1;fillStyle=future;");
         let report = drawio::import(unsupported.as_bytes()).unwrap();
         assert!(report.warnings.contains(&ImportWarning::Formatting));
         let pasted = decode(&unsupported).unwrap();

@@ -845,6 +845,11 @@ impl Sheet {
         self.canvas.has_object_data()
     }
 
+    /// Whether the sheet needs shape-style-aware persistence.
+    pub fn has_shape_styles(&self) -> bool {
+        self.canvas.has_shape_styles()
+    }
+
     /// Whether the sheet needs layer-aware persistence.
     pub fn has_layers(&self) -> bool {
         self.canvas.has_layers()
@@ -2672,6 +2677,11 @@ impl Workbook {
     /// Whether any sheet needs object-data-aware persistence.
     pub fn has_object_data(&self) -> bool {
         self.sheets.iter().any(Sheet::has_object_data)
+    }
+
+    /// Whether any sheet needs shape-style-aware persistence.
+    pub fn has_shape_styles(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_shape_styles)
     }
 
     /// Whether any sheet needs layer-aware persistence.

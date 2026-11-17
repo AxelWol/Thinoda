@@ -261,6 +261,79 @@ impl Drawing {
             fill(color)));
     }
 
+    /// Closed polygon with a gradient fill. The shape box is the polygon's
+    /// bounds, so DrawingML stretches the gradient over it; rotated linear and
+    /// radial gradients are approximated by their angle and the box centre.
+    fn gradient_poly(
+        &mut self,
+        name: &str,
+        points: &[Vec2],
+        paint: &thinoda_core::shape_style::ShapePaint,
+    ) {
+        use thinoda_core::shape_style::ShapePaint;
+        if points.len() < 3 {
+            return;
+        }
+        let (min, max) = points.iter().fold(
+            (
+                Vec2::new(f32::INFINITY, f32::INFINITY),
+                Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY),
+            ),
+            |(lo, hi), p| {
+                (
+                    Vec2::new(lo.x.min(p.x), lo.y.min(p.y)),
+                    Vec2::new(hi.x.max(p.x), hi.y.max(p.y)),
+                )
+            },
+        );
+        let (w, h) = (
+            self.emu(max.x - min.x).max(1),
+            self.emu(max.y - min.y).max(1),
+        );
+        let id = self.id();
+        let point = |p: Vec2| {
+            format!(
+                r#"<a:pt x="{}" y="{}"/>"#,
+                self.emu(p.x - min.x),
+                self.emu(p.y - min.y)
+            )
+        };
+        let mut path = format!("<a:moveTo>{}</a:moveTo>", point(points[0]));
+        for p in &points[1..] {
+            path.push_str(&format!("<a:lnTo>{}</a:lnTo>", point(*p)));
+        }
+        path.push_str("<a:close/>");
+        let stop = |position: u32, color: Color| {
+            format!(
+                r#"<a:gs pos="{position}"><a:srgbClr val="{:02X}{:02X}{:02X}"><a:alpha val="{}"/></a:srgbClr></a:gs>"#,
+                color.r,
+                color.g,
+                color.b,
+                u32::from(color.a) * 100_000 / 255
+            )
+        };
+        let shade = match *paint {
+            ShapePaint::Linear { from, to, .. } => {
+                let angle = (to.y - from.y).atan2(to.x - from.x).to_degrees();
+                format!(
+                    r#"<a:lin ang="{}" scaled="0"/>"#,
+                    ((angle * 60_000.0).round() as i64).rem_euclid(21_600_000)
+                )
+            }
+            ShapePaint::Radial { .. } => {
+                r#"<a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>"#.to_owned()
+            }
+        };
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="{}" y="{}"/><a:ext cx="{w}" cy="{h}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{w}" h="{h}">{path}</a:path></a:pathLst></a:custGeom><a:gradFill rotWithShape="1"><a:gsLst>{}{}</a:gsLst>{shade}</a:gradFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>"#,
+            esc(name),
+            self.emu(min.x - self.frame.min.x),
+            self.emu(min.y - self.frame.min.y),
+            stop(0, paint.start()),
+            stop(100_000, paint.end()),
+        ));
+    }
+
     fn rectangle_sides(
         &mut self,
         name: &str,
@@ -317,6 +390,9 @@ impl Drawing {
                     fill,
                     stroke,
                 ),
+                super::board::Prim::Gradient { points, paint } => {
+                    self.gradient_poly(&format!("Canvas object {}", object.id), &points, &paint)
+                }
                 super::board::Prim::RectangleSides {
                     paths,
                     stroke,

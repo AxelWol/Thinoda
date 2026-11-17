@@ -88,7 +88,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Connectors | Fixed ports, waypoints, floating ends | Native | — |
 | Connectors | Multiple labels per edge | Native (D7) | D7 |
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
-| Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Approx. (lost on export) | D9 |
+| Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Approx. (cards native; shape labels partial) | D9 |
 | Text | Rich HTML labels, sub/superscript, lists | Approx. (plain text) | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
@@ -236,7 +236,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 ### D9 — Style and text
 
-- [ ] Dash, gradient, shadow, glass, fill patterns, flip on shapes
+- [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
 - [ ] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
 - [ ] Copy/paste style, set default style, style rules
@@ -278,6 +278,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D9 shape style | Native shape style effects on `ObjectStyle`: dash pattern with fixed-length option, linear (north/south/east/west) and radial gradients, drop shadow, glass highlight, fill patterns (hatch, cross-hatch, dots, dashed, zigzag) and horizontal/vertical flip that mirrors built-in, polygon and stencil geometry plus fixed ports about the frame centre (labels stay upright); canvas and SVG/PNG/PDF/PPTX paint them identically (stencil dashes now export too); Shape style inspector section for single and multi-selection with one undo per edit and style copy/paste; draw.io import maps the keys natively and export writes them back; native v47, sheet clipboard v36, board clipboard v40, XMind `THINODA-XMIND-SHAPE-STYLES-1`, recovery `THINODA-RECOVERY-SHAPE-STYLES-1` and `THINODA-RECOVERY-INK-SHAPE-STYLES-1` |
 | 2026-11-17 | D8 tables | Native 2-D tables on the scene container engine: a table container owns row heights, column widths, cell slots with row/column spans and row/column stripe colours, and the shared layout pass places its cell containers (content never grows a cell); undoable insert row above/below and column left/right, delete row/column, merge/unmerge, stripes and track resize; Insert table (board toolbar, rows × columns) and a Table inspector section; canvas and SVG/PNG/PDF/PPTX paint stripes; draw.io `tableLayout` tables import natively with rowspan/colspan, stripes, grid lines and cell content and export as table/tableRow/partialRectangle cells; native v46, sheet clipboard v35, board clipboard v39, new XMind and recovery table envelopes; D8 complete |
 | 2026-11-17 | D8 layers | Named board layers per sheet above an implicit base layer, with visibility and lock; hidden layers leave canvas, hits, lasso, select all, snapping and every export; locked layers lock their objects; Layers panel (View menu, Board menu and board toolbar) adds, renames, reorders, hides, locks and deletes layers and moves the selection with group members and container children; draw.io layers import named, hidden and locked instead of being flattened or dropped and export as layer cells; native v45, board clipboard v38, sheet clipboard v34, new XMind and recovery envelopes |
 | 2026-11-17 | D7 page links | `data:page/id` links navigate to the sheet with the matching imported draw.io page id from the inspector ("Go to page" shows the target sheet title) and the link opener; missing pages warn; D7 complete |
@@ -624,6 +625,34 @@ approximations:
   Column width fields.
 - Export does not write `adaptiveColors`, so re-importing an exported page
   can warn about Formatting for fixed colours.
+
+**D9 shape style.** `ObjectStyle` gains `dash`, `gradient`, `fill_pattern`,
+`shadow`, `glass`, `flip_h` and `flip_v`; validation rejects them on anything
+but shapes. Fill and stroke opacity were already folded into colour alpha and
+rotation already existed, so they are reused rather than duplicated. One
+shared `shape_style` module mirrors outlines before rotation, splits dashes and
+builds gradient, pattern and glass geometry for canvas and every export, and
+the scene mirrors fixed connector ports with the shape. Known approximations:
+
+- draw.io flips act on the screen axes; Thinoda stores flips in the shape's
+  own frame, so a quarter-turned `direction` swaps `flipH` and `flipV` on
+  import. Export writes the stored flips, which is equivalent because
+  `direction` is folded into the geometry.
+- The shadow is a fixed offset (2, 3) at 25 % black without blur;
+  `shadowColor`, `shadowOpacity`, `shadowOffsetX/Y` and `shadowBlur` stay in
+  passthrough.
+- Glass is a white highlight over draw.io's glass region and is drawn only on
+  filled shapes.
+- Fill patterns use a gap of four stroke widths (at least 4) at -41°; draw.io's
+  sketch parameters (`hachureGap`, `hachureAngle`, `fillWeight`) stay in
+  passthrough. Sketch-only styles (`hachure`, `zigzag`, `sunburst`, ...) map
+  to the nearest native pattern with a Formatting warning; unknown values and
+  diagonal gradient directions stay in passthrough and warn.
+- PowerPoint gradients span the shape's bounding box; viewport slides are
+  flattened to an image as before.
+- Effects map only on built-in and stencil shapes; text, image, container and
+  table cells keep the keys in passthrough. The inspector offers dash presets
+  only and shows the first shape's values for a multi-selection.
 
 ## 5. Rubber-duck findings
 
