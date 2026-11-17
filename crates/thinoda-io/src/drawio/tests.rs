@@ -3641,6 +3641,71 @@ fn plain_drawio_shapes_resolve_through_the_stencil_import_map() {
 }
 
 #[test]
+fn drawio_js_shapes_bind_numeric_and_choice_style_keys() {
+    let cell = |id: &str, style: &str| {
+        format!(
+            r#"<mxCell id="{id}" value="{id}" style="{style}" vertex="1" parent="1"><mxGeometry x="10" y="10" width="100" height="80" as="geometry"/></mxCell>"#
+        )
+    };
+    let cells = [
+        cell("wall", "shape=mxgraph.floorplan.wall;wallThickness=20;"),
+        cell(
+            "end",
+            "shape=mxgraph.bpmn.event;outline=end;symbol=terminate;",
+        ),
+        cell("bare", "shape=mxgraph.bpmn.event;"),
+        cell(
+            "bogus",
+            "shape=mxgraph.bpmn.event;outline=standard;symbol=bogus;",
+        ),
+        cell("gateway", "shape=mxgraph.bpmn.gateway2;gwType=parallel;"),
+        cell("task", "shape=mxgraph.bpmn.task2;taskMarker=user;"),
+        cell("person", "shape=mxgraph.c4.person2;"),
+    ]
+    .concat();
+    let sheet = clean(&page(&cells));
+    let objects = shapes(&sheet);
+    let stencil = |label: &str| {
+        objects
+            .iter()
+            .find(|object| object.label() == label)
+            .and_then(|object| object.stencil.clone())
+            .unwrap_or_else(|| panic!("{label} has no stencil"))
+    };
+    let param = |label: &str, key: &str| stencil(label).parameters.get(key).copied();
+    let defined = |label: &str| stencil(label).definition;
+
+    assert_eq!(defined("wall"), "floorplan-wall");
+    assert_eq!(param("wall", "wallThickness"), Some(20.0));
+    assert_eq!(param("end", "outline"), Some(8.0));
+    assert_eq!(param("end", "symbol"), Some(12.0));
+    // draw.io draws no outline when the key is missing; Thinoda's own default is a circle.
+    assert_eq!(param("bare", "outline"), Some(0.0));
+    assert_eq!(param("bogus", "symbol").unwrap_or(0.0), 0.0);
+    assert_eq!(param("gateway", "gwType"), Some(2.0));
+    assert_eq!(defined("task"), "bpmn-task");
+    assert_eq!(defined("person"), "c4-person2");
+    for object in &objects {
+        assert!(thinoda_core::stencil_object::render(object).is_some());
+    }
+
+    let xml = String::from_utf8(export(&Workbook::new(sheet.clone())).unwrap()).unwrap();
+    assert!(xml.contains("outline=end;symbol=terminate;"), "{xml}");
+    assert!(xml.contains("gwType=parallel;"));
+    assert!(xml.contains("wallThickness=20;"));
+    assert_eq!(
+        shapes(&clean(&xml))
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>(),
+        objects
+            .iter()
+            .map(|object| object.stencil.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn inline_drawio_stencils_import_render_and_round_trip() {
     use base64::Engine as _;
     let encode = |stencil: &str| {

@@ -94,14 +94,15 @@ fn drawio_shape_package_validates_and_every_definition_evaluates() {
             )
             .unwrap_or_else(|e| panic!("{} failed: {e}", definition.id));
         assert!(
-            out.paths.len() > 1 || out.paths[0].background,
+            out.paths.len() > 1 || out.paths.first().is_some_and(|p| p.background),
             "{}",
             definition.id
         );
         assert!(
-            [(0.5, 0.6), (0.75, 0.5), (0.1, 0.1), (0.5, 0.95)]
-                .iter()
-                .any(|(x, y)| out.contains(Vec2::new(w as f32 * x, h as f32 * y))),
+            (0..=16).any(|i| (0..=16).any(|j| out.contains(Vec2::new(
+                w as f32 * (0.02 + 0.06 * i as f32),
+                h as f32 * (0.02 + 0.06 * j as f32)
+            )))),
             "{} is not hit-testable",
             definition.id
         );
@@ -127,13 +128,46 @@ fn drawio_shape_package_validates_and_every_definition_evaluates() {
         }
     }
     let imports = package.extensions["drawio.import"].as_object().unwrap();
-    assert_eq!(imports.len(), package.definitions.len());
+    let mut imported = std::collections::BTreeSet::new();
     for target in imports.values() {
         let id = target
             .as_str()
             .or_else(|| target["definition"].as_str())
             .unwrap();
         assert!(package.definition(id).is_some(), "missing {id}");
+        imported.insert(id);
+    }
+    assert_eq!(imported.len(), package.definitions.len());
+}
+
+#[test]
+fn drawio_shape_choices_and_toggles_all_evaluate_at_odd_sizes() {
+    let package = StencilPackage::from_json(builtin_sources()[1]).unwrap();
+    for definition in &package.definitions {
+        for (name, parameter) in &definition.parameters {
+            let values: Vec<f64> = match parameter.kind {
+                ParameterKind::Choice => (0..parameter.options.len()).map(|i| i as f64).collect(),
+                ParameterKind::Toggle => vec![0.0, 1.0],
+                _ => continue,
+            };
+            for value in values {
+                let params =
+                    definition.resolve_parameters(&BTreeMap::from([(name.clone(), value)]));
+                for (w, h) in [(12.0, 9.0), (240.0, 60.0), (40.0, 300.0)] {
+                    package
+                        .evaluate(
+                            &definition.id,
+                            &Instance {
+                                width: w,
+                                height: h,
+                                stroke_width: 2.0,
+                                parameters: &params,
+                            },
+                        )
+                        .unwrap_or_else(|e| panic!("{} {name}={value}: {e}", definition.id));
+                }
+            }
+        }
     }
 }
 

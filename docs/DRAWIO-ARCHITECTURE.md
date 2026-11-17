@@ -530,6 +530,15 @@ because Windows exhausted paging-file capacity; no full-suite success is claimed
   resolves plain shape names through it after the built-in maps and the bundle,
   and explicit references through it after the bundle. Diagrams opened after
   installing a library therefore show its shapes instead of placeholders.
+- **ST4 JS-coded shapes (D5):** 34 definitions in `thinoda.drawio` reproduce 35
+  draw.io shapes drawn by JavaScript (floorplan, mockup, BPMN event, gateway
+  and task, C4 person, lean mapping, callouts). Keyword style keys bind to
+  `choice` parameters through `{"style": key, "values": [...]}`: the option
+  index is the value, import maps the keyword and export writes it back. A key
+  that is missing or holds an unknown keyword takes the definition's `absent`
+  rule, which follows draw.io's own default. Icon-table shapes
+  (`networks2.icon`, `aws4.resourceIcon`) and `electrical.logic_gate` stay
+  fallbacks.
 - **Next:** add explicit revision-update previews for ST6 and implement ST5 legacy
   migration. Extend the data-driven import map to further mxgraph libraries.
   Revisit workbook-global closure deduplication before adding larger

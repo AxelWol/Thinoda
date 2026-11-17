@@ -72,9 +72,9 @@ approximately with a warning; **Preserved** = kept in a passthrough envelope
 | Pages | Pages, rename, reorder, duplicate | Native (sheets) | — |
 | Pages | Page links `data:page/id` | Approx. (plain link) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Approx. (flattened; Below/Above bands only) | D8 |
-| Shapes | Core 16 + drawio 101 JS shapes | 31 native `ShapeKind`s + 32 JSON definitions; others approximate as rectangles | D5 |
+| Shapes | Core 16 + drawio 101 JS shapes | 31 native `ShapeKind`s + 66 JSON definitions; others approximate as rectangles | D5 ✅ |
 | Shapes | 9,090 XML stencils | 17 generic families bundled (81 packages, 2,238 shapes); vendor and platform families not yet available | D4 |
-| Shapes | 717 JS library shapes | Missing (rectangle fallback) | D5 |
+| Shapes | 717 JS library shapes | 35 frequent corpus shapes defined (floorplan, mockup, BPMN, C4, lean mapping); icon-table shapes and the rest fall back to rectangles | D5 (partial) |
 | Shapes | Edit Shape (stencil XML), inline `stencil(...)` | Native import of inline stencils; no editor | D12 |
 | Libraries | Sidebar sections, search, More Shapes | Library browser with built-in sections, a "draw.io" group of the 17 bundled families (opt-in under More shapes, searchable), imported packages, scratchpad, `.mxlibrary` import; no vendor libraries | D4 |
 | Libraries | Vendor libraries (AWS, Azure, GCP, Cisco, ...) | Missing | D4 |
@@ -203,10 +203,11 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Split stencil files that exceed package limits (aws4) into several packages
 - [ ] Optional user-triggered download of a pinned family (desktop) with SHA-256 verification and display of the applicable terms — deferred (see the D4 critique)
 
-### D5 — JS-coded draw.io shapes as JSON definitions
+### D5 — JS-coded draw.io shapes as JSON definitions ✅
 
-- [ ] Corpus-ranked definitions: mockup forms/containers, floorplan wall/doors/windows, arrows2, basic, bpmn task/event/gateway, infographic, lean_mapping, c4 person, logic gates
-- [ ] Parameters bound to draw.io style keys via `drawio.import` rules
+- [x] Corpus-ranked definitions (34 new, 35 draw.io names): floorplan wall, wall corner, window, doors (left, right, double) and stairs; mockup margin rects, buttons, scroll bar, checkbox, curly brace and browser window; bpmn event, shape, gateway2 and task/task2 (outlines, symbols, markers, loops); c4 person and person2; stylised arrow, shaded pyramid, circular callout, bar callout; lean_mapping inventory, push and pull arrows, data box, supermarket, outside sources, manufacturing process (plain and shared), FIFO lane
+- [x] Parameters bound to draw.io style keys via `drawio.import` rules, including choice keys (`outline`, `symbol`, `gwType`, `taskMarker`, `buttonStyle`, ...) with draw.io's absent defaults; unknown choice values fall back to the absent default
+- [ ] networks2 icons, aws4 resource icons and electrical logic gates — deferred (see the D5 critique)
 
 ### D6 — Ownership and passthrough envelope
 
@@ -271,6 +272,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D5 | 34 JSON definitions cover 35 JS-coded draw.io shapes (floorplan, mockup, BPMN, C4, lean mapping, callouts); choice parameters bind draw.io keyword styles both ways; every option evaluates at three sizes |
 | 2026-11-17 | D4 | draw.io stencil XML imports as `user.drawio.<ns>` packages with draw.io aliases; installed libraries resolve opened diagrams; aws4 (1,050 shapes) installs as 2 parts in 0.2 s; pinned download deferred |
 | 2026-11-17 | Requests | Software template previews readable; re-toggled arrows scale with width (d34d271); shape and connector options edit multi-selections with one undo |
 | 2026-11-17 | D3 | Library browser lists the 17 bundled families (2,238 shapes) in an opt-in "draw.io" group; catalog search; one shared resource per inserted package; 11 new family names translated into 8 languages |
@@ -355,6 +357,28 @@ JSON) would have failed to reload. Parts are now sized and stored as compact
 JSON, and a test reloads them. The bundle generator keeps its own alias code
 because it also strips licenses and revisions; the two derive aliases the same
 way.
+
+**D5.** The definitions are written from draw.io's JavaScript shape code, not
+traced from renders, so they follow its geometry but are not checked visually
+(D15). Several are approximations: the BPMN task markers service, user,
+manual, script and business rule are simplified icons, and some markers are
+not drawn at all. The mockup browser window omits its address text and
+navigation arrows. Lean process headers use a `headerHeight` parameter where
+draw.io derives the height from the font size. Stairs are unrolled to 80
+fixed step lines. An `include` cannot pass parameters, so the event drawing is
+inlined into the gateway and task definitions rather than shared. Each
+definition's own default (for example a visible circle for BPMN events) can
+differ from draw.io's absent value (no outline); import uses draw.io's value,
+so opened files draw as in draw.io while new shapes from the library are
+visible. Outside label positions are left out of the export styles until D9
+supports them, because they would otherwise warn on every insert. Deferred:
+`networks2.icon` and `aws4.resourceIcon` draw one of hundreds of embedded icons
+selected by a style key, and electrical `logic_gate` depends on operator and
+input-count keys. Each needs a table-driven definition rather than a single
+shape. These remain rectangle fallbacks with the usual warning. All new titles
+are translated into the eight UI languages. Choice options show readable
+labels (for example "Intermediate catching") while import and export keep
+draw.io's keywords. Parameter labels and option names are English only.
 
 ## 5. Rubber-duck findings
 

@@ -2229,6 +2229,39 @@ Ribbon banner|Cinta de banner|Bannière ruban|Båndbanner|Lintbanner|Faixa de fi
 Shaded cube|Cubo sombreado|Cube ombré|Skyggelagt terning|Gearceerde kubus|Cubo sombreado|Cubo ombreggiato|Cieniowany sześcian
 Pyramid step|Escalón de pirámide|Marche de pyramide|Pyramidetrin|Piramidetrede|Degrau de pirâmide|Gradino della piramide|Stopień piramidy
 Shaded cylinder|Cilindro sombreado|Cylindre ombré|Skyggelagt cylinder|Gearceerde cilinder|Cilindro sombreado|Cilindro ombreggiato|Cieniowany walec
+Wall|Pared|Mur|Væg|Muur|Parede|Muro|Ściana
+Wall corner|Esquina de pared|Angle de mur|Væghjørne|Muurhoek|Canto de parede|Angolo del muro|Narożnik ściany
+Door (left)|Puerta (izquierda)|Porte (gauche)|Dør (venstre)|Deur (links)|Porta (esquerda)|Porta (sinistra)|Drzwi (lewe)
+Door (right)|Puerta (derecha)|Porte (droite)|Dør (højre)|Deur (rechts)|Porta (direita)|Porta (destra)|Drzwi (prawe)
+Double door|Puerta doble|Porte double|Dobbeltdør|Dubbele deur|Porta dupla|Porta doppia|Drzwi dwuskrzydłowe
+Stairs|Escaleras|Escalier|Trappe|Trap|Escadas|Scale|Schody
+Margin rectangle|Rectángulo con margen|Rectangle avec marge|Rektangel med margen|Rechthoek met marge|Retângulo com margem|Rettangolo con margine|Prostokąt z marginesem
+Margin rectangle (square)|Rectángulo con margen (recto)|Rectangle avec marge (carré)|Rektangel med margen (firkantet)|Rechthoek met marge (vierkant)|Retângulo com margem (quadrado)|Rettangolo con margine (squadrato)|Prostokąt z marginesem (kwadratowy)
+Left button|Botón izquierdo|Bouton gauche|Venstre knap|Linkerknop|Botão esquerdo|Pulsante sinistro|Lewy przycisk
+Button|Botón|Bouton|Knap|Knop|Botão|Pulsante|Przycisk
+Scroll bar|Barra de desplazamiento|Barre de défilement|Rullepanel|Schuifbalk|Barra de rolagem|Barra di scorrimento|Pasek przewijania
+Checkbox|Casilla de verificación|Case à cocher|Afkrydsningsfelt|Selectievakje|Caixa de seleção|Casella di controllo|Pole wyboru
+Curly brace|Llave|Accolade|Krøllet parentes|Accolade|Chaveta|Parentesi graffa|Nawias klamrowy
+Browser window|Ventana del navegador|Fenêtre de navigateur|Browservindue|Browservenster|Janela do navegador|Finestra del browser|Okno przeglądarki
+BPMN event|Evento BPMN|Événement BPMN|BPMN-hændelse|BPMN-gebeurtenis|Evento BPMN|Evento BPMN|Zdarzenie BPMN
+BPMN shape|Forma BPMN|Forme BPMN|BPMN-figur|BPMN-vorm|Forma BPMN|Forma BPMN|Kształt BPMN
+BPMN gateway|Compuerta BPMN|Passerelle BPMN|BPMN-gateway|BPMN-gateway|Gateway BPMN|Gateway BPMN|Bramka BPMN
+BPMN task|Tarea BPMN|Tâche BPMN|BPMN-opgave|BPMN-taak|Tarefa BPMN|Attività BPMN|Zadanie BPMN
+Person|Persona|Personne|Person|Persoon|Pessoa|Persona|Osoba
+Person (C4)|Persona (C4)|Personne (C4)|Person (C4)|Persoon (C4)|Pessoa (C4)|Persona (C4)|Osoba (C4)
+Stylised arrow|Flecha estilizada|Flèche stylisée|Stiliseret pil|Gestileerde pijl|Seta estilizada|Freccia stilizzata|Stylizowana strzałka
+Shaded pyramid|Pirámide sombreada|Pyramide ombrée|Skyggelagt pyramide|Gearceerde piramide|Pirâmide sombreada|Piramide ombreggiata|Cieniowana piramida
+Circular callout|Llamada circular|Bulle circulaire|Rund billedforklaring|Ronde toelichting|Balão circular|Callout circolare|Okrągły dymek
+Bar callout|Llamada de barra|Bulle à barre|Bjælkeforklaring|Balktoelichting|Balão de barra|Callout a barra|Dymek z belką
+Inventory|Inventario|Stock|Lager|Voorraad|Inventário|Inventario|Zapas
+Manufacturing process|Proceso de fabricación|Processus de fabrication|Produktionsproces|Productieproces|Processo de fabrico|Processo di produzione|Proces produkcyjny
+Shared process|Proceso compartido|Processus partagé|Delt proces|Gedeeld proces|Processo partilhado|Processo condiviso|Proces współdzielony
+Push arrow|Flecha de empuje|Flèche de poussée|Push-pil|Duwpijl|Seta de empurrar|Freccia push|Strzałka pchania
+Physical pull|Tirón físico|Flux tiré physique|Fysisk træk|Fysieke pull|Puxar físico|Pull fisico|Fizyczne ssanie
+Data box|Cuadro de datos|Boîte de données|Databoks|Gegevensvak|Caixa de dados|Riquadro dati|Pole danych
+Supermarket|Supermercado|Supermarché|Supermarked|Supermarkt|Supermercado|Supermercato|Supermarket
+FIFO lane|Carril FIFO|Couloir FIFO|FIFO-bane|FIFO-baan|Faixa FIFO|Corsia FIFO|Tor FIFO
+Outside sources|Fuentes externas|Sources externes|Eksterne kilder|Externe bronnen|Fontes externas|Fonti esterne|Źródła zewnętrzne
 Stencil parameters|Parámetros de stencil|Paramètres de stencil|Stencilparametre|Stencilparameters|Parâmetros do stencil|Parametri stencil|Parametry szablonu
 Reset|Restablecer|Réinitialiser|Nulstil|Opnieuw instellen|Repor|Ripristina|Resetuj
 Reset to the stencil default|Restablecer el valor predeterminado del stencil|Rétablir la valeur par défaut du stencil|Nulstil til standarden|Standaard van stencil herstellen|Repor predefinição do stencil|Ripristina il valore predefinito dello stencil|Przywróć ustawienia domyślne szablonu
