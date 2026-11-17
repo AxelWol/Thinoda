@@ -76,7 +76,7 @@ approximately with a warning; **Preserved** = kept in a passthrough envelope
 | Shapes | 9,090 XML stencils | 17 generic families bundled (81 packages, 2,238 shapes); vendor and platform families not yet available | D4 |
 | Shapes | 717 JS library shapes | Missing (rectangle fallback) | D5 |
 | Shapes | Edit Shape (stencil XML), inline `stencil(...)` | Native import of inline stencils; no editor | D12 |
-| Libraries | Sidebar sections, search, More Shapes | Library browser with built-in sections, imported packages, scratchpad, `.mxlibrary` import; no draw.io families | D3 |
+| Libraries | Sidebar sections, search, More Shapes | Library browser with built-in sections, a "draw.io" group of the 17 bundled families (opt-in under More shapes, searchable), imported packages, scratchpad, `.mxlibrary` import; no vendor libraries | D4 |
 | Libraries | Vendor libraries (AWS, Azure, GCP, Cisco, ...) | Missing | D4 |
 | Connectors | Straight, orthogonal, elbow, curved | Native (Straight, Elbow, Curve) | — |
 | Connectors | entityRelation, segment, isometric, sideToSide, topToBottom, loop, libavoid | Approx. (elbow) | D7 |
@@ -182,12 +182,12 @@ annotations) only built-in and inline stencils, so the object stays an
 editable native kind; otherwise a bundled alias, but only from an explicit
 `shape=` key, because draw.io reads a bare first style token as a named style.
 
-### D3 — Library browser for bundled families
+### D3 — Library browser for bundled families ✅
 
-- [ ] "draw.io" group in the library browser with one collapsible section per family, decoded when opened
-- [ ] Search across catalog titles without decoding packages
-- [ ] Visibility per family persisted with the existing built-in visibility settings
-- [ ] Inserted objects embed a per-package closure that later insertions of the same package reuse
+- [x] "draw.io" group in the library browser with one collapsible section per family (package captions in multi-package families); a package is decoded only when one of its tiles becomes visible
+- [x] Search across catalog titles, shape names and package titles without decoding packages; hidden families are searched too, and bundled results are capped at 240 with a "Refine the search" hint
+- [x] Visibility per family persisted next to the built-in visibility settings (`shown_drawio`, opt-in, under "More shapes…")
+- [x] Inserted objects embed their whole bundled package as one content-addressed resource, so every later insertion from that package reuses it
 
 ### D4 — Vendor and platform libraries
 
@@ -264,6 +264,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D3 | Library browser lists the 17 bundled families (2,238 shapes) in an opt-in "draw.io" group; catalog search; one shared resource per inserted package; 11 new family names translated into 8 languages |
 | 2026-11-17 | D2 | 17 families bundled (81 packages, 2,238 shapes, about 854 KB); 253 cells in the example corpus now draw their stencils; approximate native kinds stay native; NOTICE and Apache text shipped |
 | 2026-11-17 | D1 | 8,040 of 8,040 shapes in converted files evaluate; aws4 (1,050 shapes) still fails as a file and moves to D4 |
 | 2026-11-17 | D0 | Research, gap analysis, plan, coverage probe, translator fixes (99.94 % of shapes in converted files), rubber-duck review folded in |
@@ -293,15 +294,28 @@ can restyle, instead of a frozen stencil. Bare style tokens are deliberately not
 resolved, matching draw.io, so such a cell keeps its fallback just as it
 draws as a plain rectangle in draw.io. Closures are built per package and per page from visible
 cells only and inserted when the first object uses them; hidden layers
-therefore never leave unused resources that would block draw.io export. A
-whole package is embedded even when a page uses one shape, so native documents
-grow by up to a package's size; this buys the 128-resource limit and stable
-re-import. `.drawio` interchange stays name-based, so a regenerated bundle can
+therefore never leave unused resources that would block draw.io export. Each
+page embeds one closure per package holding only the definitions it uses (plus
+their includes), which bounds resources to one per package and keeps re-import
+stable. `.drawio` interchange stays name-based, so a regenerated bundle can
 change how an exported file looks after re-import; native documents are
 unaffected. 34 corpus names in bundled namespaces still fall back: they are
 JavaScript-coded shapes (mockup containers, `bpmn.event`, `basic.rect`, ...)
 owned by D5. Package validity and evaluation are proven; visual parity is not
 and remains D15.
+
+**D3.** Families are opt-in so the default panel stays as small as before;
+search still covers hidden families, so a shape can be found without knowing
+its family. Insertion embeds the whole bundled package rather than a closure:
+every shape inserted from that package shares one resource (one per package,
+never one per shape), at the cost of up to about 1 MB per package in memory
+(networks2 is the largest; on disk the native zip compresses it). Imported
+`.drawio` pages keep their smaller per-page closures, so the same package can
+appear as two resources in a sheet that mixes both paths. Package, shape and
+section-caption titles stay English, as in the catalog; only family names are
+localized. The preview cache does not count the shared package bytes per tile,
+so large packages do not evict other previews; the panel keeps each decoded
+package and its encoded resource for the session (about 5 MB at most).
 
 ## 5. Rubber-duck findings
 

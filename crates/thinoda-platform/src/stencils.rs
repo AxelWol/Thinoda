@@ -49,6 +49,9 @@ pub struct StencilState {
     /// Declarative packages use the same local ID namespace as template libraries.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub packages: Vec<SavedPackage>,
+    /// Bundled draw.io shape families the user showed with "More shapes…".
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shown_drawio: Vec<String>,
 }
 
 fn valid_id(id: &str) -> bool {
@@ -94,13 +97,17 @@ pub fn validate(state: &StencilState) -> std::result::Result<(), String> {
     if state.libraries.len().saturating_add(state.packages.len()) > MAX_LIBRARIES {
         return Err(format!("Keep at most {MAX_LIBRARIES} stencil libraries."));
     }
-    if state.hidden_builtin.len() > MAX_IDS || state.collapsed.len() > MAX_IDS {
+    if state.hidden_builtin.len() > MAX_IDS
+        || state.collapsed.len() > MAX_IDS
+        || state.shown_drawio.len() > MAX_IDS
+    {
         return Err("Too many remembered stencil sections.".into());
     }
     if !state
         .hidden_builtin
         .iter()
         .chain(&state.collapsed)
+        .chain(&state.shown_drawio)
         .all(|id| valid_section_id(id))
     {
         return Err("Stencil section IDs must be valid.".into());
@@ -191,6 +198,7 @@ mod tests {
                 id: "lib-2".into(),
                 json: r#"{"schema":"thinoda.stencil-package"}"#.into(),
             }],
+            shown_drawio: vec!["electrical".into(), "networks2".into()],
         };
         save(&paths, &state).unwrap();
         assert_eq!(load(&paths).unwrap(), state);
@@ -210,6 +218,11 @@ mod tests {
             ..Default::default()
         };
         assert!(save(&paths, &bad_id).is_err());
+        let bad_family = StencilState {
+            shown_drawio: vec!["bad family".into()],
+            ..Default::default()
+        };
+        assert!(save(&paths, &bad_family).is_err());
         let many = StencilState {
             libraries: (0..=MAX_LIBRARIES)
                 .map(|i| library(&format!("l{i}")))

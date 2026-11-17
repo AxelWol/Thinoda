@@ -2232,3 +2232,15 @@ Stencil parameters|Parámetros de stencil|Paramètres de stencil|Stencilparametr
 Reset|Restablecer|Réinitialiser|Nulstil|Opnieuw instellen|Repor|Ripristina|Resetuj
 Reset to the stencil default|Restablecer el valor predeterminado del stencil|Rétablir la valeur par défaut du stencil|Nulstil til standarden|Standaard van stencil herstellen|Repor predefinição do stencil|Ripristina il valore predefinito dello stencil|Przywróć ustawienia domyślne szablonu
 Drag to adjust; use arrow keys to nudge, Shift for larger steps.|Arrastra para ajustar o usa las flechas; Mayús para pasos mayores.|Faites glisser ou utilisez les flèches ; Maj pour des pas plus grands.|Træk eller brug piletasterne; Skift giver større trin.|Sleep of gebruik de pijltjestoetsen; Shift voor grotere stappen.|Arraste ou use as setas; Shift para passos maiores.|Trascina o usa le frecce; Maiusc per incrementi maggiori.|Przeciągnij lub użyj strzałek; Shift zwiększa krok.
+Electrical|Eléctrico|Électrique|Elektrisk|Elektrisch|Elétrico|Elettrico|Elektryczne
+Floorplans|Planos de planta|Plans d'étage|Plantegninger|Plattegronden|Plantas|Planimetrie|Plany pięter
+Mockups|Maquetas|Maquettes|Mockups|Mockups|Protótipos|Mockup|Makiety
+Cabinets|Armarios eléctricos|Armoires électriques|Skabe|Kasten|Armários elétricos|Armadi elettrici|Szafy sterownicze
+Enterprise integration patterns|Patrones de integración empresarial|Modèles d'intégration d'entreprise|Virksomhedsintegrationsmønstre|Enterprise-integratiepatronen|Padrões de integração empresarial|Pattern di integrazione aziendale|Wzorce integracji korporacyjnej
+Fluid power|Potencia fluida|Hydraulique et pneumatique|Fluidteknik|Vloeistoftechniek|Potência fluida|Oleodinamica e pneumatica|Napędy płynowe
+Lean mapping|Mapeo lean|Cartographie lean|Lean-kortlægning|Lean-mapping|Mapeamento lean|Mappatura lean|Mapowanie lean
+Sitemap|Mapa del sitio|Plan du site|Sitemap|Sitemap|Mapa do site|Mappa del sito|Mapa witryny
+Signs|Señales|Panneaux|Skilte|Borden|Sinais|Segnali|Znaki
+Networks|Redes|Réseaux|Netværk|Netwerken|Redes|Reti|Sieci
+Network icons|Iconos de red|Icônes réseau|Netværksikoner|Netwerkpictogrammen|Ícones de rede|Icone di rete|Ikony sieci
+Refine the search to see more|Refina la búsqueda para ver más|Affinez la recherche pour en voir plus|Forfin søgningen for at se flere|Verfijn de zoekopdracht om meer te zien|Refine a pesquisa para ver mais|Affina la ricerca per vederne altri|Zawęź wyszukiwanie, aby zobaczyć więcej
