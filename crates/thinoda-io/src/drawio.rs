@@ -1289,21 +1289,7 @@ impl Style {
         {
             return None;
         }
-        let kind = match name {
-            "classic" => ConnectorMarkerKind::Classic,
-            "classicThin" => ConnectorMarkerKind::ClassicThin,
-            "open" => ConnectorMarkerKind::Open,
-            "openThin" => ConnectorMarkerKind::OpenThin,
-            "block" => ConnectorMarkerKind::Block,
-            "blockThin" => ConnectorMarkerKind::BlockThin,
-            "diamond" => ConnectorMarkerKind::Diamond,
-            "diamondThin" => ConnectorMarkerKind::DiamondThin,
-            "oval" => ConnectorMarkerKind::Oval,
-            "halfCircle" => ConnectorMarkerKind::HalfCircle,
-            "baseDash" => ConnectorMarkerKind::BaseDash,
-            "dash" => ConnectorMarkerKind::Dash,
-            _ => return None,
-        };
+        let kind = drawio_marker_kind(name)?;
         Some(ConnectorMarker { kind })
     }
 
@@ -1399,22 +1385,7 @@ impl Style {
                 && (self.get("jumpStyle").is_some_and(|v| v != "none")
                     || ["startArrow", "endArrow"].iter().any(|key| {
                         self.get(key).is_some_and(|v| {
-                            !matches!(
-                                v,
-                                "" | "none"
-                                    | "classic"
-                                    | "classicThin"
-                                    | "open"
-                                    | "openThin"
-                                    | "block"
-                                    | "blockThin"
-                                    | "diamond"
-                                    | "diamondThin"
-                                    | "oval"
-                                    | "halfCircle"
-                                    | "baseDash"
-                                    | "dash"
-                            )
+                            !matches!(v, "" | "none") && drawio_marker_kind(v).is_none()
                         })
                     })
                     || [("startArrow", "startFill"), ("endArrow", "endFill")]
@@ -5364,20 +5335,8 @@ impl<'a> PageWriter<'a> {
                         }
                     }
                 }
-                let marker_name = |marker: Option<ConnectorMarker>| match marker.map(|m| m.kind) {
-                    Some(ConnectorMarkerKind::Classic) => "classic",
-                    Some(ConnectorMarkerKind::ClassicThin) => "classicThin",
-                    Some(ConnectorMarkerKind::Open) => "open",
-                    Some(ConnectorMarkerKind::OpenThin) => "openThin",
-                    Some(ConnectorMarkerKind::Block) => "block",
-                    Some(ConnectorMarkerKind::BlockThin) => "blockThin",
-                    Some(ConnectorMarkerKind::Diamond) => "diamond",
-                    Some(ConnectorMarkerKind::DiamondThin) => "diamondThin",
-                    Some(ConnectorMarkerKind::Oval) => "oval",
-                    Some(ConnectorMarkerKind::HalfCircle) => "halfCircle",
-                    Some(ConnectorMarkerKind::BaseDash) => "baseDash",
-                    Some(ConnectorMarkerKind::Dash) => "dash",
-                    None => "classic",
+                let marker_name = |marker: Option<ConnectorMarker>| {
+                    marker.map_or("classic", |m| drawio_marker_name(m.kind))
                 };
                 style.push_str("endArrow=");
                 style.push_str(if connector.arrow_end {
@@ -6181,6 +6140,52 @@ pub(crate) fn embed_png(mut png: Vec<u8>, sheet: &Sheet) -> Result<Vec<u8>, IoEr
     let checksum = crc32fast::hash(&chunk[4..chunk_len - 4]);
     chunk[chunk_len - 4..].copy_from_slice(&checksum.to_be_bytes());
     Ok(png)
+}
+
+const DRAWIO_MARKER_NAMES: [(&str, ConnectorMarkerKind); 30] = [
+    ("classic", ConnectorMarkerKind::Classic),
+    ("classicThin", ConnectorMarkerKind::ClassicThin),
+    ("open", ConnectorMarkerKind::Open),
+    ("openThin", ConnectorMarkerKind::OpenThin),
+    ("block", ConnectorMarkerKind::Block),
+    ("blockThin", ConnectorMarkerKind::BlockThin),
+    ("diamond", ConnectorMarkerKind::Diamond),
+    ("diamondThin", ConnectorMarkerKind::DiamondThin),
+    ("oval", ConnectorMarkerKind::Oval),
+    ("halfCircle", ConnectorMarkerKind::HalfCircle),
+    ("baseDash", ConnectorMarkerKind::BaseDash),
+    ("dash", ConnectorMarkerKind::Dash),
+    ("ERone", ConnectorMarkerKind::ErOne),
+    ("ERmandOne", ConnectorMarkerKind::ErMandOne),
+    ("ERmany", ConnectorMarkerKind::ErMany),
+    ("ERoneToMany", ConnectorMarkerKind::ErOneToMany),
+    ("ERzeroToOne", ConnectorMarkerKind::ErZeroToOne),
+    ("ERzeroToMany", ConnectorMarkerKind::ErZeroToMany),
+    ("manyOptional", ConnectorMarkerKind::ManyOptional),
+    ("box", ConnectorMarkerKind::Box),
+    ("cross", ConnectorMarkerKind::Cross),
+    ("circle", ConnectorMarkerKind::Circle),
+    ("circlePlus", ConnectorMarkerKind::CirclePlus),
+    ("async", ConnectorMarkerKind::Async),
+    ("openAsync", ConnectorMarkerKind::OpenAsync),
+    ("doubleBlock", ConnectorMarkerKind::DoubleBlock),
+    ("sysMLx", ConnectorMarkerKind::SysmlX),
+    ("sysMLLost", ConnectorMarkerKind::SysmlLost),
+    ("sysMLFound", ConnectorMarkerKind::SysmlFound),
+    ("sysMLPackCont", ConnectorMarkerKind::SysmlPackCont),
+];
+
+fn drawio_marker_kind(name: &str) -> Option<ConnectorMarkerKind> {
+    DRAWIO_MARKER_NAMES
+        .iter()
+        .find_map(|(candidate, kind)| (*candidate == name).then_some(*kind))
+}
+
+fn drawio_marker_name(kind: ConnectorMarkerKind) -> &'static str {
+    DRAWIO_MARKER_NAMES
+        .iter()
+        .find_map(|(name, candidate)| (*candidate == kind).then_some(*name))
+        .unwrap_or("classic")
 }
 
 #[cfg(test)]

@@ -2585,6 +2585,18 @@ fn paint_connector_marker(
     color: Color32,
     stroke: Stroke,
 ) {
+    for part in marker.parts() {
+        paint_connector_marker_part(painter, part, xf, color, stroke);
+    }
+}
+
+fn paint_connector_marker_part(
+    painter: &Painter,
+    marker: thinoda_core::scene::ConnectorMarkerPart,
+    xf: Xf,
+    color: Color32,
+    stroke: Stroke,
+) {
     if let Some((center, radius)) = marker.circle() {
         if radius > 0.0 {
             painter.circle(

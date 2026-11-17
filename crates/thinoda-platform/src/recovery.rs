@@ -95,6 +95,8 @@ const COLLAPSE_LAYOUT_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-COLLAPSE-LAYOUT
 const COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-COLLAPSE-LAYOUT-1";
 const SEMANTIC_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SEMANTIC-1";
 const SEMANTIC_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SEMANTIC-1";
+const MARKER_LIBRARY_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-MARKER-LIBRARY-1";
+const MARKER_LIBRARY_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-MARKER-LIBRARY-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -116,7 +118,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_semantic_model() {
+        tuple.serialize_element(if self.workbook.has_library_connector_markers() {
+            MARKER_LIBRARY_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_semantic_model() {
             SEMANTIC_INK_WORKBOOK_VERSION
         } else if self.workbook.has_scene_collapse() && self.workbook.has_scene_layout_policies() {
             COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION
@@ -234,7 +238,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_semantic_model() {
+    let version = if workbook.has_library_connector_markers() {
+        MARKER_LIBRARY_WORKBOOK_VERSION
+    } else if workbook.has_semantic_model() {
         SEMANTIC_WORKBOOK_VERSION
     } else if workbook.has_scene_collapse() && workbook.has_scene_layout_policies() {
         COLLAPSE_LAYOUT_WORKBOOK_VERSION
@@ -319,6 +325,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_library_connector_markers() {
+                return Err(A::Error::custom(
+                    "draw.io library connector markers require a marker-library-aware recovery workbook",
+                ));
+            }
             if workbook.has_scene_hierarchy() {
                 return Err(A::Error::custom(
                     "scene hierarchy requires scene-aware recovery",
@@ -440,6 +451,8 @@ where
                 && version != COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION
                 && version != SEMANTIC_WORKBOOK_VERSION
                 && version != SEMANTIC_INK_WORKBOOK_VERSION
+                && version != MARKER_LIBRARY_WORKBOOK_VERSION
+                && version != MARKER_LIBRARY_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -449,6 +462,24 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let marker_library_envelope = version == MARKER_LIBRARY_WORKBOOK_VERSION
+                || version == MARKER_LIBRARY_INK_WORKBOOK_VERSION;
+            if workbook.has_library_connector_markers() != marker_library_envelope {
+                return Err(A::Error::custom(
+                    "draw.io library connector markers require a marker-library-aware recovery workbook",
+                ));
+            }
+            let version = match (
+                marker_library_envelope,
+                workbook.has_semantic_model(),
+                has_pending_ink,
+            ) {
+                (false, _, _) => version,
+                (true, true, true) => SEMANTIC_INK_WORKBOOK_VERSION.to_owned(),
+                (true, true, false) => SEMANTIC_WORKBOOK_VERSION.to_owned(),
+                (true, false, true) => COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION.to_owned(),
+                (true, false, false) => COLLAPSE_LAYOUT_WORKBOOK_VERSION.to_owned(),
+            };
             let semantic_envelope =
                 version == SEMANTIC_WORKBOOK_VERSION || version == SEMANTIC_INK_WORKBOOK_VERSION;
             if workbook.has_semantic_model() != semantic_envelope {
@@ -2397,6 +2428,58 @@ mod lock_tests {
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn library_markers_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint, Vec2,
+        };
+
+        let mut book = Workbook::default();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::DoubleBlock,
+        });
+        book.active_mut()
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    MARKER_LIBRARY_INK_WORKBOOK_VERSION
+                } else {
+                    MARKER_LIBRARY_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION
+            } else {
+                COLLAPSE_LAYOUT_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+            let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
         }
     }
 

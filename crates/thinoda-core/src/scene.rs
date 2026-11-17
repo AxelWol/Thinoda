@@ -56,20 +56,27 @@ pub enum SceneHit {
 }
 
 /// Paint geometry for a non-default connector marker, in sheet coordinates.
+/// Composite markers (ER, SysML, double block) add up to two extra parts.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConnectorMarkerGeometry {
     shape: ConnectorMarkerShape,
     pub closed: bool,
     pub filled: bool,
     pub line_inset: f32,
+    extra: [Option<ConnectorMarkerPart>; 2],
+}
+
+/// One independently stroked (and optionally filled) piece of a marker.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConnectorMarkerPart {
+    shape: ConnectorMarkerShape,
+    pub closed: bool,
+    pub filled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ConnectorMarkerShape {
-    Polygon {
-        points: [Vec2; 4],
-        point_count: usize,
-    },
+    Polygon { points: [Vec2; 4], point_count: u8 },
     Circle(Vec2, f32),
     Curve([Vec2; 5]),
 }
@@ -151,36 +158,32 @@ fn point_near_curve_path(point: Vec2, path: &[Vec2], radius: f64) -> bool {
     })
 }
 
-impl ConnectorMarkerGeometry {
-    /// The polygonal marker outline, including the notch of a classic arrow.
-    pub fn points(&self) -> &[Vec2] {
-        match &self.shape {
-            ConnectorMarkerShape::Polygon {
+impl ConnectorMarkerShape {
+    fn points(&self) -> &[Vec2] {
+        match self {
+            Self::Polygon {
                 points,
                 point_count,
-            } => &points[..*point_count],
+            } => &points[..usize::from(*point_count)],
             _ => &[],
         }
     }
 
-    /// The center and radius of a circular marker, when present.
-    pub fn circle(&self) -> Option<(Vec2, f32)> {
-        match self.shape {
-            ConnectorMarkerShape::Circle(center, radius) => Some((center, radius)),
+    fn circle(&self) -> Option<(Vec2, f32)> {
+        match *self {
+            Self::Circle(center, radius) => Some((center, radius)),
             _ => None,
         }
     }
 
-    /// Two connected quadratic spans: start, control, join, control, end.
-    pub fn curve(&self) -> Option<[Vec2; 5]> {
-        match self.shape {
-            ConnectorMarkerShape::Curve(points) => Some(points),
+    fn curve(&self) -> Option<[Vec2; 5]> {
+        match *self {
+            Self::Curve(points) => Some(points),
             _ => None,
         }
     }
 
-    /// Flatten a marker curve for conservative stroke hit testing.
-    pub fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
+    fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
         let points = self.curve()?;
         let spans = [
             [points[0], points[1], points[2]],
@@ -218,6 +221,289 @@ impl ConnectorMarkerGeometry {
     }
 }
 
+macro_rules! marker_shape_accessors {
+    () => {
+        /// The polygonal outline, including the notch of a classic arrow.
+        pub fn points(&self) -> &[Vec2] {
+            self.shape.points()
+        }
+
+        /// The center and radius of a circular part, when present.
+        pub fn circle(&self) -> Option<(Vec2, f32)> {
+            self.shape.circle()
+        }
+
+        /// Two connected quadratic spans: start, control, join, control, end.
+        pub fn curve(&self) -> Option<[Vec2; 5]> {
+            self.shape.curve()
+        }
+
+        /// Flatten a marker curve for conservative stroke hit testing.
+        pub fn flattened_curve(&self, width: f32) -> Option<(Vec<Vec2>, f32)> {
+            self.shape.flattened_curve(width)
+        }
+    };
+}
+
+impl ConnectorMarkerPart {
+    marker_shape_accessors!();
+
+    fn segment(a: Vec2, b: Vec2) -> Self {
+        Self::polygon(&[a, b], false, false)
+    }
+
+    fn polygon(points: &[Vec2], closed: bool, filled: bool) -> Self {
+        let mut stored = [points[points.len() - 1]; 4];
+        stored[..points.len()].copy_from_slice(points);
+        Self {
+            shape: ConnectorMarkerShape::Polygon {
+                points: stored,
+                point_count: points.len() as u8,
+            },
+            closed,
+            filled: closed && filled,
+        }
+    }
+
+    fn circle_part(center: Vec2, radius: f32, filled: bool) -> Self {
+        Self {
+            shape: ConnectorMarkerShape::Circle(center, radius),
+            closed: true,
+            filled,
+        }
+    }
+}
+
+impl ConnectorMarkerGeometry {
+    marker_shape_accessors!();
+
+    /// The primary part followed by any extra parts, in paint order.
+    pub fn parts(&self) -> impl Iterator<Item = ConnectorMarkerPart> + '_ {
+        std::iter::once(ConnectorMarkerPart {
+            shape: self.shape,
+            closed: self.closed,
+            filled: self.filled,
+        })
+        .chain(self.extra.iter().flatten().copied())
+    }
+
+    fn single(shape: ConnectorMarkerShape, closed: bool, filled: bool, line_inset: f32) -> Self {
+        Self {
+            shape,
+            closed,
+            filled,
+            line_inset,
+            extra: [None, None],
+        }
+    }
+
+    fn compose(line_inset: f32, parts: &[ConnectorMarkerPart]) -> Self {
+        let primary = parts[0];
+        Self {
+            shape: primary.shape,
+            closed: primary.closed,
+            filled: primary.filled,
+            line_inset,
+            extra: [parts.get(1).copied(), parts.get(2).copied()],
+        }
+    }
+}
+
+/// draw.io's library markers (mxMarker.js, mxER.js, mxSysML.js, Shapes.js).
+/// `n` is draw.io's `size + sw + 1` unit; `d` points back from the tip.
+/// Tip position plus the unit travel direction and its normal at a connector end.
+#[derive(Clone, Copy)]
+struct MarkerFrame {
+    tip: Vec2,
+    direction: Vec2,
+    normal: Vec2,
+}
+
+fn library_marker_geometry(
+    frame: MarkerFrame,
+    at_start: bool,
+    kind: ConnectorMarkerKind,
+    width: f32,
+    marker_size: f32,
+    fill: bool,
+) -> Option<ConnectorMarkerGeometry> {
+    use ConnectorMarkerKind as K;
+    use ConnectorMarkerPart as P;
+    let MarkerFrame {
+        tip,
+        direction,
+        normal,
+    } = frame;
+    let n = marker_size + width + 1.0;
+    let back = |distance: f32| tip - direction * distance;
+    let bar = |distance: f32| {
+        P::segment(
+            back(distance) + normal * (n * 0.5),
+            back(distance) - normal * (n * 0.5),
+        )
+    };
+    let crow = P::polygon(
+        &[tip - normal * (n * 0.5), back(n), tip + normal * (n * 0.5)],
+        false,
+        false,
+    );
+    let ring = |filled: bool| P::circle_part(back(1.5 * n), marker_size * 0.5, filled);
+    let er_inset = 2.0 * n - width * 0.5;
+    // Async barbs sit on the left of the travel direction at the source, right at the target.
+    let side = |sign: f32, u: f32| normal * (sign * u * 0.5);
+    let geometry = match kind {
+        K::ErOne => ConnectorMarkerGeometry::compose(0.0, &[bar(n * 0.5)]),
+        K::ErMandOne => ConnectorMarkerGeometry::compose(0.0, &[bar(n * 0.5), bar(n)]),
+        K::ErMany => ConnectorMarkerGeometry::compose(0.0, &[crow]),
+        K::ErOneToMany => ConnectorMarkerGeometry::compose(0.0, &[bar(n), crow]),
+        // draw.io fills the "filled" ER ring with white and leaves the line untrimmed;
+        // an unfilled ring with a trimmed line looks identical on the default canvas.
+        K::ErZeroToMany => ConnectorMarkerGeometry::compose(
+            er_inset,
+            &[ring(false), crow, P::segment(back(n), tip)],
+        ),
+        K::ErZeroToOne => ConnectorMarkerGeometry::compose(
+            er_inset,
+            &[
+                ring(false),
+                bar(n * 0.5),
+                P::segment(back(n + width * 0.5), tip),
+            ],
+        ),
+        K::ManyOptional => ConnectorMarkerGeometry::compose(
+            er_inset,
+            &[ring(fill), P::segment(tip, back(n)), crow],
+        ),
+        K::Box => {
+            let p = tip + direction * (n * 0.5);
+            let half = normal * (n * 0.5);
+            let near = p - direction * (n * 0.5);
+            let far = p - direction * (n * 1.5);
+            ConnectorMarkerGeometry::compose(
+                n,
+                &[P::polygon(
+                    &[near + half, near - half, far - half, far + half],
+                    true,
+                    fill,
+                )],
+            )
+        }
+        K::Cross => {
+            let half = normal * (n * 0.5);
+            ConnectorMarkerGeometry::compose(
+                0.0,
+                &[
+                    P::segment(back(n * 0.5) + half, back(n * 1.5) - half),
+                    P::segment(back(n * 0.5) - half, back(n * 1.5) + half),
+                ],
+            )
+        }
+        K::Circle | K::CirclePlus => {
+            let s = marker_size + width;
+            let center = back(s + width);
+            let circle = P::circle_part(center, s, fill);
+            if kind == K::Circle {
+                ConnectorMarkerGeometry::compose(2.0 * s + width, &[circle])
+            } else {
+                let m = marker_size + 2.0 * width;
+                let cross_center = back(m);
+                ConnectorMarkerGeometry::compose(
+                    2.0 * s + width,
+                    &[
+                        circle,
+                        P::segment(back(width), back(2.0 * m - width)),
+                        P::segment(
+                            cross_center + normal * (m - width),
+                            cross_center - normal * (m - width),
+                        ),
+                    ],
+                )
+            }
+        }
+        K::Async | K::OpenAsync | K::DoubleBlock => {
+            let u = marker_size + width;
+            let offset = if kind == K::OpenAsync {
+                0.0
+            } else {
+                width * 1.118
+            };
+            let pt = tip - direction * offset;
+            let barb = |at: Vec2, sign: f32| at - direction * u + side(sign, u);
+            let sign = if at_start { 1.0 } else { -1.0 };
+            match kind {
+                K::OpenAsync => {
+                    ConnectorMarkerGeometry::compose(0.0, &[P::segment(pt, barb(pt, sign))])
+                }
+                K::Async => ConnectorMarkerGeometry::compose(
+                    u + offset,
+                    &[P::polygon(
+                        &[pt, barb(pt, sign), pt - direction * u],
+                        true,
+                        fill,
+                    )],
+                ),
+                _ => {
+                    let second = pt - direction * u;
+                    let triangle = |at: Vec2| {
+                        P::polygon(
+                            &[
+                                at,
+                                at - direction * u + side(1.0, u),
+                                at - direction * u + side(-1.0, u),
+                            ],
+                            true,
+                            fill,
+                        )
+                    };
+                    ConnectorMarkerGeometry::compose(
+                        2.0 * u + offset,
+                        &[triangle(pt), triangle(second)],
+                    )
+                }
+            }
+        }
+        K::SysmlX => {
+            let along = direction * (n * 0.5);
+            let across = normal * (n * 0.5);
+            ConnectorMarkerGeometry::compose(
+                0.0,
+                &[
+                    P::segment(tip - along + across, tip + along - across),
+                    P::segment(tip + along + across, tip - along - across),
+                ],
+            )
+        }
+        K::SysmlLost => ConnectorMarkerGeometry::compose(
+            0.0,
+            &[
+                P::polygon(
+                    &[
+                        back(1.5 * n) + normal * (n * 0.5),
+                        back(n * 0.5),
+                        back(1.5 * n) - normal * (n * 0.5),
+                    ],
+                    false,
+                    false,
+                ),
+                P::circle_part(back(n * 0.5), marker_size * 0.5, true),
+            ],
+        ),
+        K::SysmlFound => ConnectorMarkerGeometry::compose(
+            0.0,
+            &[P::circle_part(back(n * 0.5), marker_size * 0.5, true)],
+        ),
+        K::SysmlPackCont => ConnectorMarkerGeometry::compose(
+            0.0,
+            &[
+                bar(n * 0.5),
+                P::circle_part(back(n * 0.5), marker_size * 0.5, false),
+            ],
+        ),
+        _ => return None,
+    };
+    Some(geometry)
+}
+
 fn connector_marker_geometry(
     points: &[Vec2],
     at_start: bool,
@@ -244,31 +530,39 @@ fn connector_marker_geometry(
     let delta = tip - *toward;
     let direction = delta * (1.0 / delta.length());
     let normal = Vec2::new(-direction.y, direction.x);
+    if kind.requires_marker_library_format() {
+        return library_marker_geometry(
+            MarkerFrame {
+                tip,
+                direction,
+                normal,
+            },
+            at_start,
+            kind,
+            width,
+            marker_size,
+            fill,
+        );
+    }
     if kind == ConnectorMarkerKind::Oval {
         let radius = marker_size * 0.5;
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Circle(tip, radius),
-            closed: true,
-            filled: fill,
-            line_inset: radius,
-        });
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Circle(tip, radius),
+            true,
+            fill,
+            radius,
+        ));
     }
     if kind == ConnectorMarkerKind::HalfCircle {
         let radius = marker_size + width + 1.0;
         let apex = tip - direction * radius;
         let side = normal * radius;
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Curve([
-                tip + side,
-                apex + side,
-                apex,
-                apex - side,
-                tip - side,
-            ]),
-            closed: false,
-            filled: false,
-            line_inset: radius,
-        });
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Curve([tip + side, apex + side, apex, apex - side, tip - side]),
+            false,
+            false,
+            radius,
+        ));
     }
     if kind.is_bar() {
         let length = marker_size + width + 1.0;
@@ -281,15 +575,15 @@ fn connector_marker_geometry(
                 tip - direction * (length * 1.5) - side,
             )
         };
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Polygon {
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Polygon {
                 points: [first, last, last, last],
                 point_count: 2,
             },
-            closed: false,
-            filled: false,
-            line_inset: 0.0,
-        });
+            false,
+            false,
+            0.0,
+        ));
     }
     // Keep draw.io's rounded coefficients for stroke-width-dependent tip offsets.
     let offset = width
@@ -309,8 +603,8 @@ fn connector_marker_geometry(
             } else {
                 3.4
             };
-        return Some(ConnectorMarkerGeometry {
-            shape: ConnectorMarkerShape::Polygon {
+        return Some(ConnectorMarkerGeometry::single(
+            ConnectorMarkerShape::Polygon {
                 points: [
                     midpoint + normal * wing,
                     tip,
@@ -319,10 +613,10 @@ fn connector_marker_geometry(
                 ],
                 point_count: 4,
             },
-            closed: true,
-            filled: fill,
-            line_inset: offset + size,
-        });
+            true,
+            fill,
+            offset + size,
+        ));
     }
     let classic = matches!(
         kind,
@@ -358,6 +652,7 @@ fn connector_marker_geometry(
         } else {
             offset * 2.0
         },
+        extra: [None, None],
     })
 }
 
@@ -446,7 +741,8 @@ pub enum SceneGeometry {
         width: f32,
         /// Shared color-scale override for an unassigned semantic placeholder.
         color: Option<crate::Color>,
-        markers: [Option<ConnectorMarkerGeometry>; 2],
+        /// Boxed so composite marker parts do not bloat every scene item.
+        markers: Box<[Option<ConnectorMarkerGeometry>; 2]>,
         label_bounds: Option<Rect>,
     },
 }
@@ -497,27 +793,33 @@ impl SceneGeometry {
                 };
                 label_bounds.is_some_and(|r| r.expand(tolerance).contains(p))
                     || stroke_hit
-                    || markers.iter().flatten().any(|marker| {
-                        if let Some((center, marker_radius)) = marker.circle() {
-                            let distance = (p - center).length();
-                            marker_radius > 0.0
-                                && ((marker.filled && distance <= marker_radius + radius)
-                                    || (distance - marker_radius).abs() <= radius)
-                        } else if let Some((path, error)) = marker.flattened_curve(*width) {
-                            point_near_curve_path(
-                                p,
-                                &path,
-                                f64::from(*width) / 2.0 + f64::from(tolerance) + f64::from(error),
-                            )
-                        } else {
-                            (marker.filled && point_in_polygon(p, marker.points()))
-                                || if marker.closed {
-                                    distance_to_outline(p, marker.points()) <= radius
-                                } else {
-                                    distance_to_polyline(p, marker.points()) <= radius
-                                }
-                        }
-                    })
+                    || markers
+                        .iter()
+                        .flatten()
+                        .flat_map(ConnectorMarkerGeometry::parts)
+                        .any(|marker| {
+                            if let Some((center, marker_radius)) = marker.circle() {
+                                let distance = (p - center).length();
+                                marker_radius > 0.0
+                                    && ((marker.filled && distance <= marker_radius + radius)
+                                        || (distance - marker_radius).abs() <= radius)
+                            } else if let Some((path, error)) = marker.flattened_curve(*width) {
+                                point_near_curve_path(
+                                    p,
+                                    &path,
+                                    f64::from(*width) / 2.0
+                                        + f64::from(tolerance)
+                                        + f64::from(error),
+                                )
+                            } else {
+                                (marker.filled && point_in_polygon(p, marker.points()))
+                                    || if marker.closed {
+                                        distance_to_outline(p, marker.points()) <= radius
+                                    } else {
+                                        distance_to_polyline(p, marker.points()) <= radius
+                                    }
+                            }
+                        })
             }
         }
     }
@@ -876,7 +1178,7 @@ fn object_item(
                         &crate::sankey::flow_label(c, 0.0),
                     )
                 }),
-                markers: [
+                markers: Box::new([
                     c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
                         connector_marker_geometry(
                             &points,
@@ -897,7 +1199,7 @@ fn object_item(
                             !c.end_marker_unfilled,
                         )
                     }),
-                ],
+                ]),
                 points,
                 width: c.width,
             }
@@ -1024,7 +1326,11 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
             if let Some(label_bounds) = label_bounds {
                 bounds = bounds.union(label_bounds);
             }
-            for marker in markers.iter().flatten() {
+            for marker in markers
+                .iter()
+                .flatten()
+                .flat_map(ConnectorMarkerGeometry::parts)
+            {
                 let marker_bounds = if let Some((center, radius)) = marker.circle() {
                     (radius > 0.0).then(|| {
                         Rect::from_center_size(center, Vec2::new(2.0 * radius, 2.0 * radius))

@@ -316,6 +316,22 @@ Oval|Óvalo|Ovale|Oval|Ovaal|Oval|Ovale|Owal
 Half circle|Semicírculo|Demi-cercle|Halvcirkel|Halve cirkel|Semicírculo|Semicerchio|Półkole
 Bar|Barra|Barre|Tværstreg|Dwarsstreep|Barra|Barra|Kreska poprzeczna
 Diagonal bar|Barra diagonal|Barre diagonale|Skråstreg|Schuine streep|Barra diagonal|Barra diagonale|Kreska ukośna
+ER one|ER uno|ER un|ER én|ER één|ER um|ER uno|ER jeden
+ER mandatory one|ER exactamente uno|ER exactement un|ER præcis én|ER precies één|ER exatamente um|ER esattamente uno|ER dokładnie jeden
+ER many|ER muchos|ER plusieurs|ER mange|ER veel|ER muitos|ER molti|ER wiele
+ER one to many|ER uno a muchos|ER un à plusieurs|ER én til mange|ER één op veel|ER um para muitos|ER uno a molti|ER jeden do wielu
+ER zero to one|ER cero a uno|ER zéro à un|ER nul til én|ER nul tot één|ER zero a um|ER zero a uno|ER zero do jednego
+ER zero to many|ER cero a muchos|ER zéro à plusieurs|ER nul til mange|ER nul tot veel|ER zero a muitos|ER zero a molti|ER zero do wielu
+ER many optional|ER muchos opcional|ER plusieurs facultatif|ER mange valgfri|ER veel optioneel|ER muitos opcional|ER molti facoltativo|ER wiele opcjonalnie
+Cross|Cruz|Croix|Kryds|Kruis|Cruz|Croce|Krzyżyk
+Circle plus|Círculo con más|Cercle plus|Cirkel med plus|Cirkel met plus|Círculo com mais|Cerchio con più|Okrąg z plusem
+Async arrow|Flecha asíncrona|Flèche asynchrone|Asynkron pil|Asynchrone pijl|Seta assíncrona|Freccia asincrona|Strzałka asynchroniczna
+Open async arrow|Flecha asíncrona abierta|Flèche asynchrone ouverte|Åben asynkron pil|Open asynchrone pijl|Seta assíncrona aberta|Freccia asincrona aperta|Otwarta strzałka asynchroniczna
+Double block arrow|Flecha de bloque doble|Double flèche pleine|Dobbelt blokpil|Dubbele blokpijl|Seta de bloco dupla|Doppia freccia piena|Podwójna strzałka blokowa
+SysML X|SysML X|SysML X|SysML X|SysML X|SysML X|SysML X|SysML X
+SysML lost|SysML perdido|SysML perdu|SysML tabt|SysML verloren|SysML perdido|SysML perso|SysML utracony
+SysML found|SysML encontrado|SysML trouvé|SysML fundet|SysML gevonden|SysML encontrado|SysML trovato|SysML znaleziony
+SysML package containment|SysML contención de paquete|SysML contenance de paquetage|SysML pakkeindhold|SysML pakketinsluiting|SysML contenção de pacote|SysML contenimento di package|SysML zawieranie pakietu
 Legacy arrowheads approximated in draw.io|Puntas de flecha anteriores aproximadas en draw.io|Pointes de flèche historiques approximatives dans draw.io|Tidligere pilespidser tilnærmes i draw.io|Eerdere pijlpunten benaderd in draw.io|Pontas de seta anteriores aproximadas no draw.io|Punte delle frecce precedenti approssimate in draw.io|Dotychczasowe groty strzałek przybliżone w draw.io
 Card|Tarjeta|Carte|Kort|Kaart|Cartão|Scheda|Karta
 Rotation|Rotación|Rotation|Rotation|Rotatie|Rotação|Rotazione|Obrót

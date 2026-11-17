@@ -452,14 +452,22 @@ pub(crate) fn object_prims(
             let n = points.len();
             if connector.arrow_end && n >= 2 {
                 if let Some(marker) = markers[1] {
-                    out.push(marker_primitive(marker, width, color));
+                    out.extend(
+                        marker
+                            .parts()
+                            .map(|part| marker_primitive(part, width, color)),
+                    );
                 } else if connector.end_marker.is_none() {
                     out.push(arrowhead(points[n - 2], points[n - 1], width, color));
                 }
             }
             if connector.arrow_start && n >= 2 {
                 if let Some(marker) = markers[0] {
-                    out.push(marker_primitive(marker, width, color));
+                    out.extend(
+                        marker
+                            .parts()
+                            .map(|part| marker_primitive(part, width, color)),
+                    );
                 } else if connector.start_marker.is_none() {
                     out.push(arrowhead(points[1], points[0], width, color));
                 }
@@ -504,7 +512,7 @@ pub(crate) fn object_prims(
 }
 
 fn marker_primitive(
-    marker: thinoda_core::scene::ConnectorMarkerGeometry,
+    marker: thinoda_core::scene::ConnectorMarkerPart,
     width: f32,
     color: Color,
 ) -> Prim {

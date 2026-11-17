@@ -815,6 +815,11 @@ impl Sheet {
         self.canvas.has_bar_connector_markers()
     }
 
+    /// Whether the sheet needs draw.io marker-library-aware persistence.
+    pub fn has_library_connector_markers(&self) -> bool {
+        self.canvas.has_library_connector_markers()
+    }
+
     /// Whether the sheet needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.canvas.has_shape_rounding()
@@ -2597,6 +2602,11 @@ impl Workbook {
     /// Whether any sheet needs bar-marker-aware persistence.
     pub fn has_bar_connector_markers(&self) -> bool {
         self.sheets.iter().any(Sheet::has_bar_connector_markers)
+    }
+
+    /// Whether any sheet needs draw.io marker-library-aware persistence.
+    pub fn has_library_connector_markers(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_library_connector_markers)
     }
 
     /// Whether any sheet needs adjustable-corner-aware persistence.

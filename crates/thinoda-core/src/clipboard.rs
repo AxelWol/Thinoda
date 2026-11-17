@@ -43,12 +43,15 @@ const SCENE_SHEET_PREFIX: &str = "THINODA-SHEET-23\n";
 const COLLAPSE_SHEET_PREFIX: &str = "THINODA-SHEET-24\n";
 const SCENE_LAYOUT_SHEET_PREFIX: &str = "THINODA-SHEET-25\n";
 const SEMANTIC_SHEET_PREFIX: &str = "THINODA-SHEET-26\n";
+const MARKER_LIBRARY_SHEET_PREFIX: &str = "THINODA-SHEET-27\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_semantic_model() {
+    let prefix = if sheet.has_library_connector_markers() {
+        MARKER_LIBRARY_SHEET_PREFIX
+    } else if sheet.has_semantic_model() {
         SEMANTIC_SHEET_PREFIX
     } else if sheet.has_scene_layout_policies() {
         SCENE_LAYOUT_SHEET_PREFIX
@@ -122,6 +125,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         .strip_prefix(SCENE_LAYOUT_SHEET_PREFIX)
         .or_else(|| text.strip_prefix("THINODA-SHEET-25\r\n"))
         .map(|json| (25, json))
+        .or_else(|| {
+            text.strip_prefix(MARKER_LIBRARY_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-27\r\n"))
+                .map(|json| (27, json))
+        })
         .or_else(|| {
             text.strip_prefix(SEMANTIC_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-26\r\n"))
@@ -249,6 +257,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 27 && sheet.has_library_connector_markers() {
+        return Err("draw.io library connector markers require sheet clipboard version 27".into());
+    }
     if version < 26 && sheet.has_semantic_model() {
         return Err("socio-technical data requires sheet clipboard version 26".into());
     }
@@ -1445,5 +1456,37 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn library_marker_sheet_clipboard_requires_version_twenty_seven() {
+        use crate::Vec2;
+        use crate::board::{
+            CanvasConnector, CanvasObject, ConnectorMarker, ConnectorMarkerKind, Endpoint,
+        };
+        let mut sheet = Sheet::new("Markers", "Root");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.end_marker = Some(ConnectorMarker {
+            kind: ConnectorMarkerKind::SysmlPackCont,
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(MARKER_LIBRARY_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(MARKER_LIBRARY_SHEET_PREFIX, SEMANTIC_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("library connector markers require sheet clipboard version 27")
+        );
     }
 }

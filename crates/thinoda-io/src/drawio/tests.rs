@@ -6246,10 +6246,11 @@ fn connector_marker_and_port_approximations_require_confirmation() {
         ))
     };
     for style in [
-        "endArrow=cross;",
+        "endArrow=sysMLReqInt;",
+        "startArrow=mermaidCircle;",
         "startFill=0;",
         "endArrow=none;endFill=0;",
-        "endArrow=cross;endFill=0;",
+        "endArrow=sysMLProvInt;endFill=0;",
         "endFill=invalid;",
         "endFill=2;",
         "startSize=12;",
@@ -9820,4 +9821,78 @@ fn passthrough_style_keeps_generated_keys_and_drops_orphans() {
     let mut style = String::from("edgeStyle=none;strokeColor=#000000;");
     passthrough_style(&mut style, Some(&drawio));
     assert_eq!(style, "edgeStyle=none;strokeColor=#000000;custom=1;");
+}
+
+#[test]
+fn library_connector_markers_round_trip_and_require_native_version_thirty_eight() {
+    use ConnectorMarkerKind as K;
+    for (name, kind) in [
+        ("ERone", K::ErOne),
+        ("ERmandOne", K::ErMandOne),
+        ("ERmany", K::ErMany),
+        ("ERoneToMany", K::ErOneToMany),
+        ("ERzeroToOne", K::ErZeroToOne),
+        ("ERzeroToMany", K::ErZeroToMany),
+        ("manyOptional", K::ManyOptional),
+        ("box", K::Box),
+        ("cross", K::Cross),
+        ("circle", K::Circle),
+        ("circlePlus", K::CirclePlus),
+        ("async", K::Async),
+        ("openAsync", K::OpenAsync),
+        ("doubleBlock", K::DoubleBlock),
+        ("sysMLx", K::SysmlX),
+        ("sysMLLost", K::SysmlLost),
+        ("sysMLFound", K::SysmlFound),
+        ("sysMLPackCont", K::SysmlPackCont),
+    ] {
+        for fill in [0, 1] {
+            let xml = page(&format!(
+                r#"<mxCell id="e" style="startArrow={name};startFill={fill};endArrow={name};endFill={fill};endSize=10;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#
+            ));
+            let report = load(&xml);
+            assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+            let connector = connectors(&report.workbook.sheets[0])[0].clone();
+            assert_eq!(connector.start_marker.unwrap().kind, kind);
+            assert_eq!(connector.end_marker.unwrap().kind, kind);
+            assert_eq!(connector.end_marker_size, Some(10.0));
+            assert_eq!(connector.end_marker_unfilled, fill == 0);
+            assert_eq!(crate::required_native_version(&report.workbook), 38);
+            let exported = export(&report.workbook).unwrap();
+            let restored = import(&exported).unwrap();
+            assert!(
+                restored.warnings.is_empty(),
+                "{name}: {:?}",
+                restored.warnings
+            );
+            let restored = connectors(&restored.workbook.sheets[0])[0].clone();
+            assert_eq!(restored.start_marker, connector.start_marker);
+            assert_eq!(restored.end_marker, connector.end_marker);
+            assert_eq!(restored.end_marker_size, connector.end_marker_size);
+            assert_eq!(restored.end_marker_unfilled, connector.end_marker_unfilled);
+            let native = crate::formats::native_export(&report.workbook).unwrap();
+            assert_eq!(
+                crate::formats::native_import(&native).unwrap(),
+                report.workbook
+            );
+        }
+    }
+
+    let report = load(&page(
+        r#"<mxCell id="e" style="endArrow=ERmany;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"#,
+    ));
+    let content = serde_json::to_vec(&report.workbook).unwrap();
+    let older = crate::formats::archive(&[
+        (
+            "manifest.json",
+            br#"{"format":"thinoda","version":37,"resources":[]}"#,
+        ),
+        ("content.json", &content),
+    ])
+    .unwrap();
+    assert!(matches!(
+        crate::formats::native_import(&older),
+        Err(IoError::NewerVersion(message)) if message.contains("version 38")
+    ));
+    assert!(crate::formats::native_import(&content).is_err());
 }

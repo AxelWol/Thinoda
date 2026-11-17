@@ -80,7 +80,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Libraries | Vendor libraries (AWS, Azure, GCP, Cisco, ...) | Missing | D4 |
 | Connectors | Straight, orthogonal, elbow, curved | Native (Straight, Elbow, Curve) | — |
 | Connectors | entityRelation, segment, isometric, sideToSide, topToBottom, loop, libavoid | Approx. (elbow) | D7 |
-| Connectors | 34 markers | 12 native; others approximate | D7 |
+| Connectors | 34 markers | 30 native; sysMLReqInt, sysMLProvInt and mermaid markers approximate | D7 |
 | Connectors | Line jumps | Missing | D7 |
 | Connectors | Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire | Approx. (line) | D7 |
 | Connectors | Fixed ports, waypoints, floating ends | Native | — |
@@ -216,7 +216,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 
 ### D7 — Connectors, links and data
 
-- [ ] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
+- [x] Markers: ER family, async, box, cross, circle, circlePlus, doubleBlock, manyOptional, SysML
 - [ ] Line jumps (arc, gap, sharp, line)
 - [ ] Routes entityRelation, segment, isometric, sideToSide, topToBottom, loop as editable routes
 - [ ] Edge shapes flexArrow, link, pipe, filledEdge, taperedArrow, wire
@@ -272,6 +272,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D7 markers | 18 library markers (ER, box, cross, circle, circlePlus, async, openAsync, doubleBlock, SysML) are native, drawn from 1-3 parts; native v38, board clipboard v31, sheet clipboard v27, new XMind and recovery envelopes; menu translated |
 | 2026-11-17 | D6 | Board objects keep draw.io source ids, unknown style keys and UserObject attributes; sheets keep diagram ids, model attributes and tombstones. Native v37, board clipboard v30; export never overrides edited keys or reuses deleted ids |
 | 2026-11-17 | D5 | 34 JSON definitions cover 35 JS-coded draw.io shapes (floorplan, mockup, BPMN, C4, lean mapping, callouts); choice parameters bind draw.io keyword styles both ways; every option evaluates at three sizes |
 | 2026-11-17 | D4 | draw.io stencil XML imports as `user.drawio.<ns>` packages with draw.io aliases; installed libraries resolve opened diagrams; aws4 (1,050 shapes) installs as 2 parts in 0.2 s; pinned download deferred |
@@ -397,6 +398,18 @@ warning; storing them as opaque objects belongs to D10, as do workbook-level
 Because almost every imported cell has an id, a file saved after a draw.io
 import needs native v37, so older Thinoda versions cannot open it. A shape
 `link` is preserved but still warns until D7 makes links editable.
+
+**D7 markers.** Geometry follows draw.io's mxMarker, mxER, mxSysML and
+Shapes.js sources at draw.io's `size + strokeWidth + 1` unit. Approximations:
+the ER "zero" rings are always unfilled, whereas draw.io fills them with the
+background white, so a ring on top of another shape shows the shape through it;
+sysMLReqInt, sysMLProvInt and the mermaid markers still import as the classic
+arrow with a formatting warning. A marker can now have up to three parts, so
+`ConnectorMarkerGeometry` grew (its size bound rose from 64 to 160 bytes) and
+`SceneGeometry` boxes it to stay within its 192-byte bound. Fill applies only to closed
+shapes (`is_fillable`); cross, ER bars and SysML lines ignore it. The menu grew
+to 31 entries and relies on its existing scroll area. Files that use a new
+marker need native v38, so older builds reject them.
 
 ## 5. Rubber-duck findings
 

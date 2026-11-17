@@ -4914,6 +4914,24 @@ fn marker_field(
         Some(ConnectorMarkerKind::HalfCircle) => "Half circle",
         Some(ConnectorMarkerKind::BaseDash) => "Bar",
         Some(ConnectorMarkerKind::Dash) => "Diagonal bar",
+        Some(ConnectorMarkerKind::ErOne) => "ER one",
+        Some(ConnectorMarkerKind::ErMandOne) => "ER mandatory one",
+        Some(ConnectorMarkerKind::ErMany) => "ER many",
+        Some(ConnectorMarkerKind::ErOneToMany) => "ER one to many",
+        Some(ConnectorMarkerKind::ErZeroToOne) => "ER zero to one",
+        Some(ConnectorMarkerKind::ErZeroToMany) => "ER zero to many",
+        Some(ConnectorMarkerKind::ManyOptional) => "ER many optional",
+        Some(ConnectorMarkerKind::Box) => "Box",
+        Some(ConnectorMarkerKind::Cross) => "Cross",
+        Some(ConnectorMarkerKind::Circle) => "Circle",
+        Some(ConnectorMarkerKind::CirclePlus) => "Circle plus",
+        Some(ConnectorMarkerKind::Async) => "Async arrow",
+        Some(ConnectorMarkerKind::OpenAsync) => "Open async arrow",
+        Some(ConnectorMarkerKind::DoubleBlock) => "Double block arrow",
+        Some(ConnectorMarkerKind::SysmlX) => "SysML X",
+        Some(ConnectorMarkerKind::SysmlLost) => "SysML lost",
+        Some(ConnectorMarkerKind::SysmlFound) => "SysML found",
+        Some(ConnectorMarkerKind::SysmlPackCont) => "SysML package containment",
     };
     ui.add_enabled_ui(enabled, |ui| {
         widgets::property_field(ui, t(label), |ui| {
@@ -4958,6 +4976,60 @@ fn marker_field(
                         Some(ConnectorMarker {
                             kind: ConnectorMarkerKind::Dash,
                         }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErOne,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErMandOne,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErMany,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErOneToMany,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErZeroToOne,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ErZeroToMany,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::ManyOptional,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Box,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Cross,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Circle,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::CirclePlus,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::Async,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::OpenAsync,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::DoubleBlock,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlX,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlLost,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlFound,
+                        }),
+                        Some(ConnectorMarker {
+                            kind: ConnectorMarkerKind::SysmlPackCont,
+                        }),
                     ] {
                         ui.selectable_value(marker, choice, t(name(choice)));
                     }
@@ -5001,16 +5073,7 @@ fn marker_fill_field(
     marker: Option<ConnectorMarker>,
     unfilled: &mut bool,
 ) {
-    let open = marker.is_some_and(|marker| {
-        matches!(
-            marker.kind,
-            ConnectorMarkerKind::Open
-                | ConnectorMarkerKind::OpenThin
-                | ConnectorMarkerKind::HalfCircle
-                | ConnectorMarkerKind::BaseDash
-                | ConnectorMarkerKind::Dash
-        )
-    });
+    let open = marker.is_some_and(|marker| !marker.kind.is_fillable());
     let can_fill = enabled && marker.is_some() && !open;
     let mut filled = !*unfilled;
     let response = ui.add_enabled(can_fill, egui::Checkbox::new(&mut filled, t(label)));
@@ -10791,6 +10854,12 @@ mod tests {
             ("Half circle", Some(ConnectorMarkerKind::HalfCircle)),
             ("Bar", Some(ConnectorMarkerKind::BaseDash)),
             ("Diagonal bar", Some(ConnectorMarkerKind::Dash)),
+            ("ER one to many", Some(ConnectorMarkerKind::ErOneToMany)),
+            ("Async arrow", Some(ConnectorMarkerKind::Async)),
+            (
+                "SysML package containment",
+                Some(ConnectorMarkerKind::SysmlPackCont),
+            ),
             ("Legacy triangle", None),
         ] {
             harness.get_by_label("End arrow style").click();
@@ -10828,11 +10897,14 @@ mod tests {
         else {
             panic!("expected connector");
         };
-        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Dash);
+        assert_eq!(
+            current.end_marker.unwrap().kind,
+            ConnectorMarkerKind::SysmlPackCont
+        );
     }
 
     #[test]
-    fn connector_marker_menu_scrolls_to_last_bar_with_the_mouse() {
+    fn connector_marker_menu_scrolls_to_last_marker_with_the_mouse() {
         let mut app = ThinodaApp::headless();
         let doc = app.doc_mut().unwrap();
         let connector = CanvasConnector::new(
@@ -10855,23 +10927,23 @@ mod tests {
         harness.run_steps(3);
         harness.get_by_label("End arrow style").click();
         harness.run_steps(3);
-        let before = harness.get_by_label("Diagonal bar").rect();
+        let before = harness.get_by_label("SysML package containment").rect();
         harness.hover_at(harness.get_by_label("Legacy triangle").rect().center());
         harness.event(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
-            delta: vec2(0.0, -1200.0),
+            delta: vec2(0.0, -4000.0),
             phase: egui::TouchPhase::Move,
             source: egui::MouseWheelSource::Unknown,
             modifiers: egui::Modifiers::NONE,
         });
         harness.run_steps(15);
-        let after = harness.get_by_label("Diagonal bar").rect();
+        let after = harness.get_by_label("SysML package containment").rect();
         assert!(
             after.top() < before.top(),
             "before={before:?}, after={after:?}"
         );
         assert!(harness.ctx.content_rect().contains(after.center()));
-        harness.get_by_label("Diagonal bar").click();
+        harness.get_by_label("SysML package containment").click();
         harness.run_steps(3);
         let CanvasObjectKind::Connector(current) = &harness
             .state()
@@ -10886,7 +10958,10 @@ mod tests {
         else {
             panic!("expected connector");
         };
-        assert_eq!(current.end_marker.unwrap().kind, ConnectorMarkerKind::Dash);
+        assert_eq!(
+            current.end_marker.unwrap().kind,
+            ConnectorMarkerKind::SysmlPackCont
+        );
     }
 
     #[test]
@@ -11053,6 +11128,8 @@ mod tests {
         for (label, kind) in [
             ("Bar", ConnectorMarkerKind::BaseDash),
             ("Diagonal bar", ConnectorMarkerKind::Dash),
+            ("Cross", ConnectorMarkerKind::Cross),
+            ("ER many", ConnectorMarkerKind::ErMany),
         ] {
             harness.get_by_label("End arrow style").click();
             harness.run_steps(3);

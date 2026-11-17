@@ -63,6 +63,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "draw.io passthrough requires native format version 37".into(),
             ));
         }
+        if version < 38 && book.has_library_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "draw.io library connector markers require native format version 38".into(),
+            ));
+        }
         if version >= 3 {
             crate::native_resources::hydrate(&mut z, &manifest_bytes, &mut book)?;
         } else if book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
@@ -246,6 +251,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_library_connector_markers() {
+            return Err(IoError::NewerVersion(
+                "draw.io library connector markers require native format version 38".into(),
+            ));
+        }
         if book.has_semantic_model() {
             return Err(IoError::NewerVersion(
                 "socio-technical data requires a versioned native archive".into(),

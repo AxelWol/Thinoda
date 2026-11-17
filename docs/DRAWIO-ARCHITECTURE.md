@@ -185,6 +185,13 @@ zone ids are regenerated on each import. Export prefers a stored source id over 
 generated `o{id}` (Sankey connectors always use `o{id}`), which keeps renumbered
 re-imports stable. Object passthrough is an immutable `Arc`, shared across undo snapshots.
 
+**As implemented in D7 (markers):** the 18 library marker kinds need native v38,
+board clipboard v31 and sheet clipboard v27. Private XMind snapshots use
+`THINODA-XMIND-MARKER-LIBRARY-1`, and recovery uses
+`THINODA-RECOVERY-MARKER-LIBRARY-1` (`THINODA-RECOVERY-INK-MARKER-LIBRARY-1`
+with pending ink). draw.io names map through one shared table in
+`thinoda_io::drawio`, used by import, export and the loss check.
+
 - **Native format gates:** v10 covers connector waypoints, v11 covers open and
   block connector markers, v12 adds classic and thin markers, v13 adds marker
   sizes, v14 adds marker fill overrides, v15 adds diamond markers, v16 adds

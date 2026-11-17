@@ -313,6 +313,15 @@ impl CanvasLayer {
         })
     }
 
+    /// Whether this layer needs draw.io marker-library-aware persistence.
+    pub fn has_library_connector_markers(&self) -> bool {
+        self.objects.iter().any(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c)
+                if [c.start_marker, c.end_marker].into_iter().flatten()
+                    .any(|marker| marker.kind.requires_marker_library_format()))
+        })
+    }
+
     /// Whether this layer needs adjustable-corner-aware persistence.
     pub fn has_shape_rounding(&self) -> bool {
         self.objects.iter().any(|object| object.rounding.is_some())
@@ -1305,12 +1314,75 @@ pub enum ConnectorMarkerKind {
     HalfCircle,
     BaseDash,
     Dash,
+    ErOne,
+    ErMandOne,
+    ErMany,
+    ErOneToMany,
+    ErZeroToOne,
+    ErZeroToMany,
+    ManyOptional,
+    Box,
+    Cross,
+    Circle,
+    CirclePlus,
+    Async,
+    OpenAsync,
+    DoubleBlock,
+    SysmlX,
+    SysmlLost,
+    SysmlFound,
+    SysmlPackCont,
 }
 
 impl ConnectorMarkerKind {
     /// Open and block markers were introduced before the extended marker set.
     pub fn requires_extended_format(self) -> bool {
         !matches!(self, Self::Open | Self::Block)
+    }
+
+    /// ER, UML, and SysML markers from draw.io's marker library (native v38).
+    pub fn requires_marker_library_format(self) -> bool {
+        matches!(
+            self,
+            Self::ErOne
+                | Self::ErMandOne
+                | Self::ErMany
+                | Self::ErOneToMany
+                | Self::ErZeroToOne
+                | Self::ErZeroToMany
+                | Self::ManyOptional
+                | Self::Box
+                | Self::Cross
+                | Self::Circle
+                | Self::CirclePlus
+                | Self::Async
+                | Self::OpenAsync
+                | Self::DoubleBlock
+                | Self::SysmlX
+                | Self::SysmlLost
+                | Self::SysmlFound
+                | Self::SysmlPackCont
+        )
+    }
+
+    /// Whether the marker's start/end fill flag changes its rendering.
+    pub fn is_fillable(self) -> bool {
+        matches!(
+            self,
+            Self::Classic
+                | Self::ClassicThin
+                | Self::Block
+                | Self::BlockThin
+                | Self::Diamond
+                | Self::DiamondThin
+                | Self::Oval
+                | Self::ManyOptional
+                | Self::Box
+                | Self::Circle
+                | Self::CirclePlus
+                | Self::Async
+                | Self::DoubleBlock
+        )
     }
 
     pub fn is_diamond(self) -> bool {

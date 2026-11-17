@@ -3562,7 +3562,7 @@ mod tests {
     #[test]
     fn drawio_clipboard_reports_marker_and_port_approximation() {
         use crate::app::Cmd;
-        for style in ["endArrow=cross", "endArrow=classic;exitX=0.25"] {
+        for style in ["endArrow=sysMLReqInt", "endArrow=classic;exitX=0.25"] {
             let (mut app, clipboard) = empty_board_app();
             let before = app.doc().unwrap().doc.workbook().clone();
             let items = board_item_count(&app);

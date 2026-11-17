@@ -589,7 +589,8 @@ fn custom_marker_geometry_matches_published_drawio() {
 
 #[test]
 fn marker_shapes_keep_scene_geometry_compact() {
-    assert!(std::mem::size_of::<ConnectorMarkerGeometry>() <= 64);
+    // Library markers compose up to three parts; the pair is boxed inside `SceneGeometry`.
+    assert!(std::mem::size_of::<ConnectorMarkerGeometry>() <= 160);
     assert!(std::mem::size_of::<SceneGeometry>() <= 192);
 }
 
@@ -2291,7 +2292,7 @@ fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
         SceneGeometry::Polyline {
             points: path,
             width: connector.width,
-            markers: [None, None],
+            markers: Box::new([None, None]),
             label_bounds: None,
             color: None,
         }
@@ -2432,4 +2433,119 @@ fn rotated_card_topic_hit_test() {
         Some(SceneHit::Topic(id))
     );
     assert_eq!(sc.hit_test(Vec2::new(1090.0, 0.0)), None);
+}
+
+fn close(actual: Vec2, expected: Vec2) -> bool {
+    (actual - expected).length() < 0.001
+}
+
+#[test]
+fn library_marker_geometry_matches_drawio_marker_sources() {
+    use ConnectorMarkerKind as K;
+    let line = [Vec2::new(100.0, 100.0), Vec2::new(300.0, 100.0)];
+    let end = |kind, fill| connector_marker_geometry(&line, false, kind, 1.0, 6.0, fill).unwrap();
+    // n = size + width + 1 = 8; direction (1, 0); normal (0, 1).
+    for (kind, parts, inset) in [
+        (K::ErOne, 1, 0.0),
+        (K::ErMandOne, 2, 0.0),
+        (K::ErMany, 1, 0.0),
+        (K::ErOneToMany, 2, 0.0),
+        (K::ErZeroToOne, 3, 15.5),
+        (K::ErZeroToMany, 3, 15.5),
+        (K::ManyOptional, 3, 15.5),
+        (K::Box, 1, 8.0),
+        (K::Cross, 2, 0.0),
+        (K::Circle, 1, 15.0),
+        (K::CirclePlus, 3, 15.0),
+        (K::Async, 1, 8.118),
+        (K::OpenAsync, 1, 0.0),
+        (K::DoubleBlock, 2, 15.118),
+        (K::SysmlX, 2, 0.0),
+        (K::SysmlLost, 2, 0.0),
+        (K::SysmlFound, 1, 0.0),
+        (K::SysmlPackCont, 2, 0.0),
+    ] {
+        assert!(kind.requires_marker_library_format(), "{kind:?}");
+        let marker = end(kind, true);
+        assert_eq!(marker.parts().count(), parts, "{kind:?}");
+        assert!((marker.line_inset - inset).abs() < 0.001, "{kind:?}");
+        let fills: Vec<_> = marker.parts().map(|part| part.filled).collect();
+        let unfilled: Vec<_> = end(kind, false).parts().map(|part| part.filled).collect();
+        assert_eq!(
+            fills != unfilled,
+            kind.is_fillable(),
+            "{kind:?} fill flag drives rendering"
+        );
+        let trimmed = connector_stroke_path(&line, &[None, Some(marker)]);
+        assert!(close(
+            *trimmed.last().unwrap(),
+            Vec2::new(300.0 - inset, 100.0)
+        ));
+    }
+
+    let er_one = end(K::ErOne, true);
+    assert_eq!(
+        er_one.points(),
+        [Vec2::new(296.0, 104.0), Vec2::new(296.0, 96.0)]
+    );
+    let ring = end(K::ErZeroToMany, true)
+        .parts()
+        .next()
+        .unwrap()
+        .circle()
+        .unwrap();
+    assert!(close(ring.0, Vec2::new(288.0, 100.0)) && ring.1 == 3.0);
+    let boxed = end(K::Box, false);
+    assert!(boxed.closed && !boxed.filled);
+    assert_eq!(
+        boxed.points(),
+        [
+            Vec2::new(300.0, 104.0),
+            Vec2::new(300.0, 96.0),
+            Vec2::new(292.0, 96.0),
+            Vec2::new(292.0, 104.0),
+        ]
+    );
+    let circle = end(K::Circle, true).circle().unwrap();
+    assert!(close(circle.0, Vec2::new(292.0, 100.0)) && circle.1 == 7.0);
+    let lost: Vec<_> = end(K::SysmlLost, false).parts().collect();
+    assert!(lost[1].filled && lost[1].circle().is_some());
+    let pack: Vec<_> = end(K::SysmlPackCont, true).parts().collect();
+    assert!(!pack[1].filled);
+
+    // Async barbs keep draw.io's handedness: left of travel at the source, right at the target.
+    let barb = |at_start| {
+        connector_marker_geometry(&line, at_start, K::Async, 1.0, 6.0, true)
+            .unwrap()
+            .points()[1]
+    };
+    assert!(close(barb(false), Vec2::new(291.882, 96.5)));
+    assert!(close(barb(true), Vec2::new(108.118, 96.5)));
+}
+
+#[test]
+fn library_marker_parts_drive_hit_testing_and_bounds() {
+    use crate::board::ConnectorMarker;
+
+    let mut sheet = Sheet::new("Library marker", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.width = 1.0;
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::ErZeroToMany,
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    // The ring is centred 12 units before the tip with radius 3; its hollow is not a hit.
+    assert_eq!(
+        scene.hit_test_tolerance(Vec2::new(88.0, 3.0), 0.1),
+        Some(SceneHit::Object(id))
+    );
+    assert_eq!(scene.hit_test_tolerance(Vec2::new(88.0, 1.0), 0.0), None);
+    assert!(sheet.has_library_connector_markers());
 }

@@ -2426,3 +2426,42 @@ fn drawio_passthrough_board_clipboard_requires_version_thirty_and_drops_source_i
         [("owner".to_string(), "ops".to_string())]
     );
 }
+
+#[test]
+fn library_marker_board_clipboard_requires_version_thirty_one() {
+    use crate::board::{CanvasConnector, ConnectorMarker, ConnectorMarkerKind, Endpoint};
+
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.arrow_start = true;
+    connector.start_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::ErOneToMany,
+    });
+    connector.end_marker = Some(ConnectorMarker {
+        kind: ConnectorMarkerKind::Async,
+    });
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(MARKER_LIBRARY_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let downgraded = encoded.replacen(
+        MARKER_LIBRARY_BOARD_PREFIX,
+        DRAWIO_PASSTHROUGH_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("library connector markers require board clipboard version 31")
+    );
+}

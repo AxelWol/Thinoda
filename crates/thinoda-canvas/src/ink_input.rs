@@ -14,7 +14,7 @@ use thinoda_core::board::{
     MAX_TOTAL_INK_POINTS, MIN_STROKE_WIDTH, distance_to_segment, point_in_polygon, rotate_around,
     rotated_corners, validate_object,
 };
-use thinoda_core::scene::{SceneGeometry, connector_stroke_path};
+use thinoda_core::scene::{ConnectorMarkerGeometry, SceneGeometry, connector_stroke_path};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Color, InkStroke, InkTool, Rect, Scene,
     SceneHit, SceneId, SceneItem, Vec2,
@@ -883,7 +883,11 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
                     intersects |=
                         polygon_touches_lasso(&rotated_corners(*rect, 0.0), polygon, &mut budget)?;
                 }
-                for marker in markers.iter().flatten() {
+                for marker in markers
+                    .iter()
+                    .flatten()
+                    .flat_map(ConnectorMarkerGeometry::parts)
+                {
                     if intersects {
                         break;
                     }
@@ -1065,26 +1069,29 @@ fn validate_scene_geometry(
             if points.iter().any(|&point| !finite_point(point)) {
                 return Err(invalid());
             }
-            for marker in markers.iter().flatten() {
-                budget.charge(marker.points().len())?;
-                let invalid_circle = marker.circle().is_some_and(|(center, radius)| {
-                    !finite_point(center)
-                        || !radius.is_finite()
-                        || radius < 0.0
-                        || !(center.x + radius).is_finite()
-                        || !(center.x - radius).is_finite()
-                        || !(center.y + radius).is_finite()
-                        || !(center.y - radius).is_finite()
-                });
-                if invalid_circle
-                    || marker
-                        .curve()
-                        .is_some_and(|curve| curve.iter().any(|&point| !finite_point(point)))
-                    || marker.points().iter().any(|&point| !finite_point(point))
-                    || !marker.line_inset.is_finite()
-                    || marker.line_inset < 0.0
-                {
+            for geometry in markers.iter().flatten() {
+                if !geometry.line_inset.is_finite() || geometry.line_inset < 0.0 {
                     return Err(invalid());
+                }
+                for marker in geometry.parts() {
+                    budget.charge(marker.points().len())?;
+                    let invalid_circle = marker.circle().is_some_and(|(center, radius)| {
+                        !finite_point(center)
+                            || !radius.is_finite()
+                            || radius < 0.0
+                            || !(center.x + radius).is_finite()
+                            || !(center.x - radius).is_finite()
+                            || !(center.y + radius).is_finite()
+                            || !(center.y - radius).is_finite()
+                    });
+                    if invalid_circle
+                        || marker
+                            .curve()
+                            .is_some_and(|curve| curve.iter().any(|&point| !finite_point(point)))
+                        || marker.points().iter().any(|&point| !finite_point(point))
+                    {
+                        return Err(invalid());
+                    }
                 }
             }
         }
