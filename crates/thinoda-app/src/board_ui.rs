@@ -99,8 +99,19 @@ struct ConnectorOwner {
     instance: u64,
     sheet: usize,
     root: TopicId,
+    /// Primary selected object; its values seed the contextual controls.
     object: CanvasObjectId,
+    /// Further selected objects of the same kind that every change also edits.
+    others: Vec<CanvasObjectId>,
     tool: BoardTool,
+}
+
+impl ConnectorOwner {
+    fn objects(&self) -> Vec<CanvasObjectId> {
+        std::iter::once(self.object)
+            .chain(self.others.iter().copied())
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -449,6 +460,8 @@ fn semantic_text_field(
 struct ConnectorProperties {
     semantic: bool,
     route: ConnectorRoute,
+    /// The selected connectors use different routes, so every route choice applies.
+    mixed_route: bool,
     arrow_start: bool,
     arrow_end: bool,
     color: Option<Color>,
@@ -472,6 +485,8 @@ struct ConnectorPopups {
 #[derive(Clone, Copy)]
 struct ShapeProperties {
     shape: ShapeKind,
+    /// The selected shapes have different kinds, so every shape choice applies.
+    mixed_shape: bool,
     fill: Option<Color>,
     stroke: Option<Color>,
     /// Outline drawn when no explicit stroke is set and the shape has no fill.
@@ -534,8 +549,8 @@ impl ShapeChange {
         }
     }
 
-    fn apply(self, object: &mut CanvasObject, auto_stroke: Color) {
-        match self {
+    fn apply(&self, object: &mut CanvasObject, auto_stroke: Color) {
+        match *self {
             Self::Shape(kind) => {
                 if let CanvasObjectKind::Shape { shape, .. } = &mut object.kind {
                     if *shape != kind || object.stencil.is_some() {
@@ -652,8 +667,8 @@ impl ConnectorChange {
         }
     }
 
-    fn apply(self, connector: &mut thinoda_core::CanvasConnector) {
-        match self {
+    fn apply(&self, connector: &mut thinoda_core::CanvasConnector) {
+        match *self {
             Self::Route(route) => connector.route = route,
             Self::ArrowStart(enabled) => connector.set_arrow_start(enabled),
             Self::ArrowEnd(enabled) => connector.set_arrow_end(enabled),
@@ -905,12 +920,18 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
 impl ThinodaApp {
     /// The one selected board object a contextual toolbar may edit, and whether editing is allowed.
     fn single_board_object(&self) -> Option<(ConnectorTarget, bool)> {
+        self.selected_board_objects()
+            .filter(|(target, _)| target.owner.others.is_empty())
+    }
+
+    /// The selected board objects of one kind that the attribute ribbon edits together.
+    fn selected_board_objects(&self) -> Option<(ConnectorTarget, bool)> {
         let doc = self.doc()?;
         let view = &doc.view;
         if !matches!(
             view.board_tool,
             BoardTool::Select | BoardTool::Connector | BoardTool::Shape(_)
-        ) || view.board_selection.len() != 1
+        ) || view.board_selection.is_empty()
             || !view.selection.is_empty()
             || view.selected_object.is_some()
             || view.relationship_from.is_some()
@@ -922,8 +943,20 @@ impl ThinodaApp {
         let sheet = doc.doc.sheet();
         let id = view.board_selection[0];
         let object = sheet.canvas.object(id)?;
-        let enabled = !object.locked
-            && object.group.is_none()
+        let kind = std::mem::discriminant(&object.kind);
+        let mut others = Vec::new();
+        let mut editable = !object.locked && object.group.is_none();
+        for &other in &view.board_selection[1..] {
+            let candidate = sheet.canvas.object(other)?;
+            if std::mem::discriminant(&candidate.kind) != kind {
+                return None;
+            }
+            if other != id && !others.contains(&other) {
+                editable &= !candidate.locked && candidate.group.is_none();
+                others.push(other);
+            }
+        }
+        let enabled = editable
             && !view.has_active_canvas_gesture()
             && !doc.has_inspector_changes()
             && doc.fim_edit.is_none()
@@ -945,6 +978,7 @@ impl ThinodaApp {
                     sheet: doc.doc.active_index(),
                     root: sheet.root,
                     object: id,
+                    others,
                     tool: view.board_tool,
                 },
                 revision: doc.doc.state_id(),
@@ -954,13 +988,23 @@ impl ThinodaApp {
     }
 
     fn connector_context(&self) -> Option<ConnectorContext> {
-        let (target, enabled) = self.single_board_object()?;
+        let (target, enabled) = self.selected_board_objects()?;
         let doc = self.doc()?;
         let view = &doc.view;
-        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let canvas = &doc.doc.sheet().canvas;
+        let object = canvas.object(target.owner.object)?;
         let CanvasObjectKind::Connector(connector) = &object.kind else {
             return None;
         };
+        let connectors = target
+            .owner
+            .objects()
+            .into_iter()
+            .filter_map(|id| match &canvas.object(id)?.kind {
+                CanvasObjectKind::Connector(connector) => Some(connector),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let default_color = thinoda_canvas::automatic_board_stroke(view.accent, view.dark);
         let effective_color = connector
             .color
@@ -970,14 +1014,16 @@ impl ThinodaApp {
             target,
             enabled,
             properties: ConnectorProperties {
-                semantic: connector.sankey.is_some(),
+                semantic: connectors.iter().any(|c| c.sankey.is_some()),
                 route: connector.route,
-                arrow_start: connector.arrow_start,
-                arrow_end: connector.arrow_end,
+                mixed_route: connectors.iter().any(|c| c.route != connector.route),
+                // Arrow toggles read as on only when every selected connector shows that arrow.
+                arrow_start: connectors.iter().all(|c| c.arrow_start),
+                arrow_end: connectors.iter().all(|c| c.arrow_end),
                 color: connector.color,
                 effective_color,
                 width: connector.width,
-                has_waypoints: !connector.waypoints.is_empty(),
+                has_waypoints: connectors.iter().any(|c| !c.waypoints.is_empty()),
             },
         })
     }
@@ -993,13 +1039,19 @@ impl ThinodaApp {
     }
 
     fn shape_context(&self) -> Option<ShapeContext> {
-        let (target, enabled) = self.single_board_object()?;
+        let (target, enabled) = self.selected_board_objects()?;
         let doc = self.doc()?;
         let view = &doc.view;
-        let object = doc.doc.sheet().canvas.object(target.owner.object)?;
+        let canvas = &doc.doc.sheet().canvas;
+        let object = canvas.object(target.owner.object)?;
         let CanvasObjectKind::Shape { shape, .. } = &object.kind else {
             return None;
         };
+        let mixed_shape = target.owner.others.iter().any(|&id| {
+            canvas.object(id).is_some_and(|other| {
+                !matches!(&other.kind, CanvasObjectKind::Shape { shape: kind, .. } if kind == shape)
+            })
+        });
         let mut auto_style = object.style;
         auto_style.text_color = None;
         let auto_text_color = crate::ui::to_color(
@@ -1010,6 +1062,7 @@ impl ThinodaApp {
             enabled,
             properties: ShapeProperties {
                 shape: *shape,
+                mixed_shape,
                 fill: object.style.fill,
                 stroke: object.style.stroke,
                 auto_stroke: crate::ui::to_color(thinoda_canvas::automatic_board_stroke(
@@ -1040,7 +1093,7 @@ impl ThinodaApp {
             .doc_mut()
             .ok_or_else(|| t("Not possible here").to_owned())?;
         doc.doc
-            .update_canvas_object(label, target.owner.object, |object| {
+            .update_canvas_objects(label, &target.owner.objects(), |object| {
                 change.apply(object, auto_stroke);
             })
             .map_err(|error| error.to_string())?;
@@ -1084,7 +1137,7 @@ impl ThinodaApp {
             .doc_mut()
             .ok_or_else(|| t("Not possible here").to_owned())?;
         doc.doc
-            .update_canvas_object(label, target.owner.object, |object| {
+            .update_canvas_objects(label, &target.owner.objects(), |object| {
                 let CanvasObjectKind::Connector(connector) = &mut object.kind else {
                     unreachable!("connector ownership was checked before the edit")
                 };
@@ -1301,6 +1354,7 @@ impl ThinodaApp {
         };
         let target = context.target().clone();
         let enabled = context.enabled();
+        let selected = 1 + target.owner.others.len();
         let (area_id, scroll_id, heading) = match &context {
             BoardObjectContext::Connector(_) => (
                 "thinoda_connector_options",
@@ -1357,7 +1411,12 @@ impl ThinodaApp {
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     ui.horizontal_centered(|ui| {
-                                        ui.label(egui::RichText::new(t(heading)).small());
+                                        let heading = if selected > 1 {
+                                            format!("{} ({selected})", t(heading))
+                                        } else {
+                                            t(heading).to_owned()
+                                        };
+                                        ui.label(egui::RichText::new(heading).small());
                                         ui.add_enabled_ui(enabled, |ui| match &context {
                                             BoardObjectContext::Connector(connector) => {
                                                 (connector_change, popups) =
@@ -1375,7 +1434,7 @@ impl ThinodaApp {
                                             ui,
                                             true,
                                             34.0,
-                                            enabled,
+                                            enabled && selected == 1,
                                             format_panel_open,
                                         );
                                     });
@@ -4018,7 +4077,7 @@ fn connector_context_controls(
                             ConnectorRoute::Curve,
                         ] {
                             if connector_route_tile(ui, route, properties.route)
-                                && route != properties.route
+                                && (properties.mixed_route || route != properties.route)
                             {
                                 change = Some(ConnectorChange::Route(route));
                             }
@@ -4112,7 +4171,7 @@ fn shape_context_controls(
         row_height,
         |ui| {
             if let Some(shape) = shape_library(ui, canvas, Some(properties.shape), t)
-                && shape != properties.shape
+                && (properties.mixed_shape || shape != properties.shape)
             {
                 change = Some(ShapeChange::Shape(shape));
             }

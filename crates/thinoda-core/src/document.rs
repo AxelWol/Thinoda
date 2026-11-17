@@ -1176,6 +1176,23 @@ impl Document {
         })
     }
 
+    /// Applies one edit to several objects as a single atomic, undoable step.
+    pub fn update_canvas_objects(
+        &mut self,
+        label: &str,
+        ids: &[CanvasObjectId],
+        mut f: impl FnMut(&mut CanvasObject),
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            for &id in ids {
+                sheet
+                    .update_canvas_object(id, &mut f)
+                    .map_err(EditError::Invalid)?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn reorder_canvas_objects(
         &mut self,
         ids: &[CanvasObjectId],

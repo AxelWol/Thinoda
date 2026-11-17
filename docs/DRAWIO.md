@@ -189,6 +189,13 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Visibility per family persisted next to the built-in visibility settings (`shown_drawio`, opt-in, under "More shapes…")
 - [x] Inserted objects embed their whole bundled package as one content-addressed resource, so every later insertion from that package reuses it
 
+### Interleaved user requests ✅
+
+- [x] Template previews on the start page (Software group): thumbnail labels scale with their shapes instead of keeping the 7 px interactive minimum
+- [x] Re-enabled connector arrows: the legacy arrowhead now scales with the line width (`legacy_arrow_size`), on canvas and in export, so a toggled-off-and-on arrow is no longer hidden under a thick stroke
+- [x] Attribute ribbon audit: arrow buttons, route, colors, width and popups checked against the format sidebar and the style clipboard; no further defects found
+- [x] Shape and connector options for multi-selections of one kind: every change applies to all selected objects as one undo step; the heading shows the count, arrows read as on only when all connectors show them, "Edit label" stays single-object, and a locked or grouped member disables the ribbon
+
 ### D4 — Vendor and platform libraries
 
 - [ ] Import a draw.io stencil XML file (any family, including vendor families) as a user library through the existing library import, with its aliases
@@ -264,6 +271,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | Requests | Software template previews readable; re-toggled arrows scale with width (d34d271); shape and connector options edit multi-selections with one undo |
 | 2026-11-17 | D3 | Library browser lists the 17 bundled families (2,238 shapes) in an opt-in "draw.io" group; catalog search; one shared resource per inserted package; 11 new family names translated into 8 languages |
 | 2026-11-17 | D2 | 17 families bundled (81 packages, 2,238 shapes, about 854 KB); 253 cells in the example corpus now draw their stencils; approximate native kinds stay native; NOTICE and Apache text shipped |
 | 2026-11-17 | D1 | 8,040 of 8,040 shapes in converted files evaluate; aws4 (1,050 shapes) still fails as a file and moves to D4 |
@@ -316,6 +324,18 @@ section-caption titles stay English, as in the catalog; only family names are
 localized. The preview cache does not count the shared package bytes per tile,
 so large packages do not evict other previews; the panel keeps each decoded
 package and its encoded resource for the session (about 5 MB at most).
+
+**Interleaved requests.** Arrows: the root cause was not the toggle itself but
+two arrowhead sizes, a fixed canvas size and a width-scaled export size.
+Turning an arrow off clears its draw.io marker, so it comes back as the legacy
+arrowhead, and the core validation (no marker without its arrow flag) forbids
+keeping the marker. Unifying the size fixes both thick and default connectors;
+draw.io itself restores its default classic marker in this case. Multi-selection:
+only objects of one kind are edited together (shapes with shapes, connectors
+with connectors). A mixed selection still has no ribbon, because the common
+attributes of a shape and a connector differ in meaning (fill vs. connector
+color). The controls show the primary (first selected) object's values rather
+than a "mixed" state, so a color swatch can mislead until a value is picked.
 
 ## 5. Rubber-duck findings
 

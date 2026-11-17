@@ -933,6 +933,53 @@ fn stale_revisions_documents_sheets_viewports_and_selections_are_rejected() {
 }
 
 #[test]
+fn connector_options_toggle_arrows_on_every_selected_connector() {
+    let (mut app, id) = app_with_connector();
+    let doc = app.doc_mut().unwrap();
+    let mut second = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-120.0, 120.0)),
+        Endpoint::Point(Vec2::new(120.0, 160.0)),
+    );
+    second.arrow_end = false;
+    second.route = ConnectorRoute::Curve;
+    let other = doc
+        .doc
+        .add_canvas_object(CanvasObject::connector(second))
+        .unwrap();
+    doc.view.board_selection.push(other);
+    let context = app.connector_context().unwrap();
+    assert!(context.enabled);
+    assert!(
+        !context.properties.arrow_end,
+        "only some connectors show an end arrow"
+    );
+    assert!(context.properties.mixed_route);
+
+    let mut h = harness(app, vec2(1000.0, 700.0));
+    h.get_by_label("Connector options (2)");
+    click(&mut h, Role::Button, "Arrow at end");
+    assert!(connector(h.state(), id).arrow_end);
+    assert!(connector(h.state(), other).arrow_end);
+    click(&mut h, Role::Button, "Arrow at end");
+    assert!(!connector(h.state(), id).arrow_end);
+    assert!(!connector(h.state(), other).arrow_end);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_end && connector(h.state(), other).arrow_end);
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    h.run_steps(3);
+    assert!(connector(h.state(), id).arrow_end);
+    assert!(!connector(h.state(), other).arrow_end);
+
+    let target = h.state().connector_context().unwrap().target;
+    h.state_mut()
+        .apply_connector_change(&target, ConnectorChange::Width(5.0))
+        .unwrap();
+    assert_eq!(connector(h.state(), id).width, 5.0);
+    assert_eq!(connector(h.state(), other).width, 5.0);
+}
+
+#[test]
 fn locked_grouped_and_mixed_selections_cannot_edit_a_connector() {
     for case in ["locked", "group", "locked-member", "locked-group", "mixed"] {
         let (mut app, id) = app_with_connector();

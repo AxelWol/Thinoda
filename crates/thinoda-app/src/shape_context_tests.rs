@@ -1039,10 +1039,17 @@ fn locked_grouped_and_mixed_shape_selections_cannot_be_edited() {
         } else {
             let other = doc
                 .doc
-                .add_canvas_object(CanvasObject::shape(
-                    ShapeKind::Ellipse,
-                    BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
-                ))
+                .add_canvas_object(if case == "mixed" {
+                    CanvasObject::connector(thinoda_core::CanvasConnector::new(
+                        thinoda_core::Endpoint::Point(Vec2::new(300.0, 0.0)),
+                        thinoda_core::Endpoint::Point(Vec2::new(400.0, 0.0)),
+                    ))
+                } else {
+                    CanvasObject::shape(
+                        ShapeKind::Ellipse,
+                        BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
+                    )
+                })
                 .unwrap();
             if case == "mixed" {
                 doc.view.board_selection.push(other);
@@ -1079,6 +1086,80 @@ fn locked_grouped_and_mixed_shape_selections_cannot_be_edited() {
             assert!(control.accesskit_node().is_disabled(), "{case}: {label}");
         }
     }
+}
+
+#[test]
+fn shape_options_edit_every_selected_shape_with_one_undo() {
+    let (mut app, id) = app_with_shape();
+    let doc = app.doc_mut().unwrap();
+    let mut ellipse = CanvasObject::shape(
+        ShapeKind::Ellipse,
+        BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
+    );
+    ellipse.style.fill = Some(Color::rgb(1, 2, 3));
+    let other = doc.doc.add_canvas_object(ellipse).unwrap();
+    doc.view.board_selection.push(other);
+    let original = object(&app, id).style.fill;
+    let context = app.shape_context().unwrap();
+    assert!(context.enabled);
+    assert!(context.properties.mixed_shape);
+    assert!(app.single_board_object().is_none());
+    let red = Some(Color::rgb(200, 10, 10));
+    let target = app
+        .apply_shape_change(&context.target, ShapeChange::Fill(red))
+        .unwrap();
+    let target = app
+        .apply_shape_change(&target, ShapeChange::Shape(ShapeKind::Rectangle))
+        .unwrap();
+    for id in [id, other] {
+        assert_eq!(object(&app, id).style.fill, red);
+        assert_eq!(shape_kind(&app, id), ShapeKind::Rectangle);
+    }
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(shape_kind(&app, other), ShapeKind::Ellipse);
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(object(&app, id).style.fill, original);
+    assert_eq!(object(&app, other).style.fill, Some(Color::rgb(1, 2, 3)));
+    assert!(
+        app.apply_shape_change(&target, ShapeChange::Fill(red))
+            .is_err()
+    );
+
+    let h = harness(app);
+    h.get_by_label("Shape options (2)");
+    for label in ["Change shape", "Fill color", "Outline color", "Text Color"] {
+        let control = h.get_by_role_and_label(Role::Button, label);
+        assert!(!control.accesskit_node().is_disabled(), "{label}");
+    }
+    let edit = h.get_by_role_and_label(Role::Button, "Edit label");
+    assert!(edit.accesskit_node().is_disabled());
+}
+
+#[test]
+fn a_locked_shape_in_a_multi_selection_disables_the_shape_options() {
+    let (mut app, id) = app_with_shape();
+    let doc = app.doc_mut().unwrap();
+    let other = doc
+        .doc
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            BoardRect::from_center_size(Vec2::new(300.0, 0.0), Vec2::new(60.0, 40.0)),
+        ))
+        .unwrap();
+    doc.doc.set_canvas_objects_locked(&[other], true).unwrap();
+    doc.view.board_selection.push(other);
+    let context = app.shape_context().unwrap();
+    assert!(!context.enabled);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    assert!(
+        app.apply_shape_change(&context.target, ShapeChange::Fill(Some(Color::WHITE)))
+            .is_err()
+    );
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert_eq!(
+        object(&app, id).style.fill,
+        before.sheets[0].canvas.object(id).unwrap().style.fill
+    );
 }
 
 #[test]
