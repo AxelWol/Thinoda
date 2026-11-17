@@ -531,6 +531,42 @@ fn cross_axis_fill_selects_native_v35_and_rejects_v34_archives() {
 }
 
 #[test]
+fn tables_select_native_v46_and_reject_older_or_legacy_archives() {
+    let mut sheet = Sheet::new("Tables", "Root");
+    sheet.insert_canvas_table(Vec2::ZERO, 2, 2, None).unwrap();
+    let book = Workbook::new(sheet);
+    assert_eq!(crate::required_native_version(&book), 46);
+
+    let bytes = crate::formats::native_export(&book).unwrap();
+    assert_eq!(crate::formats::native_import(&bytes).unwrap(), book);
+
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "format": "thinoda",
+        "version": 45,
+        "resources": [],
+    }))
+    .unwrap();
+    let content = serde_json::to_vec(&book).unwrap();
+    let older = archive(&[
+        ("manifest.json", manifest.as_slice()),
+        ("content.json", content.as_slice()),
+    ])
+    .unwrap();
+    let error = crate::formats::native_import(&older).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("tables require native format version 46")
+    );
+    let error = crate::formats::native_import(&content).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("tables require native format version 46")
+    );
+}
+
+#[test]
 fn rejects_tampering_invalid_metadata_and_missing_or_unlisted_blobs_atomically() {
     let mut book = empty_book(1);
     let first = entry(0, "first.bin", b"first resource");

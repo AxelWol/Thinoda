@@ -10474,3 +10474,203 @@ fn drawio_named_first_layer_and_layered_cards_stay_explicit() {
     let out = String::from_utf8(export(&Workbook::new(sheet)).unwrap()).unwrap();
     assert!(out.contains(r#"value="Sketch" parent="0"/>"#), "{out}");
 }
+
+type TableSummary = (
+    Vec<f32>,
+    Vec<f32>,
+    Vec<(u16, u16, u16, u16, String)>,
+    thinoda_core::scene_table::TableStripes,
+);
+
+/// Grid, spans and labels of the only table, independent of object ids.
+fn table_summary(sheet: &Sheet) -> TableSummary {
+    assert_eq!(sheet.canvas.scene.tables.len(), 1);
+    let (id, table) = sheet.canvas.scene.tables.iter().next().unwrap();
+    assert!(table.validate().is_ok());
+    assert!(sheet.canvas.scene.containers.contains(id));
+    let cells = table
+        .cells
+        .iter()
+        .map(|cell| {
+            assert_eq!(sheet.canvas.scene.parents.get(&cell.id), Some(id));
+            let object = sheet.canvas.object(cell.id).unwrap();
+            (
+                cell.row,
+                cell.column,
+                cell.row_span,
+                cell.column_span,
+                object.label().to_string(),
+            )
+        })
+        .collect();
+    (
+        table.rows.clone(),
+        table.columns.clone(),
+        cells,
+        table.stripes,
+    )
+}
+
+#[test]
+fn drawio_tables_import_merges_stripes_and_cell_content_and_round_trip() {
+    let cell = |id: &str, parent: &str, x: f32, w: f32, h: f32, extra: &str, visible: bool| {
+        format!(
+            r#"<mxCell id="{id}" value="{}" style="shape=partialRectangle;html=1;whiteSpace=wrap;connectable=0;strokeColor=inherit;overflow=hidden;fillColor=none;top=0;left=0;bottom=0;right=0;pointerEvents=1;fontColor=#000000;{extra}" {} vertex="1" parent="{parent}"><mxGeometry x="{x}" width="{w}" height="{h}" as="geometry"><mxRectangle width="{}" height="40" as="alternateBounds"/></mxGeometry></mxCell>"#,
+            if visible { id } else { "" },
+            if visible { "" } else { r#"visible="0""# },
+            if extra.contains("colspan") { 60.0 } else { w },
+        )
+    };
+    let row = |id: &str, y: f32| {
+        format!(
+            r#"<mxCell id="{id}" style="shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;swimlaneBody=0;strokeColor=inherit;top=0;left=0;bottom=0;right=0;collapsible=0;dropTarget=0;fillColor=none;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;" vertex="1" parent="t"><mxGeometry y="{y}" width="180" height="40" as="geometry"/></mxCell>"#
+        )
+    };
+    let xml = page(&format!(
+        r#"<mxCell id="t" value="Table" style="shape=table;startSize=30;container=1;collapsible=0;childLayout=tableLayout;strokeColor=#333333;fillColor=#FFFFFF;fontColor=#000000;evenRowColor=#EEEEEE;oddColumnColor=#DDEEFF;" vertex="1" parent="1"><mxGeometry x="100" y="50" width="180" height="150" as="geometry"/></mxCell>
+        {}{}{}{}
+        {}{}{}{}
+        <mxCell id="note" value="Inside" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;" vertex="1" parent="c10"><mxGeometry x="5" y="5" width="40" height="20" as="geometry"/></mxCell>
+        {}{}{}{}"#,
+        row("r0", 30.0),
+        cell("c00", "r0", 0.0, 120.0, 40.0, "colspan=2;", true),
+        cell("c01", "r0", 60.0, 60.0, 40.0, "", false),
+        cell("c02", "r0", 120.0, 60.0, 40.0, "", true),
+        row("r1", 70.0),
+        cell("c10", "r1", 0.0, 60.0, 40.0, "", true),
+        cell("c11", "r1", 60.0, 60.0, 40.0, "", true),
+        cell("c12", "r1", 120.0, 60.0, 80.0, "rowspan=2;", true),
+        row("r2", 110.0),
+        cell("c20", "r2", 0.0, 60.0, 40.0, "", true),
+        cell("c21", "r2", 60.0, 60.0, 40.0, "", true),
+        cell("c22", "r2", 120.0, 60.0, 40.0, "", false),
+    ))
+    .replace("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#);
+    let sheet = clean(&xml);
+    let summary = table_summary(&sheet);
+    let label = |r: u16, c: u16, rs: u16, cs: u16, label: &str| (r, c, rs, cs, label.to_string());
+    assert_eq!(summary.0, vec![40.0; 3]);
+    assert_eq!(summary.1, vec![60.0; 3]);
+    assert_eq!(
+        summary.2,
+        vec![
+            label(0, 0, 1, 2, "c00"),
+            label(0, 2, 1, 1, "c02"),
+            label(1, 0, 1, 1, "c10"),
+            label(1, 1, 1, 1, "c11"),
+            label(1, 2, 2, 1, "c12"),
+            label(2, 0, 1, 1, "c20"),
+            label(2, 1, 1, 1, "c21"),
+        ]
+    );
+    assert_eq!(summary.3.even_rows, Some(Color::rgb(0xEE, 0xEE, 0xEE)));
+    assert_eq!(summary.3.odd_columns, Some(Color::rgb(0xDD, 0xEE, 0xFF)));
+    let (&table, _) = sheet.canvas.scene.tables.iter().next().unwrap();
+    assert_eq!(
+        thinoda_core::scene_table::table_header(&sheet.canvas, table).map(|h| h.extent),
+        Some(30.0)
+    );
+    let note = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.label() == "Inside")
+        .unwrap();
+    let host = sheet
+        .canvas
+        .objects
+        .iter()
+        .find(|o| o.label() == "c10")
+        .unwrap();
+    assert_eq!(sheet.canvas.scene.parents.get(&note.id), Some(&host.id));
+    assert_eq!(host.rect, rect(100.0, 120.0, 60.0, 40.0));
+    assert_eq!(
+        host.style.stroke,
+        Some(Color::rgb(0x33, 0x33, 0x33)),
+        "inherited grid stroke"
+    );
+    assert_eq!(note.rect.min, Vec2::new(105.0, 125.0));
+    assert!(sheet.validate().is_ok());
+
+    let drawio = String::from_utf8(
+        export_bytes(
+            &Workbook::new(sheet.clone()),
+            Format::DrawIo,
+            &ExportOptions::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(drawio.contains("childLayout=tableLayout"));
+    assert_eq!(drawio.matches("shape=tableRow").count(), 3);
+    assert_eq!(drawio.matches(r#"visible="0""#).count(), 2);
+    assert!(drawio.contains("colspan=2;") && drawio.contains("rowspan=2;"));
+    // The export drops the page's adaptiveColors="none", so fixed colours warn.
+    let report = load(&drawio);
+    assert_eq!(
+        report.warnings.iter().collect::<Vec<_>>(),
+        vec![&ImportWarning::Formatting]
+    );
+    let round_trip = report.workbook.sheets.into_iter().next().unwrap();
+    assert_eq!(table_summary(&round_trip), summary);
+    assert_eq!(
+        round_trip
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.label() == "Inside")
+            .unwrap()
+            .rect,
+        note.rect
+    );
+}
+
+#[test]
+fn native_tables_export_to_drawio_and_back() {
+    use thinoda_core::scene_table::{TableAxis, TableStripes};
+    let mut sheet = Sheet::new("Board", "Root");
+    let table = sheet
+        .insert_canvas_table(Vec2::new(20.0, 20.0), 3, 3, None)
+        .unwrap();
+    let ids: Vec<_> = sheet.canvas.scene.tables[&table]
+        .cells
+        .iter()
+        .map(|c| c.id)
+        .collect();
+    for (n, id) in ids.iter().enumerate() {
+        if let CanvasObjectKind::Shape { label, .. } =
+            &mut sheet.canvas.object_mut(*id).unwrap().kind
+        {
+            *label = format!("cell {n}");
+        }
+    }
+    sheet.merge_canvas_table_cells(table, &ids[0..2]).unwrap();
+    sheet
+        .merge_canvas_table_cells(table, &[ids[5], ids[8]])
+        .unwrap();
+    sheet
+        .resize_canvas_table_track(table, TableAxis::Column, 0, 80.0)
+        .unwrap();
+    sheet
+        .set_canvas_table_stripes(
+            table,
+            TableStripes {
+                even_rows: Some(Color::rgb(240, 240, 240)),
+                ..TableStripes::default()
+            },
+        )
+        .unwrap();
+    let summary = table_summary(&sheet);
+    let frame = sheet.canvas.object(table).unwrap().rect;
+    let drawio = export_bytes(
+        &Workbook::new(sheet),
+        Format::DrawIo,
+        &ExportOptions::default(),
+    )
+    .unwrap();
+    let round_trip = clean(std::str::from_utf8(&drawio).unwrap());
+    assert_eq!(table_summary(&round_trip), summary);
+    let (&id, _) = round_trip.canvas.scene.tables.iter().next().unwrap();
+    assert_eq!(round_trip.canvas.object(id).unwrap().rect, frame);
+    assert!(thinoda_core::scene_table::table_header(&round_trip.canvas, id).is_none());
+}

@@ -2564,6 +2564,7 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     let canvas = &sheet.canvas;
     if !canvas.scene.is_empty() {
         SceneHierarchy::from_canvas(canvas)?;
+        crate::scene_table::validate_geometry(canvas)?;
     }
     if sheet.has_scene_collapse() && sheet.has_sankey() {
         return Err("collapse does not support Sankey sheets".into());
@@ -3452,6 +3453,27 @@ impl Sheet {
     /// the removed shape's centre, or the connector's path midpoint; emptied
     /// groups are dissolved.
     pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> Result<(), String> {
+        if !self.canvas.scene.tables.is_empty() && !ids.is_empty() {
+            let removed: HashSet<_> = SceneHierarchy::from_canvas(&self.canvas)?
+                .descendant_closure(ids)?
+                .into_iter()
+                .collect();
+            for (table, grid) in &self.canvas.scene.tables {
+                if !removed.contains(table)
+                    && grid.cells.iter().any(|cell| removed.contains(&cell.id))
+                {
+                    return Err("delete the table row or column instead of a single cell".into());
+                }
+            }
+        }
+        self.remove_canvas_objects_unchecked(ids)
+    }
+
+    /// Removal without table-cell protection, for table commands that replace the grid.
+    pub(crate) fn remove_canvas_objects_unchecked(
+        &mut self,
+        ids: &[CanvasObjectId],
+    ) -> Result<(), String> {
         if ids.is_empty() {
             return Err("nothing selected".into());
         }
@@ -3579,6 +3601,10 @@ impl Sheet {
         self.canvas
             .scene
             .layout_policies
+            .retain(|id, _| !removed.contains(id));
+        self.canvas
+            .scene
+            .tables
             .retain(|id, _| !removed.contains(id));
         for zone in &mut self.zones {
             if zone.objects.iter().any(|id| removed.contains(id)) {
@@ -3873,6 +3899,15 @@ impl Sheet {
     /// Sets the unrotated frame; ink points are scaled with it.
     pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> Result<(), String> {
         self.require_unlocked(&[id])?;
+        if self.canvas.scene.tables.contains_key(&id) {
+            if !valid_rect(rect) {
+                return Err("object frame out of range".into());
+            }
+            return self.resize_canvas_table(id, rect);
+        }
+        if crate::scene_table::table_of_cell(&self.canvas, id).is_some() {
+            return Err("resize the table row or column instead".into());
+        }
         if self.canvas.scene.collapsed.contains_key(&id) {
             return Err("expand the container before resizing".into());
         }

@@ -891,6 +891,18 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   the View and Board menus and the board toolbar; with only the base layer it shows an
   explanation and "Add layer". Changes are announced through toasts. Gates: native v45,
   board clipboard v38, sheet clipboard v34, XMind and recovery layer envelopes.
+- **Tables**: insert rows × columns, row/column commands, merge, stripes.
+  *As implemented in D8 (tables):* `SceneStructure.tables` maps a table container to a
+  `SceneTable { rows, columns, cells, stripes }` (`scene_table.rs`); each cell is a
+  free scene container child of the table, so the existing container engine handles
+  content, selection, locks and export, and the shared layout pass derives cell frames
+  from the tracks without growing cells. Commands insert/delete/resize tracks,
+  merge/unmerge rectangular spans and set stripes, each one undo step. The board
+  toolbar's "Insert table" popup picks rows × columns; a Table inspector section
+  appears for a table or cells of one table. draw.io `tableLayout`/`tableRow`/
+  `partialRectangle` cells map to it with `rowspan`/`colspan` and stripe keys. Gates:
+  native v46, board clipboard v39, sheet clipboard v35, XMind and recovery table
+  envelopes.
 - **Clipboard**: copy also as draw.io XML; paste of draw.io XML / compressed payloads /
   `#R` links inserts at cursor; size-capped like existing board clipboard payloads.
 - **Dark mode**: `default`/`light-dark()` resolve against Thinoda's Light/Dark/Auto theme.

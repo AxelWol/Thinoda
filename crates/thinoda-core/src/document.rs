@@ -259,6 +259,18 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
         + sheet.canvas.scene.layout_policies.len()
             * (size_of::<CanvasObjectId>() + size_of::<ContainerLayoutPolicy>() + 48)
         + sheet
+            .canvas
+            .scene
+            .tables
+            .values()
+            .map(|table| {
+                size_of::<crate::scene_table::SceneTable>()
+                    + 48
+                    + (table.rows.len() + table.columns.len()) * size_of::<f32>()
+                    + table.cells.len() * size_of::<crate::scene_table::SceneTableCell>()
+            })
+            .sum::<usize>()
+        + sheet
             .semantic
             .as_ref()
             .map_or(0, crate::semantic::SemanticModel::estimated_heap_bytes)

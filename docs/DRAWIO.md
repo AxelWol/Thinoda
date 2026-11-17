@@ -93,7 +93,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Text | Rich HTML labels, sub/superscript, lists | Approx. (plain text) | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
-| Structure | Tables (rows, columns, merge, stripes) | Approx. (container tables SC4 roadmap) | D8 |
+| Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
 | Layout | ELK flow/tree/radial/organic, circle, org chart | Missing for boards (mind-map layout is native) | D11 |
 | Insert | Mermaid, PlantUML, CSV, SQL, from text | Missing | D12 |
 | Insert | Templates (155) | Thinoda templates only | D12 |
@@ -232,7 +232,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 ### D8 — Layers and tables
 
 - [x] Named layers per sheet with visibility and lock, layers panel, move to layer
-- [ ] Tables: rows, columns, merge, stripes on the container-table engine
+- [x] Tables: rows, columns, merge, stripes on the container-table engine
 
 ### D9 — Style and text
 
@@ -278,6 +278,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D8 tables | Native 2-D tables on the scene container engine: a table container owns row heights, column widths, cell slots with row/column spans and row/column stripe colours, and the shared layout pass places its cell containers (content never grows a cell); undoable insert row above/below and column left/right, delete row/column, merge/unmerge, stripes and track resize; Insert table (board toolbar, rows × columns) and a Table inspector section; canvas and SVG/PNG/PDF/PPTX paint stripes; draw.io `tableLayout` tables import natively with rowspan/colspan, stripes, grid lines and cell content and export as table/tableRow/partialRectangle cells; native v46, sheet clipboard v35, board clipboard v39, new XMind and recovery table envelopes; D8 complete |
 | 2026-11-17 | D8 layers | Named board layers per sheet above an implicit base layer, with visibility and lock; hidden layers leave canvas, hits, lasso, select all, snapping and every export; locked layers lock their objects; Layers panel (View menu, Board menu and board toolbar) adds, renames, reorders, hides, locks and deletes layers and moves the selection with group members and container children; draw.io layers import named, hidden and locked instead of being flattened or dropped and export as layer cells; native v45, board clipboard v38, sheet clipboard v34, new XMind and recovery envelopes |
 | 2026-11-17 | D7 page links | `data:page/id` links navigate to the sheet with the matching imported draw.io page id from the inspector ("Go to page" shows the target sheet title) and the link opener; missing pages warn; D7 complete |
 | 2026-11-17 | D7 placeholders | `%name%` placeholders resolve in canvas and exports from object data, scene containers, `id`, `width`, `height` and the page name; draw.io import copies values inherited from non-container ancestors, resolves Zone names, and warns only for templates it cannot keep live (C4, kanban and home-lab now import resolved) |
@@ -596,6 +597,33 @@ objects that become hidden. Known approximations:
   unlocked layer with the same name; otherwise they land on the base layer.
 - Connectors attached to objects on a hidden layer still render from the
   stored geometry.
+
+**D8 tables.** `scene.tables` maps a table container to a `SceneTable` with
+row heights, column widths, every cell's slot and span, and stripe colours.
+Cells are ordinary free scene containers parented to the table, so selection,
+content, locks, z-order and exports reuse the container engine; the shared
+layout pass derives every cell frame from the grid and moves cell content with
+its cell, and validation rejects overlapping, out-of-range or non-rectangular
+spans, collapsed tables or cells, stack layouts on the table, growing cell
+layouts and more than 256 rows or columns or 16 384 slots. Known
+approximations:
+
+- Stripes use the colour of a cell's start slot, so a merged cell takes one
+  stripe; rows paint over columns as in draw.io, and only cells without a
+  visible fill of their own are striped. The inspector toggles a default
+  light stripe; other colours come from draw.io.
+- draw.io paints table grid lines on the table; on import they become the
+  sides of each partial-rectangle cell, so a later border change is per cell.
+- A table header is the container's Free layout header; draw.io `startSize`
+  maps to it and `horizontal=0` to a left header.
+- Tables whose rows have different cell counts, rotated or collapsed tables,
+  and tables inside Zones keep the previous generic container import. Content
+  of draw.io cells hidden under a merge is dropped with a Formatting warning.
+- Resizing the table frame scales its tracks proportionally; there is no
+  on-canvas track divider dragging yet, only the inspector's Row height and
+  Column width fields.
+- Export does not write `adaptiveColors`, so re-importing an exported page
+  can warn about Formatting for fixed colours.
 
 ## 5. Rubber-duck findings
 

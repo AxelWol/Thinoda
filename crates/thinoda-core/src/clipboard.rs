@@ -51,12 +51,15 @@ const EDGE_SHAPES_SHEET_PREFIX: &str = "THINODA-SHEET-31\n";
 const CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-32\n";
 const OBJECT_DATA_SHEET_PREFIX: &str = "THINODA-SHEET-33\n";
 const LAYERS_SHEET_PREFIX: &str = "THINODA-SHEET-34\n";
+const TABLES_SHEET_PREFIX: &str = "THINODA-SHEET-35\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_layers() {
+    let prefix = if sheet.has_tables() {
+        TABLES_SHEET_PREFIX
+    } else if sheet.has_layers() {
         LAYERS_SHEET_PREFIX
     } else if sheet.has_object_data() {
         OBJECT_DATA_SHEET_PREFIX
@@ -150,6 +153,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
             text.strip_prefix(LINE_JUMPS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-28\r\n"))
                 .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(TABLES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-35\r\n"))
+                .map(|json| (35, json))
         })
         .or_else(|| {
             text.strip_prefix(LAYERS_SHEET_PREFIX)
@@ -313,6 +321,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 35 && sheet.has_tables() {
+        return Err("tables require sheet clipboard version 35".into());
+    }
     if version < 34 && sheet.has_layers() {
         return Err("layers require sheet clipboard version 34".into());
     }
@@ -1533,6 +1544,23 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn table_sheet_clipboard_requires_version_thirty_five() {
+        let mut sheet = Sheet::new("Tables", "Root");
+        sheet
+            .insert_canvas_table(crate::Vec2::ZERO, 2, 2, None)
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(TABLES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(TABLES_SHEET_PREFIX, LAYERS_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("tables require sheet clipboard version 35")
+        );
     }
 
     #[test]

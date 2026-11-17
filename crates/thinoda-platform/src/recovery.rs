@@ -111,6 +111,8 @@ const OBJECT_DATA_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-OBJECT-DATA-1";
 const OBJECT_DATA_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-OBJECT-DATA-1";
 const LAYERS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-LAYERS-1";
 const LAYERS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-LAYERS-1";
+const TABLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-TABLES-1";
+const TABLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-TABLES-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -132,7 +134,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_layers() {
+        tuple.serialize_element(if self.workbook.has_tables() {
+            TABLES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_layers() {
             LAYERS_INK_WORKBOOK_VERSION
         } else if self.workbook.has_object_data() {
             OBJECT_DATA_INK_WORKBOOK_VERSION
@@ -266,7 +270,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_layers() {
+    let version = if workbook.has_tables() {
+        TABLES_WORKBOOK_VERSION
+    } else if workbook.has_layers() {
         LAYERS_WORKBOOK_VERSION
     } else if workbook.has_object_data() {
         OBJECT_DATA_WORKBOOK_VERSION
@@ -367,6 +373,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_tables() {
+                return Err(A::Error::custom(
+                    "tables require a table-aware recovery workbook",
+                ));
+            }
             if workbook.has_layers() {
                 return Err(A::Error::custom(
                     "layers require a layer-aware recovery workbook",
@@ -544,6 +555,8 @@ where
                 && version != OBJECT_DATA_INK_WORKBOOK_VERSION
                 && version != LAYERS_WORKBOOK_VERSION
                 && version != LAYERS_INK_WORKBOOK_VERSION
+                && version != TABLES_WORKBOOK_VERSION
+                && version != TABLES_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -553,6 +566,60 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let tables_envelope =
+                version == TABLES_WORKBOOK_VERSION || version == TABLES_INK_WORKBOOK_VERSION;
+            if workbook.has_tables() != tables_envelope {
+                return Err(A::Error::custom(
+                    "tables require a table-aware recovery workbook",
+                ));
+            }
+            let version = if !tables_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_layers() {
+                    (LAYERS_WORKBOOK_VERSION, LAYERS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_object_data() {
+                    (
+                        OBJECT_DATA_WORKBOOK_VERSION,
+                        OBJECT_DATA_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_labels() {
+                    (
+                        CONNECTOR_LABELS_WORKBOOK_VERSION,
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
             let layers_envelope =
                 version == LAYERS_WORKBOOK_VERSION || version == LAYERS_INK_WORKBOOK_VERSION;
             if workbook.has_layers() != layers_envelope {
@@ -2780,6 +2847,56 @@ mod lock_tests {
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn tables_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::Vec2;
+
+        for layered in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let table = sheet.insert_canvas_table(Vec2::ZERO, 2, 3, None).unwrap();
+            if layered {
+                let layer = sheet.add_board_layer("Tables").unwrap();
+                sheet
+                    .move_canvas_objects_to_layer(&[table], Some(layer))
+                    .unwrap();
+            }
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        TABLES_INK_WORKBOOK_VERSION
+                    } else {
+                        TABLES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    LAYERS_INK_WORKBOOK_VERSION
+                } else {
+                    LAYERS_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
         }
     }
 

@@ -593,6 +593,30 @@ fn check(path: &Path) -> Result<String, String> {
                 })
                 .collect();
             endpoints.sort();
+            let mut tables: Vec<_> = sheet
+                .canvas
+                .scene
+                .tables
+                .iter()
+                .filter_map(|(id, table)| {
+                    let cells: Vec<_> = table
+                        .cells
+                        .iter()
+                        .map(|cell| {
+                            (
+                                object_keys.get(&cell.id).cloned(),
+                                [cell.row, cell.column, cell.row_span, cell.column_span],
+                            )
+                        })
+                        .collect();
+                    Some((
+                        object_keys.get(id)?.clone(),
+                        format!("{:?} {:?} {:?}", table.rows, table.columns, table.stripes),
+                        cells,
+                    ))
+                })
+                .collect();
+            tables.sort();
             (
                 objects,
                 containers,
@@ -601,6 +625,7 @@ fn check(path: &Path) -> Result<String, String> {
                 collapsed,
                 policies,
                 endpoints,
+                tables,
             )
         };
         if has_scene_hierarchy {
@@ -728,7 +753,7 @@ fn check(path: &Path) -> Result<String, String> {
         }
     }
     Ok(format!(
-        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} double ellipse(s), {} fixed port(s), {} warning kind(s)",
+        "{} page(s), {count} item(s), {} waypoint edge(s), {} marker edge(s), {} sized marker end(s), {} partial rectangle(s), {} double ellipse(s), {} fixed port(s), {} table(s), {} warning kind(s)",
         book.sheets.len(),
         book.sheets
             .iter()
@@ -756,6 +781,10 @@ fn check(path: &Path) -> Result<String, String> {
         book.sheets
             .iter()
             .map(|sheet| fixed_ports(sheet).len())
+            .sum::<usize>(),
+        book.sheets
+            .iter()
+            .map(|sheet| sheet.canvas.scene.tables.len())
             .sum::<usize>(),
         report.warnings.len()
     ))

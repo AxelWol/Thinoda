@@ -850,6 +850,11 @@ impl Sheet {
         self.canvas.has_layers()
     }
 
+    /// Whether the sheet needs table-aware persistence.
+    pub fn has_tables(&self) -> bool {
+        !self.canvas.scene.tables.is_empty()
+    }
+
     /// Whether the sheet needs draw.io segment-route-aware persistence.
     pub fn has_drawio_segment_routes(&self) -> bool {
         self.canvas.has_drawio_segment_routes()
@@ -2672,6 +2677,11 @@ impl Workbook {
     /// Whether any sheet needs layer-aware persistence.
     pub fn has_layers(&self) -> bool {
         self.sheets.iter().any(Sheet::has_layers)
+    }
+
+    /// Whether any sheet needs table-aware persistence.
+    pub fn has_tables(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_tables)
     }
 
     /// Whether any sheet needs draw.io segment-route-aware persistence.

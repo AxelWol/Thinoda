@@ -2467,6 +2467,40 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn table_board_clipboard_requires_version_thirty_nine_and_remaps_cells() {
+    let mut source = Sheet::new("Source", "Root");
+    let table = source
+        .insert_canvas_table(Vec2::new(10.0, 10.0), 2, 2, None)
+        .unwrap();
+    let payload = copy(&source, &[], &[table]);
+    assert_eq!(payload.fragment.canvas.scene.tables.len(), 1);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(TABLES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(TABLES_BOARD_PREFIX, LAYERS_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("tables require board clipboard version 39")
+    );
+
+    let pasted = paste_board_selection(&mut source, &payload, Vec2::new(0.0, 200.0))
+        .unwrap()
+        .objects;
+    assert_eq!(source.canvas.scene.tables.len(), 2);
+    let copy = source
+        .canvas
+        .scene
+        .tables
+        .iter()
+        .find(|(id, _)| **id != table)
+        .unwrap();
+    assert!(pasted.contains(copy.0));
+    assert!(copy.1.cells.iter().all(|cell| pasted.contains(&cell.id)));
+    crate::board::validate_board(&source).unwrap();
+}
+
+#[test]
 fn layered_board_clipboard_requires_version_thirty_eight_and_maps_layers_by_name() {
     let mut source = Sheet::new("Source", "Root");
     let base = source

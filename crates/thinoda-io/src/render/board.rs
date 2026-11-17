@@ -136,10 +136,13 @@ pub(crate) fn band_items<'a>(
                 return None;
             };
             objects.get(&id).copied().map(|object| {
-                let object = thinoda_core::object_data::with_resolved_placeholders(
+                let object = thinoda_core::scene_table::with_table_stripes(
                     &sheet.canvas,
-                    object,
-                    Some(&sheet.title),
+                    thinoda_core::object_data::with_resolved_placeholders(
+                        &sheet.canvas,
+                        object,
+                        Some(&sheet.title),
+                    ),
                 );
                 (item, object)
             })

@@ -57,6 +57,7 @@ const EDGE_SHAPES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-35\n";
 const CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-36\n";
 const OBJECT_DATA_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-37\n";
 const LAYERS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-38\n";
+const TABLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-39\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -75,7 +76,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_layers() {
+        if self.fragment.has_tables() {
+            TABLES_BOARD_PREFIX
+        } else if self.fragment.has_layers() {
             LAYERS_BOARD_PREFIX
         } else if self.fragment.has_object_data() {
             OBJECT_DATA_BOARD_PREFIX
@@ -353,9 +356,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(LAYERS_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-38\r\n"))
-        .map(|json| (38, json))
+        .strip_prefix(TABLES_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-39\r\n"))
+        .map(|json| (39, json))
+        .or_else(|| {
+            text.strip_prefix(LAYERS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-38\r\n"))
+                .map(|json| (38, json))
+        })
         .or_else(|| {
             text.strip_prefix(OBJECT_DATA_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-37\r\n"))
@@ -547,6 +555,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         serde_json::from_str(json).map_err(|error| error.to_string())?;
     if version < 30 && payload.fragment.has_drawio_passthrough() {
         return Err("draw.io passthrough requires board clipboard version 30".into());
+    }
+    if version < 39 && payload.fragment.has_tables() {
+        return Err("tables require board clipboard version 39".into());
     }
     if version < 38 && payload.fragment.has_layers() {
         return Err("layers require board clipboard version 38".into());
@@ -1112,6 +1123,14 @@ fn copy_prepared_board_selection(
         .filter(|(id, _)| objects.contains(id))
         .map(|(id, policy)| (*id, *policy))
         .collect();
+    fragment.canvas.scene.tables = sheet
+        .canvas
+        .scene
+        .tables
+        .iter()
+        .filter(|(id, _)| objects.contains(id))
+        .map(|(id, table)| (*id, table.clone()))
+        .collect();
     for mut object in copied_objects {
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             let from_external = is_external(connector.from, &owned, &objects);
@@ -1645,6 +1664,17 @@ pub fn paste_board_selection(
             .scene
             .layout_policies
             .insert(map_object(*id)?, *policy);
+    }
+    for (id, table) in &source.canvas.scene.tables {
+        let mut table = table.clone();
+        for cell in &mut table.cells {
+            cell.id = map_object(cell.id)?;
+        }
+        candidate
+            .canvas
+            .scene
+            .tables
+            .insert(map_object(*id)?, table);
     }
     // Copied layers land on a usable target layer of the same name, else on the base layer.
     let layer_map: HashMap<_, _> = source

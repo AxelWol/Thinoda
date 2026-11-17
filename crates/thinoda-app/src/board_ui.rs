@@ -1191,6 +1191,7 @@ impl ThinodaApp {
             .unwrap_or(true);
         let mut command = None;
         let mut insert_shape = None;
+        let mut insert_table = None;
         let content_width = (canvas.width() - 36.0).max(0.0);
         let toolbar_width = if collapsed {
             content_width.min(34.0)
@@ -1292,6 +1293,21 @@ impl ThinodaApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             },
                         );
+                        board_tool_popup(
+                            ui,
+                            CommandIcon::from(icons::ZONES).with_tone(ribbon::IconTone::Create),
+                            "Insert table",
+                            collapsed,
+                            false,
+                            row_height,
+                            |ui| {
+                                if let Some(size) = crate::board_table_ui::insert_table_controls(ui)
+                                {
+                                    insert_table = Some(size);
+                                    ui.close_kind(egui::UiKind::Menu);
+                                }
+                            },
+                        );
                         for (value, label) in [
                             (BoardTool::Connector, "Connector tool"),
                             (BoardTool::Frame, "Frame tool"),
@@ -1361,6 +1377,9 @@ impl ThinodaApp {
         }
         if let Some(shape) = insert_shape {
             self.insert_board_shape(ctx, shape);
+        }
+        if let Some((rows, columns)) = insert_table {
+            self.insert_board_table(ctx, rows, columns);
         }
         Some(toolbar.response.rect)
     }
@@ -2051,7 +2070,10 @@ impl ThinodaApp {
         let (target, enabled) = self.single_board_object()?;
         let sheet = self.doc()?.doc.sheet();
         let id = target.owner.object;
-        if !sheet.canvas.scene.containers.contains(&id) {
+        // Tables and their cells are arranged by the table section instead.
+        if !sheet.canvas.scene.containers.contains(&id)
+            || thinoda_core::scene_table::selected_table(&sheet.canvas, id).is_some()
+        {
             return None;
         }
         Some(ContainerContext {
@@ -3488,15 +3510,18 @@ impl ThinodaApp {
     }
 
     pub(crate) fn board_object_properties(&mut self, ui: &mut Ui) -> bool {
+        let table = self.board_table_properties(ui);
         if self.board_container_properties(ui) {
             return true;
         }
-        let Some(doc) = self.doc() else { return false };
+        let Some(doc) = self.doc() else { return table };
         if doc.view.board_selection.is_empty() {
-            return false;
+            return table;
         }
         if doc.view.board_selection.len() != 1 || !doc.view.selection.is_empty() {
-            widgets::caption(ui, t("Select one board object to edit its properties."));
+            if !table {
+                widgets::caption(ui, t("Select one board object to edit its properties."));
+            }
             return true;
         }
         let id = doc.view.board_selection[0];

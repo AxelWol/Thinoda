@@ -13,6 +13,7 @@ use crate::model::{Sheet, valid_position};
 use crate::scene_layout::{
     ContainerLayout, ContainerLayoutPolicy, StackResizePolicy, preview_container_layout,
 };
+use crate::scene_table::SceneTable;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -43,10 +44,13 @@ pub struct SceneStructure {
     /// Persistent header and free/stack layout overrides for containers.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub layout_policies: BTreeMap<CanvasObjectId, ContainerLayoutPolicy>,
+    /// Native table grids, keyed by their table container.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tables: BTreeMap<CanvasObjectId, SceneTable>,
 }
 
 impl Sheet {
-    fn commit_scene_canvas(&mut self, candidate: CanvasLayer) -> Result<(), String> {
+    pub(crate) fn commit_scene_canvas(&mut self, candidate: CanvasLayer) -> Result<(), String> {
         let previous = std::mem::replace(&mut self.canvas, candidate);
         let semantic_error = self
             .semantic
@@ -142,6 +146,14 @@ impl Sheet {
         } else {
             candidate.scene.layout_policies.remove(&id);
         }
+        if let Some(table) = candidate.scene.tables.get(&id) {
+            let size = crate::scene_table::table_frame_size(table, policy.map(|p| p.header));
+            let object = candidate.object_mut(id).ok_or("scene table not found")?;
+            object.rect.size = size;
+            validate_object(object)?;
+            candidate = SceneHierarchy::from_canvas(&candidate)?
+                .preview_scene_layout(&BTreeMap::new(), |_| Ok(()))?;
+        }
         SceneHierarchy::from_canvas(&candidate)?;
         self.commit_scene_canvas(candidate)
     }
@@ -193,12 +205,14 @@ impl SceneStructure {
             && self.parents.is_empty()
             && self.collapsed.is_empty()
             && self.layout_policies.is_empty()
+            && self.tables.is_empty()
     }
 
     pub fn contains(&self, id: CanvasObjectId) -> bool {
         self.containers.contains(&id)
             || self.parents.contains_key(&id)
             || self.layout_policies.contains_key(&id)
+            || self.tables.contains_key(&id)
     }
 }
 
@@ -285,6 +299,7 @@ impl<'a> SceneHierarchy<'a> {
                 .collect(),
             collapsed: self.canvas.scene.collapsed.clone(),
             layout_policies: self.canvas.scene.layout_policies.clone(),
+            tables: self.canvas.scene.tables.clone(),
         };
         let ranks: HashMap<_, _> = self
             .preorder()
@@ -440,6 +455,7 @@ impl<'a> SceneHierarchy<'a> {
                 .or_default()
                 .push(object.id);
         }
+        crate::scene_table::validate_structure(canvas, &container_set, &parent_map, &children)?;
         let hierarchy = Self {
             canvas,
             objects,
@@ -961,6 +977,16 @@ impl<'a> SceneHierarchy<'a> {
         if policies.is_empty() {
             return Err("no scene layout policies supplied".into());
         }
+        self.preview_scene_layout(policies, validate)
+    }
+
+    /// Layout pass over `policies` and every table grid, which always refits
+    /// its cells to the table frame.
+    pub(crate) fn preview_scene_layout(
+        &self,
+        policies: &BTreeMap<CanvasObjectId, ContainerLayoutPolicy>,
+        validate: impl FnOnce(&SceneEditContext<'_, 'a>) -> Result<(), String>,
+    ) -> Result<CanvasLayer, String> {
         if policies.len() > MAX_CANVAS_OBJECTS {
             return Err("scene layout policy count exceeds canvas limits".into());
         }
@@ -986,6 +1012,7 @@ impl<'a> SceneHierarchy<'a> {
         let mut deltas = HashMap::new();
         let mut resized = HashMap::new();
         let mut scheduled = Vec::with_capacity(policies.len());
+        let mut fitted_tables = BTreeMap::new();
 
         for &container in order.iter().rev() {
             let Some(policy) = policies.get(&container).copied() else {
@@ -1026,6 +1053,28 @@ impl<'a> SceneHierarchy<'a> {
         }
 
         for container in order {
+            if let Some(table) = self.canvas.scene.tables.get(&container) {
+                scheduled.push(container);
+                let frame = rects
+                    .get(&container)
+                    .copied()
+                    .ok_or("scene table not found")?;
+                let header = crate::scene_table::table_header(self.canvas, container);
+                let (fitted, placements) = crate::scene_table::place_table(table, header, frame)?;
+                if let Some(fitted) = fitted {
+                    fitted_tables.insert(container, fitted);
+                }
+                let placements: Vec<_> = placements
+                    .into_iter()
+                    .filter(|(child, rect)| {
+                        rects
+                            .get(child)
+                            .is_none_or(|before| !crate::scene_table::same_rect(*before, *rect))
+                    })
+                    .collect();
+                self.place_layout_children(placements, &mut rects, &mut deltas, &mut resized)?;
+                continue;
+            }
             let Some(policy) = policies.get(&container).copied() else {
                 continue;
             };
@@ -1052,8 +1101,48 @@ impl<'a> SceneHierarchy<'a> {
             if preview.parent.size != parent_rect.size {
                 return Err("nested parent growth did not converge".into());
             }
+            self.place_layout_children(
+                children.into_iter().zip(preview.children).collect(),
+                &mut rects,
+                &mut deltas,
+                &mut resized,
+            )?;
+        }
 
-            for (child, rect) in children.into_iter().zip(preview.children) {
+        self.add_rigid_connector_deltas(&mut deltas);
+        let mut candidate = self.stored_canvas();
+        Sheet::translate_canvas_objects_by_delta(&mut candidate, &deltas)?;
+        for (&id, &size) in &resized {
+            candidate.objects[self.objects[&id]].rect.size = size;
+        }
+        candidate.scene.tables.extend(fitted_tables);
+        let affected: Vec<_> = self
+            .preorder()
+            .into_iter()
+            .filter(|id| deltas.contains_key(id) || resized.contains_key(id))
+            .collect();
+        validate(&SceneEditContext {
+            kind: SceneEditKind::Layout,
+            before: self,
+            after: self,
+            geometry: &candidate,
+            selection: &scheduled,
+            affected: &affected,
+            edge_parent_changes: &[],
+        })?;
+        Ok(candidate)
+    }
+
+    /// Moves and resizes laid-out children; descendants follow each move.
+    fn place_layout_children(
+        &self,
+        placements: Vec<(CanvasObjectId, Rect)>,
+        rects: &mut HashMap<CanvasObjectId, Rect>,
+        deltas: &mut HashMap<CanvasObjectId, Vec2>,
+        resized: &mut HashMap<CanvasObjectId, Vec2>,
+    ) -> Result<(), String> {
+        {
+            for (child, rect) in placements {
                 let before = rects[&child];
                 let delta = rect.min - before.min;
                 let size_changed = rect.size != before.size;
@@ -1088,28 +1177,7 @@ impl<'a> SceneHierarchy<'a> {
                 }
             }
         }
-
-        self.add_rigid_connector_deltas(&mut deltas);
-        let mut candidate = self.stored_canvas();
-        Sheet::translate_canvas_objects_by_delta(&mut candidate, &deltas)?;
-        for (&id, &size) in &resized {
-            candidate.objects[self.objects[&id]].rect.size = size;
-        }
-        let affected: Vec<_> = self
-            .preorder()
-            .into_iter()
-            .filter(|id| deltas.contains_key(id) || resized.contains_key(id))
-            .collect();
-        validate(&SceneEditContext {
-            kind: SceneEditKind::Layout,
-            before: self,
-            after: self,
-            geometry: &candidate,
-            selection: &scheduled,
-            affected: &affected,
-            edge_parent_changes: &[],
-        })?;
-        Ok(candidate)
+        Ok(())
     }
 
     fn add_rigid_connector_deltas(&self, deltas: &mut HashMap<CanvasObjectId, Vec2>) {

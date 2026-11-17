@@ -63,6 +63,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 "draw.io passthrough requires native format version 37".into(),
             ));
         }
+        if version < 46 && book.has_tables() {
+            return Err(IoError::NewerVersion(
+                "tables require native format version 46".into(),
+            ));
+        }
         if version < 45 && book.has_layers() {
             return Err(IoError::NewerVersion(
                 "layers require native format version 45".into(),
@@ -286,6 +291,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(book)
     } else {
         let book: Workbook = serde_json::from_slice(bytes)?;
+        if book.has_tables() {
+            return Err(IoError::NewerVersion(
+                "tables require native format version 46".into(),
+            ));
+        }
         if book.has_layers() {
             return Err(IoError::NewerVersion(
                 "layers require native format version 45".into(),

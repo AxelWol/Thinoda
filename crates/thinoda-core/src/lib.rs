@@ -39,6 +39,7 @@ pub mod sankey;
 pub mod scene;
 pub mod scene_hierarchy;
 pub mod scene_layout;
+pub mod scene_table;
 pub mod schedule;
 pub mod search;
 pub mod semantic;

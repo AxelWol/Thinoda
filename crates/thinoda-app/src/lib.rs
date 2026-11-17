@@ -5,6 +5,7 @@ pub mod app;
 mod attachments;
 mod board_clipboard;
 mod board_layers_ui;
+mod board_table_ui;
 mod board_ui;
 pub mod brand;
 mod cloud_changes;

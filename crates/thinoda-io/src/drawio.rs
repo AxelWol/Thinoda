@@ -71,6 +71,7 @@ const OWNED_STYLE_KEYS: &[&str] = &[
     "bottom",
     "childLayout",
     "collapsible",
+    "colspan",
     "container",
     "curved",
     "direction",
@@ -84,6 +85,8 @@ const OWNED_STYLE_KEYS: &[&str] = &[
     "entryPerimeter",
     "entryX",
     "entryY",
+    "evenColumnColor",
+    "evenRowColor",
     "exitDx",
     "exitDy",
     "exitPerimeter",
@@ -107,6 +110,8 @@ const OWNED_STYLE_KEYS: &[&str] = &[
     "marginLeft",
     "marginRight",
     "marginTop",
+    "oddColumnColor",
+    "oddRowColor",
     "opacity",
     "perimeter",
     "perimeterSpacing",
@@ -117,6 +122,7 @@ const OWNED_STYLE_KEYS: &[&str] = &[
     "rotation",
     "rounded",
     "roundedPerimeter",
+    "rowspan",
     "rSize",
     "shape",
     "size",
@@ -852,7 +858,7 @@ enum ConstraintPerimeter {
     Unknown,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Style {
     tokens: Vec<String>,
     map: HashMap<String, String>,
@@ -2921,6 +2927,13 @@ impl<'a> PageImport<'a> {
         if matches!(cell.style.shape(), "note" | "note2") && !cell.style.draws_stencil() {
             self.warn(ImportWarning::DrawioFoldedNotesApproximated);
         }
+        if cell.style.get("childLayout") == Some("tableLayout") {
+            if self.table(index, rect, context, depth) {
+                return;
+            }
+            log::warn!("draw.io table {} imported without its grid", cell.id);
+            self.warn(ImportWarning::DrawioSceneLayoutNotPreserved);
+        }
         match kind {
             Kind::Group => {
                 if context.scene_parent.is_some() {
@@ -3111,6 +3124,399 @@ impl<'a> PageImport<'a> {
             self.sheet.canvas.scene.layout_policies.insert(id, policy);
         }
         Some(id)
+    }
+
+    /// Imports a draw.io `tableLayout` container as a native table whose rows
+    /// and cells become its grid. Returns false, before creating anything,
+    /// when the source is not a rectangular grid of rows and cells.
+    fn table(&mut self, index: usize, rect: Rect, context: Context, depth: usize) -> bool {
+        use thinoda_core::scene_layout::{
+            ContainerLayout, ContainerLayoutPolicy, HeaderPolicy, HeaderSide,
+        };
+        use thinoda_core::scene_table::{
+            MAX_TABLE_SLOTS, MAX_TABLE_TRACKS, MIN_TABLE_TRACK, SceneTable, SceneTableCell,
+            TableStripes, table_body, table_frame_size,
+        };
+
+        let cells = self.cells;
+        let cell = &cells[index];
+        let style = &cell.style;
+        if context.bucket.is_some()
+            || cell.collapsed
+            || style.rotation() != 0.0
+            || depth + 3 > MAX_CELL_DEPTH
+        {
+            return false;
+        }
+        let vertices = |parent: usize| -> Vec<usize> {
+            self.children[parent]
+                .iter()
+                .copied()
+                .filter(|&child| cells[child].vertex)
+                .collect()
+        };
+        let rows = vertices(index);
+        let grid: Vec<Vec<usize>> = rows.iter().map(|&row| vertices(row)).collect();
+        let columns = grid.first().map_or(0, Vec::len);
+        if rows.is_empty()
+            || rows.len() > MAX_TABLE_TRACKS
+            || columns == 0
+            || columns > MAX_TABLE_TRACKS
+            || rows.len() * columns > MAX_TABLE_SLOTS
+            || grid.iter().any(|row| row.len() != columns)
+            || rows
+                .iter()
+                .chain(grid.iter().flatten())
+                .any(|&cell| cells[cell].geometry.invalid_frame)
+        {
+            return false;
+        }
+
+        // draw.io treats tables like swimlanes: an absent startSize is 40.
+        let default_extent = if matches!(style.shape(), "table" | "swimlane") {
+            40.0
+        } else {
+            0.0
+        };
+        let horizontal = style.get("horizontal") != Some("0");
+        let limit = if horizontal { rect.size.y } else { rect.size.x };
+        let source_extent = style.num("startSize").unwrap_or(default_extent);
+        let extent = source_extent.clamp(0.0, (limit - MIN_TABLE_TRACK).max(0.0));
+        if extent != source_extent {
+            self.warn(ImportWarning::Formatting);
+        }
+        let header = (extent > 0.0).then_some(HeaderPolicy {
+            side: if horizontal {
+                HeaderSide::Top
+            } else {
+                HeaderSide::Left
+            },
+            extent,
+        });
+        let Ok(body) = table_body(rect, header) else {
+            return false;
+        };
+
+        let span = |cell: usize, key: &str, room: usize| -> (usize, bool) {
+            let style = &cells[cell].style;
+            match style.get(key) {
+                None => (1, false),
+                Some(raw) => match raw.trim().parse::<usize>() {
+                    Ok(span) if (1..=room).contains(&span) => (span, false),
+                    _ => (1, true),
+                },
+            }
+        };
+        let fit = |sizes: Vec<f32>, total: f32| -> Vec<f32> {
+            let sum: f32 = sizes.iter().sum();
+            let count = sizes.len() as f32;
+            sizes
+                .into_iter()
+                .map(|size| {
+                    let size = if sum > 0.0 && sum.is_finite() && total > 0.0 {
+                        size * total / sum
+                    } else {
+                        total / count
+                    };
+                    (size.round()).max(MIN_TABLE_TRACK)
+                })
+                .collect()
+        };
+        let row_sizes = rows
+            .iter()
+            .map(|&row| cells[row].geometry.height.max(0.0))
+            .collect();
+        // Prefer an unmerged cell of each column; merged ones keep their slot
+        // size only as alternate bounds.
+        let column_sizes = (0..columns)
+            .map(|column| {
+                let source = grid
+                    .iter()
+                    .map(|row| row[column])
+                    .find(|&cell| span(cell, "colspan", columns).0 == 1)
+                    .unwrap_or(grid[0][column]);
+                let geometry = &cells[source].geometry;
+                match geometry.alternate_bounds {
+                    Some(bounds) => bounds.size.x.max(0.0),
+                    None => geometry.width.max(0.0) / span(source, "colspan", columns).0 as f32,
+                }
+            })
+            .collect();
+        let mut table = SceneTable {
+            rows: fit(row_sizes, body.size.y),
+            columns: fit(column_sizes, body.size.x),
+            cells: Vec::new(),
+            stripes: TableStripes {
+                even_rows: style.color("evenRowColor", ""),
+                odd_rows: style.color("oddRowColor", ""),
+                even_columns: style.color("evenColumnColor", ""),
+                odd_columns: style.color("oddColumnColor", ""),
+            },
+        };
+
+        // Each slot belongs to the first cell whose span reaches it; covered
+        // source cells are hidden in draw.io and only their content is lost.
+        let mut covered = vec![false; rows.len() * columns];
+        let mut sources: Vec<usize> = Vec::new();
+        let mut clamped = false;
+        for (r, row) in grid.iter().enumerate() {
+            for (c, &source) in row.iter().enumerate() {
+                if covered[r * columns + c] {
+                    if !self.label(&cells[source]).trim().is_empty()
+                        || self.children[source]
+                            .iter()
+                            .any(|&child| cells[child].vertex || cells[child].edge)
+                    {
+                        self.warn(ImportWarning::Formatting);
+                    }
+                    continue;
+                }
+                let (mut row_span, bad_row) = span(source, "rowspan", rows.len() - r);
+                let (mut column_span, bad_column) = span(source, "colspan", columns - c);
+                clamped |= bad_row || bad_column;
+                let free = |covered: &[bool], r: usize, c: usize| !covered[r * columns + c];
+                let width = (c..c + column_span)
+                    .take_while(|&column| free(&covered, r, column))
+                    .count();
+                if width < column_span {
+                    column_span = width;
+                    clamped = true;
+                }
+                let height = (r..r + row_span)
+                    .take_while(|&row| {
+                        (c..c + column_span).all(|column| free(&covered, row, column))
+                    })
+                    .count();
+                if height < row_span {
+                    row_span = height;
+                    clamped = true;
+                }
+                for row in r..r + row_span {
+                    for column in c..c + column_span {
+                        covered[row * columns + column] = true;
+                    }
+                }
+                let mut slot = SceneTableCell::new(CanvasObjectId(0), r, c);
+                slot.row_span = row_span as u16;
+                slot.column_span = column_span as u16;
+                table.cells.push(slot);
+                sources.push(source);
+            }
+        }
+        if clamped {
+            self.warn(ImportWarning::Formatting);
+        }
+        if table.validate().is_err() {
+            return false;
+        }
+        let actual: HashSet<usize> = sources.iter().copied().collect();
+
+        let frame = Rect::from_min_size(rect.min, table_frame_size(&table, header));
+        if frame.size != rect.size {
+            self.warn(ImportWarning::Formatting);
+        }
+        let Ok(body) = table_body(frame, header) else {
+            return false;
+        };
+        let label = self.label(cell);
+        let mut object = CanvasObject::shape(ShapeKind::Rectangle, frame);
+        if let CanvasObjectKind::Shape {
+            label: object_label,
+            ..
+        } = &mut object.kind
+        {
+            *object_label = label;
+        }
+        object.style = object_style(style);
+        object.band = style.band();
+        object.alt_text = cell.tooltip.clone().unwrap_or_default();
+        if let Some(header) = header {
+            let mut stencil =
+                thinoda_core::stencil_object::StencilRef::new("thinoda.general", "header-frame-v2");
+            stencil.parameters.insert(
+                "headerSide".into(),
+                if header.side == HeaderSide::Top {
+                    0.0
+                } else {
+                    3.0
+                },
+            );
+            stencil
+                .parameters
+                .insert("headerHeight".into(), f64::from(header.extent));
+            object.stencil = Some(stencil);
+        }
+        let Some(table_id) = self.add_object(index, object, context) else {
+            return false;
+        };
+        self.sheet.canvas.scene.containers.insert(table_id);
+        if let Some(header) = header {
+            self.sheet.canvas.scene.layout_policies.insert(
+                table_id,
+                ContainerLayoutPolicy {
+                    header,
+                    layout: ContainerLayout::Free,
+                },
+            );
+        }
+        self.items.insert(index, Item::Container(table_id));
+
+        let table_context = Context {
+            origin: rect.min,
+            parent_size: rect.size,
+            parent_is_vertex: true,
+            zone: None,
+            bucket: None,
+            scene_parent: Some(table_id),
+            ..context
+        };
+        let mut complete = true;
+        for (r, &row) in rows.iter().enumerate() {
+            self.visited[row] = true;
+            let row_cell = &cells[row];
+            if !self.label(row_cell).trim().is_empty()
+                || row_cell.style.num("startSize").unwrap_or(0.0) > 0.0
+            {
+                self.warn(ImportWarning::Formatting);
+            }
+            let row_fill = if row_cell.style.shape() == "swimlane" {
+                row_cell.style.color("swimlaneFillColor", "fillOpacity")
+            } else {
+                row_cell.style.color("fillColor", "fillOpacity")
+            }
+            .filter(|fill| fill.a > 0);
+            for &source in &grid[r] {
+                if !actual.contains(&source) {
+                    self.mark_visited(source);
+                }
+            }
+            for (slot, &source) in sources.iter().enumerate() {
+                if usize::from(table.cells[slot].row) != r {
+                    continue;
+                }
+                let source_cell = &cells[source];
+                let source_style = &source_cell.style;
+                self.visited[source] = true;
+                self.paint_order.push(source);
+                let cell_rect = table.cell_rect(body, &table.cells[slot]);
+                let label = self.label(source_cell);
+                let mut object = CanvasObject::shape(ShapeKind::Rectangle, cell_rect);
+                object.style = object_style(source_style);
+                object.band = source_style.band();
+                object.alt_text = source_cell.tooltip.clone().unwrap_or_default();
+                let has_label = !label.trim().is_empty();
+                if let CanvasObjectKind::Shape {
+                    label: object_label,
+                    ..
+                } = &mut object.kind
+                {
+                    *object_label = label;
+                }
+                match source_style.shape() {
+                    "partialRectangle" => {
+                        // draw.io paints table grid lines on the table; Thinoda
+                        // paints them as cell sides in the table's stroke.
+                        let mut sides = source_style.rectangle_sides();
+                        let row_lines = style.get("rowLines") != Some("0");
+                        let column_lines = style.get("columnLines") != Some("0");
+                        sides.top |= row_lines;
+                        sides.bottom |= row_lines;
+                        sides.left |= column_lines;
+                        sides.right |= column_lines;
+                        object.rectangle_sides = Some(sides);
+                        let outline_visible =
+                            sides.top || sides.right || sides.bottom || sides.left;
+                        let mut resolved = source_style.clone();
+                        if resolved.get("strokeColor") == Some("inherit") {
+                            match style.get("strokeColor") {
+                                Some(stroke) => {
+                                    resolved.map.insert("strokeColor".into(), stroke.into());
+                                }
+                                None => {
+                                    resolved.map.remove("strokeColor");
+                                }
+                            }
+                        }
+                        if resolved_shape_colors(
+                            &resolved,
+                            &mut object,
+                            has_label,
+                            self.adaptive_fixed_colors,
+                            outline_visible,
+                        ) {
+                            self.warn(ImportWarning::Formatting);
+                        }
+                    }
+                    "swimlane" => {
+                        object.style.fill = source_style.color("swimlaneFillColor", "fillOpacity");
+                        if source_style.num("startSize").unwrap_or(40.0) > 0.0 {
+                            self.warn(ImportWarning::Formatting);
+                        }
+                    }
+                    "" | "rect" | "rectangle" => {}
+                    _ => self.warn(ImportWarning::Formatting),
+                }
+                if source_style.rotation() != 0.0 {
+                    self.warn(ImportWarning::Formatting);
+                }
+                if object.style.fill.is_none_or(|fill| fill.a == 0)
+                    && let Some(fill) = row_fill
+                {
+                    object.style.fill = Some(fill);
+                }
+                let Some(id) = self.add_object(source, object, table_context) else {
+                    complete = false;
+                    self.mark_visited(source);
+                    continue;
+                };
+                self.sheet.canvas.scene.containers.insert(id);
+                self.items.insert(source, Item::Container(id));
+                table.cells[slot].id = id;
+                let content_context = Context {
+                    origin: cell_rect.min,
+                    parent_size: cell_rect.size,
+                    scene_parent: Some(id),
+                    ..table_context
+                };
+                for child in self.children[source].clone() {
+                    self.visit(child, content_context, depth + 3);
+                }
+            }
+            let row_origin = self.vertex_rect(row_cell, table_context).min;
+            for child in self.children[row].clone() {
+                if cells[child].edge {
+                    let context = Context {
+                        origin: row_origin,
+                        ..table_context
+                    };
+                    self.visit(child, context, depth + 2);
+                } else if !cells[child].vertex {
+                    self.mark_visited(child);
+                }
+            }
+        }
+        for child in self.children[index].clone() {
+            if cells[child].edge {
+                self.visit(child, table_context, depth + 1);
+            } else if !cells[child].vertex {
+                self.mark_visited(child);
+            }
+        }
+        if complete {
+            self.sheet.canvas.scene.tables.insert(table_id, table);
+        } else {
+            self.warn(ImportWarning::DrawioSceneLayoutNotPreserved);
+        }
+        true
+    }
+
+    fn mark_visited(&mut self, index: usize) {
+        let mut stack = vec![index];
+        while let Some(index) = stack.pop() {
+            if !std::mem::replace(&mut self.visited[index], true) {
+                stack.extend(self.children[index].iter().copied());
+            }
+        }
     }
 
     /// A container frame, unless it cannot be a valid Zone.
@@ -5118,6 +5524,8 @@ struct PageWriter<'a> {
     used_ids: HashSet<String>,
     /// draw.io layer cell id of each named board layer.
     layer_cells: HashMap<thinoda_core::BoardLayerId, String>,
+    /// Row cell ids and absolute row origins of each written table.
+    table_rows: HashMap<CanvasObjectId, Vec<(String, Vec2)>>,
 }
 
 /// Layer cell ids of named board layers: the imported draw.io id when it is
@@ -5293,6 +5701,7 @@ impl<'a> PageWriter<'a> {
             label_placement: None,
             used_ids: HashSet::new(),
             layer_cells: HashMap::new(),
+            table_rows: HashMap::new(),
         };
         let mut reserved: HashSet<String> = ["0", "1"].map(String::from).into();
         reserved.extend(sheet.topics.keys().map(|id| format!("t{}", id.0)));
@@ -5451,7 +5860,7 @@ impl<'a> PageWriter<'a> {
         rect: Rect,
         user: Option<(&str, &str)>,
     ) {
-        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, user);
+        self.vertex_with_alternate_bounds(id, label, style, parent, rect, None, false, user);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5463,13 +5872,10 @@ impl<'a> PageWriter<'a> {
         parent: &str,
         rect: Rect,
         alternate_bounds: Option<Rect>,
+        collapsed: bool,
         user: Option<(&str, &str)>,
     ) {
-        let collapsed = if alternate_bounds.is_some() {
-            " collapsed=\"1\""
-        } else {
-            ""
-        };
+        let collapsed = if collapsed { " collapsed=\"1\"" } else { "" };
         let geometry = match alternate_bounds {
             Some(bounds) => format!(
                 "<mxRectangle x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"alternateBounds\"/>",
@@ -5731,7 +6137,97 @@ impl<'a> PageWriter<'a> {
         self.write_member(member);
     }
 
+    /// Writes the rows of a table, then each row's cells in column order with
+    /// hidden placeholders for slots covered by a merged cell, as draw.io does.
+    fn table_grid(&mut self, id: CanvasObjectId, frame: Rect) {
+        const ROW_STYLE: &str = "shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;swimlaneBody=0;strokeColor=inherit;top=0;left=0;bottom=0;right=0;collapsible=0;dropTarget=0;fillColor=none;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;";
+        const COVERED_STYLE: &str = "shape=partialRectangle;html=1;whiteSpace=wrap;connectable=0;strokeColor=inherit;overflow=hidden;fillColor=none;top=0;left=0;bottom=0;right=0;pointerEvents=1;";
+        let Some(table) = self.sheet.canvas.scene.tables.get(&id) else {
+            return;
+        };
+        let header = thinoda_core::scene_table::table_header(&self.sheet.canvas, id);
+        let Ok(body) = thinoda_core::scene_table::table_body(frame, header) else {
+            return;
+        };
+        let table_id = self.cell_id(id);
+        let mut rows = Vec::with_capacity(table.rows.len());
+        let mut y = 0.0;
+        for (index, height) in table.rows.iter().enumerate() {
+            let row_id = self.generated_id(format!("{table_id}-row{index}"));
+            let offset = body.min - frame.min;
+            self.vertex(
+                &row_id,
+                "",
+                ROW_STYLE,
+                &table_id,
+                Rect::from_min_size(
+                    Vec2::new(offset.x, offset.y + y),
+                    Vec2::new(body.size.x, *height),
+                ),
+                None,
+            );
+            rows.push((row_id, Vec2::new(body.min.x, body.min.y + y)));
+            y += height;
+        }
+        self.table_rows.insert(id, rows.clone());
+        for (row, (row_id, _)) in rows.iter().enumerate() {
+            let mut x = 0.0;
+            for (column, width) in table.columns.iter().enumerate() {
+                match table.cell_at(row, column) {
+                    Some(cell)
+                        if usize::from(cell.row) == row && usize::from(cell.column) == column =>
+                    {
+                        self.write_member(BoardMember::Object(cell.id));
+                    }
+                    _ => {
+                        let covered = self.generated_id(format!("{row_id}-{column}"));
+                        let slot = Rect::from_min_size(
+                            Vec2::new(x, 0.0),
+                            Vec2::new(*width, table.rows[row]),
+                        );
+                        let mut out = String::new();
+                        std::mem::swap(&mut out, &mut self.out);
+                        self.vertex_with_alternate_bounds(
+                            &covered,
+                            "",
+                            COVERED_STYLE,
+                            row_id,
+                            slot,
+                            Some(Rect::from_min_size(Vec2::ZERO, slot.size)),
+                            false,
+                            None,
+                        );
+                        std::mem::swap(&mut out, &mut self.out);
+                        self.out.push_str(&out.replacen(
+                            " vertex=\"1\"",
+                            " vertex=\"1\" visible=\"0\"",
+                            1,
+                        ));
+                    }
+                }
+                x += width;
+            }
+        }
+    }
+
+    fn generated_id(&mut self, mut id: String) -> String {
+        while self.used_ids.contains(&id) {
+            id.push('x');
+        }
+        self.used_ids.insert(id.clone());
+        id
+    }
+
     fn write_member(&mut self, member: BoardMember) {
+        // Table cells are written by their table, under the table's row cells.
+        if let BoardMember::Object(id) = member
+            && let Some((table, _)) =
+                thinoda_core::scene_table::table_of_cell(&self.sheet.canvas, id)
+            && !self.table_rows.contains_key(&table)
+        {
+            self.member(BoardMember::Object(table));
+            return;
+        }
         if !self.written.insert(member) {
             return;
         }
@@ -5745,7 +6241,13 @@ impl<'a> PageWriter<'a> {
         let Some(object) = self.sheet.canvas.object(id) else {
             return;
         };
-        let (parent, origin) = self.parent(BoardMember::Object(id));
+        let table = self.sheet.canvas.scene.tables.get(&id);
+        let table_cell = thinoda_core::scene_table::table_of_cell(&self.sheet.canvas, id)
+            .and_then(|(table, grid)| Some((grid, *grid.cell(id)?, self.table_rows.get(&table)?)));
+        let (parent, origin) = match table_cell {
+            Some((_, cell, rows)) => rows[usize::from(cell.row)].clone(),
+            None => self.parent(BoardMember::Object(id)),
+        };
         let cell_id = self.cell_id(id);
         let drawio = object.drawio.as_deref();
         self.attributes = object
@@ -5769,7 +6271,34 @@ impl<'a> PageWriter<'a> {
                     .stencil
                     .as_ref()
                     .and_then(crate::drawio_stencil::native_style);
-                if let Some(mut native) = stencil_native {
+                if let Some(table) = table {
+                    style
+                        .push_str("shape=table;childLayout=tableLayout;container=1;collapsible=0;");
+                    let header = thinoda_core::scene_table::table_header(&self.sheet.canvas, id);
+                    style.push_str(&format!(
+                        "startSize={};",
+                        num(header.map_or(0.0, |header| header.extent))
+                    ));
+                    if header.is_some_and(|header| {
+                        header.side == thinoda_core::scene_layout::HeaderSide::Left
+                    }) {
+                        style.push_str("horizontal=0;");
+                    }
+                    let stripes = &table.stripes;
+                    for (key, color) in [
+                        ("evenRowColor", stripes.even_rows),
+                        ("oddRowColor", stripes.odd_rows),
+                        ("evenColumnColor", stripes.even_columns),
+                        ("oddColumnColor", stripes.odd_columns),
+                    ] {
+                        color_keys(
+                            &mut style,
+                            key,
+                            "",
+                            color.map(|color| Color { a: 255, ..color }),
+                        );
+                    }
+                } else if let Some(mut native) = stencil_native {
                     if scene_header.and_then(|stencil| stencil.parameters.get("headerSide"))
                         == Some(&3.0)
                     {
@@ -5800,6 +6329,7 @@ impl<'a> PageWriter<'a> {
                         ));
                     }
                 } else if *shape == ShapeKind::Rectangle
+                    && table_cell.is_none()
                     && style_ref.fill.is_some_and(|c| c.a == 0)
                     && style_ref.stroke.is_some_and(|c| c.a == 0)
                 {
@@ -5810,7 +6340,7 @@ impl<'a> PageWriter<'a> {
                 if let Some(margin) = object.double_ellipse_margin {
                     style.push_str(&format!("margin={};", num(margin)));
                 }
-                if let Some(stencil) = &object.stencil {
+                if let Some(stencil) = object.stencil.as_ref().filter(|_| table.is_none()) {
                     if let Some(scene_header) = scene_header {
                         if let Some(extent) = scene_header.parameters.get("headerHeight") {
                             style.push_str(&format!("startSize={};", num(*extent as f32)));
@@ -5819,7 +6349,15 @@ impl<'a> PageWriter<'a> {
                         style.push_str(&crate::drawio_stencil::reference_style(stencil));
                     }
                 }
-                if scene_container {
+                if let Some((_, cell, _)) = table_cell {
+                    if cell.row_span > 1 {
+                        style.push_str(&format!("rowspan={};", cell.row_span));
+                    }
+                    if cell.column_span > 1 {
+                        style.push_str(&format!("colspan={};", cell.column_span));
+                    }
+                }
+                if scene_container && table.is_none() {
                     style.push_str("container=1;");
                     if is_isolated_scene_container(self.sheet, id) {
                         style.push_str("thinodaSceneContainer=1;");
@@ -5870,15 +6408,31 @@ impl<'a> PageWriter<'a> {
                 );
                 passthrough_style(&mut style, drawio);
                 let user = (!object.alt_text.is_empty()).then_some((object.alt_text.as_str(), ""));
+                // draw.io keeps a table cell's own slot size as its alternate bounds.
+                let slot = table_cell.map(|(grid, cell, _)| {
+                    Rect::from_min_size(
+                        Vec2::ZERO,
+                        Vec2::new(
+                            grid.columns[usize::from(cell.column)],
+                            grid.rows[usize::from(cell.row)],
+                        ),
+                    )
+                });
                 self.vertex_with_alternate_bounds(
                     &cell_id,
                     label,
                     &style,
                     &parent,
                     object.rect.translate(Vec2::ZERO - origin),
-                    collapsed_bounds.map(|bounds| bounds.translate(Vec2::ZERO - origin)),
+                    slot.or_else(|| {
+                        collapsed_bounds.map(|bounds| bounds.translate(Vec2::ZERO - origin))
+                    }),
+                    collapsed_bounds.is_some(),
                     user,
                 );
+                if table.is_some() {
+                    self.table_grid(id, object.rect);
+                }
             }
             CanvasObjectKind::Connector(connector) => {
                 let mut style = String::from("html=1;");

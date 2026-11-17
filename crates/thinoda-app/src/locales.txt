@@ -2367,3 +2367,20 @@ Layer unlocked|Capa desbloqueada|Calque déverrouillé|Lag låst op|Laag ontgren
 Layer moved|Capa movida|Calque déplacé|Lag flyttet|Laag verplaatst|Camada movida|Livello spostato|Przeniesiono warstwę
 Layer deleted|Capa eliminada|Calque supprimé|Lag slettet|Laag verwijderd|Camada eliminada|Livello eliminato|Usunięto warstwę
 Moved selection to layer|Selección movida a la capa|Sélection déplacée vers le calque|Markering flyttet til lag|Selectie naar laag verplaatst|Seleção movida para a camada|Selezione spostata sul livello|Przeniesiono zaznaczenie na warstwę
+Insert table|Insertar tabla|Insérer un tableau|Indsæt tabel|Tabel invoegen|Inserir tabela|Inserisci tabella|Wstaw tabelę
+Rows|Filas|Lignes|Rækker|Rijen|Linhas|Righe|Wiersze
+Columns|Columnas|Colonnes|Kolonner|Kolommen|Colunas|Colonne|Kolumny
+Table|Tabla|Tableau|Tabel|Tabel|Tabela|Tabella|Tabela
+Insert row above|Insertar fila encima|Insérer une ligne au-dessus|Indsæt række over|Rij boven invoegen|Inserir linha acima|Inserisci riga sopra|Wstaw wiersz powyżej
+Insert row below|Insertar fila debajo|Insérer une ligne en dessous|Indsæt række under|Rij onder invoegen|Inserir linha abaixo|Inserisci riga sotto|Wstaw wiersz poniżej
+Insert column left|Insertar columna a la izquierda|Insérer une colonne à gauche|Indsæt kolonne til venstre|Kolom links invoegen|Inserir coluna à esquerda|Inserisci colonna a sinistra|Wstaw kolumnę z lewej
+Insert column right|Insertar columna a la derecha|Insérer une colonne à droite|Indsæt kolonne til højre|Kolom rechts invoegen|Inserir coluna à direita|Inserisci colonna a destra|Wstaw kolumnę z prawej
+Delete row|Eliminar fila|Supprimer la ligne|Slet række|Rij verwijderen|Excluir linha|Elimina riga|Usuń wiersz
+Delete column|Eliminar columna|Supprimer la colonne|Slet kolonne|Kolom verwijderen|Excluir coluna|Elimina colonna|Usuń kolumnę
+Merge cells|Combinar celdas|Fusionner les cellules|Flet celler|Cellen samenvoegen|Mesclar células|Unisci celle|Scal komórki
+Unmerge cells|Separar celdas|Annuler la fusion des cellules|Ophæv fletning af celler|Samenvoegen van cellen opheffen|Desfazer mesclagem de células|Dividi celle|Rozdziel komórki
+Row height|Alto de fila|Hauteur de ligne|Rækkehøjde|Rijhoogte|Altura da linha|Altezza riga|Wysokość wiersza
+Column width|Ancho de columna|Largeur de colonne|Kolonnebredde|Kolombreedte|Largura da coluna|Larghezza colonna|Szerokość kolumny
+Row stripes|Filas alternas|Lignes alternées|Rækkestriber|Rijstrepen|Linhas alternadas|Righe alternate|Paski wierszy
+Column stripes|Columnas alternas|Colonnes alternées|Kolonnestriber|Kolomstrepen|Colunas alternadas|Colonne alternate|Paski kolumn
+Select cells to delete, merge or resize rows and columns.|Selecciona celdas para eliminar, combinar o redimensionar filas y columnas.|Sélectionnez des cellules pour supprimer, fusionner ou redimensionner des lignes et colonnes.|Vælg celler for at slette, flette eller ændre størrelse på rækker og kolonner.|Selecteer cellen om rijen en kolommen te verwijderen, samen te voegen of te vergroten of verkleinen.|Selecione células para excluir, mesclar ou redimensionar linhas e colunas.|Seleziona le celle per eliminare, unire o ridimensionare righe e colonne.|Zaznacz komórki, aby usuwać, scalać lub zmieniać rozmiar wierszy i kolumn.

@@ -457,6 +457,30 @@ impl MapView {
         Ok(id)
     }
 
+    /// Inserts a `rows` × `columns` table into free space like
+    /// [`Self::insert_board_shape`], selecting the new table.
+    pub fn insert_board_table(
+        &mut self,
+        doc: &mut Document,
+        rows: usize,
+        columns: usize,
+    ) -> EditResult<CanvasObjectId> {
+        use thinoda_core::scene_table::{DEFAULT_TABLE_COLUMN, DEFAULT_TABLE_ROW};
+        self.try_commit_edit(doc)?;
+        self.try_commit_board_label(doc)?;
+        let layout = self.layout_for(doc);
+        let scene = thinoda_core::scene::build_scene(doc.sheet(), &layout);
+        let size = Vec2::new(
+            DEFAULT_TABLE_COLUMN * columns as f32,
+            DEFAULT_TABLE_ROW * rows as f32,
+        );
+        let center = insert_spot(doc.sheet(), self, &scene, size);
+        let id = doc.insert_canvas_table(center - size * 0.5, rows, columns, None)?;
+        select_hit(self, doc.sheet(), SceneHit::Object(id), false);
+        self.reveal_board_object(id);
+        Ok(id)
+    }
+
     pub fn has_board_label_changes(&self) -> bool {
         self.board_input
             .label
