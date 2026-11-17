@@ -93,20 +93,20 @@ unbound diagrams must never be silently promoted by interpreting their labels.
 
 ## draw.io diagram support (2026-11-05)
 
-🟡 In progress (Milestone A — codec, import, export — landed; see DRAWIO.md §4.1).
-[DRAWIO.md](DRAWIO.md) holds the research (app.diagrams.net 32.6.10,
-file format), the concept (native board model + lossless round-trip contract,
-`.drawio` editable in place, Apache-2.0 generic libraries bundled, vendor sets
-downloaded on demand) and phases 0–14. Phase 1 changes shape placement on all
-boards to draw.io behaviour and ships independently of file support.
+🟡 In progress. On 2026-11-17 the plan was rewritten: [DRAWIO.md](DRAWIO.md) holds
+the research (draw.io desktop 32.6.10, stencil coverage), the gap analysis of all
+features, the concept and phases D0–D15 with their progress record;
+[DRAWIO-ARCHITECTURE.md](DRAWIO-ARCHITECTURE.md) keeps the binding contracts.
+The progress records of the retired plan (Milestone A, placement, markers,
+standalone shapes) remain in [its last revision](https://github.com/AxelWol/Thinoda/blob/d01c023/docs/DRAWIO.md).
 
 **Architecture clarification (2026-11-12):** future object support is driven by
 extensible JSON stencil definitions and a shared, bounded interpreter, not more
-hardcoded native shape variants. [DRAWIO.md §3.1.2](DRAWIO.md#312-json-stencil-dsl-and-interpreter-contract-proposed-2026-11-12)
+hardcoded native shape variants. [DRAWIO-ARCHITECTURE.md §3.1.2](DRAWIO-ARCHITECTURE.md#312-json-stencil-dsl-and-interpreter-contract-proposed-2026-11-12)
 defines the proposed DSL, persistence, third-party adapters and ST0-ST7 migration.
 Existing shapes remain compatible while migrating. The interpreter foundation
 is implemented; persistence/rendering/library integration is partial, as
-recorded in DRAWIO.md's implementation status. The unfinished shape-specific
+recorded in the retired plan's implementation status. The unfinished shape-specific
 envelope prototype has been shelved.
 
 ## Sankey family support (2026-11-11)
@@ -159,18 +159,18 @@ The following are outstanding priorities, not claims of release acceptance:
 ## Latest task and release continuation
 
 The latest status screenshots mix complete implementation slices with partially
-accepted work. The [draw.io phase table](DRAWIO.md#4-phase-plan) tracks each
+accepted work. The [draw.io phase table](DRAWIO.md#4-phased-plan-and-progress-record) tracks each
 parent phase separately; a completed slice does not close its parent. Retain the
 following work until its stated tests, written critique and acceptance gates are
 complete:
 
 | Screenshot task or follow-up | Status | Evidence or remaining work |
 |---|---|---|
-| Context-menu organization, FIM visibility, icon colors, separate pen options, stationary canvas and reserved toolbar space | Complete locally | Committed slices and critiques in [DRAWIO.md](DRAWIO.md#4-phase-plan); physical-device and assistive-technology acceptance remains a separate gate |
-| Bar-marker geometry, persistence, controls and validation | Complete locally | The bar-marker checkpoint in [DRAWIO.md](DRAWIO.md#41-implementation-progress) records compatibility, tests and critique; other marker and connector work remains |
+| Context-menu organization, FIM visibility, icon colors, separate pen options, stationary canvas and reserved toolbar space | Complete locally | Committed slices and critiques in [the retired draw.io plan](https://github.com/AxelWol/Thinoda/blob/d01c023/docs/DRAWIO.md#4-phase-plan); physical-device and assistive-technology acceptance remains a separate gate |
+| Bar-marker geometry, persistence, controls and validation | Complete locally | The bar-marker checkpoint in [the retired draw.io plan](https://github.com/AxelWol/Thinoda/blob/d01c023/docs/DRAWIO.md#41-implementation-progress) records compatibility, tests and critique; other marker and connector work remains |
 | Adjustable mockup rectangle radii | Complete locally | The absolute-radius checkpoint records persistence gates, tests, critique and limitations; generic stencils remain open |
 | Invisible draw.io anchors | Complete locally | The anchor checkpoint records transparent proxies, conversion warnings, tests and remaining source-fidelity limits; generic stencils remain open |
-| Draw.io standalone partial-rectangle sides | Complete locally | Four sides, direction and rotation are retained and editable; persistence, canvas and export checks, the critique and remaining adaptive-color limitations are recorded in [DRAWIO.md](DRAWIO.md#41-implementation-progress) |
+| Draw.io standalone partial-rectangle sides | Complete locally | Four sides, direction and rotation are retained and editable; persistence, canvas and export checks, the critique and remaining adaptive-color limitations are recorded in [the retired draw.io plan](https://github.com/AxelWol/Thinoda/blob/d01c023/docs/DRAWIO.md#41-implementation-progress) |
 | Draw.io shaped containers | Partial | Non-swimlane shapes, including partial rectangles, become frames with a formatting warning; preserve their appearance, editable hierarchy and connector behavior in the scene model |
 | Draw.io clipboard omissions | Partial | Pasting counts omitted frames and additional pages, scopes content warnings to the first page, and positions the actual copied content; preserving omitted content and real-host clipboard acceptance remain open |
 | Draw.io connector attachments | Partial | Group/frame and unresolved terminal detachments are reported on import and paste; retain editable attachments and accurate perimeter/port routing |
@@ -179,9 +179,9 @@ complete:
 | Draw.io explicit appearance diagnostics | Complete locally | Unresolved explicit colors and invalid opacity or stroke width now trigger a formatting warning; theme preservation and comprehensive appearance diagnostics remain open |
 | Draw.io CSS colors | Partial | Common static CSS colors are converted to editable sRGB; adaptive/dynamic color preservation, wider color spaces and full appearance fidelity remain open |
 | Draw.io double ellipses | Partial | Standalone shapes retain editable outlines, insets and eight default connector points; full text fidelity, shaped containers, adaptive colors, external-viewer acceptance and source-preserving save-back remain open |
-| Draw.io standalone double-ellipse outlines | Complete locally | Editable automatic/custom insets, persistence and clipboard gates, renderer checks, cross-browser paste/copy and the critique are recorded in [DRAWIO.md](DRAWIO.md#41-implementation-progress) |
+| Draw.io standalone double-ellipse outlines | Complete locally | Editable automatic/custom insets, persistence and clipboard gates, renderer checks, cross-browser paste/copy and the critique are recorded in [the retired draw.io plan](https://github.com/AxelWol/Thinoda/blob/d01c023/docs/DRAWIO.md#41-implementation-progress) |
 | Draw.io UML final states | Partial | Standalone symbols are editable with outer-ellipse connections; dynamic color links, external labels, shaped containers, exact visual parity and source-preserving save-back remain open |
-| Draw.io standalone final-state symbol | Complete locally | Editable native symbol, supported import/export with loss warnings, persistence gates, cross-browser paste/copy and the critique are recorded in [DRAWIO.md](DRAWIO.md#41-implementation-progress) |
+| Draw.io standalone final-state symbol | Complete locally | Editable native symbol, supported import/export with loss warnings, persistence gates, cross-browser paste/copy and the critique are recorded in [the retired draw.io plan](https://github.com/AxelWol/Thinoda/blob/d01c023/docs/DRAWIO.md#41-implementation-progress) |
 | Ellipse shape-picker previews | Complete locally | Built-in previews are transparent and theme-aware in both pickers; ordinary ellipses have one outline and the distinct double ellipse keeps two, without restyling inserted or imported content |
 | Draw.io flowchart annotations | Partial | Annotation 1 brackets import as editable open-sided rectangles with a formatting warning; exact paths, labels, ports and stencil identity remain open |
 | Draw.io flowchart processes | Partial | Rounded source stencils import as square editable processes with a warning; native processes export as tagged square rectangles. Exact source appearance, identity, ports and save-back remain open |
@@ -199,7 +199,7 @@ complete:
 | Draw.io folders and floorplan stencils | Open | Supplied examples use folder tabs, bounded labels and nested containers as well as floorplan chairs. Ensure approximations report their appearance loss until faithful rendering and editing are implemented |
 | Draw.io label colors and transparency | Partial | Removed colors and fully transparent text are distinguished; editor contrast and visual-export warnings are improved. Independent text opacity, adaptive defaults and label backgrounds still require versioned model and renderer work |
 | Draw.io label sizes and connector-label cells | Partial | Size loss and folded child-label formatting are disclosed; labeled board connector and flattened relationship exports use the 12-unit canvas size. Independent label placement, styling, rich text and source preservation remain open |
-| Draw.io label-size and folded-label diagnostics | Complete locally | Shape and connector size loss, named text styling and merged child labels are disclosed; the export adjustment, tests and critique are recorded in [DRAWIO.md](DRAWIO.md#41-implementation-progress) |
+| Draw.io label-size and folded-label diagnostics | Complete locally | Shape and connector size loss, named text styling and merged child labels are disclosed; the export adjustment, tests and critique are recorded in [the retired draw.io plan](https://github.com/AxelWol/Thinoda/blob/d01c023/docs/DRAWIO.md#41-implementation-progress) |
 | Windows pen ink | Partial | Pen-first browser interruption mitigation is implemented; native Windows pen identity, ambiguous or touch-first streams and physical-device acceptance remain |
 | SVG sheet clipboard | Partial | Windows and supported browsers publish SVG with editable sheet text; real system clipboard, recipient and cross-platform acceptance remain |
 | Ink input and performance | Partial | Define budgets and verify representative native, browser, GPU, touch and stylus workloads |

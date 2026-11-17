@@ -345,10 +345,11 @@ projection, export fidelity and rendered equations remain open; see PLAN.
 
 ### P1 — draw.io diagram support (user request, 2026-11-05)
 
-🟡 In progress; concept, support matrix and 15-phase plan in [DRAWIO.md](DRAWIO.md)
-(reviewed twice, findings resolved in its §7). Milestone A landed: `.drawio`,
+🟡 In progress; research, gap analysis, concept and phases D0–D15 in
+[DRAWIO.md](DRAWIO.md) (rewritten and rubber-duck reviewed 2026-11-17; contracts in
+[DRAWIO-ARCHITECTURE.md](DRAWIO-ARCHITECTURE.md)). Milestone A landed: `.drawio`,
 `.dio`, `.drawio.svg` and `.drawio.png` open as imported copies; File › Export ›
-draw.io and Save As `.drawio` write after the loss preflight (DRAWIO.md §4.1).
+draw.io and Save As `.drawio` write after the loss preflight (architecture §3.5).
 A draw.io-style GitHub corner mark (status bar and home screen, translated tooltip,
 opens the project page) landed with it. Shape placement, hover actions,
 quick-shape selection, shape-aware connector perimeters, waypoint editing and

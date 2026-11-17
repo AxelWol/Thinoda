@@ -86,6 +86,7 @@ pub fn import_drawio_stencils(
     }
 
     let mut ids = BTreeMap::new();
+    let mut shape_ids = Vec::with_capacity(shapes.len());
     let mut used = BTreeSet::new();
     for (index, shape) in shapes.iter().enumerate() {
         let name = shape.attr("name").unwrap_or_default();
@@ -99,18 +100,15 @@ pub fn import_drawio_stencils(
             id = format!("{base}-{n}");
             n += 1;
         }
-        ids.entry(name.to_string()).or_insert(id);
+        // Includes resolve to the first shape carrying a name, like draw.io.
+        ids.entry(name.to_string()).or_insert_with(|| id.clone());
+        shape_ids.push(id);
     }
 
     let mut diagnostics = Vec::new();
     let mut definitions = Vec::with_capacity(shapes.len());
-    for (index, shape) in shapes.iter().enumerate() {
+    for (shape, id) in shapes.iter().zip(shape_ids) {
         let name = shape.attr("name").unwrap_or_default();
-        let id = if name.is_empty() {
-            format!("shape-{}", index + 1)
-        } else {
-            ids[name].clone()
-        };
         let mut cx = Convert {
             ids: &ids,
             requires: BTreeSet::new(),
@@ -144,6 +142,14 @@ pub fn import_drawio_stencils(
         package,
         diagnostics,
     })
+}
+
+fn is_geometry(name: &str) -> bool {
+    matches!(name, "rect" | "roundrect" | "ellipse" | "path")
+}
+
+fn is_paint(name: &str) -> bool {
+    matches!(name, "fill" | "stroke" | "fillstroke")
 }
 
 /// Lowercase ASCII identifier from a draw.io stencil name.
@@ -186,22 +192,37 @@ impl Convert<'_> {
             stroke_width,
         };
 
+        // draw.io runs <background> as ordinary instructions before
+        // <foreground>; its first geometry is the outline. Thinoda seeds the
+        // outline as the current path, so the remaining background
+        // instructions (state, paint, later geometry) become a foreground
+        // prelude that keeps draw.io's execution order.
         let mut background = None;
+        let mut foreground = Vec::new();
         if let Some(bg) = shape.child("background") {
+            let mut prelude_before_outline = false;
             for child in &bg.children {
-                match self.geometry(child) {
-                    Some(op) if background.is_none() => background = Some(op),
-                    Some(_) => self.notes.push(
+                if background.is_none() {
+                    if let Some(op) = self.geometry(child) {
+                        background = Some(op);
+                        continue;
+                    }
+                    prelude_before_outline |= is_paint(&child.name);
+                } else if is_geometry(&child.name) {
+                    self.notes.push(
                         "background has extra geometry; only the first is the outline".into(),
-                    ),
-                    None => self.unsupported(&child.name),
+                    );
                 }
+                foreground.extend(self.ops(std::slice::from_ref(child)));
+            }
+            if prelude_before_outline {
+                self.notes
+                    .push("background paints before its outline geometry".into());
             }
         }
-        let foreground = shape
-            .child("foreground")
-            .map(|fg| self.ops(&fg.children))
-            .unwrap_or_default();
+        if let Some(fg) = shape.child("foreground") {
+            foreground.extend(self.ops(&fg.children));
+        }
 
         let mut names = BTreeSet::new();
         let connections = shape

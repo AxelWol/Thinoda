@@ -193,3 +193,35 @@ fn nested_unsupported_elements_and_oversized_payloads_are_not_skipped() {
     let huge = "A".repeat(17 * 1024 * 1024);
     assert!(import_drawio_stencils(&huge, "user.x", "").is_err());
 }
+
+#[test]
+fn background_state_and_extra_paths_run_before_foreground() {
+    let xml = r##"<shapes name="t">
+<shape name="Twin" w="10" h="10"><background><save/><fillcolor color="#ff0000"/><rect x="0" y="0" w="10" h="10"/><fillstroke/><ellipse x="2" y="2" w="6" h="6"/></background><foreground><stroke/></foreground></shape>
+<shape name="Twin" w="10" h="10"><background><rect x="0" y="0" w="10" h="10"/></background><foreground><fillstroke/></foreground></shape>
+</shapes>"##;
+    let import = import_drawio_stencils(xml, "user.t", "").expect("import");
+    let ids: Vec<_> = import
+        .package
+        .definitions
+        .iter()
+        .map(|d| d.id.as_str())
+        .collect();
+    assert_eq!(ids, ["twin", "twin-2"]);
+    let out = evaluate(&import.package, "twin", 10.0, 10.0).expect("renders");
+    // The outline is filled with the colour set before it, then the extra
+    // background ellipse is stroked by the foreground.
+    assert!(out.paths[0].background);
+    assert!(matches!(
+        out.paths[0].fill.as_ref().map(|f| &f.color),
+        Some(PaintRef::Rgb(_))
+    ));
+    assert_eq!(out.paths.len(), 2);
+    assert!(
+        import
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("extra geometry"))
+    );
+    assert!(evaluate(&import.package, "twin-2", 10.0, 10.0).is_ok());
+}

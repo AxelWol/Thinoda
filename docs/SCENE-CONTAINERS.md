@@ -7,7 +7,7 @@ partial, SC2 has partial layout-policy support, and SC3 has a bounded nested
 import/export slice; original-fixture and full loss-policy acceptance remain
 open.**
 This is the common structural contract for [draw.io support](DRAWIO.md) and
-[socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO.md section
+[socio-technical editing](SOCIO-TECHNICAL.md). It refines DRAWIO-ARCHITECTURE.md section
 3.2.1, rather than introducing a second container implementation.
 
 User requirement: "draw.io also has support for nested swimlanes. please
