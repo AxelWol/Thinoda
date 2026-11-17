@@ -1,0 +1,36 @@
+Thinoda bundled draw.io stencils
+================================
+
+catalog.json and packages.bin contain stencil shapes derived from the
+draw.io stencil libraries (https://github.com/jgraph/drawio),
+version 32.6.10, path src/main/webapp/stencils.
+
+Copyright (c) JGraph Ltd and contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use these files except in compliance with the License. A copy is included as
+LICENSE-APACHE; you may also obtain one at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+Upstream stencil restriction (src/main/webapp/stencils/LICENSE), verbatim:
+
+The icon sets and stencil libraries included in this software, and any derivatives thereof (including conversions to other formats, traced reproductions, substantially similar visual representations, or AI-generated images created using these icons as reference or training input), may not be used as software assets in, distributed for use with, or incorporated into Atlassian products or products distributed through the Atlassian marketplace or plugin ecosystem, without explicit written permission.
+
+This restriction does not apply to end-user diagram output (such as exported images or documents) created using this software.
+
+Modifications
+-------------
+Each upstream stencil XML file was converted into a Thinoda stencil package
+(JSON, deflate-compressed) by the Thinoda draw.io stencil translator
+(translator revision 1, bundle revision 1). The original XML source is
+stripped from the bundled definitions; geometry, styles and connection points
+are re-expressed in Thinoda's stencil format.
+
+Regenerate with:
+
+    cargo run --release -p thinoda-io --example drawio_stencil_bundle -- <drawio stencils xml dir>

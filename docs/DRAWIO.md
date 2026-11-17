@@ -73,7 +73,7 @@ approximately with a warning; **Preserved** = kept in a passthrough envelope
 | Pages | Page links `data:page/id` | Approx. (plain link) | D7 |
 | Layers | Named layers, visibility, lock, move to layer | Approx. (flattened; Below/Above bands only) | D8 |
 | Shapes | Core 16 + drawio 101 JS shapes | 31 native `ShapeKind`s + 32 JSON definitions; others approximate as rectangles | D5 |
-| Shapes | 9,090 XML stencils | Translator only; no family bundled, so `mxgraph.*` stencils approximate | D2, D4 |
+| Shapes | 9,090 XML stencils | 17 generic families bundled (81 packages, 2,238 shapes); vendor and platform families not yet available | D4 |
 | Shapes | 717 JS library shapes | Missing (rectangle fallback) | D5 |
 | Shapes | Edit Shape (stencil XML), inline `stencil(...)` | Native import of inline stencils; no editor | D12 |
 | Libraries | Sidebar sections, search, More Shapes | Library browser with built-in sections, imported packages, scratchpad, `.mxlibrary` import; no draw.io families | D3 |
@@ -153,17 +153,34 @@ A task is ticked only when implemented, tested and committed.
 
 Visual parity against draw.io reference renders is tracked in D15.
 
-### D2 — Bundled generic stencil families
+### D2 — Bundled generic stencil families ✅
 
-- [ ] License audit per family; bundle only families drawn by jgraph without third-party marks: basic, arrows, flowchart, bpmn, electrical, pid, floorplan, mockup, cabinets, eip, fluid_power, lean_mapping, sitemap, signs, networks, networks2, bootstrap. Android, iOS and Material (gmdl) mimic platform trademarks and move to D4
-- [ ] Ship `stencils/drawio/NOTICE` with the Apache-2.0 notice, the upstream stencil restriction text and modification provenance; reconcile architecture §3.8
-- [ ] Deterministic generator: pinned upstream version and per-file SHA-256, sorted files, source-order duplicate suffixes, compact serialization, fixed deflate level, translator revision; package limits checked per family
-- [ ] Lightweight catalog (aliases `mxgraph.<ns>.<name>`, titles, definition ids, package file) so lookup and search never decode packages; packages carry no import map
-- [ ] Lazy, cached decode API in thinoda-io; release wasm size budget ≤ 1 MB added by the bundle
-- [ ] draw.io import resolves catalog aliases and embeds one closure per bundled package per page (never one resource per definition); explicit Thinoda references to bundled packages resolve on re-import
-- [ ] Tests: catalog integrity, each package validates, decode counts stay lazy, a page with > 128 distinct bundled shapes plus images imports fully, corpus cells resolve, export keeps `shape=mxgraph...`
+- [x] License audit per family; bundle only families drawn by jgraph without third-party marks: basic, arrows, flowchart, bpmn, electrical, pid, floorplan, mockup, cabinets, eip, fluid_power, lean_mapping, sitemap, signs, networks, networks2, bootstrap. Android, iOS and Material (gmdl) mimic platform trademarks and move to D4
+- [x] Ship `stencils/drawio/NOTICE` with the Apache-2.0 notice, the upstream stencil restriction text and modification provenance; reconcile architecture §3.8
+- [x] Deterministic generator: pinned upstream version and per-file SHA-256, sorted files, source-order duplicate suffixes, compact serialization, fixed deflate level, translator revision; package limits checked per family
+- [x] Lightweight catalog (aliases `mxgraph.<ns>.<name>`, titles, definition ids, package file) so lookup and search never decode packages; packages carry no import map
+- [x] Lazy, cached decode API in thinoda-io; release wasm size budget ≤ 1 MB added by the bundle
+- [x] draw.io import resolves catalog aliases and embeds one closure per bundled package per page (never one resource per definition); explicit Thinoda references to bundled packages resolve on re-import
+- [x] Tests: catalog integrity, each package validates, decode counts stay lazy, a page with > 128 distinct bundled shapes plus images imports fully, corpus cells resolve, export keeps `shape=mxgraph...`
 
 Interchange contract: like draw.io itself, `.drawio` files reference bundled shapes by name. Native documents embed the definitions they use and never change; a `.drawio` file re-imported after a bundle regeneration draws the regenerated definition. The bundle revision is part of the package and regeneration notes are recorded here.
+
+Regeneration notes:
+
+| Bundle revision | Translator revision | Upstream | Contents |
+|---|---|---|---|
+| 1 | 1 | draw.io 32.6.10 | 17 families, 81 packages, 2,238 shapes, about 854 KB (catalog and compressed packages) |
+
+Regenerate with `cargo run --release -p thinoda-io --example drawio_stencil_bundle -- <dir>`,
+where `<dir>` holds the upstream `src/main/webapp/stencils` XML. The output is
+byte-identical for the same inputs. Change the bundle revision whenever the
+translator or the family list changes.
+
+Precedence when draw.io import resolves a shape: native exact kinds first; for
+approximate native kinds (for example rounded `process`, open-bracket
+annotations) only built-in and inline stencils, so the object stays an
+editable native kind; otherwise a bundled alias, but only from an explicit
+`shape=` key, because draw.io reads a bare first style token as a named style.
 
 ### D3 — Library browser for bundled families
 
@@ -247,6 +264,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D2 | 17 families bundled (81 packages, 2,238 shapes, about 854 KB); 253 cells in the example corpus now draw their stencils; approximate native kinds stay native; NOTICE and Apache text shipped |
 | 2026-11-17 | D1 | 8,040 of 8,040 shapes in converted files evaluate; aws4 (1,050 shapes) still fails as a file and moves to D4 |
 | 2026-11-17 | D0 | Research, gap analysis, plan, coverage probe, translator fixes (99.94 % of shapes in converted files), rubber-duck review folded in |
 
@@ -268,6 +286,22 @@ shapes rather than the element names' intent; parity wins because users compare
 against draw.io. Rounded paths (none in the 32.6.10 stencils) are only
 disclosed. 100 % evaluation is not visual parity; D15 still owns reference
 renders.
+
+**D2.** Keeping approximate native kinds over bundled stencils trades fidelity
+for editability: a rounded draw.io process stays a Thinoda process that users
+can restyle, instead of a frozen stencil. Bare style tokens are deliberately not
+resolved, matching draw.io, so such a cell keeps its fallback just as it
+draws as a plain rectangle in draw.io. Closures are built per package and per page from visible
+cells only and inserted when the first object uses them; hidden layers
+therefore never leave unused resources that would block draw.io export. A
+whole package is embedded even when a page uses one shape, so native documents
+grow by up to a package's size; this buys the 128-resource limit and stable
+re-import. `.drawio` interchange stays name-based, so a regenerated bundle can
+change how an exported file looks after re-import; native documents are
+unaffected. 34 corpus names in bundled namespaces still fall back: they are
+JavaScript-coded shapes (mockup containers, `bpmn.event`, `basic.rect`, ...)
+owned by D5. Package validity and evaluation are proven; visual parity is not
+and remains D15.
 
 ## 5. Rubber-duck findings
 

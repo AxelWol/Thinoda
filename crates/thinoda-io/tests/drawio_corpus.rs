@@ -792,6 +792,51 @@ fn real_drawio_diagrams_import_round_trip_and_render() {
 }
 
 #[test]
+fn corpus_cells_naming_bundled_drawio_shapes_draw_their_stencils() {
+    let Some(dir) = corpus_dir() else {
+        return;
+    };
+    let bundle = thinoda_io::drawio_bundle::bundle();
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "drawio"))
+        .collect();
+    files.sort();
+    let mut drawn = 0;
+    for path in &files {
+        let bytes = std::fs::read(path).unwrap();
+        let Ok(report) = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes) else {
+            continue;
+        };
+        for sheet in &report.workbook.sheets {
+            for object in &sheet.canvas.objects {
+                let Some(stencil) = &object.stencil else {
+                    continue;
+                };
+                if bundle.package_by_id(&stencil.package).is_none() {
+                    continue;
+                }
+                assert!(
+                    stencil.package_resource.is_some()
+                        && thinoda_core::stencil_object::render(object).is_some(),
+                    "{}: {}/{}",
+                    path.display(),
+                    stencil.package,
+                    stencil.definition
+                );
+                drawn += 1;
+            }
+        }
+    }
+    eprintln!("{drawn} corpus cell(s) drawn by bundled draw.io stencils");
+    if std::env::var_os("THINODA_DRAWIO_CORPUS").is_none() {
+        assert!(drawn >= 60, "{drawn}");
+    }
+}
+
+#[test]
 fn supplied_uml_activity_nested_swimlane_import_preserves_structure_and_geometry() {
     let bytes = include_bytes!("../../../docs/draw-io-examples/uml-activity-example.drawio");
     let report = thinoda_io::import_bytes_with_report(Format::DrawIo, bytes).unwrap();
@@ -947,7 +992,7 @@ fn supplied_gantt_processes_remain_editable_with_a_warning() {
 }
 
 #[test]
-fn supplied_floorplan_chair_placeholders_are_explicitly_reported() {
+fn supplied_floorplan_chairs_draw_their_bundled_stencils() {
     let Some(dir) = corpus_dir() else {
         return;
     };
@@ -963,30 +1008,27 @@ fn supplied_floorplan_chair_placeholders_are_explicitly_reported() {
         }
         let bytes = std::fs::read(path).unwrap();
         let report = thinoda_io::import_bytes_with_report(Format::DrawIo, &bytes).unwrap();
-        assert!(
-            report
-                .warnings
-                .contains(&thinoda_io::ImportWarning::UnsupportedDrawioShapes),
-            "{name}"
-        );
-        let placeholders = report
+        let chairs: Vec<_> = report
             .workbook
             .sheets
             .iter()
             .flat_map(|sheet| &sheet.canvas.objects)
             .filter(|object| {
-                matches!(
-                    object.kind,
-                    CanvasObjectKind::Shape {
-                        shape: ShapeKind::Rectangle,
-                        ..
-                    }
-                ) && object.label().is_empty()
+                object.label().is_empty()
                     && (object.rect.size == Vec2::new(40.0, 43.0)
                         || object.rect.size == Vec2::new(43.0, 40.0))
             })
-            .count();
-        assert!(placeholders >= minimum, "{name}: {placeholders}");
+            .collect();
+        assert!(chairs.len() >= minimum, "{name}: {}", chairs.len());
+        for chair in chairs {
+            let stencil = chair.stencil.as_ref();
+            assert!(
+                stencil.is_some_and(|stencil| {
+                    stencil.package == "drawio.floorplan" && stencil.definition.contains("chair")
+                }) && thinoda_core::stencil_object::render(chair).is_some(),
+                "{name}: {stencil:?}"
+            );
+        }
         report.workbook.validate().unwrap();
     }
 }

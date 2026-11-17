@@ -836,6 +836,10 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
   data was converted to JSON. Only converted stencil data is bundled; Rust code is
   written from spec; per-library provenance manifest (upstream version, file
   SHA-256, license per file).
+  Implemented in D2: `crates/thinoda-io/stencils/drawio/NOTICE` quotes the
+  restriction verbatim beside `LICENSE-APACHE`; `catalog.json` records the
+  upstream version, bundle and translator revisions, the license and each
+  source file's SHA-256; THIRD_PARTY_NOTICES.md points to both files.
 - Platform look-alike families (Android, iOS, Material) are treated like vendor sets.
 - Vendor sets (AWS, Azure, GCP, Cisco, IBM, …) not bundled; optional user-triggered
   download from pinned URL + SHA-256, vendor terms shown first; PRIVACY.md updated.

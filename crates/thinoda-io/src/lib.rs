@@ -5,6 +5,7 @@
 //! (including outlined text); JPEG always uses an opaque background.
 mod board_export;
 mod drawio;
+pub mod drawio_bundle;
 pub mod drawio_clipboard;
 pub mod drawio_library;
 pub mod drawio_stencil;
@@ -1078,7 +1079,17 @@ fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
         .objects
         .iter()
         .filter_map(|object| object.stencil.as_ref())
-        .filter(|stencil| stencil.package == drawio_stencil::INLINE_PACKAGE_ID)
+        .filter(|stencil| {
+            stencil.package == drawio_stencil::INLINE_PACKAGE_ID
+                || drawio_bundle::bundle()
+                    .package_by_id(&stencil.package)
+                    .and_then(|package| {
+                        package
+                            .definition(&stencil.definition)
+                            .map(thinoda_core::stencil::StencilPackage::definition_hash)
+                    })
+                    .is_some_and(|hash| stencil.definition_hash.as_ref() == Some(&hash))
+        })
         .filter_map(|stencil| stencil.package_resource.as_deref())
         .collect();
     sheet.topics.values().all(|topic| {
@@ -1089,7 +1100,7 @@ fn drawio_keeps_resources(sheet: &thinoda_core::Sheet) -> bool {
                 .is_none_or(|image| card_images.contains(image))
     }) && sheet.resources.entries.iter().all(|(id, resource)| {
         let reference = format!("{}{id}", thinoda_core::resources::RESOURCE_PREFIX);
-        // draw.io re-creates an imported inline stencil from its `shape=stencil(...)` style.
+        // draw.io re-creates an inline or unchanged bundled stencil from its `shape=` style.
         (resource.media_type == "application/json" && inline_stencils.contains(reference.as_str()))
             || (matches!(resource.media_type.as_str(), "image/png" | "image/jpeg")
                 && card_images.contains(reference.as_str()))

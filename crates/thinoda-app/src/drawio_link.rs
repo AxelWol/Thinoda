@@ -442,7 +442,7 @@ mod tests {
     fn unsupported_shape_link_shows_a_cancelable_specific_warning() {
         let xml = concat!(
             r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>"#,
-            r#"<mxCell id="chair" value="Chair" style="shape=mxgraph.floorplan.office_chair;" vertex="1" parent="1"><mxGeometry width="40" height="43" as="geometry"/></mxCell>"#,
+            r#"<mxCell id="chair" value="Chair" style="shape=mxgraph.example.not_a_stencil;" vertex="1" parent="1"><mxGeometry width="40" height="43" as="geometry"/></mxCell>"#,
             r#"</root></mxGraphModel>"#
         );
         let link = format!(

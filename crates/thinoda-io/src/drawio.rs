@@ -814,12 +814,21 @@ impl Style {
 
     /// A stencil reference: an explicit Thinoda reference, otherwise a plain
     /// draw.io shape that no native kind draws exactly but a built-in stencil
-    /// package (or the cell's inline `stencil(...)`) defines as data.
+    /// package (or the cell's inline `stencil(...)`) defines as data. Bundled
+    /// draw.io families only draw shapes without any native kind, so an
+    /// approximate native kind stays editable as that kind.
     fn stencil(&self) -> Option<thinoda_core::stencil_object::StencilRef> {
         let explicit = self.get(crate::drawio_stencil::STYLE_PACKAGE_KEY).is_some();
         let implicit = !explicit
-            && crate::drawio_stencil::maps_drawio_shape(self.shape())
-            && matches!(classify_native(self), Kind::Approx(..) | Kind::Unknown);
+            && match classify_native(self) {
+                Kind::Approx(..) => crate::drawio_stencil::maps_builtin_drawio_shape(self.shape()),
+                // A bare token is a named-style lookup, never a bundled shape.
+                Kind::Unknown if self.get("shape").is_some() => {
+                    crate::drawio_stencil::maps_drawio_shape(self.shape())
+                }
+                Kind::Unknown => crate::drawio_stencil::maps_builtin_drawio_shape(self.shape()),
+                _ => false,
+            };
         if !explicit && !implicit {
             return None;
         }
@@ -2103,7 +2112,18 @@ struct PageImport<'a> {
             String,
         )>,
     >,
+    bundled_stencils: Option<BundledStencils>,
 }
+
+/// Per bundled draw.io package id: the page's closure and, once an object
+/// uses it, its resource.
+type BundledStencils = HashMap<
+    String,
+    (
+        std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+        Option<String>,
+    ),
+>;
 
 impl<'a> PageImport<'a> {
     fn warn(&mut self, warning: ImportWarning) {
@@ -2186,6 +2206,88 @@ impl<'a> PageImport<'a> {
         self.inline_stencils.clone().flatten()
     }
 
+    /// The page's bundled draw.io stencils: one closure per bundled package
+    /// holding every definition the page's visible cells draw from it, so a
+    /// page never embeds one resource per shape.
+    fn bundled_stencils(&mut self) -> &mut BundledStencils {
+        if self.bundled_stencils.is_none() {
+            let bundle = crate::drawio_bundle::bundle();
+            let mut used: std::collections::BTreeMap<String, BTreeSet<String>> = Default::default();
+            for (index, cell) in self.cells.iter().enumerate() {
+                if let Some(stencil) = cell.style.stencil()
+                    && stencil.package_resource.is_none()
+                    && !stencil.is_installed_builtin()
+                    && self.shown(index)
+                    && bundle
+                        .package_by_id(&stencil.package)
+                        .is_some_and(|package| package.definition(&stencil.definition).is_some())
+                {
+                    used.entry(stencil.package)
+                        .or_default()
+                        .insert(stencil.definition);
+                }
+            }
+            let mut stencils = HashMap::new();
+            for (id, definitions) in used {
+                let roots: Vec<&str> = definitions.iter().map(String::as_str).collect();
+                if let Some(closure) = bundle
+                    .package_by_id(&id)
+                    .and_then(|package| package.definition_closure(&roots).ok())
+                {
+                    stencils.insert(id, (std::sync::Arc::new(closure), None));
+                }
+            }
+            self.bundled_stencils = Some(stencils);
+        }
+        self.bundled_stencils.get_or_insert_default()
+    }
+
+    /// The page closure of a bundled package and its resource, embedding the
+    /// resource when the first object draws from it.
+    fn bundled_stencil(
+        &mut self,
+        package: &str,
+    ) -> Option<(
+        std::sync::Arc<thinoda_core::stencil::StencilPackage>,
+        String,
+    )> {
+        let (closure, reference) = self.bundled_stencils().get(package)?.clone();
+        if let Some(reference) = reference {
+            return Some((closure, reference));
+        }
+        let bytes = serde_json::to_vec(closure.as_ref()).ok()?;
+        let resource = thinoda_core::resources::Resource::new(
+            "stencil-package.json",
+            "application/json",
+            bytes,
+        )
+        .ok()?;
+        let reference = self.sheet.resources.insert(resource).ok()?;
+        if let Some(entry) = self.bundled_stencils().get_mut(package) {
+            entry.1 = Some(reference.clone());
+        }
+        Some((closure, reference))
+    }
+
+    /// Whether the cell and all its ancestors are visible, as `visit` requires.
+    fn shown(&self, mut index: usize) -> bool {
+        for _ in 0..=MAX_CELL_DEPTH {
+            let cell = &self.cells[index];
+            if !cell.visible {
+                return false;
+            }
+            match cell
+                .parent
+                .as_deref()
+                .and_then(|parent| self.index.get(parent))
+            {
+                Some(&parent) if parent != index => index = parent,
+                _ => return true,
+            }
+        }
+        false
+    }
+
     fn add_object(
         &mut self,
         cell: usize,
@@ -2196,6 +2298,15 @@ impl<'a> PageImport<'a> {
             && stencil.package == crate::drawio_stencil::INLINE_PACKAGE_ID
             && stencil.package_resource.is_none()
             && let Some((package, reference)) = self.inline_stencils()
+            && package.definition(&stencil.definition).is_some()
+            && let Some(stencil) = &mut object.stencil
+        {
+            stencil.embed_package(package, reference);
+        }
+        if let Some(stencil) = &object.stencil
+            && stencil.package_resource.is_none()
+            && !stencil.is_installed_builtin()
+            && let Some((package, reference)) = self.bundled_stencil(&stencil.package.clone())
             && package.definition(&stencil.definition).is_some()
             && let Some(stencil) = &mut object.stencil
         {
@@ -3792,6 +3903,7 @@ fn import_page(
         deferred: Vec::new(),
         adaptive_fixed_colors: !matches!(model.attr("adaptiveColors"), Some("simple" | "none")),
         inline_stencils: None,
+        bundled_stencils: None,
     };
     import.run();
     if let Some(extension) = model.attr("thinodaSankey") {

@@ -25,6 +25,9 @@ use crate::drawio::{BoundedDecodeError, Element, decode_compressed_bounded, pars
 pub const CAP_IMAGE: &str = "drawio.image";
 /// Capability declared by definitions that include shapes from outside the file.
 pub const CAP_EXTERNAL_INCLUDE: &str = "drawio.include-shape";
+/// Revision of the conversion rules; bundled packages record the revision
+/// that generated them, and a change must regenerate the bundle.
+pub const TRANSLATOR_REVISION: u32 = 1;
 /// Extension key holding the bounded original `<shape>` XML.
 pub const SOURCE_EXTENSION: &str = "drawio.source";
 const MAX_SOURCE_BYTES: usize = 32 * 1024;
@@ -968,8 +971,15 @@ fn import_index() -> &'static HashMap<String, ImportTarget> {
     })
 }
 
-/// Whether a built-in package maps the draw.io shape name to a definition.
+/// Whether a built-in package, the bundled draw.io families or the shape's
+/// inline payload define the draw.io shape name. Never decodes a package.
 pub fn maps_drawio_shape(shape: &str) -> bool {
+    maps_builtin_drawio_shape(shape) || crate::drawio_bundle::bundle().has_alias(shape)
+}
+
+/// Whether a built-in package or the shape's inline payload defines the
+/// draw.io shape name, ignoring the bundled draw.io families.
+pub fn maps_builtin_drawio_shape(shape: &str) -> bool {
     import_index().contains_key(shape) || inline_payload(shape).is_some()
 }
 
@@ -1056,8 +1066,9 @@ pub(crate) fn inline_bundle<'a>(
 
 /// Resolves a cell style to a stencil reference. An explicit Thinoda reference
 /// wins; when its package is not installed, a matching inline stencil in the
-/// same style draws it. With `implicit`, a plain draw.io shape name resolves
-/// through the built-in `drawio.import` maps or its inline stencil payload.
+/// same style draws it, and a bundled draw.io package of that id comes next.
+/// With `implicit`, a plain draw.io shape name resolves through its inline
+/// stencil payload, the built-in `drawio.import` maps or the bundled families.
 pub(crate) fn style_reference<'a>(
     entries: impl IntoIterator<Item = (&'a str, &'a str)>,
     shape: &str,
@@ -1069,8 +1080,10 @@ pub(crate) fn style_reference<'a>(
         if explicit.resolve().is_some() {
             return Some(explicit);
         }
-        if let Some(package) = inline_package(shape)
-            && package.id == explicit.package
+        let fallback = inline_package(shape)
+            .filter(|package| package.id == explicit.package)
+            .or_else(|| crate::drawio_bundle::bundle().package_by_id(&explicit.package));
+        if let Some(package) = fallback
             && package.definition(&explicit.definition).is_some()
         {
             let mut stencil = StencilRef::with_package(package, explicit.definition.clone());
@@ -1088,12 +1101,14 @@ pub(crate) fn style_reference<'a>(
     let stencil = if let Some(package) = inline_package(shape) {
         let definition = package.definitions.first()?.id.clone();
         StencilRef::with_package(package, definition)
-    } else {
-        let target = import_index().get(shape)?;
+    } else if let Some(target) = import_index().get(shape) {
         let mut stencil =
             StencilRef::with_package(Arc::clone(&target.package), target.definition.clone());
         apply_bound_parameters(&mut stencil, &entries, target.absent);
         stencil
+    } else {
+        let (package, definition) = crate::drawio_bundle::bundle().lookup(shape)?;
+        StencilRef::with_package(package, definition)
     };
     stencil.validate().ok()?;
     stencil.resolve()?;

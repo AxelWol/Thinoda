@@ -3704,6 +3704,86 @@ fn inline_drawio_stencils_import_render_and_round_trip() {
 }
 
 #[test]
+fn bundled_drawio_shapes_embed_one_closure_per_package_per_page() {
+    let bundle = crate::drawio_bundle::bundle();
+    let aliases: Vec<String> = bundle
+        .catalog()
+        .packages
+        .iter()
+        .flat_map(|package| package.shapes.iter().map(move |shape| package.alias(shape)))
+        .step_by(7)
+        .take(170)
+        .collect();
+    // Shapes a native kind draws exactly stay native; the bundle draws the rest.
+    let (aliases, native): (Vec<String>, Vec<String>) = aliases.into_iter().partition(|alias| {
+        let sheet = clean(&page(&format!(
+            r#"<mxCell id="x" style="shape={alias};" vertex="1" parent="1"><mxGeometry width="40" height="40" as="geometry"/></mxCell>"#
+        )));
+        shapes(&sheet)[0].stencil.is_some()
+    });
+    assert!(native.len() < 5, "{native:?}");
+    let mut cells = String::new();
+    for (i, alias) in aliases.iter().enumerate() {
+        cells.push_str(&format!(
+            r#"<mxCell id="s{i}" style="shape={alias};html=1;" vertex="1" parent="1"><mxGeometry x="{}" y="{}" width="40" height="40" as="geometry"/></mxCell>"#,
+            (i % 20) * 50,
+            (i / 20) * 50
+        ));
+    }
+    for i in 0..3 {
+        cells.push_str(&format!(
+            r#"<mxCell id="p{i}" style="shape=image;image=data:image/png,{};" vertex="1" parent="1"><mxGeometry x="{}" y="500" width="20" height="20" as="geometry"/></mxCell>"#,
+            b64(&tiny_png(4 + i, 4)),
+            i * 30
+        ));
+    }
+    let report = load(&page(&cells));
+    assert!(
+        !report
+            .warnings
+            .contains(&ImportWarning::UnsupportedDrawioShapes),
+        "{:?}",
+        report.warnings
+    );
+    let sheet = report.workbook.sheets.into_iter().next().unwrap();
+    let objects = shapes(&sheet);
+    assert_eq!(objects.len(), aliases.len());
+    let stencils: Vec<_> = objects
+        .iter()
+        .map(|object| object.stencil.clone().expect("bundled stencil"))
+        .collect();
+    let definitions: BTreeSet<_> = stencils
+        .iter()
+        .map(|stencil| (stencil.package.clone(), stencil.definition.clone()))
+        .collect();
+    let packages: BTreeSet<_> = stencils.iter().map(|s| s.package.clone()).collect();
+    assert!(definitions.len() > 128, "{}", definitions.len());
+    assert!(
+        objects
+            .iter()
+            .all(|object| thinoda_core::stencil_object::render(object).is_some())
+    );
+    assert!(stencils.iter().all(|s| s.package_resource.is_some()));
+    assert_eq!(image_cards(&sheet).len(), 3);
+    assert_eq!(sheet.resources.entries.len(), packages.len() + 3);
+
+    let book = Workbook::new(sheet.clone());
+    let native = export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(crate::import_bytes(Format::Thinoda, &native).unwrap(), book);
+
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    for alias in &aliases {
+        assert!(exported.contains(&format!("shape={alias};")), "{alias}");
+    }
+    let again = clean(&exported);
+    let reopened: Vec<_> = shapes(&again)
+        .into_iter()
+        .map(|object| object.stencil.clone().unwrap())
+        .collect();
+    assert_eq!(reopened, stencils);
+}
+
+#[test]
 fn ignored_named_styles_with_explicit_shapes_report_formatting_loss() {
     for style in [
         "ellipse;shape=cloud;",
