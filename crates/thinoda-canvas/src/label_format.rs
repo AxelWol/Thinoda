@@ -81,7 +81,7 @@ fn style_at(rich: &InlineText, index: usize) -> InlineTextStyle {
         .map_or_else(InlineTextStyle::default, |run| run.style.clone())
 }
 
-pub(super) fn selection_value<T: Copy + PartialEq>(
+pub(super) fn selection_value<T: PartialEq>(
     rich: &InlineText,
     text: &str,
     range: Range<usize>,

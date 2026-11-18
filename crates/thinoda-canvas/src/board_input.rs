@@ -331,6 +331,8 @@ pub(super) struct LabelEdit {
     typing_style: Option<label_format::TypingStyle>,
     rich_reconciliation_error: Option<String>,
     toolbar_page: LabelToolbarPage,
+    family_filter: String,
+    family_filter_composing: bool,
     toolbar_rect: Option<Rect>,
     toolbar_buttons: Vec<Id>,
     sheet: usize,
@@ -443,6 +445,21 @@ impl MapView {
                 edit.text.as_str(),
                 edit.rich_text.as_ref(),
             )
+        })
+    }
+
+    /// Font families needed to preview the current rich-label draft and caret style.
+    pub fn board_label_draft_font_families(&self) -> impl Iterator<Item = &str> {
+        self.board_input.label.iter().flat_map(|edit| {
+            edit.rich_text
+                .iter()
+                .flat_map(|rich| rich.runs.iter())
+                .filter_map(|run| run.style.font_family.as_deref())
+                .chain(
+                    edit.typing_style
+                        .iter()
+                        .filter_map(|typing| typing.style.font_family.as_deref()),
+                )
         })
     }
 
@@ -608,6 +625,8 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
         typing_style: None,
         rich_reconciliation_error: None,
         toolbar_page: LabelToolbarPage::Formatting,
+        family_filter: String::new(),
+        family_filter_composing: false,
         toolbar_rect: None,
         toolbar_buttons: Vec::new(),
         sheet: doc.active_index(),
@@ -6184,6 +6203,7 @@ struct LabelToolbar {
     first_enabled: Option<Id>,
     action: Option<LabelFormatAction>,
     page: Option<LabelToolbarPage>,
+    family_filter: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6191,13 +6211,15 @@ enum LabelToolbarPage {
     Formatting,
     Text,
     Colors,
+    Families,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum LabelFormatAction {
     Toggle(label_format::Format),
     Size(Option<f32>),
     Color(Option<thinoda_core::Color>),
+    Family(Option<String>),
 }
 
 fn show_label_format_toolbar(
@@ -6206,6 +6228,7 @@ fn show_label_format_toolbar(
     editor: Rect,
     labels: &BoardLabels,
     edit: &LabelEdit,
+    font_families: &[String],
 ) -> LabelToolbar {
     use label_format::Format;
 
@@ -6221,9 +6244,12 @@ fn show_label_format_toolbar(
         LabelToolbarPage::Formatting => 9,
         LabelToolbarPage::Text => 7,
         LabelToolbarPage::Colors => crate::FORMAT_SWATCHES.len() + 2,
+        LabelToolbarPage::Families => 2,
     };
     let rows = button_count.div_ceil(columns) as f32;
-    let height = if compact {
+    let height = if edit.toolbar_page == LabelToolbarPage::Families {
+        if compact { 76.0 } else { 220.0 }
+    } else if compact {
         16.0 + 28.0 * rows
     } else {
         34.0 + 28.0 * rows
@@ -6278,6 +6304,13 @@ fn show_label_format_toolbar(
     } else {
         label_format::selection_value(rich, &edit.text, selection.clone(), |style| style.color)
     };
+    let family = if selection.is_empty() {
+        Some(caret_style.font_family.clone())
+    } else {
+        label_format::selection_value(rich, &edit.text, selection.clone(), |style| {
+            style.font_family.clone()
+        })
+    };
     let controls = [
         (Format::Bold, "B", &labels.label_bold),
         (Format::Italic, "I", &labels.label_italic),
@@ -6292,6 +6325,7 @@ fn show_label_format_toolbar(
     let mut first_enabled = None;
     let mut action = None;
     let mut page = None;
+    let mut family_filter = edit.family_filter.clone();
     let area = egui::Area::new(MapCanvas::id().with("board-label-formatting"))
         .order(egui::Order::Foreground)
         .default_size(vec2(width, height))
@@ -6352,8 +6386,12 @@ fn show_label_format_toolbar(
                                     action = Some(LabelFormatAction::Toggle(format));
                                 }
                             }
-                            let label =
-                                format!("{} / {}", labels.label_font_size, labels.label_text_color);
+                            let label = format!(
+                                "{} / {} / {}",
+                                labels.label_font_size,
+                                labels.label_text_color,
+                                labels.label_font_family
+                            );
                             let response = ui
                                 .add_enabled(
                                     enabled,
@@ -6371,19 +6409,19 @@ fn show_label_format_toolbar(
                         LabelToolbarPage::Text | LabelToolbarPage::Colors => {
                             let response = ui
                                 .add_enabled(
-                                    enabled,
+                                    enabled && !edit.family_filter_composing,
                                     egui::Button::new("<").min_size(vec2(26.0, 24.0)),
                                 )
                                 .on_hover_text(&labels.label_formatting);
                             response.widget_info(|| {
                                 egui::WidgetInfo::labeled(
                                     egui::Role::Button,
-                                    enabled,
+                                    enabled && !edit.family_filter_composing,
                                     &labels.label_formatting,
                                 )
                             });
                             buttons.push(response.id);
-                            if enabled {
+                            if enabled && !edit.family_filter_composing {
                                 first_enabled = Some(response.id);
                             }
                             if response.clicked() {
@@ -6443,6 +6481,14 @@ fn show_label_format_toolbar(
                                 buttons.push(response.id);
                                 if response.clicked() {
                                     page = Some(LabelToolbarPage::Colors);
+                                }
+                                let response = ui.add_enabled(
+                                    enabled,
+                                    egui::Button::new(&labels.label_font_family),
+                                );
+                                buttons.push(response.id);
+                                if response.clicked() {
+                                    page = Some(LabelToolbarPage::Families);
                                 }
                             } else {
                                 let label = format!(
@@ -6512,6 +6558,126 @@ fn show_label_format_toolbar(
                                 }
                             }
                         }
+                        LabelToolbarPage::Families => {
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    let choices_enabled = enabled && !edit.family_filter_composing;
+                                    let response = ui
+                                        .add_enabled(
+                                            choices_enabled,
+                                            egui::Button::new("<").min_size(vec2(26.0, 24.0)),
+                                        )
+                                        .on_hover_text(&labels.label_formatting);
+                                    response.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::Role::Button,
+                                            choices_enabled,
+                                            &labels.label_formatting,
+                                        )
+                                    });
+                                    buttons.push(response.id);
+                                    if choices_enabled {
+                                        first_enabled = Some(response.id);
+                                    }
+                                    if response.clicked() {
+                                        page = Some(LabelToolbarPage::Text);
+                                    }
+                                    let filter_label = format!(
+                                        "{} · {}",
+                                        labels.label_font_family, labels.label_search
+                                    );
+                                    let response = ui.add_enabled(
+                                        !edit.ime_composing,
+                                        TextEdit::singleline(&mut family_filter)
+                                            .id(MapCanvas::id().with("board-label-family-filter"))
+                                            .hint_text(&labels.label_search)
+                                            .char_limit(
+                                                thinoda_core::rich_text::MAX_INLINE_FONT_FAMILY_BYTES,
+                                            )
+                                            .desired_width(ui.available_width()),
+                                    );
+                                    response.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::Role::TextInput,
+                                            !edit.ime_composing,
+                                            &filter_label,
+                                        )
+                                    });
+                                    buttons.push(response.id);
+                                });
+                                let query = family_filter.trim().to_lowercase();
+                                let matches = |name: &str| {
+                                    query.is_empty() || name.to_lowercase().contains(&query)
+                                };
+                                let mut choices = Vec::new();
+                                if matches(&labels.label_default) {
+                                    choices.push((labels.label_default.as_str(), None));
+                                }
+                                if matches(&labels.label_monospace) {
+                                    choices
+                                        .push((labels.label_monospace.as_str(), Some("monospace")));
+                                }
+                                if let Some(Some(name)) = &family
+                                    && name != "monospace"
+                                    && !font_families.contains(name)
+                                    && matches(name)
+                                {
+                                    choices.push((name.as_str(), Some(name.as_str())));
+                                }
+                                choices.extend(
+                                    font_families
+                                        .iter()
+                                        .filter(|name| matches(name))
+                                        .map(|name| (name.as_str(), Some(name.as_str()))),
+                                );
+                                let scroll_height = if compact { 36.0 } else { 160.0 };
+                                egui::ScrollArea::vertical()
+                                    .id_salt("label-font-families")
+                                    .max_height(scroll_height)
+                                    .min_scrolled_height(scroll_height)
+                                    .auto_shrink([false, true])
+                                    .show(ui, |ui| {
+                                        for (name, value) in choices {
+                                            let selected =
+                                                family.as_ref().is_some_and(|current| {
+                                                    current.as_deref() == value
+                                                });
+                                            let label = format!("{} · {name}", labels.label_font_family);
+                                            let response = ui
+                                                .push_id(("label-family", value), |ui| {
+                                                    ui.add_enabled(
+                                                        enabled && !edit.family_filter_composing,
+                                                        egui::Button::selectable(selected, name)
+                                                            .truncate()
+                                                            .min_size(vec2(
+                                                                ui.available_width(),
+                                                                ui.spacing().interact_size.y,
+                                                            )),
+                                                    )
+                                                })
+                                                .inner
+                                                .on_hover_text(&label);
+                                            response.widget_info(|| {
+                                                egui::WidgetInfo::selected(
+                                                    egui::Role::Button,
+                                                    enabled && !edit.family_filter_composing,
+                                                    selected,
+                                                    &label,
+                                                )
+                                            });
+                                            if response.gained_focus() {
+                                                response.scroll_to_me(None);
+                                            }
+                                            buttons.push(response.id);
+                                            if response.clicked() {
+                                                action = Some(LabelFormatAction::Family(
+                                                    value.map(str::to_owned),
+                                                ));
+                                            }
+                                        }
+                                    });
+                            });
+                        }
                     }
                 });
             });
@@ -6522,6 +6688,7 @@ fn show_label_format_toolbar(
         first_enabled,
         action,
         page,
+        family_filter: (family_filter != edit.family_filter).then_some(family_filter),
     }
 }
 
@@ -6996,6 +7163,18 @@ fn show_label_editor_pass(
     {
         protect_ime_candidate_keys(ui.ctx(), edit_id, &mut edit.ime_composing);
     }
+    let family_filter_id = MapCanvas::id().with("board-label-family-filter");
+    if let Some(edit) = &mut view.board_input.label {
+        if !minimap_blocks_keyboard && ui.memory(|memory| memory.has_focus(family_filter_id)) {
+            protect_ime_candidate_keys(
+                ui.ctx(),
+                family_filter_id,
+                &mut edit.family_filter_composing,
+            );
+        } else {
+            edit.family_filter_composing = false;
+        }
+    }
     let (commit, cancel) = if minimap_blocks_keyboard || (!editor_owns_keyboard && !toolbar_focused)
     {
         (false, false)
@@ -7082,7 +7261,7 @@ fn show_label_editor_pass(
             .board_input
             .label
             .as_ref()
-            .is_some_and(|edit| edit.ime_composing)
+            .is_some_and(|edit| edit.ime_composing || edit.family_filter_composing)
         && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::F6));
     let formatting_shortcuts = if editor_owns_keyboard
         && !minimap_blocks_keyboard
@@ -7108,6 +7287,7 @@ fn show_label_editor_pass(
     };
     let canvas = view.canvas_rect();
     let labels = view.board_labels.clone();
+    let font_families = view.label_font_families.clone();
     let zoom = view.zoom;
     let edit = view.board_input.label.as_mut().unwrap();
     let empty = edit.text.is_empty();
@@ -7332,7 +7512,14 @@ fn show_label_editor_pass(
         .map(LabelFormatAction::Toggle)
         .collect();
     if !input_only {
-        let toolbar = show_label_format_toolbar(ui, canvas, rect, &labels, edit);
+        let toolbar = show_label_format_toolbar(
+            ui,
+            canvas,
+            rect,
+            &labels,
+            edit,
+            font_families.as_deref().unwrap_or(&[]),
+        );
         toolbar_pointer = ui.input(|input| {
             (input.pointer.any_down()
                 || input.pointer.any_pressed()
@@ -7360,6 +7547,9 @@ fn show_label_editor_pass(
             edit.toolbar_page = page;
             restore_selection = true;
         }
+        if let Some(filter) = toolbar.family_filter {
+            edit.family_filter = filter;
+        }
         format_actions.extend(toolbar.action);
         toolbar_now_focused = ui.memory(|memory| {
             memory
@@ -7381,7 +7571,7 @@ fn show_label_editor_pass(
                     .cloned()
                     .unwrap_or_default();
                 let is_list =
-                    matches!(action, LabelFormatAction::Toggle(format) if format.list().is_some());
+                    matches!(&action, LabelFormatAction::Toggle(format) if format.list().is_some());
                 if selection.is_empty() && !is_list {
                     let mut typing = edit
                         .typing_style
@@ -7397,6 +7587,7 @@ fn show_label_editor_pass(
                         }
                         LabelFormatAction::Size(size) => typing.style.font_size = size,
                         LabelFormatAction::Color(color) => typing.style.color = color,
+                        LabelFormatAction::Family(family) => typing.style.font_family = family,
                     }
                     edit.typing_style = Some(typing);
                 } else {
@@ -7427,6 +7618,14 @@ fn show_label_editor_pass(
                                 style.color = color;
                             },
                         ),
+                        LabelFormatAction::Family(family) => label_format::apply_style(
+                            &mut rich,
+                            &edit.text,
+                            selection.clone(),
+                            |style| {
+                                style.font_family.clone_from(&family);
+                            },
+                        ),
                     }
                     .map_err(EditError::Invalid)?;
                     edit.rich_text = (!rich.is_empty()).then_some(rich);
@@ -7454,6 +7653,9 @@ fn show_label_editor_pass(
             )));
         state.store(ui.ctx(), edit_id);
         ui.memory_mut(|memory| memory.request_focus(edit_id));
+        if toolbar_pointer {
+            edit.focus_retry_after = Some((ui.ctx().viewport_id(), ui.ctx().cumulative_frame_nr()));
+        }
         ui.ctx().request_repaint();
         toolbar_now_focused = false;
     }

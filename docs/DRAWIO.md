@@ -243,6 +243,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Primary connector labels: the same editing and rendering model, including Sankey labels and draw.io HTML subset
   - [x] Typing styles at the caret for shape and primary connector labels
   - [x] Font size and palette colour controls for selected text and caret typing styles
+  - [x] Searchable inline font-family selection and draft preview for selected text and caret typing styles
   - [ ] Complete rich-label coverage for extra connector and other label kinds and preserve unsupported source HTML
 - [ ] Copy/paste style, set default style, style rules
 
@@ -283,6 +284,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 inline font families (partial) | Shape and primary connector label editors choose installed, monospace or inherited families for a selection or subsequent typing; a searchable, keyboard-accessible picker fits compact canvases. Draft and pending families are registered for preview before commit, and rapid outside clicks retain the expected atomic-commit behavior. |
 | 2026-11-18 | D9 inline typography (partial) | Shape and primary connector label editors adjust selected or subsequently typed font size and text colour, including inherited defaults, mixed-size indication, grapheme-aware selections, accessible keyboard navigation and compact palettes. Changes remain draft-only until an atomic commit; run-limit failures leave existing formatting intact. |
 | 2026-11-18 | D9 caret typing styles | Character-style toggles at an empty selection affect subsequent text without editing the document until commit. Shape and primary connector editors preserve typing styles across deletion, list changes, paste and IME input; ordered pointer/keyboard processing places later text at the clicked caret. Rich-text limit failures retain the draft and block save/commit until corrected. |
 | 2026-11-18 | D9 rich primary connector labels (partial) | Primary connector labels reuse bounded inline runs and list paragraphs, selection formatting and atomic undo; formatting-only drafts refresh recovery; search, replacement and placeholders remap runs; canvas, SVG/PNG/PDF and editable PowerPoint render them, including the authored portion of Sankey labels. Supported draw.io HTML imports and exports, with stale Sankey extensions rejected when externally edited formatting cannot be represented. Compatibility gates: native v50, sheet clipboard v39, board clipboard v43, XMind `THINODA-XMIND-RICH-CONNECTOR-LABELS-1`, recovery `THINODA-RECOVERY-RICH-CONNECTOR-LABELS-1` and `THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1`. Extra labels and unsupported HTML source preservation remain open. |
@@ -749,8 +751,18 @@ caret font size in one-unit steps and provides the shared 12-colour palette.
 Default clears that property's override without disturbing other formatting;
 mixed sizes are shown as such and a step starts from the inherited size. Page
 navigation retains the text selection. Narrow canvases use compact swatches.
-Direct numeric size entry, arbitrary colours and inline family selection remain
-open; the palette does not imply full draw.io typography parity.
+Direct numeric size entry and arbitrary colours remain open; the palette does
+not imply full draw.io typography parity.
+
+**D9 inline font families (partial).** The searchable family picker applies an
+installed family, monospace or the inherited default to selected graphemes or
+pending typing. Named faces are registered while the edit is still a draft, so
+the editor previews them before committing. Keyboard focus can reach every
+filtered choice and scrolls it into view. The list lays out all matching
+families to support focus traversal, so its work grows with the number of
+matches; filtering reduces it. Missing installed faces retain their existing
+fallback and warning behavior. Other label kinds and unsupported HTML source
+preservation remain open.
 
 ## 5. Rubber-duck findings
 

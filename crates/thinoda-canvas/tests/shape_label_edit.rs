@@ -709,7 +709,7 @@ fn selected_label_size_and_color_are_atomic_for_shapes_and_connectors() {
         let before = h.state().doc.state_id();
         h.key_press_modifiers(Modifiers::COMMAND, Key::B);
         h.run_steps(2);
-        click_toolbar_button(&mut h, "Font Size / Text Color");
+        click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
         click_toolbar_button(&mut h, "Font Size +");
         click_toolbar_button(&mut h, "Text Color");
         let red = h
@@ -769,7 +769,7 @@ fn label_size_and_color_at_the_caret_apply_only_to_later_text() {
     let mut h = harness("A");
     double_click_shape(&mut h);
     set_label_cursor(&mut h, 1);
-    click_toolbar_button(&mut h, "Font Size / Text Color");
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size +");
     click_toolbar_button(&mut h, "Text Color");
     let blue = h
@@ -816,7 +816,7 @@ fn selected_label_size_and_color_can_return_to_inherited_values() {
         })
         .unwrap();
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color");
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size · Default");
     click_toolbar_button(&mut h, "Text Color");
     click_toolbar_button(&mut h, "Text Color · Default");
@@ -861,7 +861,7 @@ fn selection_typography_limit_failure_keeps_the_original_draft() {
         .unwrap();
     double_click_shape(&mut h);
     set_label_selection(&mut h, text.len() - 1, text.len());
-    click_toolbar_button(&mut h, "Font Size / Text Color");
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     click_toolbar_button(&mut h, "Font Size +");
     let (_, current_text, current_rich) = h
         .state()
@@ -886,7 +886,7 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
         h.run_steps(1);
     }
     assert!(
-        h.get_by_role_and_label(Role::Button, "Font Size / Text Color")
+        h.get_by_role_and_label(Role::Button, "Font Size / Text Color / Font Family")
             .is_focused()
     );
     h.key_press(Key::Enter);
@@ -961,7 +961,7 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
 fn compact_canvas_keeps_typography_pages_inside_the_canvas() {
     let mut h = harness_with_size("Label", vec2(260.0, 180.0));
     double_click_shape(&mut h);
-    click_toolbar_button(&mut h, "Font Size / Text Color");
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
     for label in ["Font Size +", "Text Color"] {
         let control = h.get_by_role_and_label(Role::Button, label).rect();
         assert!(
@@ -984,6 +984,442 @@ fn compact_canvas_keeps_typography_pages_inside_the_canvas() {
     let editor = h.get_by_label("Board object label").rect();
     assert!(!toolbar.contains(editor.center()), "{toolbar:?} {editor:?}");
     assert!(h.state().view.canvas_rect().contains_rect(toolbar));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+fn open_family_page(h: &mut Harness<'_, State>) {
+    click_toolbar_button(h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(h, "Font Family");
+}
+
+fn search_families(h: &mut Harness<'_, State>, query: &str) {
+    let position = h.get_by_label("Font Family · Search").rect().center();
+    click(h, position);
+    h.run_steps(2);
+    assert!(h.get_by_label("Font Family · Search").is_focused());
+    h.event(egui::Event::Text(query.into()));
+    h.run_steps(3);
+}
+
+#[test]
+fn selected_label_family_is_searchable_and_undoable_for_shapes_and_connectors() {
+    for connector in [false, true] {
+        let mut h = harness("Label");
+        h.state_mut().view.label_font_families =
+            Some(vec!["Alpha Family".to_owned(), "Beta Family".to_owned()].into());
+        let id = if connector {
+            begin_connector_label(&mut h, "Label")
+        } else {
+            double_click_shape(&mut h);
+            h.state().shape
+        };
+        let before = h.state().doc.state_id();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        open_family_page(&mut h);
+        search_families(&mut h, "bEtA");
+        assert!(h.query_by_label("Font Family · Alpha Family").is_none());
+        click_toolbar_button(&mut h, "Font Family · Beta Family");
+        assert_eq!(h.state().doc.state_id(), before);
+        let (_, text, rich) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "Label");
+        let rich = rich.unwrap();
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        assert_eq!(
+            rich.runs[0].style.font_family.as_deref(),
+            Some("Beta Family")
+        );
+        assert_eq!(
+            h.state()
+                .view
+                .board_label_draft_font_families()
+                .collect::<Vec<_>>(),
+            vec!["Beta Family"]
+        );
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+        assert_eq!(
+            h.state()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label_rich_text
+                .as_deref(),
+            Some(&rich)
+        );
+        assert!(h.state_mut().doc.undo());
+        assert!(
+            h.state()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label_rich_text
+                .is_none()
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn caret_family_is_exposed_for_preview_before_later_text_is_typed() {
+    let mut h = harness("A");
+    h.state_mut().view.label_font_families = Some(vec!["Example Family".to_owned()].into());
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    open_family_page(&mut h);
+    search_families(&mut h, "example");
+    click_toolbar_button(&mut h, "Font Family · Example Family");
+    assert!(!h.state().view.has_board_label_changes());
+    assert_eq!(
+        h.state()
+            .view
+            .board_label_draft_font_families()
+            .collect::<Vec<_>>(),
+        vec!["Example Family"]
+    );
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "Ax");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(
+        rich.runs[0].style.font_family.as_deref(),
+        Some("Example Family")
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn selected_label_family_can_return_to_inheritance_without_losing_other_styles() {
+    let mut h = harness("Label");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("Label", 0..5, |style| {
+        style.italic = Some(true);
+        style.font_family = Some("Unavailable Family".into());
+    })
+    .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Initial formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    open_family_page(&mut h);
+    assert!(
+        h.query_by_label("Font Family · Unavailable Family")
+            .is_some()
+    );
+    click_toolbar_button(&mut h, "Font Family · Default");
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    let rich = rich.unwrap();
+    assert_eq!(rich.runs[0].style.font_family, None);
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn family_search_keeps_ime_candidate_keys_out_of_the_label_editor() {
+    let mut h = harness("Label");
+    h.state_mut().view.label_font_families = Some(vec!["Example Family".to_owned()].into());
+    double_click_shape(&mut h);
+    open_family_page(&mut h);
+    let position = h.get_by_label("Font Family · Search").rect().center();
+    click(&mut h, position);
+    h.run_steps(2);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "example".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Font Family · Search").is_focused());
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "Label");
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("example".into())));
+    h.run_steps(3);
+    click_toolbar_button(&mut h, "Font Family · Example Family");
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "Label");
+    assert_eq!(
+        rich.unwrap().runs[0].style.font_family.as_deref(),
+        Some("Example Family")
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn family_search_and_choice_are_keyboard_accessible() {
+    let mut h = harness("Label");
+    h.state_mut().view.label_font_families = Some(vec!["Example Family".to_owned()].into());
+    double_click_shape(&mut h);
+    open_family_page(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Font Family · Search").is_focused());
+    h.event(egui::Event::Text("example".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "Label");
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Font Family · Example Family")
+            .is_focused()
+    );
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Board object label").is_focused());
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rich.unwrap().runs[0].style.font_family.as_deref(),
+        Some("Example Family")
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_can_reach_families_beyond_the_visible_rows() {
+    let mut h = harness("Label");
+    h.state_mut().view.label_font_families =
+        Some((0..30).map(|i| format!("Family {i:02}")).collect());
+    double_click_shape(&mut h);
+    open_family_page(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Font Family · Search").is_focused());
+    for _ in 0..18 {
+        h.key_press(Key::Tab);
+        h.run_steps(2);
+    }
+    let choice = h.get_by_role_and_label(Role::Button, "Font Family · Family 15");
+    assert!(choice.is_focused());
+    let toolbar = h
+        .ctx
+        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .unwrap();
+    assert!(toolbar.contains(choice.rect().center()));
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rich.unwrap().runs[0].style.font_family.as_deref(),
+        Some("Family 15")
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn family_list_scrolls_without_moving_the_canvas() {
+    let mut h = harness("Label");
+    h.state_mut().view.label_font_families =
+        Some((0..30).map(|i| format!("Family {i:02}")).collect());
+    double_click_shape(&mut h);
+    open_family_page(&mut h);
+    let point = h
+        .get_by_role_and_label(Role::Button, "Font Family · Family 02")
+        .rect()
+        .center();
+    let before = h.state().view.offset;
+    let before_y = h
+        .get_by_role_and_label(Role::Button, "Font Family · Family 15")
+        .rect()
+        .center()
+        .y;
+    h.hover_at(point);
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -320.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Trackpad,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(30);
+    let choice = h.get_by_role_and_label(Role::Button, "Font Family · Family 15");
+    let toolbar = h
+        .ctx
+        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .unwrap();
+    assert!(choice.rect().center().y < before_y);
+    assert!(toolbar.contains(choice.rect().center()));
+    assert_eq!(h.state().view.offset, before);
+    let point = choice.rect().center();
+    click(&mut h, point);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rich.unwrap().runs[0].style.font_family.as_deref(),
+        Some("Family 15")
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn immediate_outside_click_after_family_choice_finishes_without_recapturing_focus() {
+    for connector in [false, true] {
+        let mut h = harness("Label");
+        h.state_mut().view.label_font_families = Some(vec!["Example Family".to_owned()].into());
+        let id = if connector {
+            begin_connector_label(&mut h, "Label")
+        } else {
+            double_click_shape(&mut h);
+            h.state().shape
+        };
+        open_family_page(&mut h);
+        search_families(&mut h, "example");
+        let family = h
+            .get_by_role_and_label(Role::Button, "Font Family · Example Family")
+            .rect()
+            .center();
+        click(&mut h, family);
+        let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("outside".into()),
+        ]);
+        h.run_steps(4);
+        assert_eq!(h.state().view.editing_board_object(), None);
+        assert!(h.query_by_label("Board object label").is_none());
+        let object = h.state().doc.sheet().canvas.object(id).unwrap();
+        assert_eq!(object.label(), "Label");
+        assert_eq!(
+            object.label_rich_text.as_ref().unwrap().runs[0]
+                .style
+                .font_family
+                .as_deref(),
+            Some("Example Family")
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn immediate_outside_click_after_toolbar_action_finishes_the_draft() {
+    for action in ["Bold", "Font Size / Text Color / Font Family"] {
+        let mut h = harness("Label");
+        double_click_shape(&mut h);
+        let position = h
+            .get_by_role_and_label(Role::Button, action)
+            .rect()
+            .center();
+        click(&mut h, position);
+        let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("outside".into()),
+        ]);
+        h.run_steps(4);
+        assert_eq!(h.state().view.editing_board_object(), None);
+        let object = h
+            .state()
+            .doc
+            .sheet()
+            .canvas
+            .object(h.state().shape)
+            .unwrap();
+        assert_eq!(object.label(), "Label");
+        if action == "Bold" {
+            assert_eq!(
+                object.label_rich_text.as_ref().unwrap().runs[0].style.bold,
+                Some(true)
+            );
+        }
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn compact_canvas_keeps_the_family_picker_operable() {
+    let mut h = harness_with_size("Label", vec2(260.0, 180.0));
+    h.state_mut().view.label_font_families = Some(vec!["Example Family".to_owned()].into());
+    double_click_shape(&mut h);
+    open_family_page(&mut h);
+    let toolbar = h
+        .ctx
+        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .unwrap();
+    let editor = h.get_by_label("Board object label").rect();
+    assert!(!toolbar.contains(editor.center()), "{toolbar:?} {editor:?}");
+    assert!(h.state().view.canvas_rect().contains_rect(toolbar));
+    search_families(&mut h, "example");
+    click_toolbar_button(&mut h, "Font Family · Example Family");
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rich.unwrap().runs[0].style.font_family.as_deref(),
+        Some("Example Family")
+    );
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 

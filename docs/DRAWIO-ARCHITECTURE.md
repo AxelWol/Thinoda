@@ -755,6 +755,12 @@ label drafts can adjust a selected grapheme range or pending caret style's size
 and palette colour. Resetting either property restores inheritance, and the
 existing rich-label version gates and atomic draft commit remain unchanged.
 
+*As implemented in D9 (inline font families):* the same drafts can select an
+installed font, monospace or inheritance through a searchable picker. Font
+families referenced by pending typing or rich draft runs are registered before
+document commit so the editor can preview them; unavailable faces keep the
+existing fallback and warning behavior.
+
 #### 3.2.3 Connector marker migration (compatibility-critical)
 - Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
   triangles; add optional `start_marker`/`end_marker` fields for exact draw.io

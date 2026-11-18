@@ -934,8 +934,11 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     labels.label_bulleted_list = t("Bulleted list").into();
     labels.label_numbered_list = t("Numbered list").into();
     labels.label_font_size = t("Font Size").into();
+    labels.label_font_family = t("Font Family").into();
     labels.label_text_color = t("Text Color").into();
     labels.label_default = t("Default").into();
+    labels.label_search = t("Search").into();
+    labels.label_monospace = t("Monospace").into();
     view.minimap_labels.accessible_name = t(
         "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
     )

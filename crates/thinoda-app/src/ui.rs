@@ -1964,11 +1964,40 @@ impl ThinodaApp {
                 self.dialogs.rename_sheet = None;
             }
         }
+        if self.doc().is_some_and(|doc| {
+            doc.view.editing_board_object().is_some() && doc.view.label_font_families.is_none()
+        }) {
+            let names = self.label_font_families.get_or_insert_with(|| {
+                self.fonts
+                    .names()
+                    .iter()
+                    .filter(|name| {
+                        !name.trim().is_empty()
+                            && name.len() <= thinoda_core::rich_text::MAX_INLINE_FONT_FAMILY_BYTES
+                            && !name.chars().any(char::is_control)
+                            && !matches!(name.as_str(), "sans-serif" | "monospace")
+                    })
+                    .cloned()
+                    .collect()
+            });
+            let names = names.clone();
+            if let Some(doc) = self.doc_mut() {
+                doc.view.label_font_families = Some(names);
+            }
+        }
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
+        let draft_font_source: std::collections::BTreeSet<_> = self
+            .doc()
+            .into_iter()
+            .flat_map(|doc| doc.view.board_label_draft_font_families())
+            .map(str::to_owned)
+            .collect();
         let preferred_fallback = (!crate::files::is_web())
             .then_some(self.settings.default_cjk_font.as_deref())
             .flatten();
-        if font_source != self.font_source || self.fonts.preferred_fallback() != preferred_fallback
+        if font_source != self.font_source
+            || draft_font_source != self.draft_font_source
+            || self.fonts.preferred_fallback() != preferred_fallback
         {
             let families: std::collections::BTreeSet<_> =
                 self.doc()
@@ -1986,6 +2015,7 @@ impl ThinodaApp {
                             custom.font_family.iter().chain(custom.roles.fonts())
                         }),
                     )
+                    .chain(draft_font_source.iter())
                     .cloned()
                     .collect();
             for name in self.fonts.ensure(&ctx, families, preferred_fallback) {
@@ -1997,6 +2027,7 @@ impl ThinodaApp {
                 ));
             }
             self.font_source = font_source;
+            self.draft_font_source = draft_font_source;
         }
         self.apply_appearance(&ctx);
         if viewport == egui::ViewportId::ROOT {
@@ -8564,7 +8595,7 @@ mod card_text_tests;
 #[cfg(test)]
 mod font_family_tests {
     use super::*;
-    use egui_kittest::Harness;
+    use egui_kittest::{Harness, kittest::Queryable};
     use std::{collections::BTreeSet, sync::Arc};
     use thinoda_core::{
         CanvasObject, CanvasObjectKind, Card, CardKind, InlineText, Rect, ShapeKind, Sheet,
@@ -8593,6 +8624,21 @@ mod font_family_tests {
         object.label_rich_text = Some(Arc::new(rich));
         sheet.add_canvas_object(object).unwrap();
         sheet
+    }
+
+    fn paints_family(shape: &egui::Shape, text: &str, family: &str) -> bool {
+        match shape {
+            egui::Shape::Text(shape) => {
+                shape.galley.job.text == text
+                    && shape.galley.job.sections.iter().any(|section| {
+                        section.format.font_id.family == egui::FontFamily::Name(family.into())
+                    })
+            }
+            egui::Shape::Vec(shapes) => shapes
+                .iter()
+                .any(|shape| paints_family(shape, text, family)),
+            _ => false,
+        }
     }
 
     #[test]
@@ -8641,20 +8687,6 @@ mod font_family_tests {
                 );
             }
         });
-        fn paints_family(shape: &egui::Shape, text: &str, family: &str) -> bool {
-            match shape {
-                egui::Shape::Text(shape) => {
-                    shape.galley.job.text == text
-                        && shape.galley.job.sections.iter().any(|section| {
-                            section.format.font_id.family == egui::FontFamily::Name(family.into())
-                        })
-                }
-                egui::Shape::Vec(shapes) => shapes
-                    .iter()
-                    .any(|shape| paints_family(shape, text, family)),
-                _ => false,
-            }
-        }
         for (text, family) in [("Font", second.as_str()), (" test", first.as_str())] {
             assert!(
                 harness.output().shapes.iter().any(|shape| paints_family(
@@ -8663,6 +8695,131 @@ mod font_family_tests {
                     family
                 )),
                 "{text:?} was not painted with {family:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn newly_chosen_draft_families_load_before_the_document_changes() {
+        for caret in [false, true] {
+            let mut app = ThinodaApp::headless();
+            let names = app.fonts.names().to_vec();
+            let mut sheet = Sheet::new("Fonts", "");
+            sheet.root_mode = SheetRootMode::Hidden;
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+            );
+            object.set_label("A").unwrap();
+            let id = sheet.add_canvas_object(object).unwrap();
+            app.new_doc(Workbook::new(sheet));
+            let mut harness = Harness::new_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            harness.run_steps(4);
+            let Some(name) = names.into_iter().find(|name| {
+                !name.trim().is_empty()
+                    && name.len() <= thinoda_core::rich_text::MAX_INLINE_FONT_FAMILY_BYTES
+                    && !name.chars().any(char::is_control)
+                    && !harness.ctx.fonts(|fonts| {
+                        fonts
+                            .definitions()
+                            .families
+                            .contains_key(&egui::FontFamily::Name(name.as_str().into()))
+                    })
+            }) else {
+                return;
+            };
+            let before = harness.state().doc().unwrap().doc.state_id();
+            {
+                let doc = harness.state_mut().doc_mut().unwrap();
+                assert!(doc.view.begin_board_label(&doc.doc, id));
+            }
+            harness.run_steps(4);
+            if caret {
+                let editor_id = MapCanvas::board_label_editor_id();
+                let mut editor = TextEdit::load_state(&harness.ctx, editor_id).unwrap();
+                editor
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::one(
+                        egui::text::CCursor::new(1),
+                    )));
+                editor.store(&harness.ctx, editor_id);
+                harness.run_steps(2);
+            }
+            let more = format!(
+                "{} / {} / {}",
+                t("Font Size"),
+                t("Text Color"),
+                t("Font Family")
+            );
+            harness
+                .get_by_role_and_label(egui::Role::Button, &more)
+                .click();
+            harness.run_steps(3);
+            assert_eq!(
+                harness.state().doc().unwrap().view.editing_board_object(),
+                Some(id),
+                "opening typography must not finish the label draft"
+            );
+            assert!(
+                harness
+                    .query_by_role_and_label(egui::Role::Button, &format!("{} +", t("Font Size")))
+                    .is_some(),
+                "typography page did not open"
+            );
+            harness
+                .get_by_role_and_label(egui::Role::Button, t("Font Family"))
+                .click();
+            harness.run_steps(3);
+            let search = format!("{} · {}", t("Font Family"), t("Search"));
+            harness.get_by_label(&search).click();
+            harness.run_steps(2);
+            harness.event(egui::Event::Text(name.clone()));
+            harness.run_steps(3);
+            let choice = format!("{} · {name}", t("Font Family"));
+            harness
+                .get_by_role_and_label(egui::Role::Button, &choice)
+                .click();
+            harness.run_steps(6);
+            let doc = harness.state().doc().unwrap();
+            assert_eq!(doc.doc.state_id(), before);
+            assert_eq!(doc.view.has_board_label_changes(), !caret);
+            assert!(
+                doc.view
+                    .board_label_draft_font_families()
+                    .any(|family| family == name)
+            );
+            assert!(
+                harness.ctx.fonts(|fonts| fonts
+                    .definitions()
+                    .families
+                    .contains_key(&egui::FontFamily::Name(name.as_str().into()))),
+                "pending family was not registered"
+            );
+            if caret {
+                harness.event(egui::Event::Text("x".into()));
+                harness.run_steps(4);
+            }
+            let (_, text, rich) = harness
+                .state()
+                .doc()
+                .unwrap()
+                .view
+                .validated_board_rich_label_draft(&harness.state().doc().unwrap().doc)
+                .unwrap()
+                .unwrap();
+            let expected_text = if caret { "Ax" } else { "A" };
+            assert_eq!(text, expected_text);
+            assert_eq!(
+                rich.unwrap().runs[0].style.font_family.as_deref(),
+                Some(name.as_str())
+            );
+            assert!(
+                harness.output().shapes.iter().any(|shape| paints_family(
+                    &shape.shape,
+                    expected_text,
+                    &name
+                )),
+                "the editor did not preview the registered family"
             );
         }
     }

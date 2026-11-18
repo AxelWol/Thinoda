@@ -171,8 +171,11 @@ pub struct BoardLabels {
     pub label_bulleted_list: String,
     pub label_numbered_list: String,
     pub label_font_size: String,
+    pub label_font_family: String,
     pub label_text_color: String,
     pub label_default: String,
+    pub label_search: String,
+    pub label_monospace: String,
 }
 
 impl Default for BoardLabels {
@@ -237,8 +240,11 @@ impl Default for BoardLabels {
             label_bulleted_list: "Bulleted list".into(),
             label_numbered_list: "Numbered list".into(),
             label_font_size: "Font Size".into(),
+            label_font_family: "Font Family".into(),
             label_text_color: "Text Color".into(),
             label_default: "Default".into(),
+            label_search: "Search".into(),
+            label_monospace: "Monospace".into(),
         }
     }
 }
@@ -411,6 +417,8 @@ pub struct MapView {
     /// Settings for subsequently started ink gestures.
     pub ink_settings: InkSettings,
     pub board_labels: BoardLabels,
+    /// Host-provided installed families for rich board-label editing.
+    pub label_font_families: Option<Arc<[String]>>,
     pub selected_object: Option<ObjectSelection>,
     pub context_marker: Option<(TopicId, usize)>,
     /// Sheet position of the latest canvas secondary click, used by context actions.
@@ -476,6 +484,7 @@ impl Default for MapView {
             board_tool: BoardTool::Select,
             ink_settings: InkSettings::default(),
             board_labels: BoardLabels::default(),
+            label_font_families: None,
             selected_object: None,
             context_marker: None,
             context_point: None,
