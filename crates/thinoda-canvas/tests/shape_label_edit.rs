@@ -153,7 +153,7 @@ fn set_label_selection(h: &mut Harness<'_, State>, start: usize, end: usize) {
 }
 
 #[test]
-fn repeated_input_preserves_extra_connector_label_formatting() {
+fn repeated_input_and_deletion_preserve_extra_connector_label_formatting() {
     let mut h = harness("Shape");
     let id = add_positioned_connector(&mut h);
     let mut rich = thinoda_core::InlineText::default();
@@ -186,6 +186,24 @@ fn repeated_input_preserves_extra_connector_label_formatting() {
     assert_eq!(connector.extra_labels[0].text, "aaaa");
     let run = &connector.extra_labels[0].rich_text.as_ref().unwrap().runs[0];
     assert_eq!((run.start, run.end), (2, 3));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+    }
+    h.run_steps(3);
+    set_label_cursor(&mut h, 1);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.extra_labels[0].text, "aaa");
+    assert_eq!(connector.extra_labels[0].rich_text.as_deref(), Some(&rich));
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 

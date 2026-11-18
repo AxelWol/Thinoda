@@ -2018,12 +2018,13 @@ Synthetic egui tests show that one frame can delete and insert several times
 without the layouter seeing the intermediate text. Final-string reconciliation
 also cannot identify where a repeated character was inserted. Shape and
 connector label editors now record the buffer range for a single eligible
-text or paste event, preserving formatting at the actual position and for
-selected replacements. Conflicting keyboard events, multiple text events,
-deletion, IME and whole-string undo still use the earlier reconciliation and
-can misplace formatting. This partial fix is not a safe card editor: the complete
-replacement must retain ordered operation positions and handle empty deletions,
-rich undo, input limits and IME transactions.
+text or paste event or a single eligible Backspace or Delete, preserving
+formatting at the actual position and for selected replacements or deletions.
+Conflicting keyboard events, multiple text events, IME and whole-string undo
+still use the earlier reconciliation and can misplace formatting. This partial
+fix is not a safe card editor: the complete replacement must retain ordered
+operation positions and handle empty deletions, rich undo, input limits and
+IME transactions.
 
 Duck check: the single-insertion path accepts only one text or paste event,
 without IME, cut, deletion, finish keys or competing command shortcuts. It
@@ -2033,6 +2034,13 @@ ordered editing. Directional selections, repeated text, unchanged-text
 replacement and document undo are covered with synthetic shape and primary
 connector input; an extra connector label is also covered. These tests do not
 establish real clipboard, IME or browser acceptance.
+
+Duck check: the single-deletion path requires exactly one pressed Backspace or
+Delete among keyboard events and validates the captured range and resulting
+text before applying it. It keeps a pending typing style only at a matching
+deletion boundary; it does not change egui's scalar-level deletion or establish
+grapheme-safe editing. Repeated characters, selected deletion and document
+undo have synthetic shape and connector coverage, including an extra label.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,

@@ -7676,9 +7676,40 @@ fn show_label_editor_pass(
                     _ => false,
                 })
         });
-    let tracked_source = track_insertion.then(|| layout_source.clone());
-    let tracked_rich = track_insertion.then(|| layout_rich.clone()).flatten();
-    let tracked_typing = track_insertion.then(|| layout_typing.clone()).flatten();
+    let tracked_deletion =
+        if layout_rich.is_some() && !require_pending_match && layout_source == edit.text {
+            ui.input(|input| {
+                let mut events = input.events.iter().filter(|event| {
+                    label_keyboard_event(event)
+                        && !matches!(event, egui::Event::Key { pressed: false, .. })
+                });
+                match (events.next(), events.next()) {
+                    (
+                        Some(egui::Event::Key {
+                            key: Key::Backspace,
+                            pressed: true,
+                            ..
+                        }),
+                        None,
+                    ) => Some(label_format::Deletion::Backward),
+                    (
+                        Some(egui::Event::Key {
+                            key: Key::Delete,
+                            pressed: true,
+                            ..
+                        }),
+                        None,
+                    ) => Some(label_format::Deletion::Forward),
+                    _ => None,
+                }
+            })
+        } else {
+            None
+        };
+    let track_edit = track_insertion || tracked_deletion.is_some();
+    let tracked_source = track_edit.then(|| layout_source.clone());
+    let tracked_rich = track_edit.then(|| layout_rich.clone()).flatten();
+    let tracked_typing = track_edit.then(|| layout_typing.clone()).flatten();
     let operations = std::cell::RefCell::new(Vec::new());
     let deletion = ui.input(|input| {
         input.events.iter().find_map(|event| match event {
@@ -7710,12 +7741,13 @@ fn show_label_editor_pass(
             .as_ref()
             .zip(tracked_source.as_deref())
             .map(|(rich, source)| {
-                label_format::reconcile_tracked_insertion(
+                label_format::reconcile_tracked_edit(
                     rich,
                     source,
                     text,
                     &tracked_typing,
                     &operations.borrow(),
+                    tracked_deletion,
                 )
             });
         let mut applied = false;
@@ -7776,7 +7808,7 @@ fn show_label_editor_pass(
     let mut tracked_buffer = label_format::TrackedBuffer {
         text: &mut edit.text,
         operations: &operations,
-        track: track_insertion,
+        track: track_edit,
     };
     let mut text_edit = TextEdit::multiline(&mut tracked_buffer)
         .id(edit_id)

@@ -124,19 +124,23 @@ impl TextBuffer for TrackedBuffer<'_> {
     }
 }
 
-pub(super) fn reconcile_tracked_insertion(
+pub(super) fn reconcile_tracked_edit(
     rich: &InlineText,
     before: &str,
     after: &str,
     typing: &Option<TypingStyle>,
     operations: &[TextOperation],
+    deletion: Option<Deletion>,
 ) -> Result<Option<(InlineText, Option<TypingStyle>)>, String> {
     let (range, replacement) = match operations {
-        [TextOperation::Insert { index, text }] => (*index..*index, text.as_str()),
+        [TextOperation::Insert { index, text }] if deletion.is_none() => {
+            (*index..*index, text.as_str())
+        }
         [
             TextOperation::Delete(range),
             TextOperation::Insert { index, text },
-        ] if range.start == *index => (range.clone(), text.as_str()),
+        ] if deletion.is_none() && range.start == *index => (range.clone(), text.as_str()),
+        [TextOperation::Delete(range)] if deletion.is_some() => (range.clone(), ""),
         _ => return Ok(None),
     };
     if range.start > range.end || range.end > before.chars().count() {
@@ -157,11 +161,17 @@ pub(super) fn reconcile_tracked_insertion(
     {
         return Ok(None);
     }
-    let pending = typing
-        .as_ref()
-        .filter(|pending| range.is_empty() && pending.position == range.start);
+    let pending = typing.as_ref().filter(|pending| match deletion {
+        Some(Deletion::Backward) => pending.position == range.end,
+        Some(Deletion::Forward) => pending.position == range.start,
+        None => range.is_empty() && pending.position == range.start,
+    });
     let (text, mut updated) = if let Some(pending) = pending {
-        rich.replace_label_range_with_style(before, range.clone(), replacement, &pending.style)?
+        if deletion.is_some() {
+            rich.replace_label_range(before, range.clone(), replacement)?
+        } else {
+            rich.replace_label_range_with_style(before, range.clone(), replacement, &pending.style)?
+        }
     } else {
         rich.replace_label_range(before, range.clone(), replacement)?
     };
@@ -169,9 +179,11 @@ pub(super) fn reconcile_tracked_insertion(
     let mut next_typing = pending.cloned();
     if let Some(pending) = &mut next_typing {
         let inserted = range.start..range.start + replacement.chars().count();
-        let graphemes = grapheme_range(after, inserted.clone())?;
-        if graphemes != inserted {
-            updated.update_range(after, graphemes, |style| *style = pending.style.clone())?;
+        if deletion.is_none() {
+            let graphemes = grapheme_range(after, inserted.clone())?;
+            if graphemes != inserted {
+                updated.update_range(after, graphemes, |style| *style = pending.style.clone())?;
+            }
         }
         pending.position = inserted.end;
     }
@@ -455,7 +467,7 @@ mod tests {
             },
         ];
         let (updated, pending) =
-            reconcile_tracked_insertion(&rich, "ab", "a\u{301}b", &typing, &operations)
+            reconcile_tracked_edit(&rich, "ab", "a\u{301}b", &typing, &operations, None)
                 .unwrap()
                 .unwrap();
         assert_eq!((updated.runs[0].start, updated.runs[0].end), (0, 2));
@@ -463,21 +475,48 @@ mod tests {
         assert_eq!(pending.unwrap().position, 2);
 
         assert!(
-            reconcile_tracked_insertion(&rich, "ab", "axb", &typing, &operations)
+            reconcile_tracked_edit(&rich, "ab", "axb", &typing, &operations, None)
                 .unwrap()
                 .is_none()
         );
         assert!(
-            reconcile_tracked_insertion(
+            reconcile_tracked_edit(
                 &rich,
                 "ab",
                 "a\u{301}b",
                 &typing,
                 &[TextOperation::Replace],
+                None,
             )
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn tracked_deletion_keeps_pending_typing_style_at_the_deleted_range() {
+        for (direction, position) in [(Deletion::Backward, 2), (Deletion::Forward, 1)] {
+            let typing = Some(TypingStyle {
+                position,
+                style: InlineTextStyle {
+                    bold: Some(true),
+                    ..Default::default()
+                },
+            });
+            let (_, pending) = reconcile_tracked_edit(
+                &InlineText::default(),
+                "aaa",
+                "aa",
+                &typing,
+                &[TextOperation::Delete(1..2)],
+                Some(direction),
+            )
+            .unwrap()
+            .unwrap();
+            let pending = pending.unwrap();
+            assert_eq!(pending.position, 1);
+            assert_eq!(pending.style.bold, Some(true));
+        }
     }
 
     #[test]
