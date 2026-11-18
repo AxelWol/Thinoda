@@ -57,7 +57,7 @@ impl InlineTextStyle {
             && self.baseline.is_none()
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if self.font_family.as_ref().is_some_and(|family| {
             family.trim().is_empty()
                 || family.len() > MAX_INLINE_FONT_FAMILY_BYTES

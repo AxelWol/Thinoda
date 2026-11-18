@@ -36,6 +36,7 @@ pub mod presentation;
 pub mod quick_styles;
 pub mod resources;
 pub mod rich_text;
+pub mod rich_text_draft;
 pub mod sankey;
 pub mod scene;
 pub mod scene_hierarchy;
