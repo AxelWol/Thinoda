@@ -305,11 +305,6 @@ impl InlineText {
         range: Range<usize>,
         replacement: &str,
     ) -> Result<(String, Self), String> {
-        self.validate(text)?;
-        let char_count = text.chars().count();
-        if range.start > range.end || range.end > char_count {
-            return Err("inline text replacement has an invalid range".into());
-        }
         let style_position = if range.start == range.end && range.start > 0 {
             range.start - 1
         } else {
@@ -321,6 +316,25 @@ impl InlineText {
             .find(|run| run.start as usize <= style_position && style_position < run.end as usize)
             .map_or_else(InlineTextStyle::default, |run| run.style.clone());
 
+        self.replace_label_range_with_style(text, range, replacement, &replacement_style)
+    }
+
+    /// Replaces a label range with an explicit typing style while preserving lists.
+    ///
+    /// The caller controls style inheritance and grapheme boundaries.
+    pub fn replace_label_range_with_style(
+        &self,
+        text: &str,
+        range: Range<usize>,
+        replacement: &str,
+        replacement_style: &InlineTextStyle,
+    ) -> Result<(String, Self), String> {
+        self.validate(text)?;
+        let char_count = text.chars().count();
+        if range.start > range.end || range.end > char_count {
+            return Err("inline text replacement has an invalid range".into());
+        }
+        replacement_style.validate()?;
         let first = text
             .chars()
             .take(range.start)
@@ -337,7 +351,7 @@ impl InlineText {
             paragraphs: Vec::new(),
         };
         let (updated_text, mut updated) =
-            without_paragraphs.replace_range(text, range, replacement, &replacement_style)?;
+            without_paragraphs.replace_range(text, range, replacement, replacement_style)?;
         let first_list = self
             .paragraphs
             .iter()
@@ -808,6 +822,88 @@ mod tests {
         assert_eq!(rich.paragraphs[1].index, 2);
         assert_eq!(rich.paragraphs[1].list, ListKind::Numbered);
         rich.validate(&joined).unwrap();
+    }
+
+    #[test]
+    fn explicit_label_typing_style_survives_paragraph_replacement() {
+        let text = "a🙂\nlast";
+        let mut rich = InlineText {
+            runs: Vec::new(),
+            paragraphs: vec![InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+        };
+        rich.update_range(text, 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let typing = InlineTextStyle {
+            italic: Some(true),
+            ..Default::default()
+        };
+        let (updated_text, updated) = rich
+            .replace_label_range_with_style(text, 1..2, "X\nY", &typing)
+            .unwrap();
+        assert_eq!(updated_text, "aX\nY\nlast");
+        assert_eq!(
+            updated.runs,
+            vec![
+                InlineTextRun {
+                    start: 0,
+                    end: 1,
+                    style: bold(),
+                },
+                InlineTextRun {
+                    start: 1,
+                    end: 4,
+                    style: typing,
+                },
+            ]
+        );
+        assert_eq!(
+            updated.paragraphs,
+            vec![
+                InlineParagraph {
+                    index: 0,
+                    list: ListKind::Bulleted,
+                },
+                InlineParagraph {
+                    index: 1,
+                    list: ListKind::Bulleted,
+                }
+            ]
+        );
+        updated.validate(&updated_text).unwrap();
+        assert_eq!(rich.runs[0].end, 2);
+    }
+
+    #[test]
+    fn explicit_label_typing_style_rejects_invalid_input_without_mutation() {
+        let mut rich = InlineText::default();
+        rich.update_range("ab", 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let before = rich.clone();
+        let invalid = InlineTextStyle {
+            font_size: Some(f32::NAN),
+            ..Default::default()
+        };
+        assert!(
+            rich.replace_label_range_with_style("ab", 1..1, "x", &invalid)
+                .is_err()
+        );
+        assert!(
+            rich.replace_label_range_with_style("ab", 3..3, "x", &InlineTextStyle::default())
+                .is_err()
+        );
+        assert!(
+            rich.replace_label_range_with_style(
+                "ab",
+                1..1,
+                &"x".repeat(MAX_INLINE_TEXT_CHARS),
+                &InlineTextStyle::default()
+            )
+            .is_err()
+        );
+        assert_eq!(rich, before);
     }
 
     #[test]

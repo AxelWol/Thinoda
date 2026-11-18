@@ -255,6 +255,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
   - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
+  - [x] Add explicit-style label range replacement with list remapping for future ordered edits
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -298,6 +299,7 @@ recovery) and binary `.vsd`.
 |---|---|---|
 | 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |
 | 2026-11-18 | D9 card baselines (partial) | Sticky/text-card superscript, subscript and explicit normal baselines survive supported draw.io HTML, rendering and persistence. Compatibility gates: native v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind `THINODA-XMIND-CARD-BASELINE-1`, recovery `THINODA-RECOVERY-CARD-BASELINE-1` and `THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open. |
+| 2026-11-18 | D9 ordered rich-text foundation (partial) | Range replacement now accepts an explicit typing style while preserving list paragraphs; shape and connector caret typing reuse it, including joined-grapheme styling. This does not yet provide ordered input, rich undo, IME handling or a card editor. |
 | 2026-11-18 | D9 formatted-card PowerPoint paragraphs (partial) | Editable branch/zone slides now emit a single text box per formatted card, with styled runs, blank paragraphs, native bullet/number properties and card rotation. List and text layout in PowerPoint/LibreOffice has not been validated; wrapping can differ and viewport slides remain rasterized, so the loss warning remains. |
 | 2026-11-18 | D9 formatted-card PowerPoint (partial) | Editable branch/zone slides exported styled runs and visible list markers in line shapes, including card rotation. This earlier representation was superseded by native paragraph/list output above. |
 | 2026-11-18 | D9 formatted-card visual export (partial) | SVG, PNG, JPEG and PDF use the same rich-card layout as the canvas, including inline styles and list markers, and no longer report inline-text loss. Rewrapping caused by coordinate rounding is bounded. PowerPoint line-run output is a separate partial slice. Corrected draw.io import to warn and remove unsupported card baseline overrides rather than producing an invalid native document. |
@@ -845,6 +847,13 @@ step. Duck check: this is not an editor; selection, IME, draft recovery,
 concurrent edits and ordered operations must be handled before wiring it to
 the canvas. Plain title editing continues to reject destructive changes to
 formatted cards.
+
+**D9 explicit typing-style replacement (partial).** The bounded range operation
+now combines explicit run styling with list remapping, and existing shape and
+connector typing uses it. Duck check: this is one validated operation, not a
+transactional input stream; callers still own grapheme handling, selection,
+IME and undo. The existing final-string reconciliation remains insufficient
+for rich-card editing.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,

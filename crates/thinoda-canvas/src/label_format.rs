@@ -182,14 +182,18 @@ pub(super) fn reconcile_typing(
             let after_end = byte_at(after, pending.position + added);
             if before[..before_at] == after[..after_at] && before[before_at..] == after[after_end..]
             {
-                let (text, mut updated) = rich.replace_label_range(
+                let inserted_range = pending.position..pending.position + added;
+                let (text, mut updated) = rich.replace_label_range_with_style(
                     before,
                     pending.position..pending.position,
                     &after[after_at..after_end],
+                    &pending.style,
                 )?;
                 debug_assert_eq!(text, after);
-                let range = grapheme_range(after, pending.position..pending.position + added)?;
-                updated.update_range(after, range, |style| *style = pending.style.clone())?;
+                let range = grapheme_range(after, inserted_range.clone())?;
+                if range != inserted_range {
+                    updated.update_range(after, range, |style| *style = pending.style.clone())?;
+                }
                 pending.position += added;
                 return Ok(updated);
             }
@@ -392,6 +396,38 @@ mod tests {
             rich.runs[0].style.color,
             Some(thinoda_core::Color::rgb(10, 20, 30))
         );
+    }
+
+    #[test]
+    fn pending_typing_style_applies_to_insertions_and_joined_graphemes() {
+        for (before, after, end) in [("ab", "aXb", 2), ("ab", "a\u{301}b", 2)] {
+            let mut rich = InlineText::default();
+            rich.update_range(before, 0..1, |style| style.italic = Some(true))
+                .unwrap();
+            let mut typing = Some(TypingStyle {
+                position: 1,
+                style: InlineTextStyle {
+                    bold: Some(true),
+                    ..Default::default()
+                },
+            });
+            let updated = reconcile_typing(&rich, before, after, &mut typing, None, true).unwrap();
+            let run = updated
+                .runs
+                .iter()
+                .find(|run| run.start as usize <= 1 && 1 < run.end as usize)
+                .unwrap();
+            assert_eq!(run.style.bold, Some(true));
+            assert_eq!(run.style.italic, None);
+            assert_eq!(run.end as usize, end);
+            if after.contains('\u{301}') {
+                assert_eq!(run.start, 0);
+            } else {
+                assert_eq!(run.start, 1);
+                assert_eq!(updated.runs[0].style.italic, Some(true));
+            }
+            assert_eq!(typing.unwrap().position, 2);
+        }
     }
 
     #[test]
