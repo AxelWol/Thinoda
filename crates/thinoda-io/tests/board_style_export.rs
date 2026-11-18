@@ -263,3 +263,110 @@ fn shape_effects_render_in_svg_png_pdf_and_powerpoint() {
     assert!(slide.contains("<a:gradFill") && !plain_slide.contains("<a:gradFill"));
     assert!(slide.len() > plain_slide.len());
 }
+#[test]
+fn shape_label_text_style_renders_in_svg_png_pdf_and_powerpoint() {
+    use std::sync::Arc;
+    use thinoda_core::TextAlign;
+    use thinoda_core::label_style::{LabelStyle, LabelVAlign};
+    let build = |styled: bool| {
+        let mut sheet = Sheet::new("Board", "Anchor");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "Styled".into();
+        }
+        shape.style.fill = Some(Color::WHITE);
+        shape.style.stroke = Some(Color::BLACK);
+        if styled {
+            shape.label_style = Some(Arc::new(LabelStyle {
+                font_family: Some("Courier New".into()),
+                font_size: Some(20.0),
+                bold: true,
+                italic: true,
+                underline: true,
+                align: TextAlign::Left,
+                vertical_position: LabelVAlign::Bottom,
+                background: Some(Color::rgb(255, 255, 0)),
+                ..LabelStyle::default()
+            }));
+        }
+        sheet.add_canvas_object(shape).unwrap();
+        let card = sheet
+            .add_card(
+                "Card",
+                Vec2::new(0.0, 200.0),
+                Card::new(CardKind::Text, Vec2::new(100.0, 40.0)),
+            )
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "All",
+                PresentationSource::Branch(card),
+                Rect::from_min_size(Vec2::new(-50.0, -50.0), Vec2::new(400.0, 300.0)),
+            )
+            .unwrap();
+        sheet
+    };
+    let plain = build(false);
+    let styled = build(true);
+    let book = Workbook::new(styled.clone());
+    book.validate().unwrap();
+    let native =
+        export_bytes_with_consent(&book, Format::Thinoda, &ExportOptions::default(), true).unwrap();
+    assert_eq!(import_bytes(Format::Thinoda, &native).unwrap(), book);
+
+    let svg = String::from_utf8(
+        export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+    )
+    .unwrap();
+    let text = text_element(&svg, "Styled");
+    for needle in [
+        "font-family=\"'Courier New'",
+        "font-weight=\"bold\"",
+        "font-style=\"italic\"",
+        "underline",
+        "text-anchor=\"start\"",
+    ] {
+        assert!(text.contains(needle), "{needle} in {text}");
+    }
+    assert!(
+        svg.contains("#FFFF00") || svg.contains("#ffff00"),
+        "label background"
+    );
+    // The label sits below the shape.
+    let y: f32 = text
+        .split(" y=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(y > 80.0, "{text}");
+
+    for format in [Format::Png, Format::Pdf] {
+        let bytes = |sheet: &Sheet| {
+            export_bytes_with_consent(
+                &Workbook::new(sheet.clone()),
+                format,
+                &ExportOptions::default(),
+                true,
+            )
+            .unwrap()
+        };
+        assert_ne!(bytes(&plain), bytes(&styled), "{format:?}");
+    }
+    let slide = slide_xml(&export_presentation_pptx(&styled, &ExportOptions::default()).unwrap());
+    for needle in [
+        "typeface=\"Courier New\"",
+        "b=\"1\" i=\"1\" u=\"sng\"",
+        "algn=\"l\"",
+        "FFFF00",
+    ] {
+        assert!(slide.contains(needle), "{needle} in {slide}");
+    }
+}

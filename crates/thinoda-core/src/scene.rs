@@ -1116,6 +1116,9 @@ pub struct SceneItem {
     pub geometry: SceneGeometry,
     /// Resolved stencil data shared by paint, labels, hit geometry and export.
     pub stencil_render: Option<crate::stencil::StencilRender>,
+    /// Styled shape label placed outside the outline; it is part of the
+    /// bounds and selects the shape.
+    pub outside_label: Option<Box<crate::label_style::LabelLayout>>,
 }
 
 impl SceneItem {
@@ -1336,6 +1339,7 @@ fn build_scene_with_collapse<'a>(
                 rotation: 0.0,
             },
             stencil_render: None,
+            outside_label: None,
         });
     }
     let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
@@ -1418,6 +1422,7 @@ fn build_scene_with_collapse<'a>(
                 rotation,
             },
             stencil_render: None,
+            outside_label: None,
         });
     }
     objects(Band::Above, &mut items);
@@ -1522,6 +1527,26 @@ fn object_item(
             bounds = bounds.expand(width * std::f32::consts::FRAC_1_SQRT_2);
         }
     }
+    let outside_label = match &object.kind {
+        CanvasObjectKind::Shape { label, .. }
+            if !label.is_empty()
+                && object
+                    .label_style
+                    .as_ref()
+                    .is_some_and(|style| style.is_outside()) =>
+        {
+            stencil_render
+                .as_ref()
+                .map(|render| crate::stencil_object::label_rect(object, render))
+                .or_else(|| crate::board::object_label_rect(object))
+                .and_then(|base| crate::label_style::layout(object, base, label))
+                .map(Box::new)
+        }
+        _ => None,
+    };
+    if let Some(label) = &outside_label {
+        bounds = bounds.union(&label.bounds());
+    }
     let clip = match &object.kind {
         CanvasObjectKind::Connector(_) => object_clip_at(sheet, object.id, bounds.center()),
         _ => object_clip_rect(sheet, object),
@@ -1533,6 +1558,7 @@ fn object_item(
         clip,
         geometry,
         stencil_render,
+        outside_label,
     })
 }
 
@@ -1814,7 +1840,11 @@ impl Scene {
             };
             (item.clip.is_none_or(|clip| clip.contains(p))
                 && item.bounds.expand(tolerance).contains(p)
-                && item.geometry.hit(p, tolerance))
+                && (item.geometry.hit(p, tolerance)
+                    || item
+                        .outside_label
+                        .as_ref()
+                        .is_some_and(|label| label.hits(p))))
             .then_some(hit)
         })
     }

@@ -477,6 +477,62 @@ impl Drawing {
                     }
                     self.rotation = previous_rotation;
                 }
+                super::board::Prim::StyledLabel {
+                    layout,
+                    style,
+                    color,
+                    opacity,
+                } => {
+                    if layout.lines.is_empty() {
+                        continue;
+                    }
+                    let previous_rotation = self.rotation;
+                    self.rotation = (layout.rotation != 0.0).then_some(Rotation {
+                        center: layout.pivot,
+                        degrees: layout.rotation,
+                    });
+                    let fade = |c: Color| {
+                        Color::rgba(
+                            c.r,
+                            c.g,
+                            c.b,
+                            (f32::from(c.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+                        )
+                    };
+                    if style.background.is_some() || style.border.is_some() {
+                        let id = self.id();
+                        self.shape(
+                            id,
+                            "Label background",
+                            layout.box_rect(),
+                            "rect",
+                            style.background.map(fade),
+                            style.border.map_or(Color::TRANSPARENT, fade),
+                            if style.border.is_some() { 1.0 } else { 0.0 },
+                            false,
+                        );
+                    }
+                    let family = style.font_family.as_deref().unwrap_or("Segoe UI");
+                    for line in &layout.lines {
+                        self.text(
+                            "Label",
+                            Rect::from_min_size(
+                                Vec2::new(layout.frame.min.x, line.rect.min.y),
+                                Vec2::new(layout.frame.size.x, line.rect.size.y),
+                            ),
+                            &line.text,
+                            layout.size,
+                            family,
+                            color,
+                            style.bold,
+                            style.italic,
+                            style.underline,
+                            style.strikethrough,
+                            layout.align,
+                        );
+                    }
+                    self.rotation = previous_rotation;
+                }
             }
         }
     }

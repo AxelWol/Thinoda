@@ -2403,3 +2403,16 @@ Shadow|Sombra|Ombre|Skygge|Schaduw|Sombra|Ombra|Cień
 Glass|Efecto cristal|Effet verre|Glaseffekt|Glaseffect|Efeito vidro|Effetto vetro|Efekt szkła
 Flip horizontally|Voltear horizontalmente|Retourner horizontalement|Spejlvend vandret|Horizontaal spiegelen|Inverter horizontalmente|Capovolgi orizzontalmente|Odwróć w poziomie
 Flip vertically|Voltear verticalmente|Retourner verticalement|Spejlvend lodret|Verticaal spiegelen|Inverter verticalmente|Capovolgi verticalmente|Odwróć w pionie
+Label text style|Estilo del texto de la etiqueta|Style du texte de l'étiquette|Etikettens tekststil|Tekststijl van label|Estilo do texto do rótulo|Stile del testo dell'etichetta|Styl tekstu etykiety
+Vertical alignment|Alineación vertical|Alignement vertical|Lodret justering|Verticale uitlijning|Alinhamento vertical|Allineamento verticale|Wyrównanie w pionie
+Middle|Centro|Milieu|Midte|Midden|Meio|Centro|Środek
+Vertical label position|Posición vertical de la etiqueta|Position verticale de l'étiquette|Lodret etiketposition|Verticale labelpositie|Posição vertical do rótulo|Posizione verticale dell'etichetta|Pionowe położenie etykiety
+Label spacing|Espaciado de la etiqueta|Espacement de l'étiquette|Etiketafstand|Labelafstand|Espaçamento do rótulo|Spaziatura dell'etichetta|Odstęp etykiety
+Wrap text|Ajustar texto|Renvoyer le texte à la ligne|Ombryd tekst|Tekst laten teruglopen|Quebrar texto|Testo a capo|Zawijaj tekst
+Vertical text|Texto vertical|Texte vertical|Lodret tekst|Verticale tekst|Texto vertical|Testo verticale|Tekst pionowy
+Label background|Fondo de la etiqueta|Arrière-plan de l'étiquette|Etiketbaggrund|Labelachtergrond|Fundo do rótulo|Sfondo dell'etichetta|Tło etykiety
+Label border|Borde de la etiqueta|Bordure de l'étiquette|Etiketkant|Labelrand|Borda do rótulo|Bordo dell'etichetta|Obramowanie etykiety
+Top spacing|Espaciado superior|Espacement en haut|Afstand foroven|Afstand boven|Espaçamento superior|Spaziatura superiore|Odstęp u góry
+Left spacing|Espaciado izquierdo|Espacement à gauche|Afstand til venstre|Afstand links|Espaçamento à esquerda|Spaziatura sinistra|Odstęp z lewej
+Bottom spacing|Espaciado inferior|Espacement en bas|Afstand forneden|Afstand onder|Espaçamento inferior|Spaziatura inferiore|Odstęp u dołu
+Right spacing|Espaciado derecho|Espacement à droite|Afstand til højre|Afstand rechts|Espaçamento à direita|Spaziatura destra|Odstęp z prawej

@@ -5894,10 +5894,21 @@ fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) ->
                 .as_ref()
                 .map(|render| thinoda_core::stencil_object::label_rect(object, render))
                 .or_else(|| thinoda_core::board::object_label_rect(object))?;
-            thinoda_core::Rect::from_center_size(
-                rotate_around(label_rect.center(), object.rect.center(), object.rotation),
-                label_rect.size,
-            )
+            if let Some(layout) =
+                thinoda_core::label_style::layout(object, label_rect, object.label())
+            {
+                let size = if object.label_style.as_ref().is_some_and(|s| s.vertical) {
+                    Vec2::new(layout.frame.size.y, layout.frame.size.x)
+                } else {
+                    layout.frame.size
+                };
+                thinoda_core::Rect::from_center_size(layout.pivot, size)
+            } else {
+                thinoda_core::Rect::from_center_size(
+                    rotate_around(label_rect.center(), object.rect.center(), object.rotation),
+                    label_rect.size,
+                )
+            }
         }
         CanvasObjectKind::Connector(connector) => {
             let point = match &item.geometry {
@@ -6172,8 +6183,34 @@ pub(super) fn show_label_editor(
     if !input_only && matches!(object.kind, CanvasObjectKind::Connector(_)) {
         ui.painter().rect_filled(rect, 2.0, background);
     }
-    let font_size = crate::render::shape_label_font_size(view.zoom).max(10.0);
-    let font = FontId::proportional(font_size);
+    let label_style = object
+        .label_style
+        .clone()
+        .filter(|_| matches!(object.kind, CanvasObjectKind::Shape { .. }));
+    let font = match label_style.as_deref() {
+        Some(style) => FontId::new(
+            (style.size() * view.zoom).max(10.0),
+            crate::measure::font_family(ui.ctx(), style.font_family.as_deref()),
+        ),
+        None => FontId::proportional(crate::render::shape_label_font_size(view.zoom).max(10.0)),
+    };
+    let align = label_style
+        .as_deref()
+        .map_or(egui::Align2::CENTER_CENTER, |style| {
+            use thinoda_core::label_style::LabelVAlign;
+            egui::Align2([
+                match style.align {
+                    thinoda_core::model::TextAlign::Left => egui::Align::Min,
+                    thinoda_core::model::TextAlign::Center => egui::Align::Center,
+                    thinoda_core::model::TextAlign::Right => egui::Align::Max,
+                },
+                match style.vertical_align {
+                    LabelVAlign::Top => egui::Align::Min,
+                    LabelVAlign::Middle => egui::Align::Center,
+                    LabelVAlign::Bottom => egui::Align::Max,
+                },
+            ])
+        });
     let is_shape = matches!(object.kind, CanvasObjectKind::Shape { .. });
     let edit = view.board_input.label.as_mut().unwrap();
     let empty = edit.text.is_empty();
@@ -6182,7 +6219,7 @@ pub(super) fn show_label_editor(
         .font(font.clone())
         .text_color(text_color)
         .frame(egui::Frame::NONE)
-        .align(egui::Align2::CENTER_CENTER)
+        .align(align)
         .desired_width(rect.width().max(40.0))
         .min_size(rect.size())
         .desired_rows(1)

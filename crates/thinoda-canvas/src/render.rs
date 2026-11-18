@@ -882,6 +882,15 @@ fn shape_label_visible_bounds(
         .as_ref()
         .map(|render| thinoda_core::stencil_object::label_rect(object, render))
         .or_else(|| thinoda_core::board::object_label_rect(object))?;
+    if let Some(layout) = thinoda_core::label_style::layout(object, label_rect, label) {
+        // Real glyphs may be wider than the shared estimate.
+        let slack = layout.block.size.x.max(layout.size);
+        let mut bounds = layout.bounds().expand(slack);
+        if let Some(clip) = item.clip {
+            bounds = intersect_rect(bounds, clip)?;
+        }
+        return Some(bounds);
+    }
     // Labels can extend beyond their outline; keep a generous text bound for culling.
     let (longest, line_count) = label.split('\n').fold((0, 0), |(longest, lines), line| {
         (longest.max(line.len()), lines + 1)
@@ -1222,7 +1231,7 @@ pub(crate) fn shape_label_editor_background(
     color32(background)
 }
 
-fn opacity_color(color: Color32, opacity: f32) -> Color32 {
+pub(crate) fn opacity_color(color: Color32, opacity: f32) -> Color32 {
     color.gamma_multiply(opacity.clamp(0.0, 1.0))
 }
 
@@ -1604,6 +1613,19 @@ fn paint_stencil_object(
     }
     let text_rect = thinoda_core::stencil_object::label_rect(object, render);
     let text_color = opacity_color(text_color, object.style.opacity);
+    if let Some(layout) = thinoda_core::label_style::layout(object, text_rect, label)
+        && let Some(style) = object.label_style.as_deref()
+    {
+        crate::label_text::paint(
+            painter,
+            &layout,
+            style,
+            text_color,
+            object.style.opacity,
+            xf,
+        );
+        return;
+    }
     let font = opts.label_font(z);
     let galley = painter.layout_no_wrap(label.clone(), font, text_color);
     let center = xf.pos(rotate_around(
@@ -1792,20 +1814,34 @@ fn paint_canvas_object(
                         object.double_ellipse_margin,
                     ),
                 );
-                let font = opts.label_font(z);
                 let (text_color, _) = board_label_colors(sheet, &object.style, opts.dark);
                 let text_color = opacity_color(text_color, object.style.opacity);
-                let galley = painter.layout_no_wrap(label.clone(), font, text_color);
-                let center = xf.pos(rotate_around(
-                    text_rect.center(),
-                    object.rect.center(),
-                    object.rotation,
-                ));
-                let angle = object.rotation.to_radians();
-                let origin = center - egui::emath::Rot2::from_angle(angle) * (galley.size() / 2.0);
-                painter.add(
-                    egui::epaint::TextShape::new(origin, galley, text_color).with_angle(angle),
-                );
+                if let Some(layout) = thinoda_core::label_style::layout(object, text_rect, label)
+                    && let Some(style) = object.label_style.as_deref()
+                {
+                    crate::label_text::paint(
+                        painter,
+                        &layout,
+                        style,
+                        text_color,
+                        object.style.opacity,
+                        xf,
+                    );
+                } else {
+                    let font = opts.label_font(z);
+                    let galley = painter.layout_no_wrap(label.clone(), font, text_color);
+                    let center = xf.pos(rotate_around(
+                        text_rect.center(),
+                        object.rect.center(),
+                        object.rotation,
+                    ));
+                    let angle = object.rotation.to_radians();
+                    let origin =
+                        center - egui::emath::Rot2::from_angle(angle) * (galley.size() / 2.0);
+                    painter.add(
+                        egui::epaint::TextShape::new(origin, galley, text_color).with_angle(angle),
+                    );
+                }
             }
         }
         (

@@ -2171,7 +2171,7 @@ impl ThinodaApp {
                     );
                 let objects = d.view.selection.is_empty()
                     && !d.view.board_selection.is_empty()
-                    && self.board_style_clipboard.is_some_and(|style| {
+                    && self.board_style_clipboard.as_ref().is_some_and(|style| {
                         d.view.board_selection.iter().all(|id| {
                             sheet
                                 .canvas
@@ -2246,7 +2246,10 @@ impl ThinodaApp {
             .doc()
             .is_some_and(|d| !d.view.board_selection.is_empty())
         {
-            let style = self.board_style_clipboard.expect("command availability");
+            let style = self
+                .board_style_clipboard
+                .clone()
+                .expect("command availability");
             let d = self.doc_mut().unwrap();
             let selection = d.view.board_selection.clone();
             if let Err(error) = d.doc.edit_sheet("Paste Style", |sheet| {

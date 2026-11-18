@@ -39,6 +39,7 @@ use thinoda_core::{
         valid_connector_marker_size, valid_edge_shape_width, valid_line_jump_size,
     },
     images::{self, MAX_DISPLAY_SIZE},
+    label_style::{LabelStyle, LabelVAlign},
     layout_sheet,
     resources::{MAX_RESOURCE_BYTES, Resource},
 };
@@ -1198,7 +1199,7 @@ impl Style {
         self.opacity() < 1.0 && self.num("textOpacity").is_none_or(|opacity| opacity > 0.0)
     }
 
-    fn label_style_loss(&self, source_is_edge: bool) -> bool {
+    fn label_style_loss(&self, source_is_edge: bool, label_text: bool) -> bool {
         // Vertices default to 12px; edges and removed defaults use mxGraph's 11px.
         // These built-in vertex styles leave the default label settings unchanged.
         if !self.tokens.is_empty()
@@ -1213,6 +1214,8 @@ impl Style {
             return true;
         }
         match self.get("fontSize") {
+            // Mapped onto the shape's label style; invalid sizes warn there.
+            _ if label_text => false,
             None => source_is_edge || self.suppress_defaults,
             Some("none") => true,
             Some(_) => self
@@ -1225,23 +1228,8 @@ impl Style {
         if !has_label {
             return false;
         }
-        let nonzero_spacing = |key| {
-            self.get(key)
-                .is_some_and(|value| value != "none" && self.num(key).is_none_or(|v| v != 0.0))
-        };
-        self.get("whiteSpace") == Some("wrap")
-            || self
-                .get("overflow")
-                .is_some_and(|value| !matches!(value, "" | "none" | "visible"))
-            || self
-                .get("labelPosition")
-                .is_some_and(|value| !matches!(value, "" | "none" | "center"))
-            || self
-                .get("verticalLabelPosition")
-                .is_some_and(|value| !matches!(value, "" | "none" | "middle"))
-            || self
-                .get("horizontal")
-                .is_some_and(|value| !matches!(value, "" | "none" | "1"))
+        self.get("overflow")
+            .is_some_and(|value| !matches!(value, "" | "none" | "visible"))
             || self.flag("noLabel")
             || self
                 .get("textDirection")
@@ -1249,18 +1237,6 @@ impl Style {
             || self
                 .get("labelWidth")
                 .is_some_and(|value| !matches!(value, "" | "none"))
-            || [
-                "spacing",
-                "spacingTop",
-                "spacingBottom",
-                "spacingLeft",
-                "spacingRight",
-            ]
-            .into_iter()
-            .any(nonzero_spacing)
-            || self
-                .get("fontStyle")
-                .is_some_and(|value| value != "none" && self.num("fontStyle").is_none())
     }
 
     fn connector_label_appearance_loss(&self, source_is_edge: bool) -> bool {
@@ -1350,8 +1326,16 @@ impl Style {
 
     /// Visual details without a Thinoda equivalent.
     /// `shape_effects` marks cells whose dash, gradient, shadow, glass and
-    /// flips map to native shape style (see [`shape_effects`]).
-    fn formatting_loss(&self, edge: bool, card_text_alignment: bool, shape_effects: bool) -> bool {
+    /// flips map to native shape style (see [`shape_effects`]); `label_text`
+    /// marks cells whose label text keys map to a label style (see
+    /// [`label_text_style`]).
+    fn formatting_loss(
+        &self,
+        edge: bool,
+        card_text_alignment: bool,
+        shape_effects: bool,
+        label_text: bool,
+    ) -> bool {
         const FLAGS: [&str; 7] = [
             "dashed", "shadow", "glass", "sketch", "flipH", "flipV", "comic",
         ];
@@ -1397,22 +1381,31 @@ impl Style {
                 })
             })
             || (!shape_effects && colored("gradientColor"))
-            || colored("labelBackgroundColor")
-            || colored("labelBorderColor")
-            || self.get("fontFamily").is_some()
-            || self.num("fontSize").is_some_and(|v| v != 11.0 && v != 12.0)
-            || self.num("fontStyle").is_some_and(|v| v != 0.0)
-            || self.get("align").is_some_and(|v| {
-                if card_text_alignment {
-                    self.text_align().is_none()
-                } else {
-                    v != "center"
-                }
-            })
-            || self.get("verticalAlign").is_some_and(|v| {
-                // Thinoda image cards caption beneath the picture.
-                v != "middle" && !(v == "bottom" && self.get("thinodaCard") == Some("image"))
-            })
+            || (label_text
+                && (self
+                    .get("overflow")
+                    .is_some_and(|value| !matches!(value, "" | "none" | "visible"))
+                    || self
+                        .get("textDirection")
+                        .is_some_and(|value| !matches!(value, "" | "none" | "default"))))
+            || (!label_text
+                && (colored("labelBackgroundColor")
+                    || colored("labelBorderColor")
+                    || self.get("fontFamily").is_some()
+                    || self.num("fontSize").is_some_and(|v| v != 11.0 && v != 12.0)
+                    || self.num("fontStyle").is_some_and(|v| v != 0.0)
+                    || self.get("align").is_some_and(|v| {
+                        if card_text_alignment {
+                            self.text_align().is_none()
+                        } else {
+                            v != "center"
+                        }
+                    })
+                    || self.get("verticalAlign").is_some_and(|v| {
+                        // Thinoda image cards caption beneath the picture.
+                        v != "middle"
+                            && !(v == "bottom" && self.get("thinodaCard") == Some("image"))
+                    })))
             || self.get("portConstraint").is_some()
             || differs_from("portConstraintRotation", 0.0)
             || differs_from("perimeterSpacing", 0.0)
@@ -2348,6 +2341,236 @@ fn shape_effects(
     (owned, approximate)
 }
 
+/// Whether a vertex's label text keys map to its shape's label style.
+fn maps_label_text(kind: Kind, style: &Style) -> bool {
+    matches!(kind, Kind::Shape(..) | Kind::Approx(..) | Kind::Text)
+        && style.get("childLayout") != Some("tableLayout")
+}
+
+/// Whether `horizontal` turns a header rather than the label of this cell.
+fn header_orientation(style: &Style) -> bool {
+    matches!(style.shape(), "swimlane" | "table")
+        || style.get("childLayout").is_some()
+        || style.flag("container")
+        || style.get("startSize").is_some()
+}
+
+/// Maps draw.io's label text keys onto a shape label style, returning the
+/// style (when anything differs from the default), the keys it owns and
+/// whether a value was only approximated.
+fn label_text_style(style: &Style) -> (Option<LabelStyle>, Vec<&'static str>, bool) {
+    use thinoda_core::label_style::{
+        MAX_LABEL_FONT_FAMILY_BYTES, MAX_LABEL_FONT_SIZE, MAX_LABEL_SPACING, MIN_LABEL_FONT_SIZE,
+    };
+    let mut label = LabelStyle::default();
+    let mut owned = Vec::new();
+    let mut approximate = false;
+    let present = |key: &str| {
+        style
+            .get(key)
+            .filter(|value| !matches!(*value, "" | "none"))
+    };
+    let mut accept = |key: &'static str, ok: bool| {
+        if ok {
+            owned.push(key);
+        } else {
+            approximate = true;
+        }
+    };
+    match present("fontFamily") {
+        None => accept("fontFamily", true),
+        Some(family) => {
+            let family = family.trim();
+            let ok = !family.is_empty()
+                && family.len() <= MAX_LABEL_FONT_FAMILY_BYTES
+                && !family.chars().any(char::is_control);
+            if ok {
+                label.font_family = Some(family.to_owned());
+            }
+            accept("fontFamily", ok);
+        }
+    }
+    match present("fontSize") {
+        None => {
+            // Without the default stylesheet draw.io falls back to mxGraph's 11px.
+            if style.suppress_defaults && style.get("fontSize").is_none() {
+                label.font_size = Some(11.0);
+            }
+            accept("fontSize", true);
+        }
+        Some(_) => {
+            let size = style
+                .num("fontSize")
+                .filter(|size| (MIN_LABEL_FONT_SIZE..=MAX_LABEL_FONT_SIZE).contains(size));
+            if let Some(size) = size.filter(|size| *size != CANVAS_LABEL_FONT_SIZE) {
+                label.font_size = Some(size);
+            }
+            accept("fontSize", size.is_some());
+        }
+    }
+    match present("fontStyle") {
+        None => accept("fontStyle", true),
+        Some(_) => {
+            let bits = style
+                .num("fontStyle")
+                .filter(|bits| *bits >= 0.0 && bits.fract() == 0.0 && *bits <= 15.0);
+            if let Some(bits) = bits {
+                label.set_font_style_bits(bits as u32);
+            }
+            accept("fontStyle", bits.is_some());
+        }
+    }
+    let horizontal = |value: Option<&str>| match value {
+        None => Some(TextAlign::Center),
+        Some("left") => Some(TextAlign::Left),
+        Some("center") => Some(TextAlign::Center),
+        Some("right") => Some(TextAlign::Right),
+        Some(_) => None,
+    };
+    let vertical = |value: Option<&str>| match value {
+        None => Some(LabelVAlign::Middle),
+        Some("top") => Some(LabelVAlign::Top),
+        Some("middle") => Some(LabelVAlign::Middle),
+        Some("bottom") => Some(LabelVAlign::Bottom),
+        Some(_) => None,
+    };
+    for (key, target) in [
+        ("align", &mut label.align),
+        ("labelPosition", &mut label.position),
+    ] {
+        let value = horizontal(present(key));
+        if let Some(value) = value {
+            *target = value;
+        }
+        accept(key, value.is_some());
+    }
+    for (key, target) in [
+        ("verticalAlign", &mut label.vertical_align),
+        ("verticalLabelPosition", &mut label.vertical_position),
+    ] {
+        let value = vertical(present(key));
+        if let Some(value) = value {
+            *target = value;
+        }
+        accept(key, value.is_some());
+    }
+    for (key, target) in [
+        ("spacing", &mut label.spacing),
+        ("spacingTop", &mut label.spacing_top),
+        ("spacingLeft", &mut label.spacing_left),
+        ("spacingBottom", &mut label.spacing_bottom),
+        ("spacingRight", &mut label.spacing_right),
+    ] {
+        if present(key).is_none() {
+            accept(key, true);
+            continue;
+        }
+        let value = style
+            .num(key)
+            .filter(|value| value.abs() <= MAX_LABEL_SPACING);
+        if let Some(value) = value {
+            *target = value;
+        }
+        accept(key, value.is_some());
+    }
+    for (key, target) in [
+        ("labelBackgroundColor", &mut label.background),
+        ("labelBorderColor", &mut label.border),
+    ] {
+        match style.get(key) {
+            None | Some("" | "none" | "default") => accept(key, true),
+            Some(value) => {
+                let parsed = parse_style_color(value);
+                *target = parsed.and_then(|parsed| parsed.color);
+                accept(
+                    key,
+                    parsed.is_some_and(|parsed| !parsed.approximate) && target.is_some(),
+                );
+            }
+        }
+    }
+    label.vertical = style.get("horizontal") == Some("0") && !header_orientation(style);
+    let white_space = style.get("whiteSpace");
+    if !label.is_default() || white_space.is_some_and(|value| value != "wrap") {
+        label.wrap = white_space == Some("wrap");
+    }
+    ((!label.is_default()).then_some(label), owned, approximate)
+}
+
+/// draw.io keys for a shape's label text style.
+fn label_text_style_keys(out: &mut String, label: &LabelStyle) {
+    if let Some(family) = &label.font_family {
+        let family: String = family.chars().filter(|c| !matches!(c, ';' | '=')).collect();
+        if !family.is_empty() {
+            out.push_str(&format!("fontFamily={family};"));
+        }
+    }
+    if let Some(size) = label.font_size {
+        out.push_str(&format!("fontSize={};", num(size)));
+    }
+    let bits = label.font_style_bits();
+    if bits != 0 {
+        out.push_str(&format!("fontStyle={bits};"));
+    }
+    let horizontal = |align: TextAlign| match align {
+        TextAlign::Left => "left",
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+    };
+    let vertical = |align: LabelVAlign| match align {
+        LabelVAlign::Top => "top",
+        LabelVAlign::Middle => "middle",
+        LabelVAlign::Bottom => "bottom",
+    };
+    if label.align != TextAlign::Center {
+        out.push_str(&format!("align={};", horizontal(label.align)));
+    }
+    if label.vertical_align != LabelVAlign::Middle {
+        out.push_str(&format!(
+            "verticalAlign={};",
+            vertical(label.vertical_align)
+        ));
+    }
+    if label.position != TextAlign::Center {
+        out.push_str(&format!("labelPosition={};", horizontal(label.position)));
+    }
+    if label.vertical_position != LabelVAlign::Middle {
+        out.push_str(&format!(
+            "verticalLabelPosition={};",
+            vertical(label.vertical_position)
+        ));
+    }
+    if label.spacing != thinoda_core::label_style::DEFAULT_LABEL_SPACING {
+        out.push_str(&format!("spacing={};", num(label.spacing)));
+    }
+    for (key, value) in [
+        ("spacingTop", label.spacing_top),
+        ("spacingLeft", label.spacing_left),
+        ("spacingBottom", label.spacing_bottom),
+        ("spacingRight", label.spacing_right),
+    ] {
+        if value != 0.0 {
+            out.push_str(&format!("{key}={};", num(value)));
+        }
+    }
+    for (key, color) in [
+        ("labelBackgroundColor", label.background),
+        ("labelBorderColor", label.border),
+    ] {
+        color_keys(
+            out,
+            key,
+            "",
+            color
+                .filter(|color| color.a > 0)
+                .map(|color| Color { a: 255, ..color }),
+        );
+    }
+    if label.vertical && !out.contains("horizontal=") {
+        out.push_str("horizontal=0;");
+    }
+}
+
 /// Resolves visible light-theme fallbacks while reporting lost adaptive styling.
 fn resolved_shape_colors(
     style: &Style,
@@ -2455,7 +2678,7 @@ struct PageImport<'a> {
     bundled_stencils: Option<BundledStencils>,
     /// Cells whose passthrough was already given to an object.
     passthrough_cells: HashSet<usize>,
-    /// Style keys mapped by [`shape_effects`], per cell.
+    /// Style keys mapped by [`shape_effects`] and [`label_text_style`], per cell.
     shape_effect_keys: HashMap<usize, Vec<&'static str>>,
     passthrough_bytes: usize,
     /// Layers locked only after import, so grouping and locking can still edit them.
@@ -3020,9 +3243,10 @@ impl<'a> PageImport<'a> {
         let card_text_alignment = matches!(kind, Kind::Card(CardKind::Sticky | CardKind::Text));
         let effects = matches!(kind, Kind::Shape(..) | Kind::Approx(..))
             && cell.style.get("childLayout") != Some("tableLayout");
+        let label_text = maps_label_text(kind, &cell.style);
         if cell
             .style
-            .formatting_loss(false, card_text_alignment, effects)
+            .formatting_loss(false, card_text_alignment, effects, label_text)
         {
             self.warn(ImportWarning::Formatting);
         }
@@ -3706,7 +3930,7 @@ impl<'a> PageImport<'a> {
             object.alt_text = cell.tooltip.clone().unwrap_or_default();
             object
         };
-        let object = match kind {
+        let mut object = match kind {
             Kind::Shape(..) if style.draws_stencil() => {
                 // Stencils are drawn in their own frame; draw.io's `direction`
                 // turns that frame like a rotation with swapped sides.
@@ -4004,7 +4228,19 @@ impl<'a> PageImport<'a> {
                 return self.card(index, card_kind, rect, label, context, image);
             }
         };
-        if !object.label().is_empty() && style.label_style_loss(false) {
+        let label_text = maps_label_text(kind, style);
+        if label_text && matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            let (label_style, owned, approximate) = label_text_style(style);
+            object.label_style = label_style.map(Arc::new);
+            self.shape_effect_keys
+                .entry(index)
+                .or_default()
+                .extend(owned);
+            if approximate && !object.label().is_empty() {
+                self.warn(ImportWarning::Formatting);
+            }
+        }
+        if !object.label().is_empty() && style.label_style_loss(false, label_text) {
             self.warn(ImportWarning::Formatting);
         }
         self.add_object(index, object, context)
@@ -4284,7 +4520,7 @@ impl<'a> PageImport<'a> {
         let style = &cell.style;
         let origin = context.origin;
         if let Some(tool) = style.get("thinodaInk") {
-            if style.formatting_loss(true, false, false)
+            if style.formatting_loss(true, false, false, false)
                 || style.start_arrow()
                 || style.end_arrow()
                 || !matches!(style.connector_port(true), Ok(None))
@@ -4401,7 +4637,7 @@ impl<'a> PageImport<'a> {
                     .get("segment")
                     .is_some_and(|value| value.trim().parse::<f32>().ok() != Some(10.0)));
         let (edge_shape, edge_shape_loss) = style.edge_shape();
-        if style.formatting_loss(true, false, false)
+        if style.formatting_loss(true, false, false, false)
             || routed_hints
             || approximated_router
             || custom_segment
@@ -4411,7 +4647,7 @@ impl<'a> PageImport<'a> {
             self.warn(ImportWarning::Formatting);
         }
         let mut label = self.label(cell);
-        let label_style_loss = !label.is_empty() && style.label_style_loss(true);
+        let label_style_loss = !label.is_empty() && style.label_style_loss(true, false);
         let label_placement = self.edge_label_placement(&cell.geometry);
         let mut extra_labels = Vec::new();
         for child in self.children[index].clone() {
@@ -6540,7 +6776,17 @@ impl<'a> PageWriter<'a> {
                         style.push_str(&stack_style);
                     }
                 }
-                style.push_str("whiteSpace=wrap;html=1;");
+                match object.label_style.as_deref() {
+                    Some(label) => {
+                        style.push_str(if label.wrap {
+                            "whiteSpace=wrap;html=1;"
+                        } else {
+                            "whiteSpace=nowrap;html=1;"
+                        });
+                        label_text_style_keys(&mut style, label);
+                    }
+                    None => style.push_str("whiteSpace=wrap;html=1;"),
+                }
                 let special_outline = object.rectangle_sides.is_some()
                     || matches!(*shape, ShapeKind::DoubleEllipse | ShapeKind::FinalState);
                 let fill = if special_outline {

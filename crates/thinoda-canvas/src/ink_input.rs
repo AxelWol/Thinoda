@@ -3153,6 +3153,7 @@ mod tests {
                 clip: None,
                 geometry: root_item.geometry,
                 stencil_render: None,
+                outside_label: None,
             },
         );
         let center = root_item.bounds.center();
@@ -3356,6 +3357,7 @@ mod tests {
                 rotation: 0.0,
             },
             stencil_render: None,
+            outside_label: None,
         };
         let scene = Scene {
             grid: None,
@@ -3388,6 +3390,7 @@ mod tests {
                     rotation: 0.0,
                 },
                 stencil_render: None,
+                outside_label: None,
             }],
         };
         assert_eq!(

@@ -53,12 +53,15 @@ const OBJECT_DATA_SHEET_PREFIX: &str = "THINODA-SHEET-33\n";
 const LAYERS_SHEET_PREFIX: &str = "THINODA-SHEET-34\n";
 const TABLES_SHEET_PREFIX: &str = "THINODA-SHEET-35\n";
 const SHAPE_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-36\n";
+const LABEL_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-37\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_shape_styles() {
+    let prefix = if sheet.has_label_styles() {
+        LABEL_STYLES_SHEET_PREFIX
+    } else if sheet.has_shape_styles() {
         SHAPE_STYLES_SHEET_PREFIX
     } else if sheet.has_tables() {
         TABLES_SHEET_PREFIX
@@ -156,6 +159,11 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
             text.strip_prefix(LINE_JUMPS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-28\r\n"))
                 .map(|json| (28, json))
+        })
+        .or_else(|| {
+            text.strip_prefix(LABEL_STYLES_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-37\r\n"))
+                .map(|json| (37, json))
         })
         .or_else(|| {
             text.strip_prefix(SHAPE_STYLES_SHEET_PREFIX)
@@ -329,6 +337,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 37 && sheet.has_label_styles() {
+        return Err("label styles require sheet clipboard version 37".into());
+    }
     if version < 36 && sheet.has_shape_styles() {
         return Err("shape styles require sheet clipboard version 36".into());
     }
@@ -1555,6 +1566,31 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(s.children(ids[1]).len(), 1);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn label_style_sheet_clipboard_requires_version_thirty_seven() {
+        use crate::board::CanvasObject;
+        let mut sheet = Sheet::new("Label styles", "Root");
+        let mut object = CanvasObject::shape(
+            crate::board::ShapeKind::Rectangle,
+            crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(40.0, 30.0)),
+        );
+        object.style.shadow = true;
+        object.label_style = Some(std::sync::Arc::new(crate::label_style::LabelStyle {
+            bold: true,
+            ..Default::default()
+        }));
+        sheet.add_canvas_object(object).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(LABEL_STYLES_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        let forged = encoded.replacen(LABEL_STYLES_SHEET_PREFIX, SHAPE_STYLES_SHEET_PREFIX, 1);
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("label styles require sheet clipboard version 37")
+        );
     }
 
     #[test]

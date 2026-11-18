@@ -115,6 +115,8 @@ const TABLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-TABLES-1";
 const TABLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-TABLES-1";
 const SHAPE_STYLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-SHAPE-STYLES-1";
 const SHAPE_STYLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-SHAPE-STYLES-1";
+const LABEL_STYLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-LABEL-STYLES-1";
+const LABEL_STYLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-LABEL-STYLES-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -136,7 +138,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_shape_styles() {
+        tuple.serialize_element(if self.workbook.has_label_styles() {
+            LABEL_STYLES_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_shape_styles() {
             SHAPE_STYLES_INK_WORKBOOK_VERSION
         } else if self.workbook.has_tables() {
             TABLES_INK_WORKBOOK_VERSION
@@ -274,7 +278,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_shape_styles() {
+    let version = if workbook.has_label_styles() {
+        LABEL_STYLES_WORKBOOK_VERSION
+    } else if workbook.has_shape_styles() {
         SHAPE_STYLES_WORKBOOK_VERSION
     } else if workbook.has_tables() {
         TABLES_WORKBOOK_VERSION
@@ -379,6 +385,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_label_styles() {
+                return Err(A::Error::custom(
+                    "label styles require a label-style-aware recovery workbook",
+                ));
+            }
             if workbook.has_shape_styles() {
                 return Err(A::Error::custom(
                     "shape styles require a shape-style-aware recovery workbook",
@@ -570,6 +581,8 @@ where
                 && version != TABLES_INK_WORKBOOK_VERSION
                 && version != SHAPE_STYLES_WORKBOOK_VERSION
                 && version != SHAPE_STYLES_INK_WORKBOOK_VERSION
+                && version != LABEL_STYLES_WORKBOOK_VERSION
+                && version != LABEL_STYLES_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -579,6 +592,67 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let label_styles_envelope = version == LABEL_STYLES_WORKBOOK_VERSION
+                || version == LABEL_STYLES_INK_WORKBOOK_VERSION;
+            if workbook.has_label_styles() != label_styles_envelope {
+                return Err(A::Error::custom(
+                    "label styles require a label-style-aware recovery workbook",
+                ));
+            }
+            let version = if !label_styles_envelope {
+                version
+            } else {
+                let (plain, ink) = if workbook.has_shape_styles() {
+                    (
+                        SHAPE_STYLES_WORKBOOK_VERSION,
+                        SHAPE_STYLES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_tables() {
+                    (TABLES_WORKBOOK_VERSION, TABLES_INK_WORKBOOK_VERSION)
+                } else if workbook.has_layers() {
+                    (LAYERS_WORKBOOK_VERSION, LAYERS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_object_data() {
+                    (
+                        OBJECT_DATA_WORKBOOK_VERSION,
+                        OBJECT_DATA_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_labels() {
+                    (
+                        CONNECTOR_LABELS_WORKBOOK_VERSION,
+                        CONNECTOR_LABELS_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_edge_shapes() {
+                    (
+                        EDGE_SHAPES_WORKBOOK_VERSION,
+                        EDGE_SHAPES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_segment_routes() {
+                    (
+                        SEGMENT_ROUTES_WORKBOOK_VERSION,
+                        SEGMENT_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_drawio_edge_routes() {
+                    (
+                        EDGE_ROUTES_WORKBOOK_VERSION,
+                        EDGE_ROUTES_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_connector_line_jumps() {
+                    (LINE_JUMPS_WORKBOOK_VERSION, LINE_JUMPS_INK_WORKBOOK_VERSION)
+                } else if workbook.has_library_connector_markers() {
+                    (
+                        MARKER_LIBRARY_WORKBOOK_VERSION,
+                        MARKER_LIBRARY_INK_WORKBOOK_VERSION,
+                    )
+                } else if workbook.has_semantic_model() {
+                    (SEMANTIC_WORKBOOK_VERSION, SEMANTIC_INK_WORKBOOK_VERSION)
+                } else {
+                    (
+                        COLLAPSE_LAYOUT_WORKBOOK_VERSION,
+                        COLLAPSE_LAYOUT_INK_WORKBOOK_VERSION,
+                    )
+                };
+                if has_pending_ink { ink } else { plain }.to_owned()
+            };
             let shape_styles_envelope = version == SHAPE_STYLES_WORKBOOK_VERSION
                 || version == SHAPE_STYLES_INK_WORKBOOK_VERSION;
             if workbook.has_shape_styles() != shape_styles_envelope {
@@ -2916,6 +2990,61 @@ mod lock_tests {
             let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             unversioned["workbook"] = serde_json::to_value(&book).unwrap();
             assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+    }
+
+    #[test]
+    fn label_styles_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::Vec2;
+        use thinoda_core::board::{CanvasObject, ShapeKind};
+        use thinoda_core::label_style::LabelStyle;
+
+        for shape_style in [false, true] {
+            let mut book = Workbook::default();
+            let sheet = book.active_mut();
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+            );
+            object.label_style = Some(std::sync::Arc::new(LabelStyle {
+                italic: true,
+                ..LabelStyle::default()
+            }));
+            object.style.shadow = shape_style;
+            sheet.add_canvas_object(object).unwrap();
+            for ink in [None, Some("pending ink")] {
+                let bytes = match ink {
+                    Some(ink) => {
+                        Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                            .unwrap()
+                    }
+                    None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+                };
+                let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(snapshot.workbook, book);
+                assert_eq!(snapshot.pending_ink.as_deref(), ink);
+                let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    older["workbook"][0],
+                    if ink.is_some() {
+                        LABEL_STYLES_INK_WORKBOOK_VERSION
+                    } else {
+                        LABEL_STYLES_WORKBOOK_VERSION
+                    }
+                );
+                older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                    SHAPE_STYLES_INK_WORKBOOK_VERSION
+                } else {
+                    SHAPE_STYLES_WORKBOOK_VERSION
+                });
+                assert!(serde_json::from_value::<Snapshot>(older).is_err());
+                let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+                let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+                assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
+            }
         }
     }
 

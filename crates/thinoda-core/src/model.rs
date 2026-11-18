@@ -850,6 +850,11 @@ impl Sheet {
         self.canvas.has_shape_styles()
     }
 
+    /// Whether any shape label has a text style.
+    pub fn has_label_styles(&self) -> bool {
+        self.canvas.has_label_styles()
+    }
+
     /// Whether the sheet needs layer-aware persistence.
     pub fn has_layers(&self) -> bool {
         self.canvas.has_layers()
@@ -2682,6 +2687,10 @@ impl Workbook {
     /// Whether any sheet needs shape-style-aware persistence.
     pub fn has_shape_styles(&self) -> bool {
         self.sheets.iter().any(Sheet::has_shape_styles)
+    }
+
+    pub fn has_label_styles(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_label_styles)
     }
 
     /// Whether any sheet needs layer-aware persistence.

@@ -1386,9 +1386,110 @@ fn board_object_svg(
                     out.push_str("</g>");
                 }
             }
+            board::Prim::StyledLabel {
+                layout,
+                style,
+                color,
+                opacity,
+            } => out.push_str(&styled_label_svg(&layout, &style, color, opacity)),
         }
     }
     out.push_str("</g>");
+    out
+}
+
+/// SVG for a styled shape label; the requested family comes first so viewers
+/// with that font installed use it.
+fn styled_label_svg(
+    layout: &thinoda_core::label_style::LabelLayout,
+    style: &thinoda_core::label_style::LabelStyle,
+    color: Color,
+    opacity: f32,
+) -> String {
+    use thinoda_core::model::TextAlign;
+    let mut out = String::new();
+    if layout.lines.is_empty() {
+        return out;
+    }
+    let rotated = layout.rotation != 0.0;
+    if rotated {
+        out.push_str(&format!(
+            "<g transform=\"rotate({:.2} {:.2} {:.2})\">",
+            layout.rotation, layout.pivot.x, layout.pivot.y
+        ));
+    }
+    if style.background.is_some() || style.border.is_some() {
+        let fade = |c: Color| {
+            Color::rgba(
+                c.r,
+                c.g,
+                c.b,
+                (f32::from(c.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+            )
+        };
+        let rect = layout.box_rect();
+        let stroke = style.border.map_or_else(
+            || "stroke=\"none\"".to_owned(),
+            |border| format!("stroke=\"{}\" stroke-width=\"1\"", col(fade(border))),
+        );
+        out.push_str(&format!(
+            "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\" {stroke}/>",
+            rect.min.x,
+            rect.min.y,
+            rect.size.x,
+            rect.size.y,
+            style
+                .background
+                .map_or_else(|| "none".to_owned(), |fill| col(fade(fill))),
+        ));
+    }
+    let family = match style.font_family.as_deref() {
+        Some(name) => format!(
+            "'{}', Segoe UI, Helvetica, Arial, sans-serif",
+            esc(&name.replace(['\'', '"'], ""))
+        ),
+        None => "Segoe UI, Helvetica, Arial, sans-serif".to_owned(),
+    };
+    let mut attributes = String::new();
+    if style.bold {
+        attributes.push_str(" font-weight=\"bold\"");
+    }
+    if style.italic {
+        attributes.push_str(" font-style=\"italic\"");
+    }
+    let decoration: Vec<&str> = [
+        style.underline.then_some("underline"),
+        style.strikethrough.then_some("line-through"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !decoration.is_empty() {
+        attributes.push_str(&format!(" text-decoration=\"{}\"", decoration.join(" ")));
+    }
+    let anchor = match layout.align {
+        TextAlign::Left => "start",
+        TextAlign::Center => "middle",
+        TextAlign::Right => "end",
+    };
+    let x = |r: Rect| match layout.align {
+        TextAlign::Left => r.min.x,
+        TextAlign::Center => r.center().x,
+        TextAlign::Right => r.max().x,
+    };
+    for line in &layout.lines {
+        out.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\" font-family=\"{family}\" font-size=\"{:.2}\"{attributes} fill=\"{}\" xml:space=\"preserve\">{}</text>",
+            x(line.rect),
+            line.rect.center().y,
+            layout.size,
+            col(color),
+            esc(&line.text)
+        ));
+    }
+    if rotated {
+        out.push_str("</g>");
+    }
     out
 }
 

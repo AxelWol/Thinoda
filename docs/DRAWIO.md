@@ -89,7 +89,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Connectors | Multiple labels per edge | Native (D7) | D7 |
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
-| Text | Font family/size/style, alignment, label position, spacing, wrap | Approx. (cards native; shape labels partial) | D9 |
+| Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
 | Text | Rich HTML labels, sub/superscript, lists | Approx. (plain text) | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
@@ -237,7 +237,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 ### D9 — Style and text
 
 - [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
-- [ ] Shape label font family/size/style, alignment, position, spacing, wrap
+- [x] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
 - [ ] Copy/paste style, set default style, style rules
 
@@ -278,6 +278,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-17 | D9 label text | Shape labels carry an optional `LabelStyle`: font family and size, bold/italic/underline/strikethrough, horizontal and vertical alignment, label position outside the shape on either axis, overall and per-side spacing, wrap on/off, label background and border colours and vertical (`horizontal=0`) text; one core layout wraps and places the text for canvas, label editor, hit testing, scene bounds and SVG/PNG/PDF/PPTX; Label text style inspector section for single and multi-selection with one undo per edit and style copy/paste; draw.io import maps the keys natively and export writes them back (`whiteSpace=nowrap` for unwrapped labels); native v48, sheet clipboard v37, board clipboard v41, XMind `THINODA-XMIND-LABEL-STYLES-1`, recovery `THINODA-RECOVERY-LABEL-STYLES-1` and `THINODA-RECOVERY-INK-LABEL-STYLES-1` |
 | 2026-11-17 | D9 shape style | Native shape style effects on `ObjectStyle`: dash pattern with fixed-length option, linear (north/south/east/west) and radial gradients, drop shadow, glass highlight, fill patterns (hatch, cross-hatch, dots, dashed, zigzag) and horizontal/vertical flip that mirrors built-in, polygon and stencil geometry plus fixed ports about the frame centre (labels stay upright); canvas and SVG/PNG/PDF/PPTX paint them identically (stencil dashes now export too); Shape style inspector section for single and multi-selection with one undo per edit and style copy/paste; draw.io import maps the keys natively and export writes them back; native v47, sheet clipboard v36, board clipboard v40, XMind `THINODA-XMIND-SHAPE-STYLES-1`, recovery `THINODA-RECOVERY-SHAPE-STYLES-1` and `THINODA-RECOVERY-INK-SHAPE-STYLES-1` |
 | 2026-11-17 | D8 tables | Native 2-D tables on the scene container engine: a table container owns row heights, column widths, cell slots with row/column spans and row/column stripe colours, and the shared layout pass places its cell containers (content never grows a cell); undoable insert row above/below and column left/right, delete row/column, merge/unmerge, stripes and track resize; Insert table (board toolbar, rows × columns) and a Table inspector section; canvas and SVG/PNG/PDF/PPTX paint stripes; draw.io `tableLayout` tables import natively with rowspan/colspan, stripes, grid lines and cell content and export as table/tableRow/partialRectangle cells; native v46, sheet clipboard v35, board clipboard v39, new XMind and recovery table envelopes; D8 complete |
 | 2026-11-17 | D8 layers | Named board layers per sheet above an implicit base layer, with visibility and lock; hidden layers leave canvas, hits, lasso, select all, snapping and every export; locked layers lock their objects; Layers panel (View menu, Board menu and board toolbar) adds, renames, reorders, hides, locks and deletes layers and moves the selection with group members and container children; draw.io layers import named, hidden and locked instead of being flattened or dropped and export as layer cells; native v45, board clipboard v38, sheet clipboard v34, new XMind and recovery envelopes |
@@ -653,6 +654,31 @@ the scene mirrors fixed connector ports with the shape. Known approximations:
 - Effects map only on built-in and stencil shapes; text, image, container and
   table cells keep the keys in passthrough. The inspector offers dash presets
   only and shows the first shape's values for a multi-selection.
+
+**D9 label text.** One renderer-neutral layout in `thinoda-core::label_style`
+breaks lines and places the text block, so the canvas, label editor, hit
+testing, scene bounds and every export agree; outside labels extend scene
+bounds and select their shape. Known approximations:
+
+- Line breaking uses an estimated glyph advance (0.55 em, 1.25 line height)
+  rather than real font metrics, so wrapped lines can differ from draw.io's
+  browser layout for proportional fonts.
+- The requested family is stored and written exactly to SVG (first in a
+  fallback list), PowerPoint and draw.io. The canvas uses the closest family
+  Thinoda has loaded (otherwise the proportional UI font), and PNG/PDF render
+  from the SVG with the installed fonts. The canvas simulates bold with a
+  double paint (italic, underline and strikethrough use egui's text format);
+  the label editor shows size, family and alignment only.
+- Labels without a style keep their previous rendering (12 px unwrapped on the
+  canvas, 14 px wrapped in exports); draw.io files imported without the
+  default stylesheet get an explicit 11 px label.
+- `overflow`, `textDirection` and `labelWidth` stay in passthrough with a
+  Formatting warning; `textOpacity` remains folded into the text colour.
+  Connector labels, text inside tables and swimlane headers (where
+  `horizontal` turns the header) are unchanged, and built-in library entries
+  still omit outside label positions from their insert styles.
+- The inspector shows the first shape's values for a multi-selection and
+  edits only the changed field on every shape.
 
 ## 5. Rubber-duck findings
 

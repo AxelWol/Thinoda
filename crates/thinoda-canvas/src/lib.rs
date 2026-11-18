@@ -39,6 +39,7 @@ mod actions;
 mod font_tests;
 pub mod ink_controller;
 pub mod ink_input;
+mod label_text;
 mod measure;
 pub mod minimap;
 pub mod pen_input;

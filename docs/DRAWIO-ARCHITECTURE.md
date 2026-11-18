@@ -713,6 +713,20 @@ geometry, shared by canvas, SVG/PNG/PDF and PPTX; the scene mirrors fixed ports.
 Gates: native v47, sheet clipboard v36, board clipboard v40, XMind
 `THINODA-XMIND-SHAPE-STYLES-1`, recovery `THINODA-RECOVERY-SHAPE-STYLES-1`.
 
+*As implemented in D9 (label text):* shapes gain `label_style:
+Option<Arc<LabelStyle>>` (font family, size, bold/italic/underline/strikethrough,
+align, vertical align, label position on both axes, spacing plus four sides,
+wrap, label background and border, vertical text); `None` keeps the legacy
+label rendering, and a stored style is never the default. The core
+`label_style::layout` wraps and places the text for canvas, editor, hit
+testing, scene bounds and the `StyledLabel` export primitive (SVG, PPTX; PNG and
+PDF rasterize the SVG). The family name is kept exactly for SVG, PPTX and
+draw.io while the canvas uses the closest loaded font. draw.io export writes
+`whiteSpace=nowrap` for unwrapped labels so wrap survives a round trip;
+`overflow`, `textDirection` and `labelWidth` stay passthrough. Gates: native
+v48, sheet clipboard v37, board clipboard v41, XMind
+`THINODA-XMIND-LABEL-STYLES-1`, recovery `THINODA-RECOVERY-LABEL-STYLES-1`.
+
 #### 3.2.3 Connector marker migration (compatibility-critical)
 - Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
   triangles; add optional `start_marker`/`end_marker` fields for exact draw.io

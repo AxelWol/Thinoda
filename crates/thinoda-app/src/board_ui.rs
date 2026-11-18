@@ -690,9 +690,12 @@ fn ink_popup_slot(viewport: egui::ViewportId) -> egui::Id {
     egui::Id::unique(("board_ink_popups", viewport))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum BoardStyleClipboard {
-    Shape(ObjectStyle),
+    Shape(
+        ObjectStyle,
+        Option<std::sync::Arc<thinoda_core::label_style::LabelStyle>>,
+    ),
     Connector {
         style: ObjectStyle,
         color: Option<Color>,
@@ -720,7 +723,7 @@ pub(crate) enum BoardStyleClipboard {
 impl BoardStyleClipboard {
     pub(crate) fn from_object(object: &CanvasObject) -> Self {
         match &object.kind {
-            CanvasObjectKind::Shape { .. } => Self::Shape(object.style),
+            CanvasObjectKind::Shape { .. } => Self::Shape(object.style, object.label_style.clone()),
             CanvasObjectKind::Connector(connector) => Self::Connector {
                 style: object.style,
                 color: connector.color,
@@ -746,18 +749,21 @@ impl BoardStyleClipboard {
         }
     }
 
-    pub(crate) fn matches(self, object: &CanvasObject) -> bool {
+    pub(crate) fn matches(&self, object: &CanvasObject) -> bool {
         matches!(
             (self, &object.kind),
-            (Self::Shape(_), CanvasObjectKind::Shape { .. })
+            (Self::Shape(..), CanvasObjectKind::Shape { .. })
                 | (Self::Connector { .. }, CanvasObjectKind::Connector(_))
                 | (Self::Ink { .. }, CanvasObjectKind::Ink(_))
         )
     }
 
-    pub(crate) fn apply(self, object: &mut CanvasObject) {
-        match (self, &mut object.kind) {
-            (Self::Shape(style), CanvasObjectKind::Shape { .. }) => object.style = style,
+    pub(crate) fn apply(&self, object: &mut CanvasObject) {
+        match (self.clone(), &mut object.kind) {
+            (Self::Shape(style, label_style), CanvasObjectKind::Shape { .. }) => {
+                object.style = style;
+                object.label_style = label_style;
+            }
             (
                 Self::Connector {
                     style,
@@ -3519,7 +3525,11 @@ impl ThinodaApp {
             return table;
         }
         if doc.view.board_selection.len() != 1 || !doc.view.selection.is_empty() {
-            if !self.board_shape_style_properties(ui) && !table {
+            let shapes = self.board_shape_style_properties(ui);
+            if shapes {
+                self.board_label_style_properties(ui);
+            }
+            if !shapes && !table {
                 widgets::caption(ui, t("Select one board object to edit its properties."));
             }
             return true;
@@ -3981,7 +3991,9 @@ impl ThinodaApp {
                 self.toasts.error(error);
             }
         }
-        self.board_shape_style_properties(ui);
+        if self.board_shape_style_properties(ui) {
+            self.board_label_style_properties(ui);
+        }
         self.board_structure_properties(ui);
         true
     }
@@ -9189,7 +9201,7 @@ mod tests {
 
     fn container_properties_harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
         let mut harness = Harness::builder()
-            .with_size(vec2(450.0, 1000.0))
+            .with_size(vec2(450.0, 1600.0))
             .build_ui_state(
                 |ui, app: &mut ThinodaApp| {
                     app.board_object_properties(ui);

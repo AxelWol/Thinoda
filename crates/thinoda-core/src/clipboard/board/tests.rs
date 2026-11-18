@@ -2467,6 +2467,32 @@ fn library_marker_board_clipboard_requires_version_thirty_one() {
 }
 
 #[test]
+fn label_style_board_clipboard_requires_version_forty_one() {
+    let mut source = Sheet::new("Source", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+    );
+    object.style.flip_v = true;
+    object.label_style = Some(std::sync::Arc::new(crate::label_style::LabelStyle {
+        font_family: Some("Courier New".into()),
+        vertical_position: crate::label_style::LabelVAlign::Bottom,
+        ..Default::default()
+    }));
+    let id = source.add_canvas_object(object).unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(LABEL_STYLES_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    let downgraded = encoded.replacen(LABEL_STYLES_BOARD_PREFIX, SHAPE_STYLES_BOARD_PREFIX, 1);
+    assert!(
+        decode_board_payload(&downgraded)
+            .unwrap_err()
+            .contains("label styles require board clipboard version 41")
+    );
+}
+
+#[test]
 fn shape_style_board_clipboard_requires_version_forty() {
     let mut source = Sheet::new("Source", "Root");
     let mut object = CanvasObject::shape(

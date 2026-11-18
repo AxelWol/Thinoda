@@ -138,6 +138,84 @@ fn drawio_shape_effects_import_natively_and_round_trip() {
 }
 
 #[test]
+fn drawio_label_text_style_imports_natively_and_round_trips() {
+    use thinoda_core::label_style::LabelVAlign;
+    let xml = page(concat!(
+        r##"<mxCell id="a" value="Styled label" style="rounded=0;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontFamily=Courier New;fontSize=18;fontStyle=15;align=left;verticalAlign=bottom;labelPosition=right;verticalLabelPosition=top;spacing=4;spacingTop=1;spacingLeft=2;spacingBottom=3;spacingRight=5;labelBackgroundColor=#FFFF00;labelBorderColor=#FF0000;horizontal=0;overflow=hidden;textDirection=rtl;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="80" height="40" as="geometry"/></mxCell>"##,
+        r##"<mxCell id="b" value="Wrapped" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontSize=14;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="80" height="40" as="geometry"/></mxCell>"##,
+        r##"<mxCell id="c" value="Plain" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;align=center;fontSize=12;" vertex="1" parent="1"><mxGeometry x="300" y="10" width="80" height="40" as="geometry"/></mxCell>"##,
+    ))
+    .replacen("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#, 1);
+    let report = load(&xml);
+    // `overflow` and `textDirection` stay passthrough with a warning.
+    assert_eq!(report.warnings, vec![ImportWarning::Formatting]);
+    let sheet = &report.workbook.sheets[0];
+    let by_id = |id: &str| {
+        sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|o| o.drawio.as_ref().and_then(|d| d.source_id.as_deref()) == Some(id))
+            .unwrap()
+    };
+    let a = by_id("a");
+    let label = a.label_style.as_deref().unwrap();
+    assert_eq!(label.font_family.as_deref(), Some("Courier New"));
+    assert_eq!(label.font_size, Some(18.0));
+    assert!(label.bold && label.italic && label.underline && label.strikethrough);
+    assert_eq!(label.align, TextAlign::Left);
+    assert_eq!(label.vertical_align, LabelVAlign::Bottom);
+    assert_eq!(label.position, TextAlign::Right);
+    assert_eq!(label.vertical_position, LabelVAlign::Top);
+    assert_eq!(
+        [
+            label.spacing,
+            label.spacing_top,
+            label.spacing_left,
+            label.spacing_bottom,
+            label.spacing_right
+        ],
+        [4.0, 1.0, 2.0, 3.0, 5.0]
+    );
+    assert_eq!(label.background, Some(Color::rgb(255, 255, 0)));
+    assert_eq!(label.border, Some(Color::rgb(255, 0, 0)));
+    assert!(label.vertical && !label.wrap);
+    let rest = &a.drawio.as_ref().unwrap().style;
+    assert!(rest.contains(&("overflow".into(), "hidden".into())));
+    assert!(rest.contains(&("textDirection".into(), "rtl".into())));
+    assert!(
+        rest.iter().all(|(key, _)| !matches!(
+            key.as_str(),
+            "fontFamily" | "fontSize" | "fontStyle" | "align" | "labelPosition" | "spacing"
+        )),
+        "{rest:?}"
+    );
+    let b = by_id("b").label_style.as_deref().unwrap();
+    assert!(b.wrap && b.font_size == Some(14.0));
+    assert!(by_id("c").label_style.is_none());
+    assert_eq!(feature_version(&report.workbook), 48);
+
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    for needle in [
+        "whiteSpace=nowrap;html=1;fontFamily=Courier New;fontSize=18;fontStyle=15;align=left;verticalAlign=bottom;labelPosition=right;verticalLabelPosition=top;spacing=4;spacingTop=1;spacingLeft=2;spacingBottom=3;spacingRight=5;labelBackgroundColor=#FFFF00;labelBorderColor=#FF0000;horizontal=0;",
+        "overflow=hidden;",
+        "whiteSpace=wrap;html=1;fontSize=14;",
+    ] {
+        assert!(exported.contains(needle), "{needle} in {exported}");
+    }
+    let reopened = load(&exported);
+    let labels = |book: &Workbook| {
+        book.sheets[0]
+            .canvas
+            .objects
+            .iter()
+            .map(|o| o.label_style.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(labels(&reopened.workbook), labels(&report.workbook));
+}
+
+#[test]
 fn drawio_shape_effects_keep_unmapped_values_and_warn() {
     let xml = page(concat!(
         r#"<mxCell id="a" style="rounded=0;html=1;fillColor=#FFFFFF;strokeColor=#000000;fillStyle=zigzag;" vertex="1" parent="1"><mxGeometry width="80" height="40" as="geometry"/></mxCell>"#,
@@ -848,7 +926,10 @@ fn sticky_and_text_card_alignment_survives_drawio_interchange() {
 
 #[test]
 fn unsupported_drawio_alignment_is_still_reported() {
-    for style in ["shape=note;align=justify;", "shape=rectangle;align=left;"] {
+    for style in [
+        "shape=note;align=justify;",
+        "shape=rectangle;align=justify;",
+    ] {
         let xml = page(&format!(
             r#"<mxCell id="a" value="Label" style="{style}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="240" height="140" as="geometry"/></mxCell>"#
         ));
@@ -1403,20 +1484,20 @@ fn double_ellipse_reports_unrepresentable_insets_and_unresolved_colors() {
 #[test]
 fn double_ellipse_reports_unsupported_label_layout() {
     for (extra, warning) in [
-        ("whiteSpace=wrap;", true),
+        ("whiteSpace=wrap;", false),
         ("whiteSpace=nowrap;", false),
-        ("spacingLeft=12;", true),
+        ("spacingLeft=12;", false),
         ("spacing=0;spacingTop=none;", false),
-        ("labelPosition=right;", true),
-        ("verticalLabelPosition=top;", true),
+        ("labelPosition=right;", false),
+        ("verticalLabelPosition=top;", false),
         ("overflow=hidden;", true),
-        ("horizontal=0;", true),
+        ("horizontal=0;", false),
         ("noLabel=1;", true),
         ("textDirection=rtl;", true),
         ("labelWidth=40;", true),
-        ("fontSize=11;", true),
+        ("fontSize=11;", false),
         ("fontSize=12;", false),
-        ("fontSize=none;", true),
+        ("fontSize=none;", false),
         ("fontSize=invalid;", true),
         ("fontStyle=invalid;", true),
     ] {
@@ -1448,10 +1529,14 @@ fn double_ellipse_reports_unsupported_label_layout() {
         r##"<mxCell id="a" value="End" style=";shape=doubleEllipse;fillColor=#fff;strokeColor=#000;fontColor=#000;" vertex="1" parent="1"><mxGeometry width="100" height="60" as="geometry"/></mxCell>"##,
     )
     .replacen("<mxGraphModel>", r#"<mxGraphModel adaptiveColors="none">"#, 1);
-    assert_eq!(
-        load(&suppressed_default).warnings,
-        vec![ImportWarning::Formatting]
-    );
+    let report = load(&suppressed_default);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let label_style = shapes(&report.workbook.sheets[0])[0]
+        .label_style
+        .clone()
+        .unwrap();
+    assert_eq!(label_style.font_size, Some(11.0));
+    assert!(!label_style.wrap);
     let restored_default =
         suppressed_default.replace("shape=doubleEllipse;", "shape=doubleEllipse;fontSize=12;");
     assert!(load(&restored_default).warnings.is_empty());
@@ -1681,11 +1766,11 @@ fn vertex_label_font_size_loss_is_reported_for_shapes_and_text() {
     for (shape, prefix, font, label, warned) in [
         ("rectangle", "", "", "Label", false),
         ("rectangle", "", "fontSize=12;", "Label", false),
-        ("rectangle", "", "fontSize=11;", "Label", true),
-        ("ellipse", "", "fontSize=11;", "Label", true),
-        ("text", "", "fontSize=11;", "Label", true),
-        ("rectangle", "", "fontSize=none;", "Label", true),
-        ("rectangle", ";", "", "Label", true),
+        ("rectangle", "", "fontSize=11;", "Label", false),
+        ("ellipse", "", "fontSize=11;", "Label", false),
+        ("text", "", "fontSize=11;", "Label", false),
+        ("rectangle", "", "fontSize=none;", "Label", false),
+        ("rectangle", ";", "", "Label", false),
         ("rectangle", ";", "fontSize=12;", "Label", false),
         ("rectangle", "", "fontSize=invalid;", "Label", true),
         ("rectangle", "", "fontSize=11;", "", false),

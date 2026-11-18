@@ -2,13 +2,14 @@
 //! editable PowerPoint renderers. Objects are reduced to absolute, already rotated
 //! primitives so both back ends draw identical geometry from the shared core scene.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
         CanvasObject, CanvasObjectKind, Card, CardKind, InkTool, RectangleSidePath, ShapeKind,
         rectangle_side_paths, rotate_around,
     },
+    label_style::{self, LabelLayout, LabelStyle},
     scene::{
         EdgeBody, Scene, SceneBand, SceneGeometry, SceneId, SceneItem, connector_stroke_paths,
     },
@@ -69,6 +70,26 @@ pub(crate) enum Prim {
         /// Unfaded backdrop when text and backdrop share one opacity group.
         group_backdrop: Option<Color>,
     },
+    /// Shape label with a text style, laid out by `thinoda_core::label_style`.
+    StyledLabel {
+        layout: LabelLayout,
+        style: Arc<LabelStyle>,
+        /// Faded text colour.
+        color: Color,
+        /// Object opacity applied to the label background and border.
+        opacity: f32,
+    },
+}
+
+/// The styled label of a shape whose default text area is `base`.
+fn styled_label(object: &CanvasObject, base: Rect, label: &str, color: Color) -> Option<Prim> {
+    let style = object.label_style.clone()?;
+    Some(Prim::StyledLabel {
+        layout: label_style::layout(object, base, label)?,
+        style,
+        color,
+        opacity: object.style.opacity,
+    })
 }
 
 fn faded(color: Color, opacity: f32) -> Color {
@@ -87,38 +108,7 @@ fn faded(color: Color, opacity: f32) -> Color {
 
 /// Greedy word wrap with an approximate glyph width; explicit newlines are kept.
 pub(crate) fn wrap(text: &str, width: f32, size: f32) -> Vec<String> {
-    let max_chars = ((width / (size * 0.55)).floor() as usize).max(1);
-    let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-        for word in paragraph.split_whitespace() {
-            let mut word = word.to_owned();
-            while word.chars().count() > max_chars {
-                if !line.is_empty() {
-                    lines.push(std::mem::take(&mut line));
-                }
-                let split = word
-                    .char_indices()
-                    .nth(max_chars)
-                    .map_or(word.len(), |(index, _)| index);
-                lines.push(word[..split].to_owned());
-                word = word[split..].to_owned();
-            }
-            if line.is_empty() {
-                line = word;
-            } else if line.chars().count() + 1 + word.chars().count() <= max_chars {
-                line.push(' ');
-                line.push_str(&word);
-            } else {
-                lines.push(std::mem::replace(&mut line, word));
-            }
-        }
-        lines.push(line);
-    }
-    while lines.last().is_some_and(String::is_empty) && lines.len() > 1 {
-        lines.pop();
-    }
-    lines
+    label_style::wrap_lines(text, width, size)
 }
 
 /// Canvas objects of `scene` in `band`, in paint order, with their source object.
@@ -311,16 +301,20 @@ pub(crate) fn object_prims(
             && !label.trim().is_empty()
         {
             let rect = thinoda_core::stencil_object::label_rect(object, render);
-            out.push(Prim::Text {
-                rect,
-                pivot: object.rect.center(),
-                rotation: object.rotation,
-                lines: wrap(label, rect.size.x, LABEL_SIZE),
-                size: LABEL_SIZE,
-                color: faded(font, opacity),
-                backdrop: None,
-                group_backdrop: None,
-            });
+            out.push(
+                styled_label(object, rect, label, faded(font, opacity)).unwrap_or_else(|| {
+                    Prim::Text {
+                        rect,
+                        pivot: object.rect.center(),
+                        rotation: object.rotation,
+                        lines: wrap(label, rect.size.x, LABEL_SIZE),
+                        size: LABEL_SIZE,
+                        color: faded(font, opacity),
+                        backdrop: None,
+                        group_backdrop: None,
+                    }
+                }),
+            );
         }
         return out;
     }
@@ -452,22 +446,25 @@ pub(crate) fn object_prims(
             if !label.trim().is_empty() {
                 let rect = thinoda_core::board::object_label_rect(object).unwrap_or(object.rect);
                 let under = object.style.fill.map_or(background, |f| f.over(background));
-                out.push(Prim::Text {
-                    rect,
-                    pivot: object.rect.center(),
-                    rotation: object.rotation,
-                    lines: wrap(label, rect.size.x, LABEL_SIZE),
-                    size: LABEL_SIZE,
-                    color: faded(
-                        object
-                            .style
-                            .text_color
-                            .unwrap_or_else(|| Color::highest_contrast_on(under)),
-                        opacity,
-                    ),
-                    backdrop: None,
-                    group_backdrop: None,
-                });
+                let color = faded(
+                    object
+                        .style
+                        .text_color
+                        .unwrap_or_else(|| Color::highest_contrast_on(under)),
+                    opacity,
+                );
+                out.push(
+                    styled_label(object, rect, label, color).unwrap_or_else(|| Prim::Text {
+                        rect,
+                        pivot: object.rect.center(),
+                        rotation: object.rotation,
+                        lines: wrap(label, rect.size.x, LABEL_SIZE),
+                        size: LABEL_SIZE,
+                        color,
+                        backdrop: None,
+                        group_backdrop: None,
+                    }),
+                );
             }
         }
         (

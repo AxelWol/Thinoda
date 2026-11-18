@@ -431,6 +431,13 @@ impl CanvasLayer {
             .iter()
             .any(|object| object.style.has_shape_style_effects())
     }
+
+    /// Whether this layer needs label-style-aware persistence.
+    pub fn has_label_styles(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.label_style.is_some())
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -728,6 +735,9 @@ pub struct CanvasObject {
     /// Named layer of the object; `None` is the base layer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer: Option<crate::board_layers::BoardLayerId>,
+    /// Shape label text style; `None` is the default label style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_style: Option<std::sync::Arc<crate::label_style::LabelStyle>>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -754,6 +764,7 @@ impl CanvasObject {
             drawio: None,
             data: None,
             layer: None,
+            label_style: None,
         }
     }
 
@@ -2500,6 +2511,16 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
     }
     if let Some(dash) = style.dash {
         crate::shape_style::DashPattern::new(dash.pattern.values())
+            .map_err(|error| format!("canvas object {id}: {error}"))?;
+    }
+    if let Some(label_style) = &object.label_style {
+        if !matches!(object.kind, CanvasObjectKind::Shape { .. }) {
+            return Err(format!(
+                "canvas object {id} has a label style but is not a shape"
+            ));
+        }
+        label_style
+            .validate()
             .map_err(|error| format!("canvas object {id}: {error}"))?;
     }
     if let Some(rounding) = object.rounding

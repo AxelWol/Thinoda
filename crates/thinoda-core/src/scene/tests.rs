@@ -3267,3 +3267,36 @@ fn flipped_shapes_mirror_fixed_ports_and_their_perimeter() {
         "{plain:?} {flipped:?}"
     );
 }
+
+#[test]
+fn outside_shape_labels_extend_bounds_and_select_the_shape() {
+    use crate::label_style::{LabelStyle, LabelVAlign};
+    let mut s = Sheet::new("Labels", "Root");
+    let id = shape(
+        &mut s,
+        ShapeKind::Rectangle,
+        rect(500.0, 500.0, 100.0, 60.0),
+        Band::Above,
+    );
+    let object = s.canvas.objects.iter_mut().find(|o| o.id == id).unwrap();
+    if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+        *label = "Below".into();
+    }
+    let below = Vec2::new(550.0, 590.0);
+    let (_, sc) = scene(&s);
+    assert_eq!(sc.hit_test(below), None);
+    let object = s.canvas.objects.iter_mut().find(|o| o.id == id).unwrap();
+    object.label_style = Some(std::sync::Arc::new(LabelStyle {
+        vertical_position: LabelVAlign::Bottom,
+        ..LabelStyle::default()
+    }));
+    let (_, sc) = scene(&s);
+    let item = sc
+        .items
+        .iter()
+        .find(|item| item.id == SceneId::Object(id))
+        .unwrap();
+    assert!(item.outside_label.is_some());
+    assert!(item.bounds.max().y > 580.0, "{:?}", item.bounds);
+    assert_eq!(sc.hit_test(below), Some(SceneHit::Object(id)));
+}

@@ -23,6 +23,7 @@ pub mod equations;
 pub mod fim;
 pub mod geometry;
 pub mod images;
+pub mod label_style;
 pub mod layout;
 pub mod markers;
 pub mod model;
