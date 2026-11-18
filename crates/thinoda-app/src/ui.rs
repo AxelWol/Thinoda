@@ -1467,21 +1467,7 @@ fn font_choice(
     response
 }
 
-/// Swatch colors offered in the format panel (XMind-like palette).
-pub const SWATCHES: [Color32; 12] = [
-    Color32::from_rgb(0x2E, 0x7C, 0xF6),
-    Color32::from_rgb(0x00, 0xA8, 0x9D),
-    Color32::from_rgb(0x2B, 0xB6, 0x73),
-    Color32::from_rgb(0xF5, 0xA6, 0x23),
-    Color32::from_rgb(0xF2, 0x6B, 0x3A),
-    Color32::from_rgb(0xE8, 0x45, 0x5C),
-    Color32::from_rgb(0xA3, 0x5B, 0xE0),
-    Color32::from_rgb(0x5B, 0x6B, 0xE0),
-    Color32::from_rgb(0x33, 0x33, 0x33),
-    Color32::from_rgb(0x88, 0x88, 0x88),
-    Color32::from_rgb(0xEE, 0xEE, 0xEE),
-    Color32::WHITE,
-];
+pub use thinoda_canvas::FORMAT_SWATCHES as SWATCHES;
 
 pub fn to_color(c: Color32) -> Color {
     Color {

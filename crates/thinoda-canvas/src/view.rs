@@ -170,6 +170,9 @@ pub struct BoardLabels {
     pub label_superscript: String,
     pub label_bulleted_list: String,
     pub label_numbered_list: String,
+    pub label_font_size: String,
+    pub label_text_color: String,
+    pub label_default: String,
 }
 
 impl Default for BoardLabels {
@@ -233,6 +236,9 @@ impl Default for BoardLabels {
             label_superscript: "Superscript".into(),
             label_bulleted_list: "Bulleted list".into(),
             label_numbered_list: "Numbered list".into(),
+            label_font_size: "Font Size".into(),
+            label_text_color: "Text Color".into(),
+            label_default: "Default".into(),
         }
     }
 }

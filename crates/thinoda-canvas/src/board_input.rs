@@ -330,6 +330,7 @@ pub(super) struct LabelEdit {
     selection: Option<std::ops::Range<usize>>,
     typing_style: Option<label_format::TypingStyle>,
     rich_reconciliation_error: Option<String>,
+    toolbar_page: LabelToolbarPage,
     toolbar_rect: Option<Rect>,
     toolbar_buttons: Vec<Id>,
     sheet: usize,
@@ -606,6 +607,7 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
         selection: None,
         typing_style: None,
         rich_reconciliation_error: None,
+        toolbar_page: LabelToolbarPage::Formatting,
         toolbar_rect: None,
         toolbar_buttons: Vec::new(),
         sheet: doc.active_index(),
@@ -6180,7 +6182,22 @@ struct LabelToolbar {
     rect: Rect,
     buttons: Vec<Id>,
     first_enabled: Option<Id>,
-    action: Option<label_format::Format>,
+    action: Option<LabelFormatAction>,
+    page: Option<LabelToolbarPage>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LabelToolbarPage {
+    Formatting,
+    Text,
+    Colors,
+}
+
+#[derive(Clone, Copy)]
+enum LabelFormatAction {
+    Toggle(label_format::Format),
+    Size(Option<f32>),
+    Color(Option<thinoda_core::Color>),
 }
 
 fn show_label_format_toolbar(
@@ -6194,8 +6211,18 @@ fn show_label_format_toolbar(
 
     let compact = canvas.width() < 360.0 || canvas.height() < 180.0;
     let width = (canvas.width() - 16.0).clamp(1.0, 300.0);
-    let columns = ((width - 14.0) / 28.0).floor().max(1.0) as usize;
-    let rows = 8_usize.div_ceil(columns) as f32;
+    let button_width = if compact && edit.toolbar_page == LabelToolbarPage::Colors {
+        22.0
+    } else {
+        28.0
+    };
+    let columns = ((width - 14.0) / button_width).floor().max(1.0) as usize;
+    let button_count: usize = match edit.toolbar_page {
+        LabelToolbarPage::Formatting => 9,
+        LabelToolbarPage::Text => 7,
+        LabelToolbarPage::Colors => crate::FORMAT_SWATCHES.len() + 2,
+    };
+    let rows = button_count.div_ceil(columns) as f32;
     let height = if compact {
         16.0 + 28.0 * rows
     } else {
@@ -6231,6 +6258,26 @@ fn show_label_format_toolbar(
         .original_label_style
         .as_deref()
         .unwrap_or(&default_style);
+    let caret_style = edit
+        .typing_style
+        .as_ref()
+        .filter(|typing| typing.position == selection.start)
+        .map_or_else(
+            || label_format::style_at_caret(rich, selection.start),
+            |typing| typing.style.clone(),
+        );
+    let size = if selection.is_empty() {
+        Some(caret_style.font_size.unwrap_or(base.size()))
+    } else {
+        label_format::selection_value(rich, &edit.text, selection.clone(), |style| {
+            style.font_size.unwrap_or(base.size())
+        })
+    };
+    let color = if selection.is_empty() {
+        Some(caret_style.color)
+    } else {
+        label_format::selection_value(rich, &edit.text, selection.clone(), |style| style.color)
+    };
     let controls = [
         (Format::Bold, "B", &labels.label_bold),
         (Format::Italic, "I", &labels.label_italic),
@@ -6244,6 +6291,7 @@ fn show_label_format_toolbar(
     let mut buttons = Vec::new();
     let mut first_enabled = None;
     let mut action = None;
+    let mut page = None;
     let area = egui::Area::new(MapCanvas::id().with("board-label-formatting"))
         .order(egui::Order::Foreground)
         .default_size(vec2(width, height))
@@ -6259,44 +6307,210 @@ fn show_label_format_toolbar(
                     ui.label(egui::RichText::new(&labels.label_formatting).small());
                 }
                 ui.horizontal_wrapped(|ui| {
-                    for (format, glyph, label) in controls {
-                        let enabled = !edit.ime_composing;
-                        let selected = if selection.is_empty() && format.list().is_none() {
-                            let style = edit
-                                .typing_style
-                                .as_ref()
-                                .filter(|typing| typing.position == selection.start)
-                                .map_or_else(
-                                    || label_format::style_at_caret(rich, selection.start),
-                                    |typing| typing.style.clone(),
-                                );
-                            label_format::active_at_caret(&style, base, format)
-                        } else {
-                            label_format::active(rich, &edit.text, selection.clone(), base, format)
-                        };
-                        let glyph = match format {
-                            Format::Bold => egui::RichText::new(glyph).strong(),
-                            Format::Italic => egui::RichText::new(glyph).italics(),
-                            Format::Underline => egui::RichText::new(glyph).underline(),
-                            Format::Strike => egui::RichText::new(glyph).strikethrough(),
-                            _ => egui::RichText::new(glyph),
-                        };
-                        let response = ui
-                            .add_enabled(
-                                enabled,
-                                egui::Button::selectable(selected, glyph)
-                                    .min_size(vec2(26.0, 24.0)),
-                            )
-                            .on_hover_text(label);
-                        response.widget_info(|| {
-                            egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, label)
-                        });
-                        buttons.push(response.id);
-                        if enabled && first_enabled.is_none() {
-                            first_enabled = Some(response.id);
+                    let enabled = !edit.ime_composing;
+                    match edit.toolbar_page {
+                        LabelToolbarPage::Formatting => {
+                            for (format, glyph, label) in controls {
+                                let selected = if selection.is_empty() && format.list().is_none() {
+                                    label_format::active_at_caret(&caret_style, base, format)
+                                } else {
+                                    label_format::active(
+                                        rich,
+                                        &edit.text,
+                                        selection.clone(),
+                                        base,
+                                        format,
+                                    )
+                                };
+                                let glyph = match format {
+                                    Format::Bold => egui::RichText::new(glyph).strong(),
+                                    Format::Italic => egui::RichText::new(glyph).italics(),
+                                    Format::Underline => egui::RichText::new(glyph).underline(),
+                                    Format::Strike => egui::RichText::new(glyph).strikethrough(),
+                                    _ => egui::RichText::new(glyph),
+                                };
+                                let response = ui
+                                    .add_enabled(
+                                        enabled,
+                                        egui::Button::selectable(selected, glyph)
+                                            .min_size(vec2(26.0, 24.0)),
+                                    )
+                                    .on_hover_text(label);
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::selected(
+                                        egui::Role::Button,
+                                        enabled,
+                                        selected,
+                                        label,
+                                    )
+                                });
+                                buttons.push(response.id);
+                                if enabled && first_enabled.is_none() {
+                                    first_enabled = Some(response.id);
+                                }
+                                if response.clicked() {
+                                    action = Some(LabelFormatAction::Toggle(format));
+                                }
+                            }
+                            let label =
+                                format!("{} / {}", labels.label_font_size, labels.label_text_color);
+                            let response = ui
+                                .add_enabled(
+                                    enabled,
+                                    egui::Button::new("...").min_size(vec2(26.0, 24.0)),
+                                )
+                                .on_hover_text(&label);
+                            response.widget_info(|| {
+                                egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label)
+                            });
+                            buttons.push(response.id);
+                            if response.clicked() {
+                                page = Some(LabelToolbarPage::Text);
+                            }
                         }
-                        if response.clicked() {
-                            action = Some(format);
+                        LabelToolbarPage::Text | LabelToolbarPage::Colors => {
+                            let response = ui
+                                .add_enabled(
+                                    enabled,
+                                    egui::Button::new("<").min_size(vec2(26.0, 24.0)),
+                                )
+                                .on_hover_text(&labels.label_formatting);
+                            response.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::Role::Button,
+                                    enabled,
+                                    &labels.label_formatting,
+                                )
+                            });
+                            buttons.push(response.id);
+                            if enabled {
+                                first_enabled = Some(response.id);
+                            }
+                            if response.clicked() {
+                                page = Some(match edit.toolbar_page {
+                                    LabelToolbarPage::Colors => LabelToolbarPage::Text,
+                                    _ => LabelToolbarPage::Formatting,
+                                });
+                            }
+                            if edit.toolbar_page == LabelToolbarPage::Text {
+                                let reference = size.unwrap_or(base.size());
+                                let min = thinoda_core::rich_text::MIN_INLINE_FONT_SIZE;
+                                let max = thinoda_core::rich_text::MAX_INLINE_FONT_SIZE;
+                                for (glyph, delta) in [("-", -1.0), ("+", 1.0)] {
+                                    let target = (reference + delta).clamp(min, max);
+                                    let label = format!("{} {glyph}", labels.label_font_size);
+                                    let response = ui
+                                        .add_enabled(
+                                            enabled && target != reference,
+                                            egui::Button::new(glyph).min_size(vec2(26.0, 24.0)),
+                                        )
+                                        .on_hover_text(&label);
+                                    response.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::Role::Button,
+                                            enabled && target != reference,
+                                            &label,
+                                        )
+                                    });
+                                    buttons.push(response.id);
+                                    if response.clicked() {
+                                        action = Some(LabelFormatAction::Size(Some(target)));
+                                    }
+                                    if delta < 0.0 {
+                                        ui.label(size.map_or_else(
+                                            || "—".into(),
+                                            |value| format!("{value}"),
+                                        ));
+                                    }
+                                }
+                                let label = format!(
+                                    "{} · {}",
+                                    labels.label_font_size, labels.label_default
+                                );
+                                let response = ui
+                                    .add_enabled(enabled, egui::Button::new(&labels.label_default));
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label)
+                                });
+                                buttons.push(response.id);
+                                if response.clicked() {
+                                    action = Some(LabelFormatAction::Size(None));
+                                }
+                                let response = ui.add_enabled(
+                                    enabled,
+                                    egui::Button::new(&labels.label_text_color),
+                                );
+                                buttons.push(response.id);
+                                if response.clicked() {
+                                    page = Some(LabelToolbarPage::Colors);
+                                }
+                            } else {
+                                let label = format!(
+                                    "{} · {}",
+                                    labels.label_text_color, labels.label_default
+                                );
+                                let default_text = if compact {
+                                    labels
+                                        .label_default
+                                        .chars()
+                                        .next()
+                                        .unwrap_or('D')
+                                        .to_string()
+                                } else {
+                                    labels.label_default.clone()
+                                };
+                                let swatch_size = if compact {
+                                    vec2(20.0, 22.0)
+                                } else {
+                                    vec2(26.0, 24.0)
+                                };
+                                let response = ui
+                                    .add_enabled(
+                                        enabled,
+                                        egui::Button::selectable(color == Some(None), default_text)
+                                            .min_size(swatch_size),
+                                    )
+                                    .on_hover_text(&label);
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::selected(
+                                        egui::Role::Button,
+                                        enabled,
+                                        color == Some(None),
+                                        &label,
+                                    )
+                                });
+                                buttons.push(response.id);
+                                if response.clicked() {
+                                    action = Some(LabelFormatAction::Color(None));
+                                }
+                                for swatch in crate::FORMAT_SWATCHES {
+                                    let [r, g, b, a] = swatch.to_srgba_unmultiplied();
+                                    let value = thinoda_core::Color::rgba(r, g, b, a);
+                                    let selected = color == Some(Some(value));
+                                    let label =
+                                        format!("{} {}", labels.label_text_color, value.to_hex());
+                                    let response = ui
+                                        .add_enabled(
+                                            enabled,
+                                            egui::Button::selectable(selected, " ")
+                                                .fill(swatch)
+                                                .min_size(swatch_size),
+                                        )
+                                        .on_hover_text(&label);
+                                    response.widget_info(|| {
+                                        egui::WidgetInfo::selected(
+                                            egui::Role::ColorWell,
+                                            enabled,
+                                            selected,
+                                            &label,
+                                        )
+                                    });
+                                    buttons.push(response.id);
+                                    if response.clicked() {
+                                        action = Some(LabelFormatAction::Color(Some(value)));
+                                    }
+                                }
+                            }
                         }
                     }
                 });
@@ -6307,6 +6521,7 @@ fn show_label_format_toolbar(
         buttons,
         first_enabled,
         action,
+        page,
     }
 }
 
@@ -7111,7 +7326,11 @@ fn show_label_editor_pass(
     let mut toolbar_pointer = false;
     let mut toolbar_now_focused = false;
     let mut toolbar_lost_focus = false;
-    let mut format_actions = formatting_shortcuts;
+    let mut restore_selection = false;
+    let mut format_actions: Vec<_> = formatting_shortcuts
+        .into_iter()
+        .map(LabelFormatAction::Toggle)
+        .collect();
     if !input_only {
         let toolbar = show_label_format_toolbar(ui, canvas, rect, &labels, edit);
         toolbar_pointer = ui.input(|input| {
@@ -7132,10 +7351,14 @@ fn show_label_editor_pass(
         edit.toolbar_buttons = toolbar.buttons;
         if formatting_focus {
             if toolbar_focused {
-                ui.memory_mut(|memory| memory.request_focus(edit_id));
+                restore_selection = true;
             } else if let Some(id) = toolbar.first_enabled {
                 ui.memory_mut(|memory| memory.request_focus(id));
             }
+        }
+        if let Some(page) = toolbar.page {
+            edit.toolbar_page = page;
+            restore_selection = true;
         }
         format_actions.extend(toolbar.action);
         toolbar_now_focused = ui.memory(|memory| {
@@ -7149,7 +7372,7 @@ fn show_label_editor_pass(
             .selection
             .clone()
             .unwrap_or_else(|| edit.text.chars().count()..edit.text.chars().count());
-        for format in format_actions {
+        for action in format_actions {
             let result = sync_label_rich_text(edit).and_then(|()| {
                 let mut rich = edit.rich_text.clone().unwrap_or_default();
                 let base = edit
@@ -7157,7 +7380,9 @@ fn show_label_editor_pass(
                     .as_deref()
                     .cloned()
                     .unwrap_or_default();
-                if selection.is_empty() && format.list().is_none() {
+                let is_list =
+                    matches!(action, LabelFormatAction::Toggle(format) if format.list().is_some());
+                if selection.is_empty() && !is_list {
                     let mut typing = edit
                         .typing_style
                         .take()
@@ -7166,14 +7391,44 @@ fn show_label_editor_pass(
                             position: selection.start,
                             style: label_format::style_at_caret(&rich, selection.start),
                         });
-                    label_format::toggle_at_caret(&mut typing.style, &base, format);
+                    match action {
+                        LabelFormatAction::Toggle(format) => {
+                            label_format::toggle_at_caret(&mut typing.style, &base, format);
+                        }
+                        LabelFormatAction::Size(size) => typing.style.font_size = size,
+                        LabelFormatAction::Color(color) => typing.style.color = color,
+                    }
                     edit.typing_style = Some(typing);
                 } else {
                     if !selection.is_empty() {
                         edit.typing_style = None;
                     }
-                    label_format::apply(&mut rich, &edit.text, selection.clone(), &base, format)
-                        .map_err(EditError::Invalid)?;
+                    match action {
+                        LabelFormatAction::Toggle(format) => label_format::apply(
+                            &mut rich,
+                            &edit.text,
+                            selection.clone(),
+                            &base,
+                            format,
+                        ),
+                        LabelFormatAction::Size(size) => label_format::apply_style(
+                            &mut rich,
+                            &edit.text,
+                            selection.clone(),
+                            |style| {
+                                style.font_size = size;
+                            },
+                        ),
+                        LabelFormatAction::Color(color) => label_format::apply_style(
+                            &mut rich,
+                            &edit.text,
+                            selection.clone(),
+                            |style| {
+                                style.color = color;
+                            },
+                        ),
+                    }
+                    .map_err(EditError::Invalid)?;
                     edit.rich_text = (!rich.is_empty()).then_some(rich);
                 }
                 Ok(())
@@ -7183,6 +7438,13 @@ fn show_label_editor_pass(
                 break;
             }
         }
+        restore_selection = true;
+    }
+    if restore_selection {
+        let selection = edit
+            .selection
+            .clone()
+            .unwrap_or_else(|| edit.text.chars().count()..edit.text.chars().count());
         let mut state = TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
         state
             .cursor
@@ -7227,6 +7489,8 @@ fn show_label_editor_pass(
     } else if (output.response.lost_focus() || (toolbar_lost_focus && !output.response.has_focus()))
         && !toolbar_pointer
         && !toolbar_now_focused
+        && !restore_selection
+        && !formatting_focus
         && let Err(error) = view.try_commit_board_label(doc)
     {
         *edit_error = Some(error);

@@ -71,11 +71,44 @@ pub(super) enum Deletion {
 }
 
 pub(super) fn style_at_caret(rich: &InlineText, position: usize) -> InlineTextStyle {
-    let index = position.saturating_sub(1);
+    style_at(rich, position.saturating_sub(1))
+}
+
+fn style_at(rich: &InlineText, index: usize) -> InlineTextStyle {
     rich.runs
         .iter()
         .find(|run| run.start as usize <= index && index < run.end as usize)
         .map_or_else(InlineTextStyle::default, |run| run.style.clone())
+}
+
+pub(super) fn selection_value<T: Copy + PartialEq>(
+    rich: &InlineText,
+    text: &str,
+    range: Range<usize>,
+    value: impl Fn(&InlineTextStyle) -> T,
+) -> Option<T> {
+    let range = grapheme_range(text, range).ok()?;
+    if range.is_empty() {
+        return None;
+    }
+    let first = value(&style_at(rich, range.start));
+    let inherited = value(&InlineTextStyle::default());
+    let mut cursor = range.start;
+    for run in &rich.runs {
+        let start = run.start as usize;
+        let end = run.end as usize;
+        if end <= range.start {
+            continue;
+        }
+        if start >= range.end {
+            break;
+        }
+        if cursor < start && inherited != first || value(&run.style) != first {
+            return None;
+        }
+        cursor = cursor.max(end);
+    }
+    (cursor >= range.end || inherited == first).then_some(first)
 }
 
 pub(super) fn active_at_caret(style: &InlineTextStyle, base: &LabelStyle, format: Format) -> bool {
@@ -108,6 +141,16 @@ fn grapheme_range(text: &str, range: Range<usize>) -> Result<Range<usize>, Strin
         start = end;
     }
     Ok(result)
+}
+
+pub(super) fn apply_style(
+    rich: &mut InlineText,
+    text: &str,
+    range: Range<usize>,
+    update: impl FnMut(&mut InlineTextStyle),
+) -> Result<(), String> {
+    let range = grapheme_range(text, range)?;
+    rich.update_range(text, range, update)
 }
 
 pub(super) fn reconcile_typing(
@@ -315,6 +358,40 @@ mod tests {
         .unwrap();
         assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
         assert_eq!((rich.runs[1].start, rich.runs[1].end), (2, 5));
+    }
+
+    #[test]
+    fn selected_values_include_inherited_gaps_and_complete_graphemes() {
+        let text = "a\u{301}bc";
+        let mut rich = InlineText::default();
+        rich.update_range(text, 0..1, |style| style.font_size = Some(15.0))
+            .unwrap();
+        rich.update_range(text, 2..3, |style| style.font_size = Some(15.0))
+            .unwrap();
+        let size = |style: &InlineTextStyle| style.font_size.unwrap_or(12.0);
+        assert_eq!(selection_value(&rich, text, 0..1, size), None);
+        assert_eq!(selection_value(&rich, text, 1..2, size), None);
+        assert_eq!(selection_value(&rich, text, 2..3, size), Some(15.0));
+        assert_eq!(selection_value(&rich, text, 2..4, size), None);
+        assert_eq!(selection_value(&rich, text, 3..4, size), Some(12.0));
+        assert_eq!(selection_value(&rich, text, 4..4, size), None);
+    }
+
+    #[test]
+    fn typography_updates_cover_the_whole_selected_grapheme() {
+        let text = "a\u{301}b";
+        let mut rich = InlineText::default();
+        apply_style(&mut rich, text, 1..2, |style| {
+            style.font_size = Some(18.0);
+            style.color = Some(thinoda_core::Color::rgb(10, 20, 30));
+        })
+        .unwrap();
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+        assert_eq!(rich.runs[0].style.font_size, Some(18.0));
+        assert_eq!(
+            rich.runs[0].style.color,
+            Some(thinoda_core::Color::rgb(10, 20, 30))
+        );
     }
 
     #[test]

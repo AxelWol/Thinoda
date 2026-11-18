@@ -750,6 +750,11 @@ v50, sheet clipboard v39, board clipboard v43, XMind
 `THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1` gate connector content separately
 from shapes. Extra connector labels and unsupported source HTML remain open.
 
+*As implemented in D9 (inline typography):* shape and primary connector
+label drafts can adjust a selected grapheme range or pending caret style's size
+and palette colour. Resetting either property restores inheritance, and the
+existing rich-label version gates and atomic draft commit remain unchanged.
+
 #### 3.2.3 Connector marker migration (compatibility-critical)
 - Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
   triangles; add optional `start_marker`/`end_marker` fields for exact draw.io

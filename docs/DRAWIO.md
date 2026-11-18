@@ -90,7 +90,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shape and primary connector labels, with inert draw.io HTML import/export; extra connector, card, zone and container-specific labels remain plain or use their existing text model; unsupported markup warns and is not preserved | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shape and primary connector labels, with selection and caret controls for font size and palette colour, and inert draw.io HTML import/export; extra connector, card, zone and container-specific labels remain plain or use their existing text model; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
@@ -242,6 +242,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Shape labels: bounded inline runs and lists, selection formatting, atomic undo, recovery, draw.io HTML subset, canvas and visual export
   - [x] Primary connector labels: the same editing and rendering model, including Sankey labels and draw.io HTML subset
   - [x] Typing styles at the caret for shape and primary connector labels
+  - [x] Font size and palette colour controls for selected text and caret typing styles
   - [ ] Complete rich-label coverage for extra connector and other label kinds and preserve unsupported source HTML
 - [ ] Copy/paste style, set default style, style rules
 
@@ -282,6 +283,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 inline typography (partial) | Shape and primary connector label editors adjust selected or subsequently typed font size and text colour, including inherited defaults, mixed-size indication, grapheme-aware selections, accessible keyboard navigation and compact palettes. Changes remain draft-only until an atomic commit; run-limit failures leave existing formatting intact. |
 | 2026-11-18 | D9 caret typing styles | Character-style toggles at an empty selection affect subsequent text without editing the document until commit. Shape and primary connector editors preserve typing styles across deletion, list changes, paste and IME input; ordered pointer/keyboard processing places later text at the clicked caret. Rich-text limit failures retain the draft and block save/commit until corrected. |
 | 2026-11-18 | D9 rich primary connector labels (partial) | Primary connector labels reuse bounded inline runs and list paragraphs, selection formatting and atomic undo; formatting-only drafts refresh recovery; search, replacement and placeholders remap runs; canvas, SVG/PNG/PDF and editable PowerPoint render them, including the authored portion of Sankey labels. Supported draw.io HTML imports and exports, with stale Sankey extensions rejected when externally edited formatting cannot be represented. Compatibility gates: native v50, sheet clipboard v39, board clipboard v43, XMind `THINODA-XMIND-RICH-CONNECTOR-LABELS-1`, recovery `THINODA-RECOVERY-RICH-CONNECTOR-LABELS-1` and `THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1`. Extra labels and unsupported HTML source preservation remain open. |
 | 2026-11-18 | D9 label font registration | Installed font families referenced by whole shape-label styles and inline shape or card runs are registered before canvas rendering, so their requested faces are used rather than silently falling back. Missing families retain the existing warning and fallback behavior. |
@@ -698,8 +700,8 @@ box with multiple runs. Known limitations:
 - The core line-break and bounds estimates still use approximate glyph widths;
   wrapping, backgrounds, hit bounds and mixed-font baselines need visual parity
   work. The editor approximates bold and baseline offsets.
-- Inline font family, size and colour can be imported and retained but do not
-  yet have per-selection editor controls.
+- Inline font family and arbitrary colour can be imported and retained but do
+  not yet have per-selection editor controls.
 - Extra connector labels, cards, zones and container/table-specific title
   import paths are not covered by this shape-label implementation.
 - HTML is parsed inertly and bounded; unsupported tags, attributes, nested
@@ -723,8 +725,8 @@ escaped and parsed inertly; edited generated Sankey suffix formatting makes the
 native extension stale instead of losing that edit. Known limitations:
 
 - Extra labels remain plain text, and whole-label connector font, spacing and
-  alignment controls are not yet implemented. Per-selection family, size and
-  color controls also remain open.
+  alignment controls are not yet implemented. Per-selection family and arbitrary
+  colour controls also remain open.
 - Bounds and line breaking still estimate glyph sizes. A small draw.io reference
   comparison exposed and corrected list-item alignment; fonts and label-backdrop
   gaps still differ, and broad visual parity remains D15 work. Unsupported HTML
@@ -741,6 +743,14 @@ the pending style. A text/run limit failure leaves the draft in the editor and
 blocks commit, save and recovery snapshots until the edit is corrected or
 undone; the unrepresentable draft cannot itself be persisted. Typing style is
 transient and is not saved until text is entered.
+
+**D9 inline typography (partial).** The label toolbar adjusts selection and
+caret font size in one-unit steps and provides the shared 12-colour palette.
+Default clears that property's override without disturbing other formatting;
+mixed sizes are shown as such and a step starts from the inherited size. Page
+navigation retains the text selection. Narrow canvases use compact swatches.
+Direct numeric size entry, arbitrary colours and inline family selection remain
+open; the palette does not imply full draw.io typography parity.
 
 ## 5. Rubber-duck findings
 

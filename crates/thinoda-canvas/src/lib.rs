@@ -64,3 +64,19 @@ pub use view::{
     ObjectSelection, ShapeDrop, StencilDrop, TitleEditContinuation, protect_ime_candidate_keys,
     shortcut_bindings,
 };
+
+/// Shared palette for text and object formatting controls.
+pub const FORMAT_SWATCHES: [egui::Color32; 12] = [
+    egui::Color32::from_rgb(0x2E, 0x7C, 0xF6),
+    egui::Color32::from_rgb(0x00, 0xA8, 0x9D),
+    egui::Color32::from_rgb(0x2B, 0xB6, 0x73),
+    egui::Color32::from_rgb(0xF5, 0xA6, 0x23),
+    egui::Color32::from_rgb(0xF2, 0x6B, 0x3A),
+    egui::Color32::from_rgb(0xE8, 0x45, 0x5C),
+    egui::Color32::from_rgb(0xA3, 0x5B, 0xE0),
+    egui::Color32::from_rgb(0x5B, 0x6B, 0xE0),
+    egui::Color32::from_rgb(0x33, 0x33, 0x33),
+    egui::Color32::from_rgb(0x88, 0x88, 0x88),
+    egui::Color32::from_rgb(0xEE, 0xEE, 0xEE),
+    egui::Color32::WHITE,
+];
