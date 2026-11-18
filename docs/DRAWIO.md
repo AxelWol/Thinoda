@@ -275,6 +275,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Preserve graphemes for Shift+Enter and the start of an eligible IME composition
   - [x] Expand partial grapheme selections for eligible Ctrl, Alt and Command Backspace/Delete
   - [x] Snap interior carets for eligible Ctrl, Alt and Command Backspace/Delete
+  - [x] Leave grapheme selections unchanged for ignored empty text/paste and newline text events
   - [x] Handle eligible AccessKit selected-text replacement with tracked rich ranges and grapheme boundaries
   - [x] Handle eligible AccessKit whole-value replacement as a tracked rich edit
   - [x] Order eligible AccessKit whole-value edits with toolbar focus transitions
@@ -320,6 +321,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 ignored text input (partial) | Empty text/paste and standalone newline text events no longer expand a partial grapheme selection or move an interior caret when egui ignores the input. |
 | 2026-11-18 | D9 accessible toolbar ordering (partial) | Eligible SetValue batches beginning with toolbar focus preserve the new caret and process subsequent focus and formatting actions in order. Other unfocused controls, pointer/IME batches and physical accessibility clients remain open. |
 | 2026-11-18 | D9 accessible whole-value replacement (partial) | Eligible AccessKit SetValue replaces all label text as a tracked rich edit, including empty and unchanged values; focused keyboard ordering and toolbar-focus updates have synthetic coverage. Physical assistive technology and broader event ordering remain open. |
 | 2026-11-18 | D9 accessible label replacement (partial) | Eligible AccessKit text replacement uses grapheme-safe selections and tracked rich edits, including empty replacement, pending caret style, ordered keyboard batches and undo. Physical assistive technology and other accessibility actions remain open. |
@@ -941,6 +943,11 @@ initial IME events and active preedit updates that join adjacent graphemes.
 Duck check: egui can reverse selection direction on an empty initial event;
 modified deletion, active IME surrounding ranges, mixed pointer/input batches
 and physical input remain separate policy and acceptance work.
+
+**D9 ignored input (partial).** Empty text/paste and standalone newline text
+events do not trigger grapheme selection changes because egui ignores them.
+Duck check: this is limited to these synthetic input cases and does not
+establish complete pointer, clipboard or IME behavior.
 
 **D9 modified selection deletion (partial).** Eligible isolated Ctrl, Alt and
 Command Backspace/Delete expand a partial selected grapheme before egui deletes

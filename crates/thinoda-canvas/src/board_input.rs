@@ -7833,7 +7833,12 @@ fn show_label_editor_pass(
                     }),
                     None,
                 ) if modifiers.matches_exact(Modifiers::SHIFT) => Some(GraphemeEdit::Replace),
-                (Some(egui::Event::Text(_) | egui::Event::Paste(_)), None) => {
+                (Some(egui::Event::Text(text)), None)
+                    if !text.is_empty() && text != "\n" && text != "\r" =>
+                {
+                    Some(GraphemeEdit::Replace)
+                }
+                (Some(egui::Event::Paste(text)), None) if !text.is_empty() => {
                     Some(GraphemeEdit::Replace)
                 }
                 (Some(event), None) if label_accessibility_replacement(event).is_some() => {

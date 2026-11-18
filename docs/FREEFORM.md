@@ -2044,7 +2044,9 @@ partial selections to grapheme boundaries, with synthetic shape/connector
 coverage for combining marks, flags, ZWJ emoji and local undo. Isolated
 text/paste replacement, cut, Shift+Enter and the start of an IME composition
 expand partial grapheme selections; a caret inside a grapheme snaps to its end
-before insertion, preserving its pending typing style. Eligible isolated Ctrl,
+before insertion, preserving its pending typing style. Ignored empty text and
+paste and standalone newline text events leave the selection unchanged.
+Eligible isolated Ctrl,
 Alt and Command Backspace/Delete also expand partial selections; collapsed
 modified deletion snaps an interior caret toward the deletion direction before
 egui computes its range. That range's other endpoint and active IME

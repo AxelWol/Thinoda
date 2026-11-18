@@ -820,6 +820,46 @@ fn rich_label_insertion_snaps_a_caret_inside_a_grapheme() {
 }
 
 #[test]
+fn rich_label_ignored_text_input_does_not_move_grapheme_selection() {
+    for event in [
+        egui::Event::Text(String::new()),
+        egui::Event::Text("\n".into()),
+        egui::Event::Text("\r".into()),
+        egui::Event::Paste(String::new()),
+    ] {
+        for selected in [true, false] {
+            let mut h = harness("a👩\u{200d}💻b");
+            h.ctx
+                .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+            double_click_shape(&mut h);
+            if selected {
+                set_label_selection(&mut h, 2, 1);
+            } else {
+                set_label_cursor(&mut h, 2);
+            }
+            h.event(event.clone());
+            h.run_steps(1);
+            assert_eq!(
+                h.state().view.board_label_draft().unwrap().2,
+                "a👩\u{200d}💻b"
+            );
+            let range = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap()
+                .as_sorted_char_range();
+            assert_eq!(
+                (range.start.0, range.end.0),
+                if selected { (1, 2) } else { (2, 2) },
+                "{event:?}"
+            );
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
 fn rich_label_accessibility_replacement_preserves_graphemes_and_formatting() {
     let mut h = harness("a👩\u{200d}💻b");
     h.ctx
