@@ -402,20 +402,38 @@ fn replace_label_text(
     let Some(existing) = rich.as_deref() else {
         return Ok(replace_text(text, needle, replacement, opts));
     };
+    let mut updated = existing.clone();
+    let count = replace_rich_text(text, &mut updated, needle, replacement, opts)?;
+    if count > 0 {
+        *rich = (!updated.is_empty()).then(|| std::sync::Arc::new(updated));
+    }
+    Ok(count)
+}
+
+fn replace_rich_text(
+    text: &mut String,
+    rich: &mut crate::InlineText,
+    needle: &str,
+    replacement: &str,
+    opts: &SearchOptions,
+) -> Result<usize, String> {
     let matches = find_in(text, needle, opts);
     if matches.is_empty() {
         return Ok(0);
     }
     let mut updated_text = text.clone();
-    let mut updated_rich = existing.clone();
+    let mut updated_rich = rich.clone();
     for range in matches.iter().rev() {
+        if &updated_text[range.clone()] == replacement {
+            continue;
+        }
         let start = updated_text[..range.start].chars().count();
         let end = updated_text[..range.end].chars().count();
         (updated_text, updated_rich) =
             updated_rich.replace_label_range(&updated_text, start..end, replacement)?;
     }
     *text = updated_text;
-    *rich = (!updated_rich.is_empty()).then(|| std::sync::Arc::new(updated_rich));
+    *rich = updated_rich;
     Ok(matches.len())
 }
 
@@ -437,25 +455,31 @@ pub fn replace_in_titles(
             continue;
         };
         let mut title = topic.title.clone();
-        let matches = replace_text(&mut title, needle, replacement, opts);
+        let mut inline = (!topic.inline_text.is_empty()).then(|| topic.inline_text.clone());
+        let matches = match &mut inline {
+            Some(rich) => replace_rich_text(&mut title, rich, needle, replacement, opts)?,
+            None => replace_text(&mut title, needle, replacement, opts),
+        };
         if matches > 0 {
-            if !topic.inline_text.is_empty() {
-                return Err(
-                    "Formatted card titles cannot be changed until rich-text editing is supported"
-                        .into(),
-                );
-            }
             if let Some(member) = sheet.board_member_for_topic(*id) {
                 sheet.require_unlocked_board_selection(&[member])?;
             }
             count += matches;
-            updates.push((*id, title));
+            updates.push((*id, title, inline));
         }
     }
-    for (id, title) in updates {
-        sheet
-            .set_title(id, &title)
-            .map_err(|error| error.to_string())?;
+    for (id, title, inline) in updates {
+        if let Some(inline) = inline {
+            let topic = sheet
+                .topic_mut(id)
+                .ok_or_else(|| "Title source no longer exists".to_owned())?;
+            topic.title = title;
+            topic.inline_text = inline;
+        } else {
+            sheet
+                .set_title(id, &title)
+                .map_err(|error| error.to_string())?;
+        }
     }
     Ok(count)
 }
@@ -733,6 +757,12 @@ mod tests {
             )
             .unwrap();
         sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .update_range("Needle card", 0..6, |style| style.bold = Some(true))
+            .unwrap();
+        sheet
             .set_board_members_locked(&[BoardMember::Card(card)], true)
             .unwrap();
         let before = sheet.clone();
@@ -750,12 +780,12 @@ mod tests {
     }
 
     #[test]
-    fn title_replacement_rejects_formatted_cards_without_partial_changes() {
-        use crate::{Card, CardKind, Vec2};
+    fn title_replacement_preserves_formatted_cards_and_undoes_atomically() {
+        use crate::{Card, CardKind, Document, InlineParagraph, ListKind, Vec2, Workbook};
 
-        let mut sheet = Sheet::new("Board", "Needle root");
+        let mut sheet = Sheet::new("Board", "x root");
         let root = sheet.root;
-        let card = sheet.add_floating("Needle card", Vec2::new(0.0, 100.0));
+        let card = sheet.add_floating("x 🙂bold x\nlast", Vec2::new(0.0, 100.0));
         sheet
             .set_topic_card(
                 card,
@@ -766,22 +796,154 @@ mod tests {
             .topic_mut(card)
             .unwrap()
             .inline_text
+            .update_range("x 🙂bold x\nlast", 2..7, |style| style.bold = Some(true))
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .paragraphs
+            .push(InlineParagraph {
+                index: 1,
+                list: ListKind::Numbered,
+            });
+        let before = sheet.clone();
+        assert!(sheet.set_title(card, "Changed").is_err());
+        assert_eq!(sheet, before);
+
+        let mut doc = Document::new(Workbook::new(sheet));
+        assert_eq!(
+            doc.edit_sheet("Replace", |sheet| {
+                replace_in_titles(sheet, &[root, card], "x", "long", &SearchOptions::default())
+                    .map_err(crate::EditError::Invalid)
+            })
+            .unwrap(),
+            3
+        );
+        let topic = doc.sheet().topic(card).unwrap();
+        assert_eq!(topic.title, "long 🙂bold long\nlast");
+        assert_eq!(
+            (
+                topic.inline_text.runs[0].start,
+                topic.inline_text.runs[0].end
+            ),
+            (5, 10)
+        );
+        assert_eq!(topic.inline_text.runs[0].style.bold, Some(true));
+        assert_eq!(topic.inline_text.paragraphs[0].index, 1);
+        doc.sheet().validate().unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.sheet(), &before);
+        assert!(doc.redo());
+        assert_eq!(
+            doc.sheet().topic(card).unwrap().title,
+            "long 🙂bold long\nlast"
+        );
+
+        assert_eq!(
+            doc.edit_sheet("Split list item", |sheet| {
+                replace_in_titles(
+                    sheet,
+                    &[card],
+                    "last",
+                    "first\nsecond",
+                    &SearchOptions::default(),
+                )
+                .map_err(crate::EditError::Invalid)
+            })
+            .unwrap(),
+            1
+        );
+        let paragraphs = &doc.sheet().topic(card).unwrap().inline_text.paragraphs;
+        assert_eq!(paragraphs.len(), 2);
+        assert_eq!(paragraphs[0].index, 1);
+        assert_eq!(paragraphs[1].index, 2);
+        assert!(paragraphs.iter().all(|p| p.list == ListKind::Numbered));
+    }
+
+    #[test]
+    fn oversized_formatted_card_replacement_leaves_all_titles_unchanged() {
+        use crate::{Card, CardKind, Vec2};
+
+        let mut sheet = Sheet::new("Board", "Needle root");
+        let root = sheet.root;
+        let card = sheet
+            .add_card(
+                "Needle card",
+                Vec2::new(0.0, 100.0),
+                Card::new(CardKind::Sticky, Vec2::new(100.0, 80.0)),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
             .update_range("Needle card", 0..6, |style| style.bold = Some(true))
             .unwrap();
         let before = sheet.clone();
-
         assert!(
             replace_in_titles(
                 &mut sheet,
                 &[root, card],
                 "needle",
-                "Goal",
+                &"x".repeat(crate::rich_text::MAX_INLINE_TEXT_CHARS),
                 &SearchOptions::default(),
             )
             .is_err()
         );
         assert_eq!(sheet, before);
-        assert!(sheet.set_title(card, "Changed").is_err());
+    }
+
+    #[test]
+    fn identical_replacement_keeps_mixed_formatting_on_cards_and_shapes() {
+        use crate::{CanvasObject, Card, CardKind, Rect, ShapeKind, Vec2};
+        use std::sync::Arc;
+
+        let mut sheet = Sheet::new("Board", "");
+        let card = sheet
+            .add_card(
+                "Text",
+                Vec2::ZERO,
+                Card::new(CardKind::Text, Vec2::new(120.0, 80.0)),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .update_range("Text", 0..2, |style| style.bold = Some(true))
+            .unwrap();
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 60.0)),
+        );
+        shape.set_label("Text").unwrap();
+        shape.label_rich_text = Some(Arc::new(sheet.topic(card).unwrap().inline_text.clone()));
+        let shape = sheet.add_canvas_object(shape).unwrap();
+        let before = sheet.clone();
+
+        assert_eq!(
+            replace_in_titles(
+                &mut sheet,
+                &[card],
+                "text",
+                "Text",
+                &SearchOptions::default()
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            replace_in_canvas(
+                &mut sheet,
+                &[shape],
+                "text",
+                "Text",
+                &SearchOptions::default()
+            )
+            .unwrap(),
+            1
+        );
         assert_eq!(sheet, before);
     }
 

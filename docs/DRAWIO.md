@@ -246,7 +246,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Font size and palette colour controls for selected text and caret typing styles
   - [x] Searchable inline font-family selection and draft preview for selected text and caret typing styles
   - [x] Direct numeric font size and arbitrary RGBA hex colour entry for selected text and caret typing styles
-  - [ ] Complete rich-label coverage for other label kinds and preserve unsupported source HTML
+  - [x] Preserve existing formatted-card runs and lists during search/replace
+  - [ ] Complete rich-card editing, rendering and draw.io interchange, cover other label kinds and preserve unsupported source HTML
 - [ ] Copy/paste style, set default style, style rules
 
 ### D10 — Save back to `.drawio`
@@ -286,6 +287,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 formatted-card search (partial) | Search/replace updates existing sticky and text card runs and list paragraphs alongside their titles, including Unicode ranges and inserted paragraph boundaries. Changes remain atomic across locked cards, validation failures and workbook sheets, and are undoable. Canvas rich editing/rendering and draw.io interchange are not yet supported for these cards. |
 | 2026-11-18 | D9 rich extra connector labels (partial) | Positioned extra labels, including Sankey labels, support bounded rich runs and lists, canvas and inspector editing, undo and recovery, placeholder/search remapping, the inert draw.io HTML subset, and canvas and SVG/PNG/PDF/editable PowerPoint rendering. Inspector property changes preserve an active draft, merge unaffected label edits and reject conflicting text changes. Compatibility gates: native v51, sheet clipboard v40, board clipboard v44, XMind `THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1`, recovery `THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1` and `THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1`. Other label kinds and unsupported HTML source preservation remain open. |
 | 2026-11-18 | D9 direct typography (partial) | Shape and primary connector label editors accept bounded fractional font sizes and arbitrary RGB/RGBA hex colours for a selection or subsequent typing; invalid values are reported without changing the draft. Apply and Enter keep edits atomic, keyboard/IME access and compact layout remain usable, and draw.io rich HTML round-trips fractional sizes and alpha. |
 | 2026-11-18 | D9 inline font families (partial) | Shape and primary connector label editors choose installed, monospace or inherited families for a selection or subsequent typing; a searchable, keyboard-accessible picker fits compact canvases. Draft and pending families are registered for preview before commit, and rapid outside clicks retain the expected atomic-commit behavior. |
@@ -788,6 +790,14 @@ ribbon centreline, including resolved placeholders. Known limitations:
   line breaks and mixed-font bounds still use the existing estimates.
 - Unsupported HTML is warned about but discarded. Other label kinds and safe
   source preservation still need their own implementations.
+
+**D9 formatted-card search (partial).** Replacement uses the same range and list
+remapping as shape and connector labels, inheriting the formatting at each
+changed replacement's start; identical replacements retain mixed formatting.
+Locked cards and values exceeding the rich-text bounds
+reject the whole operation. Direct title editing still rejects formatted cards;
+their formatting is not yet rendered or exposed in the editor, and draw.io
+interchange still drops it. This slice does not claim rich-card support.
 
 ## 5. Rubber-duck findings
 

@@ -1952,10 +1952,12 @@ Implementation contract and remaining work:
    documents retain their previous version. The importer rejects inline data
    in pre-v8 archives and legacy unversioned JSON. Non-native export preflight
    reports inline formatting/list loss. Until rich-aware editing is complete,
-   plain title edits and search/replace reject affected cards without changing
-   the title or formatting. Internal clipboard and recovery propagation now
-   preserve this model with the version and compatibility limits below; external
-   format fidelity remains open.
+   plain title edits reject affected cards without changing the title or
+   formatting. Search/replace now remaps runs and list paragraphs atomically,
+   while keeping the existing lock and size guards. Internal clipboard and
+   recovery propagation preserve this model with the version and compatibility
+   limits below; rendering, rich editing and external format fidelity remain
+   open.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,

@@ -5868,7 +5868,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_all_rejects_formatted_titles_without_cross_sheet_partial_changes() {
+    fn replace_all_preserves_formatted_titles_across_sheets_and_is_atomic() {
         use thinoda_core::{Card, CardKind, Sheet, Vec2};
 
         let mut app = ThinodaApp::headless();
@@ -5907,9 +5907,24 @@ mod tests {
 
         app.replace_all();
 
+        let after = app.doc().unwrap().doc.workbook().clone();
+        assert_eq!(after.sheets[0].root_topic().title, "Goal topic");
+        let card = after.sheets[1]
+            .topics
+            .values()
+            .find(|topic| topic.title == "Goal card")
+            .unwrap();
+        assert_eq!(card.inline_text.runs[0].style.bold, Some(true));
+        assert_eq!(
+            (card.inline_text.runs[0].start, card.inline_text.runs[0].end),
+            (0, 4)
+        );
+        assert!(app.doc_mut().unwrap().doc.undo());
         assert_eq!(app.doc().unwrap().doc.workbook(), &before);
-        assert_eq!(app.search.hits.len(), 2);
-        assert_eq!(app.search.canvas_hits.len(), 0);
+
+        app.search.replace = "x".repeat(thinoda_core::rich_text::MAX_INLINE_TEXT_CHARS);
+        app.replace_all();
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }
 
     #[test]
