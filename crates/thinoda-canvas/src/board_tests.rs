@@ -6108,6 +6108,81 @@ fn image_card_accessible_name_preserves_its_kind_when_renamed() {
 }
 
 #[test]
+fn repeated_label_input_preserves_formatting_at_the_actual_caret() {
+    for connector in [false, true] {
+        for paste in [false, true] {
+            for (anchor, focus) in [(1, 1), (1, 3), (3, 1)] {
+                let selection = anchor != focus;
+                let mut sheet = board();
+                let id = if connector {
+                    let mut line = CanvasConnector::new(
+                        Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                        Endpoint::Point(Vec2::new(100.0, 0.0)),
+                    );
+                    line.label = "aaa".into();
+                    sheet
+                        .add_canvas_object(CanvasObject::connector(line))
+                        .unwrap()
+                } else {
+                    shape(&mut sheet, 0.0, 0.0, "aaa")
+                };
+                let mut rich = thinoda_core::InlineText::default();
+                rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+                    .unwrap();
+                sheet.canvas.object_mut(id).unwrap().label_rich_text =
+                    Some(std::sync::Arc::new(rich.clone()));
+                let mut h = harness(sheet);
+                {
+                    let state = h.state_mut();
+                    assert!(state.view.begin_board_label(&state.doc, id));
+                }
+                h.run_steps(3);
+                let edit_id = MapCanvas::board_label_editor_id();
+                let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(anchor),
+                        egui::text::CCursor::new(focus),
+                    )));
+                state.store(&h.ctx, edit_id);
+                let inserted = if selection { "aa" } else { "a" };
+                if paste {
+                    h.input_mut().events.push(egui::Event::Key {
+                        key: Key::V,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::COMMAND,
+                    });
+                }
+                h.input_mut().events.push(if paste {
+                    egui::Event::Paste(inserted.into())
+                } else {
+                    egui::Event::Text(inserted.into())
+                });
+                h.run_steps(2);
+                h.key_press(Key::Enter);
+                h.run_steps(3);
+                let object = h.state().doc.sheet().canvas.object(id).unwrap();
+                assert_eq!(object.label(), if selection { "aaa" } else { "aaaa" });
+                let updated = object.label_rich_text.as_ref().unwrap();
+                assert_eq!(
+                    (updated.runs[0].start, updated.runs[0].end),
+                    if selection { (1, 3) } else { (2, 3) },
+                    "connector={connector}, paste={paste}, anchor={anchor}, focus={focus}"
+                );
+                assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+                assert!(h.state_mut().doc.undo());
+                let object = h.state().doc.sheet().canvas.object(id).unwrap();
+                assert_eq!(object.label(), "aaa");
+                assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+            }
+        }
+    }
+}
+
+#[test]
 fn pending_text_is_applied_before_finishing_board_labels() {
     for connector in [false, true] {
         for key in [Key::Enter, Key::Tab, Key::Escape] {

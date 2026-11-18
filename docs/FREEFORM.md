@@ -2014,16 +2014,25 @@ backspace/delete operate on individual scalar values. A rich-aware history,
 composition transaction and grapheme policy must be verified before wiring the
 adapter to persisted content.
 
-The existing shape and connector label editors reconcile changes from the
-layouter's strings, not the ordered buffer operations. Synthetic egui tests
-show that one frame can delete and insert several times without the layouter
-seeing the intermediate text. A single insertion into repeated text is also
-ambiguous: inserting `a` before the bold second character in `aaa` produces
-`aaaa`, but a prefix/suffix diff leaves the bold run on the wrong character.
-This is a known correctness limitation in those editors, not evidence that
-card editing can safely reuse their reconciliation. A replacement must retain
-the actual operation positions and handle empty deletions, rich undo, input
-limits and IME transactions; changing the diff heuristic is insufficient.
+Synthetic egui tests show that one frame can delete and insert several times
+without the layouter seeing the intermediate text. Final-string reconciliation
+also cannot identify where a repeated character was inserted. Shape and
+connector label editors now record the buffer range for a single eligible
+text or paste event, preserving formatting at the actual position and for
+selected replacements. Conflicting keyboard events, multiple text events,
+deletion, IME and whole-string undo still use the earlier reconciliation and
+can misplace formatting. This partial fix is not a safe card editor: the complete
+replacement must retain ordered operation positions and handle empty deletions,
+rich undo, input limits and IME transactions.
+
+Duck check: the single-insertion path accepts only one text or paste event,
+without IME, cut, deletion, finish keys or competing command shortcuts. It
+checks the captured operations and resulting string before using the exact
+range; unsupported sequences retain the old behavior rather than claiming
+ordered editing. Directional selections, repeated text, unchanged-text
+replacement and document undo are covered with synthetic shape and primary
+connector input; an extra connector label is also covered. These tests do not
+establish real clipboard, IME or browser acceptance.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,

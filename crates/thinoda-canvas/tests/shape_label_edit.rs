@@ -153,6 +153,43 @@ fn set_label_selection(h: &mut Harness<'_, State>, start: usize, end: usize) {
 }
 
 #[test]
+fn repeated_input_preserves_extra_connector_label_formatting() {
+    let mut h = harness("Shape");
+    let id = add_positioned_connector(&mut h);
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set extra label", id, |object| {
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                panic!("expected connector");
+            };
+            connector.extra_labels[0].text = "aaa".into();
+            connector.extra_labels[0].rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+    }
+    h.run_steps(3);
+    set_label_cursor(&mut h, 1);
+    h.event(egui::Event::Text("a".into()));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.extra_labels[0].text, "aaaa");
+    let run = &connector.extra_labels[0].rich_text.as_ref().unwrap().runs[0];
+    assert_eq!((run.start, run.end), (2, 3));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn caret_formatting_styles_new_text_and_toggles_off() {
     for connector in [false, true] {
         let mut h = harness("");

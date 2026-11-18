@@ -259,6 +259,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
   - [x] Add explicit-style label range replacement with list remapping for future ordered edits
   - [x] Add bounded transactional rich-draft state with directional selection, local history and explicit composition grouping
+  - [x] Use the actual buffer range for a single eligible shape/connector text or paste insertion, including repeated text and selected replacement
   - [ ] Replace final-string reconciliation in existing shape and connector label editors with ordered rich edits, including repeated text, multiple same-frame events, rich undo and IME
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -301,7 +302,8 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
-| 2026-11-18 | D9 editor input audit | Synthetic egui tests show that the layouter does not observe every operation in a frame, and final-string reconciliation can put formatting on the wrong occurrence of repeated text. Existing shape and connector label editing remains affected; ordered rich edits are required before treating that behavior as complete. |
+| 2026-11-18 | D9 single rich-label insertion (partial) | Shape and connector label editors use the actual egui buffer range for one eligible text or paste event, including repeated text and selected replacements. Other input still falls back to final-string reconciliation; multiple events, deletion, IME and rich undo need ordered transactions before editing is complete. |
+| 2026-11-18 | D9 editor input audit | Synthetic egui tests show that the layouter does not observe every operation in a frame, and final-string reconciliation can put formatting on the wrong occurrence of repeated text. The following single-insertion slice addresses one case; ordered rich edits are still required before treating that behavior as complete. |
 | 2026-11-18 | D9 PowerPoint list alignment (partial) | Editable list paragraphs use the shared layout's list-block left edge, rather than centering or right-aligning each item independently. Three-slide fixtures opened and exported from Windows PowerPoint for left, center and right alignment; the wrapped fixture broke lines differently from Thinoda. Empty markers remain hidden, host spacing differs, and post-edit alignment is not guaranteed. |
 | 2026-11-18 | D9 PowerPoint empty-list numbering (partial) | Windows PowerPoint suppressed markers on empty list paragraphs and counted following items differently from Thinoda. Following numbered paragraphs now carry explicit start values; a rotated fixture displays the subsequent 2 and 3 correctly. Empty markers are still hidden in PowerPoint, wrapping/alignment differs, and explicit starts can require manual renumbering after editing. |
 | 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |

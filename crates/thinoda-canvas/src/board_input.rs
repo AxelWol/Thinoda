@@ -7652,6 +7652,34 @@ fn show_label_editor_pass(
     let mut layout_typing = edit.typing_style.clone();
     let mut layout_source = edit.rich_source_text.clone();
     let require_pending_match = edit.rich_reconciliation_error.is_some();
+    let track_insertion = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            input
+                .events
+                .iter()
+                .filter(|event| matches!(event, egui::Event::Text(_) | egui::Event::Paste(_)))
+                .count()
+                == 1
+                && !input.events.iter().any(|event| match event {
+                    egui::Event::Ime(_) | egui::Event::Cut => true,
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => {
+                        matches!(key, Key::Backspace | Key::Delete | Key::Enter | Key::Tab)
+                            || (modifiers.command && *key != Key::V)
+                    }
+                    _ => false,
+                })
+        });
+    let tracked_source = track_insertion.then(|| layout_source.clone());
+    let tracked_rich = track_insertion.then(|| layout_rich.clone()).flatten();
+    let tracked_typing = track_insertion.then(|| layout_typing.clone()).flatten();
+    let operations = std::cell::RefCell::new(Vec::new());
     let deletion = ui.input(|input| {
         input.events.iter().find_map(|event| match event {
             egui::Event::Key {
@@ -7678,7 +7706,36 @@ fn show_label_editor_pass(
     let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
         let text = buffer.as_str();
         layout_error = None;
-        if let Some(rich) = &mut layout_rich
+        let tracked = tracked_rich
+            .as_ref()
+            .zip(tracked_source.as_deref())
+            .map(|(rich, source)| {
+                label_format::reconcile_tracked_insertion(
+                    rich,
+                    source,
+                    text,
+                    &tracked_typing,
+                    &operations.borrow(),
+                )
+            });
+        let mut applied = false;
+        if let Some(result) = tracked {
+            match result {
+                Ok(Some((rich, typing))) => {
+                    layout_rich = Some(rich);
+                    layout_typing = typing;
+                    layout_source = text.to_owned();
+                    applied = true;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    layout_error = Some(error);
+                    applied = true;
+                }
+            }
+        }
+        if !applied
+            && let Some(rich) = &mut layout_rich
             && layout_source != text
         {
             match label_format::reconcile_typing(
@@ -7716,7 +7773,12 @@ fn show_label_editor_pass(
         list_markers = markers;
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
-    let mut text_edit = TextEdit::multiline(&mut edit.text)
+    let mut tracked_buffer = label_format::TrackedBuffer {
+        text: &mut edit.text,
+        operations: &operations,
+        track: track_insertion,
+    };
+    let mut text_edit = TextEdit::multiline(&mut tracked_buffer)
         .id(edit_id)
         .font(font.clone())
         .text_color(text_color)

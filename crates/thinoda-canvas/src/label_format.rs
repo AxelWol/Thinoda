@@ -1,5 +1,6 @@
-use std::ops::Range;
+use std::{any::TypeId, cell::RefCell, ops::Range};
 
+use egui::{TextBuffer, text::CharIndex};
 use thinoda_core::{
     label_style::LabelStyle,
     rich_text::{InlineBaseline, InlineParagraph, InlineText, InlineTextStyle, ListKind},
@@ -68,6 +69,113 @@ pub(super) struct TypingStyle {
 pub(super) enum Deletion {
     Backward,
     Forward,
+}
+
+#[derive(Debug)]
+pub(super) enum TextOperation {
+    Insert { index: usize, text: String },
+    Delete(Range<usize>),
+    Replace,
+}
+
+pub(super) struct TrackedBuffer<'a> {
+    pub text: &'a mut String,
+    pub operations: &'a RefCell<Vec<TextOperation>>,
+    pub track: bool,
+}
+
+impl TextBuffer for TrackedBuffer<'_> {
+    fn is_mutable(&self) -> bool {
+        true
+    }
+
+    fn as_str(&self) -> &str {
+        self.text
+    }
+
+    fn insert_text(&mut self, text: &str, index: CharIndex) -> usize {
+        if self.track {
+            self.operations.borrow_mut().push(TextOperation::Insert {
+                index: index.0,
+                text: text.to_owned(),
+            });
+        }
+        self.text.insert_text(text, index)
+    }
+
+    fn delete_char_range(&mut self, range: Range<CharIndex>) {
+        if self.track {
+            self.operations
+                .borrow_mut()
+                .push(TextOperation::Delete(range.start.0..range.end.0));
+        }
+        self.text.delete_char_range(range);
+    }
+
+    fn replace_with(&mut self, text: &str) {
+        if self.track {
+            self.operations.borrow_mut().push(TextOperation::Replace);
+        }
+        self.text.replace_with(text);
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<TrackedBuffer<'static>>()
+    }
+}
+
+pub(super) fn reconcile_tracked_insertion(
+    rich: &InlineText,
+    before: &str,
+    after: &str,
+    typing: &Option<TypingStyle>,
+    operations: &[TextOperation],
+) -> Result<Option<(InlineText, Option<TypingStyle>)>, String> {
+    let (range, replacement) = match operations {
+        [TextOperation::Insert { index, text }] => (*index..*index, text.as_str()),
+        [
+            TextOperation::Delete(range),
+            TextOperation::Insert { index, text },
+        ] if range.start == *index => (range.clone(), text.as_str()),
+        _ => return Ok(None),
+    };
+    if range.start > range.end || range.end > before.chars().count() {
+        return Ok(None);
+    }
+    let byte_at = |index: usize| {
+        before
+            .char_indices()
+            .nth(index)
+            .map_or(before.len(), |(byte, _)| byte)
+    };
+    let start = byte_at(range.start);
+    let end = byte_at(range.end);
+    if after.len() != start + replacement.len() + before.len() - end
+        || !after.starts_with(&before[..start])
+        || !after.ends_with(&before[end..])
+        || after.get(start..start + replacement.len()) != Some(replacement)
+    {
+        return Ok(None);
+    }
+    let pending = typing
+        .as_ref()
+        .filter(|pending| range.is_empty() && pending.position == range.start);
+    let (text, mut updated) = if let Some(pending) = pending {
+        rich.replace_label_range_with_style(before, range.clone(), replacement, &pending.style)?
+    } else {
+        rich.replace_label_range(before, range.clone(), replacement)?
+    };
+    debug_assert_eq!(text, after);
+    let mut next_typing = pending.cloned();
+    if let Some(pending) = &mut next_typing {
+        let inserted = range.start..range.start + replacement.chars().count();
+        let graphemes = grapheme_range(after, inserted.clone())?;
+        if graphemes != inserted {
+            updated.update_range(after, graphemes, |style| *style = pending.style.clone())?;
+        }
+        pending.position = inserted.end;
+    }
+    Ok(Some((updated, next_typing)))
 }
 
 pub(super) fn style_at_caret(rich: &InlineText, position: usize) -> InlineTextStyle {
@@ -328,6 +436,49 @@ pub(super) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tracked_insertions_preserve_pending_grapheme_style_and_reject_other_traces() {
+        let rich = InlineText::default();
+        let typing = Some(TypingStyle {
+            position: 1,
+            style: InlineTextStyle {
+                bold: Some(true),
+                ..Default::default()
+            },
+        });
+        let operations = [
+            TextOperation::Delete(1..1),
+            TextOperation::Insert {
+                index: 1,
+                text: "\u{301}".into(),
+            },
+        ];
+        let (updated, pending) =
+            reconcile_tracked_insertion(&rich, "ab", "a\u{301}b", &typing, &operations)
+                .unwrap()
+                .unwrap();
+        assert_eq!((updated.runs[0].start, updated.runs[0].end), (0, 2));
+        assert_eq!(updated.runs[0].style.bold, Some(true));
+        assert_eq!(pending.unwrap().position, 2);
+
+        assert!(
+            reconcile_tracked_insertion(&rich, "ab", "axb", &typing, &operations)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            reconcile_tracked_insertion(
+                &rich,
+                "ab",
+                "a\u{301}b",
+                &typing,
+                &[TextOperation::Replace],
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
 
     #[test]
     fn toggle_preserves_other_overrides_and_whole_label_inheritance() {
