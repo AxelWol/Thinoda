@@ -331,6 +331,32 @@ fn resolve_placeholders_reporting<'a>(
     )
 }
 
+fn resolved_rich_label(
+    original: &str,
+    value: &str,
+    rich: &crate::InlineText,
+    changes: &[(Range<usize>, String)],
+) -> Option<std::sync::Arc<crate::InlineText>> {
+    let mut text = original.to_owned();
+    let mut rich = rich.clone();
+    let result: Result<(), String> = changes.iter().rev().try_for_each(|(range, replacement)| {
+        let start = text[..range.start].chars().count();
+        let end = text[..range.end].chars().count();
+        (text, rich) = rich.replace_label_range(&text, start..end, replacement)?;
+        Ok(())
+    });
+    match result {
+        Ok(()) => {
+            debug_assert_eq!(text, value);
+            (!rich.is_empty()).then(|| std::sync::Arc::new(rich))
+        }
+        Err(error) => {
+            log::warn!("Cannot render formatted placeholder: {error}");
+            None
+        }
+    }
+}
+
 /// `object` with placeholders replaced in its labels and description; borrowed
 /// when nothing changes.
 pub fn with_resolved_placeholders<'a>(
@@ -364,27 +390,7 @@ pub fn with_resolved_placeholders<'a>(
         set(
             &|object, value| {
                 if let Some(rich) = &object.label_rich_text {
-                    let mut text = label.clone();
-                    let mut rich = (**rich).clone();
-                    let result: Result<(), String> =
-                        changes.iter().rev().try_for_each(|(range, replacement)| {
-                            let start = text[..range.start].chars().count();
-                            let end = text[..range.end].chars().count();
-                            (text, rich) =
-                                rich.replace_label_range(&text, start..end, replacement)?;
-                            Ok(())
-                        });
-                    match result {
-                        Ok(()) => {
-                            debug_assert_eq!(text, value);
-                            object.label_rich_text =
-                                (!rich.is_empty()).then(|| std::sync::Arc::new(rich));
-                        }
-                        Err(error) => {
-                            log::warn!("Cannot render formatted placeholder: {error}");
-                            object.label_rich_text = None;
-                        }
-                    }
+                    object.label_rich_text = resolved_rich_label(label, &value, rich, &changes);
                 }
                 match &mut object.kind {
                     CanvasObjectKind::Shape { label, .. } => *label = value,
@@ -397,13 +403,26 @@ pub fn with_resolved_placeholders<'a>(
     }
     if let CanvasObjectKind::Connector(connector) = &object.kind {
         for (index, extra) in connector.extra_labels.iter().enumerate() {
+            let mut changes = Vec::new();
+            let value = resolve_placeholders_reporting(
+                canvas,
+                object,
+                page,
+                &extra.text,
+                |range, value| changes.push((range, value.to_owned())),
+            );
             set(
                 &|object, value| {
                     if let CanvasObjectKind::Connector(connector) = &mut object.kind {
-                        connector.extra_labels[index].text = value;
+                        let label = &mut connector.extra_labels[index];
+                        if let Some(rich) = &label.rich_text {
+                            label.rich_text =
+                                resolved_rich_label(&extra.text, &value, rich, &changes);
+                        }
+                        label.text = value;
                     }
                 },
-                resolve_placeholders(canvas, object, page, &extra.text),
+                value,
             );
         }
     }
@@ -598,6 +617,56 @@ mod tests {
         assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 1));
         assert_eq!((rich.runs[1].start, rich.runs[1].end), (5, 9));
         assert_eq!(object.label(), "%name% to %role%");
+    }
+
+    #[test]
+    fn connector_placeholders_preserve_extra_label_formatting() {
+        use crate::board::{CanvasConnector, ConnectorLabel};
+        use crate::{Endpoint, InlineText, Vec2};
+        use std::sync::Arc;
+
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = InlineText::default();
+        rich.update_range("%name% to %role%", 0..6, |style| style.bold = Some(true))
+            .unwrap();
+        rich.update_range("%name% to %role%", 10..16, |style| {
+            style.italic = Some(true)
+        })
+        .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "%name% to %role%".into(),
+            rich_text: Some(Arc::new(rich.clone())),
+            ..Default::default()
+        });
+        let mut object = CanvasObject::connector(connector);
+        object.data = Some(Arc::new(ObjectData {
+            properties: vec![("name".into(), "🙂".into()), ("role".into(), "lead".into())],
+            placeholders: true,
+            ..Default::default()
+        }));
+        let resolved = with_resolved_placeholders(&CanvasLayer::default(), &object, None);
+        let CanvasObjectKind::Connector(connector) = &resolved.kind else {
+            unreachable!()
+        };
+        let label = &connector.extra_labels[0];
+        assert_eq!(label.text, "🙂 to lead");
+        let resolved_rich = label.rich_text.as_ref().unwrap();
+        assert_eq!(
+            (resolved_rich.runs[0].start, resolved_rich.runs[0].end),
+            (0, 1)
+        );
+        assert_eq!(
+            (resolved_rich.runs[1].start, resolved_rich.runs[1].end),
+            (5, 9)
+        );
+        let CanvasObjectKind::Connector(source) = &object.kind else {
+            unreachable!()
+        };
+        assert_eq!(source.extra_labels[0].text, "%name% to %role%");
+        assert_eq!(source.extra_labels[0].rich_text.as_deref(), Some(&rich));
     }
 
     #[test]

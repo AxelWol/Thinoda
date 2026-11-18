@@ -62,6 +62,7 @@ const SHAPE_STYLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-40\n";
 const LABEL_STYLES_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-41\n";
 const RICH_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-42\n";
 const RICH_CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-43\n";
+const RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX: &str = "THINODA-BOARD-CLIPBOARD-44\n";
 /// Maximum size of the serialized internal board payload, including its prefix.
 pub const MAX_BOARD_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BOARD_CLIPBOARD_TOPICS: usize = MAX_CANVAS_OBJECTS;
@@ -80,7 +81,9 @@ pub struct BoardClipboardPayload {
 
 impl BoardClipboardPayload {
     fn prefix(&self) -> &'static str {
-        if self.fragment.has_rich_connector_labels() {
+        if self.fragment.has_rich_extra_connector_labels() {
+            RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX
+        } else if self.fragment.has_rich_connector_labels() {
             RICH_CONNECTOR_LABELS_BOARD_PREFIX
         } else if self.fragment.has_rich_labels() {
             RICH_LABELS_BOARD_PREFIX
@@ -368,9 +371,14 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         return Err("board clipboard payload exceeds 16 MiB".into());
     }
     let (version, json) = text
-        .strip_prefix(RICH_CONNECTOR_LABELS_BOARD_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-43\r\n"))
-        .map(|json| (43, json))
+        .strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-44\r\n"))
+        .map(|json| (44, json))
+        .or_else(|| {
+            text.strip_prefix(RICH_CONNECTOR_LABELS_BOARD_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-43\r\n"))
+                .map(|json| (43, json))
+        })
         .or_else(|| {
             text.strip_prefix(RICH_LABELS_BOARD_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-BOARD-CLIPBOARD-42\r\n"))
@@ -585,6 +593,9 @@ pub fn decode_board_payload(text: &str) -> Result<BoardClipboardPayload, String>
         .ok_or("clipboard does not contain a supported Thinoda board selection")?;
     let mut payload: BoardClipboardPayload =
         serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if version < 44 && payload.fragment.has_rich_extra_connector_labels() {
+        return Err("rich extra connector labels require board clipboard version 44".into());
+    }
     if version < 30 && payload.fragment.has_drawio_passthrough() {
         return Err("draw.io passthrough requires board clipboard version 30".into());
     }

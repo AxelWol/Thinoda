@@ -56,12 +56,15 @@ const SHAPE_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-36\n";
 const LABEL_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-37\n";
 const RICH_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-38\n";
 const RICH_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-39\n";
+const RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-40\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_rich_connector_labels() {
+    let prefix = if sheet.has_rich_extra_connector_labels() {
+        RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX
+    } else if sheet.has_rich_connector_labels() {
         RICH_CONNECTOR_LABELS_SHEET_PREFIX
     } else if sheet.has_rich_labels() {
         RICH_LABELS_SHEET_PREFIX
@@ -158,9 +161,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(RICH_CONNECTOR_LABELS_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-39\r\n"))
-        .map(|json| (39, json))
+        .strip_prefix(RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-40\r\n"))
+        .map(|json| (40, json))
+        .or_else(|| {
+            text.strip_prefix(RICH_CONNECTOR_LABELS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-39\r\n"))
+                .map(|json| (39, json))
+        })
         .or_else(|| {
             text.strip_prefix(RICH_LABELS_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-38\r\n"))
@@ -353,6 +361,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 40 && sheet.has_rich_extra_connector_labels() {
+        return Err("rich extra connector labels require sheet clipboard version 40".into());
+    }
     if version < 39 && sheet.has_rich_connector_labels() {
         return Err("rich connector labels require sheet clipboard version 39".into());
     }
@@ -1657,6 +1668,44 @@ mod tests {
     }
 
     #[test]
+    fn rich_extra_connector_label_sheet_clipboard_requires_version_forty() {
+        use crate::board::{CanvasConnector, CanvasObject, ConnectorLabel};
+        let mut sheet = Sheet::new("Rich extra connector", "Root");
+        let mut connector = CanvasConnector::new(
+            crate::Endpoint::Point(crate::Vec2::ZERO),
+            crate::Endpoint::Point(crate::Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = crate::InlineText::default();
+        rich.update_range("A🙂B", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "A🙂B".into(),
+            rich_text: Some(std::sync::Arc::new(rich)),
+            ..Default::default()
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(
+            RICH_EXTRA_CONNECTOR_LABELS_SHEET_PREFIX,
+            RICH_CONNECTOR_LABELS_SHEET_PREFIX,
+            1,
+        );
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("rich extra connector labels require sheet clipboard version 40")
+        );
+    }
+
+    #[test]
     fn label_style_sheet_clipboard_requires_version_thirty_seven() {
         use crate::board::CanvasObject;
         let mut sheet = Sheet::new("Label styles", "Root");
@@ -1789,6 +1838,7 @@ mod tests {
                 orthogonal: 10.0,
                 offset: Vec2::ZERO,
             },
+            rich_text: None,
         });
         sheet
             .add_canvas_object(CanvasObject::connector(connector))

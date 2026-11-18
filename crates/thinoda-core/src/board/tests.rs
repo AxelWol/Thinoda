@@ -2877,6 +2877,7 @@ fn connector_labels_are_validated_and_listed_in_order() {
             along: 1.0,
             ..Default::default()
         },
+        rich_text: None,
     });
     let path = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
     assert_eq!(
@@ -2894,6 +2895,7 @@ fn connector_labels_are_validated_and_listed_in_order() {
         ConnectorLabel {
             text: String::new(),
             placement: ConnectorLabelPlacement::default(),
+            rich_text: None,
         },
         ConnectorLabel {
             text: "x".into(),
@@ -2901,6 +2903,7 @@ fn connector_labels_are_validated_and_listed_in_order() {
                 along: 1.5,
                 ..Default::default()
             },
+            rich_text: None,
         },
         ConnectorLabel {
             text: "x".into(),
@@ -2908,6 +2911,7 @@ fn connector_labels_are_validated_and_listed_in_order() {
                 orthogonal: f32::NAN,
                 ..Default::default()
             },
+            rich_text: None,
         },
     ] {
         let mut bad = connector.clone();
@@ -2918,14 +2922,90 @@ fn connector_labels_are_validated_and_listed_in_order() {
             "{json}"
         );
     }
+
     let mut many = connector;
     many.extra_labels = vec![
         ConnectorLabel {
             text: "x".into(),
             placement: ConnectorLabelPlacement::default(),
+            rich_text: None,
         };
         MAX_CONNECTOR_LABELS + 1
     ];
     let json = serde_json::to_string(&many).unwrap();
     assert!(serde_json::from_str::<CanvasConnector>(&json).is_err());
+}
+
+#[test]
+fn rich_extra_connector_label_text_changes_are_atomic_and_validated() {
+    let mut rich = crate::InlineText::default();
+    rich.update_range("A🙂B", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    let mut label = ConnectorLabel {
+        text: "A🙂B".into(),
+        rich_text: Some(Arc::new(rich)),
+        ..Default::default()
+    };
+    label.set_text("A🙂BC".into()).unwrap();
+    assert_eq!(label.rich_text.as_ref().unwrap().runs[0].start, 1);
+    assert_eq!(label.rich_text.as_ref().unwrap().runs[0].end, 2);
+    let original = label.clone();
+    assert!(label.set_text(String::new()).is_err());
+    assert!(
+        label
+            .set_text("x".repeat(MAX_BOARD_TEXT_CHARS + 1))
+            .is_err()
+    );
+    assert_eq!(label, original);
+
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.extra_labels.push(label);
+    assert!(valid_connector_labels(None, &connector.extra_labels));
+    connector.extra_labels[0].text = "A".into();
+    let json = serde_json::to_string(&connector).unwrap();
+    assert!(serde_json::from_str::<CanvasConnector>(&json).is_err());
+}
+
+#[test]
+fn empty_extra_connector_labels_require_a_visible_list_and_round_trip() {
+    let list = crate::InlineText {
+        paragraphs: vec![crate::InlineParagraph {
+            index: 0,
+            list: crate::ListKind::Bulleted,
+        }],
+        ..Default::default()
+    };
+    let mut label = ConnectorLabel {
+        text: "item".into(),
+        ..Default::default()
+    };
+    let original = label.clone();
+    assert!(label.set_text_with_rich_text(String::new(), None).is_err());
+    assert_eq!(label, original);
+    label
+        .set_text_with_rich_text(String::new(), Some(list.clone()))
+        .unwrap();
+    assert!(label.has_list());
+    assert!(valid_connector_labels(None, std::slice::from_ref(&label)));
+
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.extra_labels.push(label.clone());
+    let restored: CanvasConnector =
+        serde_json::from_str(&serde_json::to_string(&connector).unwrap()).unwrap();
+    assert_eq!(restored.extra_labels[0], label);
+
+    let mut invalid = list;
+    invalid.paragraphs[0].index = 2;
+    assert!(
+        label
+            .set_text_with_rich_text(String::new(), Some(invalid))
+            .is_err()
+    );
+    assert_eq!(label, connector.extra_labels[0]);
 }

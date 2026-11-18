@@ -452,6 +452,17 @@ impl CanvasLayer {
             .iter()
             .any(|object| object.is_connector() && object.label_rich_text.is_some())
     }
+
+    /// Whether an additional connector label has inline formatting.
+    pub fn has_rich_extra_connector_labels(&self) -> bool {
+        self.objects.iter().any(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector) => connector
+                .extra_labels
+                .iter()
+                .any(|label| label.rich_text.is_some()),
+            _ => false,
+        })
+    }
 }
 
 /// A board group; groups are flat (no nesting, so no cycles).
@@ -1979,6 +1990,47 @@ pub struct ConnectorLabel {
     pub text: String,
     #[serde(default)]
     pub placement: ConnectorLabelPlacement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rich_text: Option<Arc<crate::InlineText>>,
+}
+
+impl ConnectorLabel {
+    /// An empty list paragraph still has a visible marker.
+    pub fn has_list(&self) -> bool {
+        self.rich_text
+            .as_deref()
+            .is_some_and(|rich| !rich.paragraphs.is_empty())
+    }
+
+    /// Replace the text while retaining and reconciling its inline formatting.
+    pub fn set_text(&mut self, text: String) -> Result<(), String> {
+        let rich = self
+            .rich_text
+            .as_ref()
+            .map(|rich| rich.reconcile_label(&self.text, &text))
+            .transpose()?;
+        self.set_text_with_rich_text(text, rich)
+    }
+
+    /// Atomically changes the text and its explicitly supplied inline formatting.
+    pub fn set_text_with_rich_text(
+        &mut self,
+        text: String,
+        rich: Option<crate::InlineText>,
+    ) -> Result<(), String> {
+        if text.chars().count() > MAX_BOARD_TEXT_CHARS {
+            return Err("invalid connector label text".into());
+        }
+        if let Some(rich) = &rich {
+            rich.validate(&text)?;
+        }
+        if text.is_empty() && rich.as_ref().is_none_or(|rich| rich.paragraphs.is_empty()) {
+            return Err("invalid connector label text".into());
+        }
+        self.text = text;
+        self.rich_text = rich.filter(|rich| !rich.is_empty()).map(Arc::new);
+        Ok(())
+    }
 }
 
 fn valid_connector_labels(
@@ -1988,9 +2040,13 @@ fn valid_connector_labels(
     placement.is_none_or(ConnectorLabelPlacement::is_valid)
         && labels.len() <= MAX_CONNECTOR_LABELS
         && labels.iter().all(|label| {
-            !label.text.is_empty()
+            (!label.text.is_empty() || label.has_list())
                 && label.text.chars().count() <= MAX_BOARD_TEXT_CHARS
                 && label.placement.is_valid()
+                && label
+                    .rich_text
+                    .as_ref()
+                    .is_none_or(|rich| !rich.is_empty() && rich.validate(&label.text).is_ok())
         })
 }
 
@@ -3020,6 +3076,7 @@ pub(crate) fn mask_canvas(sheet: &mut Sheet) {
                 }
                 for (n, label) in c.extra_labels.iter_mut().enumerate() {
                     label.text = format!("Connector {} label {}", index + 1, n + 2);
+                    label.rich_text = None;
                 }
             }
             _ => {}

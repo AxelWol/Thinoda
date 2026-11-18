@@ -502,6 +502,33 @@ fn rich_connector_runs_export_to_svg_png_pdf_and_editable_powerpoint() {
             orthogonal: -60.0,
             ..Default::default()
         },
+        rich_text: None,
+    });
+    let mut extra_rich = InlineText::default();
+    extra_rich
+        .update_range("Styled", 0..6, |style| style.italic = Some(true))
+        .unwrap();
+    connector.extra_labels.push(ConnectorLabel {
+        text: "Styled".into(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -90.0,
+            ..Default::default()
+        },
+        rich_text: Some(Arc::new(extra_rich)),
+    });
+    connector.extra_labels.push(ConnectorLabel {
+        text: String::new(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -120.0,
+            ..Default::default()
+        },
+        rich_text: Some(Arc::new(InlineText {
+            paragraphs: vec![thinoda_core::InlineParagraph {
+                index: 0,
+                list: thinoda_core::ListKind::Bulleted,
+            }],
+            ..Default::default()
+        })),
     });
     let mut object = CanvasObject::connector(connector);
     let mut rich = InlineText::default();
@@ -567,7 +594,10 @@ fn rich_connector_runs_export_to_svg_png_pdf_and_editable_powerpoint() {
     assert!(label.contains("fill=\"#C81E28\""), "{label}");
     assert!(label.contains("> plain</tspan>"), "{label}");
     assert!(svg.contains(">Extra</text>"));
-    assert!(svg.contains(">• </tspan>"));
+    let end = svg.find(">Styled</tspan>").unwrap();
+    let start = svg[..end].rfind("<text ").unwrap();
+    assert!(svg[start..end].contains("font-style=\"italic\""));
+    assert_eq!(svg.matches(">• </tspan>").count(), 2);
     let svg_list_line = |text: &str| {
         let end = svg.find(text).unwrap();
         let start = svg[..end].rfind("<text ").unwrap();
@@ -606,7 +636,15 @@ fn rich_connector_runs_export_to_svg_png_pdf_and_editable_powerpoint() {
         "{label}"
     );
     assert!(slide.contains("<a:t>Extra</a:t>"));
-    assert!(slide.contains(r#"<a:t xml:space="preserve">• </a:t>"#));
+    let end = slide.find("<a:t>Styled</a:t>").unwrap();
+    let start = slide[..end].rfind("<p:sp>").unwrap();
+    assert!(slide[start..end].contains("i=\"1\""));
+    assert_eq!(
+        slide
+            .matches(r#"<a:t xml:space="preserve">• </a:t>"#)
+            .count(),
+        2
+    );
     let slide_list_line = |text: &str| {
         let end = slide.find(text).unwrap();
         let start = slide[..end].rfind("<p:sp>").unwrap();
@@ -632,7 +670,10 @@ fn rich_connector_runs_export_to_svg_png_pdf_and_editable_powerpoint() {
 #[test]
 fn rich_sankey_labels_export_formatted_prefix_and_plain_generated_value() {
     use std::sync::Arc;
-    use thinoda_core::InlineText;
+    use thinoda_core::{
+        InlineText,
+        board::{ConnectorLabel, ConnectorLabelPlacement},
+    };
 
     let mut sheet = thinoda_core::templates::instantiate("sankey-budget")
         .active()
@@ -654,6 +695,23 @@ fn rich_sankey_labels_export_formatted_prefix_and_plain_generated_value() {
         rich.update_range(label, 0..label.len(), |style| style.italic = Some(true))
             .unwrap();
         object.label_rich_text = Some(Arc::new(rich));
+        let extra = if count == 0 {
+            "Ribbon extra"
+        } else {
+            "Unset extra"
+        };
+        let mut extra_rich = InlineText::default();
+        extra_rich
+            .update_range(extra, 0..extra.len(), |style| style.bold = Some(true))
+            .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: extra.into(),
+            placement: ConnectorLabelPlacement {
+                orthogonal: -80.0,
+                ..Default::default()
+            },
+            rich_text: Some(Arc::new(extra_rich)),
+        });
         count += 1;
         if count == 2 {
             break;
@@ -693,5 +751,20 @@ fn rich_sankey_labels_export_formatted_prefix_and_plain_generated_value() {
         assert!(slide[start..end].contains("i=\"1\""));
         let suffix = &slide[end..end + slide[end..].find("</p:sp>").unwrap()];
         assert!(suffix.contains("i=\"0\""), "{suffix}");
+    }
+    for text in ["Ribbon extra", "Unset extra"] {
+        let end = svg.find(&format!(">{text}</tspan>")).unwrap();
+        let start = svg[..end].rfind("<tspan ").unwrap();
+        assert!(svg[start..end].contains("font-weight=\"bold\""));
+        let end = slide.find(&format!("<a:t>{text}</a:t>")).unwrap();
+        let start = slide[..end].rfind("<a:r>").unwrap();
+        assert!(slide[start..end].contains("b=\"1\""));
+    }
+    for format in [Format::Png, Format::Pdf] {
+        assert!(
+            !export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

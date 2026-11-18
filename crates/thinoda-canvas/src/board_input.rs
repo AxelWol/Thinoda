@@ -321,6 +321,8 @@ enum GestureKind {
 
 pub(super) struct LabelEdit {
     pub(super) id: CanvasObjectId,
+    pub(super) extra_label: Option<usize>,
+    original_extra_labels: Option<Vec<thinoda_core::board::ConnectorLabel>>,
     text: String,
     original: String,
     original_rich_text: Option<std::sync::Arc<InlineText>>,
@@ -441,10 +443,13 @@ impl MapView {
     /// still use the conflict-checked variant.
     pub fn board_rich_label_draft(
         &self,
-    ) -> Option<(CanvasObjectId, &str, &str, Option<&InlineText>)> {
+    ) -> Option<(BoardLabelTarget, &str, &str, Option<&InlineText>)> {
         self.board_input.label.as_ref().map(|edit| {
             (
-                edit.id,
+                BoardLabelTarget {
+                    object: edit.id,
+                    extra_label: edit.extra_label,
+                },
                 edit.original.as_str(),
                 edit.text.as_str(),
                 edit.rich_text.as_ref(),
@@ -487,13 +492,20 @@ impl MapView {
     pub fn validated_board_rich_label_draft(
         &self,
         doc: &Document,
-    ) -> EditResult<Option<(CanvasObjectId, String, Option<InlineText>)>> {
+    ) -> EditResult<Option<(BoardLabelTarget, String, Option<InlineText>)>> {
         let Some(edit) = self.board_input.label.as_ref() else {
             return Ok(None);
         };
         validate_label_source(edit, doc)?;
         let rich = reconciled_label_rich_text(edit)?;
-        Ok(Some((edit.id, edit.text.clone(), rich)))
+        Ok(Some((
+            BoardLabelTarget {
+                object: edit.id,
+                extra_label: edit.extra_label,
+            },
+            edit.text.clone(),
+            rich,
+        )))
     }
 
     /// Whether the active shape or connector label differs from its original text.
@@ -591,11 +603,21 @@ fn validate_label_source(edit: &LabelEdit, doc: &Document) -> EditResult<()> {
     let object = doc.sheet().canvas.object(edit.id).ok_or_else(|| {
         EditError::Invalid("Label source no longer exists; draft retained".into())
     })?;
+    let source_changed = if edit.extra_label.is_some() {
+        match &object.kind {
+            CanvasObjectKind::Connector(connector) => {
+                edit.original_extra_labels.as_ref() != Some(&connector.extra_labels)
+            }
+            _ => true,
+        }
+    } else {
+        matches!(object.kind, CanvasObjectKind::Ink(_))
+            || object.label() != edit.original
+            || object.label_rich_text != edit.original_rich_text
+            || object.label_style != edit.original_label_style
+    };
     if !board_actions::member_is_movable(doc.sheet(), BoardMember::Object(edit.id))
-        || matches!(object.kind, CanvasObjectKind::Ink(_))
-        || object.label() != edit.original
-        || object.label_rich_text != edit.original_rich_text
-        || object.label_style != edit.original_label_style
+        || source_changed
     {
         return Err(EditError::Invalid(
             "Label source changed or was locked; draft retained".into(),
@@ -605,6 +627,24 @@ fn validate_label_source(edit: &LabelEdit, doc: &Document) -> EditResult<()> {
 }
 
 pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId) -> bool {
+    begin_label_at(view, doc, id, None)
+}
+
+pub(super) fn begin_extra_label(
+    view: &mut MapView,
+    doc: &Document,
+    id: CanvasObjectId,
+    index: usize,
+) -> bool {
+    begin_label_at(view, doc, id, Some(index))
+}
+
+fn begin_label_at(
+    view: &mut MapView,
+    doc: &Document,
+    id: CanvasObjectId,
+    extra_label: Option<usize>,
+) -> bool {
     let sheet = doc.sheet();
     let Some(object) = sheet.canvas.object(id) else {
         return false;
@@ -617,13 +657,30 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
     if view.editing.is_some() || view.board_input.label.is_some() {
         return false;
     }
+    let (text, rich, original_extra_labels) = if let Some(index) = extra_label {
+        let CanvasObjectKind::Connector(connector) = &object.kind else {
+            return false;
+        };
+        let Some(label) = connector.extra_labels.get(index) else {
+            return false;
+        };
+        (
+            label.text.as_str(),
+            label.rich_text.clone(),
+            Some(connector.extra_labels.clone()),
+        )
+    } else {
+        (object.label(), object.label_rich_text.clone(), None)
+    };
     view.board_input.label = Some(LabelEdit {
         id,
-        text: object.label().to_owned(),
-        original: object.label().to_owned(),
-        original_rich_text: object.label_rich_text.clone(),
-        rich_text: object.label_rich_text.as_deref().cloned(),
-        rich_source_text: object.label().to_owned(),
+        extra_label,
+        original_extra_labels,
+        text: text.to_owned(),
+        original: text.to_owned(),
+        original_rich_text: rich.clone(),
+        rich_text: rich.as_deref().cloned(),
+        rich_source_text: text.to_owned(),
         original_label_style: object.label_style.clone(),
         selection: None,
         typing_style: None,
@@ -659,7 +716,17 @@ pub(super) fn commit_label(view: &mut MapView, doc: &mut Document) -> EditResult
     let id = edit.id;
     let text = edit.text.clone();
     let rich = reconciled_label_rich_text(edit)?;
-    doc.set_canvas_object_label_with_rich_text("Edit board label", id, &text, rich)?;
+    if let Some(index) = edit.extra_label {
+        doc.set_canvas_extra_connector_label_with_rich_text(
+            "Edit connector label",
+            id,
+            index,
+            &text,
+            rich,
+        )?;
+    } else {
+        doc.set_canvas_object_label_with_rich_text("Edit board label", id, &text, rich)?;
+    }
     view.board_input.label = None;
     Ok(true)
 }
@@ -4675,7 +4742,16 @@ pub(super) fn interact(
             if !selected(view, hit) {
                 select_hit(view, doc.sheet(), hit, false);
             }
-            view.begin_board_label(doc, id);
+            let extra = doc.sheet().canvas.object(id).and_then(|object| {
+                scene.item(SceneId::Object(id)).and_then(|item| {
+                    extra_label_at_point(doc.sheet(), object, item, view.xf().sheet(point))
+                })
+            });
+            if let Some(index) = extra {
+                view.begin_board_extra_label(doc, id, index);
+            } else {
+                view.begin_board_label(doc, id);
+            }
         } else {
             select_hit(view, doc.sheet(), hit, modifiers.command || modifiers.shift);
         }
@@ -6163,7 +6239,50 @@ fn label_editor_layout_job(
     (job, bold, markers)
 }
 
-fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) -> Option<Rect> {
+fn extra_label_at_point(
+    sheet: &Sheet,
+    object: &CanvasObject,
+    item: &SceneItem,
+    point: Vec2,
+) -> Option<usize> {
+    let display = thinoda_core::object_data::with_resolved_placeholders(
+        &sheet.canvas,
+        object,
+        Some(&sheet.title),
+    );
+    let CanvasObjectKind::Connector(connector) = &display.kind else {
+        return None;
+    };
+    if connector.extra_labels.is_empty() {
+        return None;
+    }
+    let centerline;
+    let points = match &item.geometry {
+        SceneGeometry::Polyline { points, .. } => points.as_slice(),
+        SceneGeometry::Ribbon { outline, .. } => {
+            centerline = thinoda_core::sankey::ribbon_centerline(outline);
+            centerline.as_slice()
+        }
+        _ => return None,
+    };
+    connector
+        .extra_labels
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, label)| {
+            thinoda_core::scene::extra_connector_label_bounds(label, points)
+                .is_some_and(|bounds| bounds.contains(point))
+                .then_some(index)
+        })
+}
+
+fn label_editor_rect(
+    object: &CanvasObject,
+    item: &SceneItem,
+    view: &MapView,
+    extra_label: Option<usize>,
+) -> Option<Rect> {
     let rect = match &object.kind {
         CanvasObjectKind::Shape { .. } => {
             let label_rect = item
@@ -6188,15 +6307,27 @@ fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) ->
             }
         }
         CanvasObjectKind::Connector(connector) => {
-            let point = match &item.geometry {
-                SceneGeometry::Polyline { points, .. } => connector
+            let point = match (&item.geometry, extra_label) {
+                (SceneGeometry::Polyline { points, .. }, Some(index)) => {
+                    let label = connector.extra_labels.get(index)?;
+                    thinoda_core::board::connector_label_point(points, label.placement)?
+                }
+                (SceneGeometry::Ribbon { outline, .. }, Some(index)) => {
+                    let label = connector.extra_labels.get(index)?;
+                    thinoda_core::board::connector_label_point(
+                        &thinoda_core::sankey::ribbon_centerline(outline),
+                        label.placement,
+                    )?
+                }
+                (SceneGeometry::Polyline { points, .. }, None) => connector
                     .primary_label_anchor(points)
                     .unwrap_or(item.bounds.center()),
-                SceneGeometry::Ribbon { outline, .. } => {
+                (SceneGeometry::Ribbon { outline, .. }, None) => {
                     thinoda_core::sankey::ribbon_label_anchor(outline)
                         .unwrap_or(item.bounds.center())
                 }
-                _ => item.bounds.center(),
+                (_, Some(_)) => return None,
+                (_, None) => item.bounds.center(),
             };
             thinoda_core::Rect::from_center_size(point, Vec2::new(140.0, 40.0))
         }
@@ -6952,7 +7083,7 @@ pub(super) fn finish_label_before_pointer_press(
     let Some(item) = scene.item(SceneId::Object(edit.id)) else {
         return;
     };
-    let Some(rect) = label_editor_rect(object, item, view) else {
+    let Some(rect) = label_editor_rect(object, item, view, edit.extra_label) else {
         return;
     };
     let outside = ui.input(|input| {
@@ -7102,7 +7233,7 @@ pub(super) fn show_label_editor(
     let editor_press = view.board_input.label.as_ref().and_then(|edit| {
         let object = doc.sheet().canvas.object(edit.id)?;
         let item = scene.item(SceneId::Object(edit.id))?;
-        let rect = label_editor_rect(object, item, view)?;
+        let rect = label_editor_rect(object, item, view, edit.extra_label)?;
         ui.input(|input| {
             if !input.focused || !editor_focused || !input.pointer.any_pressed() {
                 return None;
@@ -7329,7 +7460,7 @@ fn show_label_editor_pass(
     let Some(item) = scene.item(SceneId::Object(edit.id)) else {
         return;
     };
-    let Some(rect) = label_editor_rect(object, item, view) else {
+    let Some(rect) = label_editor_rect(object, item, view, edit.extra_label) else {
         return;
     };
     let edit_id = MapCanvas::board_label_editor_id();

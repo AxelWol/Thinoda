@@ -1176,6 +1176,16 @@ pub fn ribbon_label_anchor(outline: &[Vec2]) -> Option<Vec2> {
     Some((*outline.get(i)? + *outline.get(outline.len().checked_sub(i + 1)?)?) * 0.5)
 }
 
+/// Path halfway between matching ribbon boundaries, from source to target.
+pub fn ribbon_centerline(outline: &[Vec2]) -> Vec<Vec2> {
+    if outline.len() < 4 || !outline.len().is_multiple_of(2) {
+        return Vec::new();
+    }
+    (0..outline.len() / 2)
+        .map(|index| (outline[index] + outline[outline.len() - 1 - index]) * 0.5)
+        .collect()
+}
+
 pub fn flow_label(connector: &crate::board::CanvasConnector, mass: f64) -> String {
     let value = if connector.sankey.is_some_and(|f| f.weight.is_none()) {
         "—%".to_owned()

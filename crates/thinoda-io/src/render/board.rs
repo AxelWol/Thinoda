@@ -95,22 +95,23 @@ fn styled_label(object: &CanvasObject, base: Rect, label: &str, color: Color) ->
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn styled_connector_label(
     object: &CanvasObject,
+    rich: &thinoda_core::InlineText,
     anchor: Vec2,
     label: &str,
     wrap: bool,
     color: Color,
     backdrop: Color,
     group_backdrop: Option<Color>,
-) -> Option<[Prim; 2]> {
-    let rich = object.label_rich_text.as_deref()?;
+) -> [Prim; 2] {
     let layout = label_style::layout_connector(anchor, label, rich, wrap);
     let rect = Rect::from_center_size(
         layout.block.center(),
         layout.block.size + Vec2::new(8.0, 4.0),
     );
-    Some([
+    [
         Prim::Text {
             rect,
             pivot: anchor,
@@ -127,7 +128,54 @@ fn styled_connector_label(
             color,
             opacity: object.style.opacity,
         },
-    ])
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_connector_label(
+    out: &mut Vec<Prim>,
+    object: &CanvasObject,
+    rich: Option<&thinoda_core::InlineText>,
+    anchor: Vec2,
+    label: &str,
+    flow: bool,
+    color: Color,
+    backdrop: Color,
+    group_backdrop: Option<Color>,
+) {
+    if let Some(rich) = rich {
+        out.extend(styled_connector_label(
+            object,
+            rich,
+            anchor,
+            label,
+            flow,
+            color,
+            backdrop,
+            group_backdrop,
+        ));
+        return;
+    }
+    let lines = wrap(label, 200.0, 12.0);
+    let longest = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(1);
+    let size = Vec2::new(
+        longest as f32 * 12.0 * 0.6 + 8.0,
+        lines.len() as f32 * 12.0 * 1.25 + 4.0,
+    );
+    out.push(Prim::Text {
+        rect: Rect::from_center_size(anchor, size),
+        pivot: anchor,
+        rotation: 0.0,
+        lines,
+        size: 12.0,
+        color,
+        backdrop: Some(backdrop),
+        group_backdrop,
+    });
 }
 
 fn faded(color: Color, opacity: f32) -> Color {
@@ -553,47 +601,57 @@ pub(crate) fn object_prims(
                 stroke: None,
                 round: false,
             });
+            let text_color = faded(
+                object
+                    .style
+                    .text_color
+                    .unwrap_or_else(|| Color::highest_contrast_on(background)),
+                opacity,
+            );
             if let Some(anchor) = thinoda_core::sankey::ribbon_label_anchor(outline) {
                 let label = thinoda_core::sankey::flow_label(connector, *mass);
-                let text_color = faded(
-                    object
-                        .style
-                        .text_color
-                        .unwrap_or_else(|| Color::highest_contrast_on(background)),
-                    opacity,
-                );
-                if let Some(primitives) = styled_connector_label(
+                let rich = object.label_rich_text.as_deref();
+                push_connector_label(
+                    &mut out,
                     object,
+                    rich,
                     anchor,
                     &label,
                     true,
                     text_color,
-                    faded(background, opacity),
+                    if rich.is_some() {
+                        faded(background, opacity)
+                    } else {
+                        background
+                    },
                     None,
-                ) {
-                    out.extend(primitives);
-                    return out;
-                }
-                let lines = wrap(&label, 200.0, 12.0);
-                let size = Vec2::new(
-                    lines.iter().map(|l| l.chars().count()).max().unwrap_or(1) as f32 * 12.0 * 0.6
-                        + 8.0,
-                    lines.len() as f32 * 12.0 * 1.25 + 4.0,
                 );
-                let rect = thinoda_core::Rect {
-                    min: anchor - size * 0.5,
-                    size,
-                };
-                out.push(Prim::Text {
-                    rect,
-                    pivot: rect.center(),
-                    rotation: 0.0,
-                    lines,
-                    size: 12.0,
-                    color: text_color,
-                    backdrop: Some(background),
-                    group_backdrop: None,
-                });
+            }
+            if !connector.extra_labels.is_empty() {
+                let centerline = thinoda_core::sankey::ribbon_centerline(outline);
+                for label in &connector.extra_labels {
+                    if (!label.text.trim().is_empty() || label.has_list())
+                        && let Some(anchor) =
+                            thinoda_core::board::connector_label_point(&centerline, label.placement)
+                    {
+                        let rich = label.rich_text.as_deref();
+                        push_connector_label(
+                            &mut out,
+                            object,
+                            rich,
+                            anchor,
+                            &label.text,
+                            false,
+                            text_color,
+                            if rich.is_some() {
+                                faded(background, opacity)
+                            } else {
+                                background
+                            },
+                            None,
+                        );
+                    }
+                }
             }
         }
         (
@@ -695,72 +753,61 @@ pub(crate) fn object_prims(
                     out.push(arrowhead(points[1], points[0], width, color));
                 }
             }
-            let mut labels: Vec<(String, Vec2, bool, bool)> = Vec::new();
+            let text_color = object
+                .style
+                .text_color
+                .map(|text| faded(text, opacity))
+                .unwrap_or(color);
+            let backdrop = if object.style.text_color.is_some() {
+                faded(background, f32::from(text_color.a) / 255.0)
+            } else {
+                background
+            };
+            let group_backdrop = object.style.text_color.map(|_| background);
             if unset {
-                labels.push((
-                    thinoda_core::sankey::flow_label(connector, 0.0),
+                push_connector_label(
+                    &mut out,
+                    object,
+                    object.label_rich_text.as_deref(),
                     midpoint(points),
+                    &thinoda_core::sankey::flow_label(connector, 0.0),
                     true,
-                    true,
-                ));
-            } else if (!connector.label.is_empty() || object.has_label_list())
+                    text_color,
+                    backdrop,
+                    group_backdrop,
+                );
+            } else if (!connector.label.trim().is_empty() || object.has_label_list())
                 && let Some(anchor) = connector.primary_label_anchor(points)
             {
-                labels.push((connector.label.clone(), anchor, false, true));
-            }
-            labels.extend(
-                connector
-                    .label_anchors(points)
-                    .into_iter()
-                    .skip(usize::from(!connector.label.is_empty()))
-                    .filter(|(text, _)| !text.trim().is_empty())
-                    .map(|(text, anchor)| (text.to_owned(), anchor, false, false)),
-            );
-            for (label, mid, flow, primary) in labels {
-                if !flow && label.trim().is_empty() && !object.has_label_list() {
-                    continue;
-                }
-                let lines = wrap(&label, 200.0, 12.0);
-                let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1);
-                let size = Vec2::new(
-                    longest as f32 * 12.0 * 0.6 + 8.0,
-                    lines.len() as f32 * 12.0 * 1.25 + 4.0,
+                push_connector_label(
+                    &mut out,
+                    object,
+                    object.label_rich_text.as_deref(),
+                    anchor,
+                    &connector.label,
+                    false,
+                    text_color,
+                    backdrop,
+                    group_backdrop,
                 );
-                let text_color = object
-                    .style
-                    .text_color
-                    .map(|text| faded(text, opacity))
-                    .unwrap_or(color);
-                let backdrop = if object.style.text_color.is_some() {
-                    faded(background, f32::from(text_color.a) / 255.0)
-                } else {
-                    background
-                };
-                let group_backdrop = object.style.text_color.map(|_| background);
-                if primary
-                    && let Some(primitives) = styled_connector_label(
+            }
+            for label in &connector.extra_labels {
+                if (!label.text.trim().is_empty() || label.has_list())
+                    && let Some(anchor) =
+                        thinoda_core::board::connector_label_point(points, label.placement)
+                {
+                    push_connector_label(
+                        &mut out,
                         object,
-                        mid,
-                        &label,
-                        flow,
+                        label.rich_text.as_deref(),
+                        anchor,
+                        &label.text,
+                        false,
                         text_color,
                         backdrop,
                         group_backdrop,
-                    )
-                {
-                    out.extend(primitives);
-                    continue;
+                    );
                 }
-                out.push(Prim::Text {
-                    rect: Rect::from_center_size(mid, size),
-                    pivot: mid,
-                    rotation: 0.0,
-                    lines,
-                    size: 12.0,
-                    color: text_color,
-                    backdrop: Some(backdrop),
-                    group_backdrop,
-                });
             }
         }
         _ => {}

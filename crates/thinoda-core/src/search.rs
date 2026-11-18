@@ -392,6 +392,33 @@ fn replace_text(text: &mut String, needle: &str, replacement: &str, opts: &Searc
     ranges.len()
 }
 
+fn replace_label_text(
+    text: &mut String,
+    rich: &mut Option<std::sync::Arc<crate::InlineText>>,
+    needle: &str,
+    replacement: &str,
+    opts: &SearchOptions,
+) -> Result<usize, String> {
+    let Some(existing) = rich.as_deref() else {
+        return Ok(replace_text(text, needle, replacement, opts));
+    };
+    let matches = find_in(text, needle, opts);
+    if matches.is_empty() {
+        return Ok(0);
+    }
+    let mut updated_text = text.clone();
+    let mut updated_rich = existing.clone();
+    for range in matches.iter().rev() {
+        let start = updated_text[..range.start].chars().count();
+        let end = updated_text[..range.end].chars().count();
+        (updated_text, updated_rich) =
+            updated_rich.replace_label_range(&updated_text, start..end, replacement)?;
+    }
+    *text = updated_text;
+    *rich = (!updated_rich.is_empty()).then(|| std::sync::Arc::new(updated_rich));
+    Ok(matches.len())
+}
+
 /// Replaces all occurrences in titles of `ids`, rejecting locked cards atomically.
 pub fn replace_in_titles(
     sheet: &mut Sheet,
@@ -472,42 +499,34 @@ pub fn replace_in_canvas(
                 count += values;
             }
         }
-        let matches = find_in(object.label(), needle, opts);
-        if !matches.is_empty()
-            && let Some(rich) = &object.label_rich_text
-        {
-            let mut text = object.label().to_owned();
-            let mut rich = (**rich).clone();
-            for range in matches.iter().rev() {
-                let start = text[..range.start].chars().count();
-                let end = text[..range.end].chars().count();
-                (text, rich) = rich.replace_label_range(&text, start..end, replacement)?;
-            }
-            match &mut object.kind {
-                CanvasObjectKind::Shape { label, .. } => *label = text,
-                CanvasObjectKind::Connector(connector) => connector.label = text,
-                CanvasObjectKind::Ink(_) => unreachable!("ink has no label"),
-            }
-            object.label_rich_text = (!rich.is_empty()).then(|| std::sync::Arc::new(rich));
-            count += matches.len();
-        } else {
-            let label = match &mut object.kind {
-                CanvasObjectKind::Shape { label, .. } => Some(label),
-                CanvasObjectKind::Connector(connector) => Some(&mut connector.label),
-                CanvasObjectKind::Ink(_) => None,
-            };
-            if let Some(label) = label {
-                count += replace_text(label, needle, replacement, opts);
-            }
+        let label = match &mut object.kind {
+            CanvasObjectKind::Shape { label, .. } => Some(label),
+            CanvasObjectKind::Connector(connector) => Some(&mut connector.label),
+            CanvasObjectKind::Ink(_) => None,
+        };
+        if let Some(label) = label {
+            count += replace_label_text(
+                label,
+                &mut object.label_rich_text,
+                needle,
+                replacement,
+                opts,
+            )?;
         }
         if let CanvasObjectKind::Connector(connector) = &mut object.kind {
             for label in &mut connector.extra_labels {
-                count += replace_text(&mut label.text, needle, replacement, opts);
+                count += replace_label_text(
+                    &mut label.text,
+                    &mut label.rich_text,
+                    needle,
+                    replacement,
+                    opts,
+                )?;
             }
-            // A label replaced by nothing disappears, as an emptied main label does.
+            // An empty label remains visible if it still has a list marker.
             connector
                 .extra_labels
-                .retain(|label| !label.text.is_empty());
+                .retain(|label| !label.text.is_empty() || label.has_list());
         }
     }
     if let Some(id) = wanted.difference(&found).next() {
@@ -897,6 +916,107 @@ mod tests {
         assert_eq!((run.start, run.end), (7, 13));
         assert_eq!(run.style.bold, Some(true));
         sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn extra_connector_replacement_preserves_runs_and_is_atomic_on_overflow() {
+        use crate::board::{CanvasConnector, CanvasObject, ConnectorLabel};
+        use crate::{Endpoint, InlineText, Vec2};
+        use std::sync::Arc;
+
+        let mut sheet = Sheet::new("Board", "");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = InlineText::default();
+        rich.update_range("x 🙂 middle x", 4..10, |style| style.bold = Some(true))
+            .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "x 🙂 middle x".into(),
+            rich_text: Some(Arc::new(rich)),
+            ..Default::default()
+        });
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        assert_eq!(
+            replace_in_canvas(&mut sheet, &[id], "x", "long", &SearchOptions::default()).unwrap(),
+            2
+        );
+        let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(id).unwrap().kind else {
+            unreachable!()
+        };
+        let label = &connector.extra_labels[0];
+        assert_eq!(label.text, "long 🙂 middle long");
+        let run = &label.rich_text.as_ref().unwrap().runs[0];
+        assert_eq!((run.start, run.end), (7, 13));
+        assert_eq!(run.style.bold, Some(true));
+        let before = sheet.clone();
+        assert!(
+            replace_in_canvas(
+                &mut sheet,
+                &[id],
+                "long",
+                &"x".repeat(crate::board::MAX_BOARD_TEXT_CHARS),
+                &SearchOptions::default(),
+            )
+            .is_err()
+        );
+        assert_eq!(sheet, before);
+    }
+
+    #[test]
+    fn replacing_connector_text_preserves_empty_extra_list_markers() {
+        use crate::board::{CanvasConnector, CanvasObject, ConnectorLabel};
+        use crate::{Endpoint, InlineParagraph, InlineText, ListKind, Vec2};
+        use std::sync::Arc;
+
+        let list = Arc::new(InlineText {
+            paragraphs: vec![InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+            ..Default::default()
+        });
+        let mut sheet = Sheet::new("Board", "");
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.extra_labels = vec![
+            ConnectorLabel {
+                text: String::new(),
+                rich_text: Some(list.clone()),
+                ..Default::default()
+            },
+            ConnectorLabel {
+                text: "needle".into(),
+                rich_text: Some(list),
+                ..Default::default()
+            },
+            ConnectorLabel {
+                text: "needle".into(),
+                ..Default::default()
+            },
+        ];
+        let id = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        assert_eq!(
+            replace_in_canvas(&mut sheet, &[id], "needle", "", &SearchOptions::default()).unwrap(),
+            2
+        );
+        let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(id).unwrap().kind else {
+            panic!()
+        };
+        assert_eq!(connector.extra_labels.len(), 2);
+        assert!(
+            connector
+                .extra_labels
+                .iter()
+                .all(|label| label.text.is_empty() && label.has_list())
+        );
     }
 
     #[test]

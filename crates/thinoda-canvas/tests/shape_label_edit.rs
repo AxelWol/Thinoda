@@ -3,7 +3,7 @@ use egui_kittest::{
     Harness,
     kittest::{NodeT, Queryable},
 };
-use thinoda_canvas::{BoardTool, MapCanvas, MapView};
+use thinoda_canvas::{BoardLabelTarget, BoardTool, MapCanvas, MapView};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, Document, ShapeKind, Sheet, SheetRootMode,
     Vec2, Workbook,
@@ -83,6 +83,46 @@ fn begin_connector_label(h: &mut Harness<'_, State>, label: &str) -> CanvasObjec
     object.set_label(label).unwrap();
     let id = state.doc.add_canvas_object(object).unwrap();
     assert!(state.view.begin_board_label(&state.doc, id));
+    h.run_steps(3);
+    id
+}
+
+fn add_positioned_connector(h: &mut Harness<'_, State>) -> CanvasObjectId {
+    use thinoda_core::{
+        Endpoint,
+        board::{CanvasConnector, ConnectorLabel, ConnectorLabelPlacement},
+    };
+
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-150.0, 100.0)),
+        Endpoint::Point(Vec2::new(150.0, 100.0)),
+    );
+    connector.label = "Primary".into();
+    connector.extra_labels = vec![
+        ConnectorLabel {
+            text: "First".into(),
+            placement: ConnectorLabelPlacement {
+                along: -0.5,
+                orthogonal: -80.0,
+                ..Default::default()
+            },
+            rich_text: None,
+        },
+        ConnectorLabel {
+            text: "Second".into(),
+            placement: ConnectorLabelPlacement {
+                along: 0.5,
+                orthogonal: -130.0,
+                ..Default::default()
+            },
+            rich_text: None,
+        },
+    ];
+    let id = h
+        .state_mut()
+        .doc
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
     h.run_steps(3);
     id
 }
@@ -2051,6 +2091,270 @@ fn primary_connector_label_formats_and_commits_as_one_undoable_change() {
             .is_none()
     );
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn double_click_extra_connector_label_edits_only_that_label_and_undoes() {
+    let mut h = harness("Shape");
+    let id = add_positioned_connector(&mut h);
+    let position = {
+        let state = h.state_mut();
+        let layout = state.view.layout_for(&state.doc);
+        let scene = thinoda_core::scene::build_scene(state.doc.sheet(), &layout);
+        let item = scene.item(thinoda_core::SceneId::Object(id)).unwrap();
+        let thinoda_core::scene::SceneGeometry::Polyline { points, .. } = &item.geometry else {
+            panic!("expected connector path");
+        };
+        let CanvasObjectKind::Connector(connector) =
+            &state.doc.sheet().canvas.object(id).unwrap().kind
+        else {
+            panic!("expected connector");
+        };
+        let anchor =
+            thinoda_core::board::connector_label_point(points, connector.extra_labels[1].placement)
+                .unwrap();
+        state.view.canvas_rect().center()
+            + state.view.offset
+            + vec2(anchor.x, anchor.y) * state.view.zoom
+    };
+    click(&mut h, position);
+    click(&mut h, position);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().view.editing_board_label_target(),
+        Some(BoardLabelTarget {
+            object: id,
+            extra_label: Some(1)
+        })
+    );
+    assert!(
+        h.get_by_label("Board object label")
+            .rect()
+            .contains(position)
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    let (target, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(target.extra_label, Some(1));
+    assert_eq!(text, "Second");
+    assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let CanvasObjectKind::Connector(connector) =
+        &h.state().doc.sheet().canvas.object(id).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(connector.label, "Primary");
+    assert!(connector.extra_labels[0].rich_text.is_none());
+    assert_eq!(
+        connector.extra_labels[1].rich_text.as_ref().unwrap().runs[0]
+            .style
+            .bold,
+        Some(true)
+    );
+    assert!(h.state_mut().doc.undo());
+    let CanvasObjectKind::Connector(connector) =
+        &h.state().doc.sheet().canvas.object(id).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert!(connector.extra_labels[1].rich_text.is_none());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn extra_connector_label_reorder_conflict_retains_the_draft() {
+    let mut h = harness("Shape");
+    let id = add_positioned_connector(&mut h);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+    }
+    h.run_steps(3);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Reorder labels", id, |object| {
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                panic!()
+            };
+            connector.extra_labels.reverse();
+        })
+        .unwrap();
+    let state = h.state_mut();
+    assert!(
+        state
+            .view
+            .validated_board_rich_label_draft(&state.doc)
+            .is_err()
+    );
+    assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+    assert!(state.view.has_board_label_changes());
+    assert_eq!(state.view.board_label_draft().unwrap().2, "First");
+    assert!(state.doc.undo());
+    assert!(state.view.try_commit_board_label(&mut state.doc).unwrap());
+    let CanvasObjectKind::Connector(connector) = &state.doc.sheet().canvas.object(id).unwrap().kind
+    else {
+        panic!()
+    };
+    assert_eq!(
+        connector.extra_labels[0].rich_text.as_ref().unwrap().runs[0]
+            .style
+            .italic,
+        Some(true)
+    );
+    assert!(connector.extra_labels[1].rich_text.is_none());
+}
+
+#[test]
+fn extra_connector_label_can_commit_an_empty_list_without_deleting_it() {
+    let mut h = harness("Shape");
+    let id = add_positioned_connector(&mut h);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+    }
+    h.run_steps(3);
+    let bullet = h
+        .get_by_role_and_label(Role::Button, "Bulleted list")
+        .rect()
+        .center();
+    click(&mut h, bullet);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert!(text.is_empty());
+    assert_eq!(
+        rich.unwrap().paragraphs[0].list,
+        thinoda_core::ListKind::Bulleted
+    );
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let CanvasObjectKind::Connector(connector) =
+        &h.state().doc.sheet().canvas.object(id).unwrap().kind
+    else {
+        panic!()
+    };
+    assert!(connector.extra_labels[0].text.is_empty());
+    assert!(connector.extra_labels[0].has_list());
+    assert_eq!(connector.extra_labels[1].text, "Second");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn empty_plain_extra_label_failure_keeps_the_draft() {
+    let mut h = harness("Shape");
+    let id = add_positioned_connector(&mut h);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_extra_label(&state.doc, id, 0));
+    }
+    h.run_steps(3);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    {
+        let state = h.state_mut();
+        assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+        assert_eq!(state.view.board_label_draft().unwrap().2, "");
+        let CanvasObjectKind::Connector(connector) =
+            &state.doc.sheet().canvas.object(id).unwrap().kind
+        else {
+            panic!()
+        };
+        assert_eq!(connector.extra_labels[0].text, "First");
+    }
+    h.event(egui::Event::Text("Corrected".into()));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let CanvasObjectKind::Connector(connector) =
+        &h.state().doc.sheet().canvas.object(id).unwrap().kind
+    else {
+        panic!()
+    };
+    assert_eq!(connector.extra_labels[0].text, "Corrected");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn double_click_sankey_extra_label_uses_the_ribbon_centerline() {
+    use thinoda_core::board::{ConnectorLabel, ConnectorLabelPlacement};
+
+    let mut h = harness("Shape");
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let object = &mut book.active_mut().canvas.objects[0];
+    let id = object.id;
+    let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+        panic!()
+    };
+    connector.extra_labels.push(ConnectorLabel {
+        text: "Ribbon label".into(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -60.0,
+            ..Default::default()
+        },
+        rich_text: None,
+    });
+    h.state_mut().doc = Document::new(book);
+    h.state_mut().view = MapView::default();
+    h.run_steps(4);
+    let position = {
+        let state = h.state_mut();
+        let layout = state.view.layout_for(&state.doc);
+        let scene = thinoda_core::scene::build_scene(state.doc.sheet(), &layout);
+        let item = scene.item(thinoda_core::SceneId::Object(id)).unwrap();
+        let thinoda_core::scene::SceneGeometry::Ribbon { outline, .. } = &item.geometry else {
+            panic!("expected Sankey ribbon");
+        };
+        let CanvasObjectKind::Connector(connector) =
+            &state.doc.sheet().canvas.object(id).unwrap().kind
+        else {
+            panic!()
+        };
+        let centerline = thinoda_core::sankey::ribbon_centerline(outline);
+        let anchor = thinoda_core::board::connector_label_point(
+            &centerline,
+            connector.extra_labels[0].placement,
+        )
+        .unwrap();
+        assert_eq!(
+            scene.hit_test(anchor),
+            Some(thinoda_core::SceneHit::Object(id))
+        );
+        state.view.canvas_rect().center()
+            + state.view.offset
+            + vec2(anchor.x, anchor.y) * state.view.zoom
+    };
+    click(&mut h, position);
+    click(&mut h, position);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().view.editing_board_label_target(),
+        Some(BoardLabelTarget {
+            object: id,
+            extra_label: Some(0)
+        })
+    );
+    assert!(
+        h.get_by_label("Board object label")
+            .rect()
+            .contains(position)
+    );
 }
 
 #[test]

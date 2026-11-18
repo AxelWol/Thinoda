@@ -820,14 +820,26 @@ pub fn lasso_hits(scene: &Scene, polygon: &[Vec2]) -> Result<Vec<SceneHit>, Geom
             SceneGeometry::Ribbon {
                 outline,
                 label_bounds,
+                extra_label_bounds,
                 ..
             } => {
-                polygon_touches_lasso(outline, polygon, &mut budget)?
+                let mut intersects = polygon_touches_lasso(outline, polygon, &mut budget)?
                     || polygon_touches_lasso(
                         &rotated_corners(*label_bounds, 0.0),
                         polygon,
                         &mut budget,
-                    )?
+                    )?;
+                for bounds in extra_label_bounds {
+                    if intersects {
+                        break;
+                    }
+                    intersects = polygon_touches_lasso(
+                        &rotated_corners(*bounds, 0.0),
+                        polygon,
+                        &mut budget,
+                    )?;
+                }
+                intersects
             }
             SceneGeometry::Polygon { outline, details } => {
                 let mut intersects = polygon_touches_lasso(outline, polygon, &mut budget)?;
@@ -1050,16 +1062,28 @@ fn validate_scene_geometry(
                 return Err(invalid());
             }
         }
-        SceneGeometry::Ribbon { outline, mass, .. } => {
+        SceneGeometry::Ribbon {
+            outline,
+            mass,
+            label_bounds,
+            extra_label_bounds,
+            ..
+        } => {
             if outline.is_empty()
                 || outline.len() > MAX_INPUT_SAMPLES
                 || !mass.is_finite()
                 || !(0.0..=100.0).contains(mass)
                 || outline.iter().any(|&p| !finite_point(p))
+                || !valid_rect(*label_bounds)
+                || extra_label_bounds.iter().any(|bounds| !valid_rect(*bounds))
             {
                 return Err(invalid());
             }
-            budget.charge(outline.len())?;
+            budget.charge(
+                outline
+                    .len()
+                    .saturating_add(4 * (1 + extra_label_bounds.len())),
+            )?;
         }
         SceneGeometry::Polygon { outline, details } => {
             let count = details.iter().fold(outline.len(), |sum, detail| {
@@ -2778,12 +2802,28 @@ mod tests {
         };
         c.sankey.as_mut().unwrap().weight = Some(1);
         c.label = "A long descriptive label on an extremely narrow positive flow".into();
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("Extra", 0..5, |style| style.font_size = Some(48.0))
+            .unwrap();
+        c.extra_labels.push(thinoda_core::board::ConnectorLabel {
+            text: "Extra".into(),
+            placement: thinoda_core::board::ConnectorLabelPlacement {
+                orthogonal: -600.0,
+                ..Default::default()
+            },
+            rich_text: Some(std::sync::Arc::new(rich)),
+        });
         let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
         let scene = thinoda_core::scene::build_scene(sheet, &layout);
         let item = scene
             .item(thinoda_core::scene::SceneId::Object(id))
             .unwrap();
-        let thinoda_core::scene::SceneGeometry::Ribbon { label_bounds, .. } = &item.geometry else {
+        let thinoda_core::scene::SceneGeometry::Ribbon {
+            label_bounds,
+            extra_label_bounds,
+            ..
+        } = &item.geometry
+        else {
             panic!()
         };
         let point = label_bounds.min + Vec2::new(8.0, 8.0);
@@ -2800,6 +2840,20 @@ mod tests {
         let bounds = thinoda_core::scene::canvas_bounds(sheet, &layout).unwrap();
         assert!(bounds.contains(label_bounds.min));
         assert!(bounds.contains(label_bounds.max()));
+        let extra = extra_label_bounds[0];
+        let point = extra.center();
+        assert_eq!(scene.hit_test(point), Some(SceneHit::Object(id)));
+        let polygon = thinoda_core::board::rotated_corners(
+            thinoda_core::Rect::from_center_size(point, Vec2::new(2.0, 2.0)),
+            0.0,
+        );
+        assert!(
+            lasso_hits(&scene, &polygon)
+                .unwrap()
+                .contains(&SceneHit::Object(id))
+        );
+        assert!(bounds.contains(extra.min));
+        assert!(bounds.contains(extra.max()));
     }
 
     #[test]

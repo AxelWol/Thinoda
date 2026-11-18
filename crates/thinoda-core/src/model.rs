@@ -865,6 +865,11 @@ impl Sheet {
         self.canvas.has_rich_connector_labels()
     }
 
+    /// Whether any additional connector label has inline formatting.
+    pub fn has_rich_extra_connector_labels(&self) -> bool {
+        self.canvas.has_rich_extra_connector_labels()
+    }
+
     /// Whether the sheet needs layer-aware persistence.
     pub fn has_layers(&self) -> bool {
         self.canvas.has_layers()
@@ -2720,6 +2725,13 @@ impl Workbook {
     /// Whether any sheet needs rich-connector-label-aware persistence.
     pub fn has_rich_connector_labels(&self) -> bool {
         self.sheets.iter().any(Sheet::has_rich_connector_labels)
+    }
+
+    /// Whether any sheet has an additional connector label with inline formatting.
+    pub fn has_rich_extra_connector_labels(&self) -> bool {
+        self.sheets
+            .iter()
+            .any(Sheet::has_rich_extra_connector_labels)
     }
 
     /// Whether any sheet needs layer-aware persistence.

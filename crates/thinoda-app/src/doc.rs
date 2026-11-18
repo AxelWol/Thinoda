@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 use thinoda_platform::fs as pfs;
 use web_time::Instant;
 
-use thinoda_canvas::MapView;
-use thinoda_core::{CanvasObjectId, Document, InlineText, TopicId, Workbook};
+use thinoda_canvas::{BoardLabelTarget, MapView};
+#[cfg(test)]
+use thinoda_core::CanvasObjectId;
+use thinoda_core::{Document, InlineText, TopicId, Workbook};
 pub(crate) use thinoda_io::import_read_limit;
 use thinoda_io::{ExportOptions, Format};
 use thinoda_platform::{
@@ -167,10 +169,10 @@ struct InkSnapshotVersion {
     retry_smooth: bool,
 }
 
-type BoardLabelSnapshot = (CanvasObjectId, String, String, Option<InlineText>);
+type BoardLabelSnapshot = (BoardLabelTarget, String, String, Option<InlineText>);
 
 fn own_board_label_draft(
-    draft: (CanvasObjectId, &str, &str, Option<&InlineText>),
+    draft: (BoardLabelTarget, &str, &str, Option<&InlineText>),
 ) -> BoardLabelSnapshot {
     (
         draft.0,
@@ -794,10 +796,24 @@ impl OpenDoc {
                 })
                 .map_err(|error| error.to_string())?;
         }
-        if let Some((id, text, rich)) = board_label {
-            document
-                .set_canvas_object_label_with_rich_text("Pending board label", id, &text, rich)
-                .map_err(|error| error.to_string())?;
+        if let Some((target, text, rich)) = board_label {
+            let result = if let Some(index) = target.extra_label {
+                document.set_canvas_extra_connector_label_with_rich_text(
+                    "Pending connector label",
+                    target.object,
+                    index,
+                    &text,
+                    rich,
+                )
+            } else {
+                document.set_canvas_object_label_with_rich_text(
+                    "Pending board label",
+                    target.object,
+                    &text,
+                    rich,
+                )
+            };
+            result.map_err(|error| error.to_string())?;
         }
         if let Some(edit) = &self.inspector_edit {
             document
@@ -1748,6 +1764,107 @@ mod tests {
             .style;
         assert_eq!(style.bold, Some(true));
         assert_eq!(style.italic, Some(true));
+        drop(orphans);
+        recovery.resume().unwrap();
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn extra_connector_label_draft_snapshots_track_the_exact_target() {
+        use thinoda_core::{
+            CanvasObject, CanvasObjectKind, Endpoint, Vec2,
+            board::{CanvasConnector, ConnectorLabel, ConnectorLabelPlacement},
+        };
+
+        let (mut harness, _) = pending_board_label();
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        let id = {
+            let doc = harness.state_mut();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-100.0, -180.0)),
+                Endpoint::Point(Vec2::new(100.0, -180.0)),
+            );
+            connector.label = "Primary".into();
+            connector.extra_labels = vec![
+                ConnectorLabel {
+                    text: "Same".into(),
+                    placement: ConnectorLabelPlacement {
+                        orthogonal: -30.0,
+                        ..Default::default()
+                    },
+                    rich_text: None,
+                },
+                ConnectorLabel {
+                    text: "Same".into(),
+                    placement: ConnectorLabelPlacement {
+                        orthogonal: -60.0,
+                        ..Default::default()
+                    },
+                    rich_text: None,
+                },
+            ];
+            let id = doc
+                .doc
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            doc.doc.mark_saved();
+            assert!(doc.view.begin_board_extra_label(&doc.doc, id, 0));
+            id
+        };
+        harness.run_steps(3);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+        harness.run_steps(2);
+        let dir = tempfile::tempdir().unwrap();
+        let paths = thinoda_platform::Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        harness.state_mut().tick();
+        harness.state_mut().snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        let first = orphans[0].docs[0].load().unwrap();
+        let CanvasObjectKind::Connector(connector) =
+            &first.active().canvas.object(id).unwrap().kind
+        else {
+            panic!()
+        };
+        assert_eq!(connector.label, "Primary");
+        assert_eq!(
+            connector.extra_labels[0].rich_text.as_ref().unwrap().runs[0]
+                .style
+                .bold,
+            Some(true)
+        );
+        assert!(connector.extra_labels[1].rich_text.is_none());
+        drop(orphans);
+        recovery.resume().unwrap();
+
+        {
+            let doc = harness.state_mut();
+            doc.view.cancel_edit();
+            assert!(doc.view.begin_board_extra_label(&doc.doc, id, 1));
+        }
+        harness.run_steps(3);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+        harness.run_steps(2);
+        harness.state_mut().tick();
+        harness.state_mut().snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        let second = orphans[0].docs[0].load().unwrap();
+        let CanvasObjectKind::Connector(connector) =
+            &second.active().canvas.object(id).unwrap().kind
+        else {
+            panic!()
+        };
+        assert_eq!(connector.label, "Primary");
+        assert!(connector.extra_labels[0].rich_text.is_none());
+        assert_eq!(
+            connector.extra_labels[1].rich_text.as_ref().unwrap().runs[0]
+                .style
+                .bold,
+            Some(true)
+        );
         drop(orphans);
         recovery.resume().unwrap();
         recovery.finish().unwrap();

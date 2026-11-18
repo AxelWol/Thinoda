@@ -2,7 +2,7 @@
 
 use crate::measure::BOLD_WIDTH;
 use crate::shape_effects;
-use crate::view::ObjectSelection;
+use crate::view::{BoardLabelTarget, ObjectSelection};
 use egui::{
     Align, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2,
     text::{LayoutJob, TextFormat},
@@ -107,7 +107,7 @@ pub(crate) struct GhostClip {
 #[derive(Clone, Default)]
 pub(crate) struct PaintSceneExtras {
     pub ghost_clip: Option<GhostClip>,
-    pub editing_board_object: Option<CanvasObjectId>,
+    pub editing_board_label: Option<BoardLabelTarget>,
     pub stencil_handle_preview: Option<Box<CanvasObject>>,
 }
 
@@ -294,7 +294,7 @@ pub(crate) fn paint_map_scene(
         SceneBand::BelowMap,
         xf,
         opts,
-        extras.editing_board_object,
+        extras.editing_board_label,
         stencil_handle_preview,
         &mut ink_cache,
         ink_tessellation,
@@ -519,7 +519,7 @@ pub(crate) fn paint_map_scene(
         SceneBand::AboveMap,
         xf,
         opts,
-        extras.editing_board_object,
+        extras.editing_board_label,
         stencil_handle_preview,
         &mut ink_cache,
         ink_tessellation,
@@ -748,7 +748,7 @@ fn paint_objects_in_band(
     band: SceneBand,
     xf: Xf,
     opts: &PaintOptions<'_>,
-    editing_board_object: Option<CanvasObjectId>,
+    editing_board_label: Option<BoardLabelTarget>,
     stencil_handle_preview: Option<&CanvasObject>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
@@ -784,7 +784,7 @@ fn paint_objects_in_band(
             item,
             xf,
             opts,
-            editing_board_object,
+            editing_board_label,
             ink_cache,
             ink_tessellation,
         );
@@ -1639,6 +1639,40 @@ fn paint_stencil_object(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn paint_connector_label(
+    painter: &Painter,
+    label: &str,
+    anchor: thinoda_core::Vec2,
+    rich: Option<&thinoda_core::InlineText>,
+    flow: bool,
+    text_color: Color32,
+    backdrop: Color32,
+    opacity: f32,
+    xf: Xf,
+    opts: &PaintOptions<'_>,
+) {
+    if let Some(rich) = rich {
+        let layout = thinoda_core::label_style::layout_connector(anchor, label, rich, flow);
+        crate::label_text::paint_connector(painter, &layout, text_color, backdrop, opacity, xf);
+        return;
+    }
+    let z = xf.zoom;
+    let galley = if flow {
+        painter.layout(
+            label.to_owned(),
+            FontId::proportional(12.0 * z),
+            text_color,
+            200.0 * z,
+        )
+    } else {
+        painter.layout_no_wrap(label.to_owned(), opts.label_font(z), text_color)
+    };
+    let rect = Rect::from_center_size(xf.pos(anchor), galley.size() + vec2(8.0, 4.0) * z);
+    painter.rect_filled(rect, CornerRadius::same((4.0 * z) as u8), backdrop);
+    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn paint_canvas_object(
     painter: &Painter,
     sheet: &Sheet,
@@ -1646,11 +1680,16 @@ fn paint_canvas_object(
     item: &thinoda_core::SceneItem,
     xf: Xf,
     opts: &PaintOptions<'_>,
-    editing_board_object: Option<CanvasObjectId>,
+    editing_board_label: Option<BoardLabelTarget>,
     ink_cache: &mut InkGeometryCache,
     ink_tessellation: InkTessellationConfig,
 ) {
     let z = xf.zoom;
+    let editing_primary = editing_board_label
+        == Some(BoardLabelTarget {
+            object: object.id,
+            extra_label: None,
+        });
     if let Some(render) = item.stencil_render.as_ref() {
         paint_stencil_object(
             painter,
@@ -1659,7 +1698,7 @@ fn paint_canvas_object(
             render,
             xf,
             opts,
-            editing_board_object,
+            editing_primary.then_some(object.id),
         );
         return;
     }
@@ -1804,9 +1843,7 @@ fn paint_canvas_object(
                 (dashed_stroke != Stroke::NONE).then_some(stroke_width),
                 xf,
             );
-            if (!label.is_empty() || object.has_label_list())
-                && editing_board_object != Some(object.id)
-            {
+            if (!label.is_empty() || object.has_label_list()) && !editing_primary {
                 let text_rect = thinoda_core::board::flipped_frame_rect(
                     object,
                     shape_label_rect_with_style(
@@ -1918,40 +1955,58 @@ fn paint_canvas_object(
                 mesh.indices = indices.into_iter().map(|i| i as u32).collect();
                 painter.add(Shape::mesh(mesh));
             }
-            if editing_board_object != Some(object.id)
+            let background = sheet_background(sheet, opts.dark);
+            let text_color = opacity_color(
+                object.style.text_color.map(color32).unwrap_or_else(|| {
+                    color32(Color::highest_contrast_on(core_color32(background)))
+                }),
+                object.style.opacity,
+            );
+            let backdrop = opacity_color(background, object.style.opacity);
+            if !editing_primary
                 && let Some(anchor) = thinoda_core::sankey::ribbon_label_anchor(outline)
             {
-                let center = xf.pos(anchor);
                 let label = thinoda_core::sankey::flow_label(connector, *mass);
-                let background = sheet_background(sheet, opts.dark);
-                let text_color = opacity_color(
-                    object.style.text_color.map(color32).unwrap_or_else(|| {
-                        color32(Color::highest_contrast_on(core_color32(background)))
-                    }),
+                paint_connector_label(
+                    painter,
+                    &label,
+                    anchor,
+                    object.label_rich_text.as_deref(),
+                    true,
+                    text_color,
+                    backdrop,
                     object.style.opacity,
+                    xf,
+                    opts,
                 );
-                let backdrop = opacity_color(background, object.style.opacity);
-                if let Some(rich) = object.label_rich_text.as_deref() {
-                    let layout =
-                        thinoda_core::label_style::layout_connector(anchor, &label, rich, true);
-                    crate::label_text::paint_connector(
-                        painter,
-                        &layout,
-                        text_color,
-                        backdrop,
-                        object.style.opacity,
-                        xf,
-                    );
-                } else {
-                    let galley = painter.layout(
-                        label,
-                        FontId::proportional(12.0 * z),
-                        text_color,
-                        200.0 * z,
-                    );
-                    let rect = Rect::from_center_size(center, galley.size() + vec2(8.0, 4.0) * z);
-                    painter.rect_filled(rect, 4.0 * z, backdrop);
-                    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
+            }
+            if !connector.extra_labels.is_empty() {
+                let centerline = thinoda_core::sankey::ribbon_centerline(outline);
+                for (index, label) in connector.extra_labels.iter().enumerate() {
+                    if editing_board_label
+                        == Some(BoardLabelTarget {
+                            object: object.id,
+                            extra_label: Some(index),
+                        })
+                    {
+                        continue;
+                    }
+                    if let Some(anchor) =
+                        thinoda_core::board::connector_label_point(&centerline, label.placement)
+                    {
+                        paint_connector_label(
+                            painter,
+                            &label.text,
+                            anchor,
+                            label.rich_text.as_deref(),
+                            false,
+                            text_color,
+                            backdrop,
+                            object.style.opacity,
+                            xf,
+                            opts,
+                        );
+                    }
                 }
             }
         }
@@ -2068,31 +2123,46 @@ fn paint_canvas_object(
                         );
                     }
                 }
-                let editing = editing_board_object == Some(object.id);
-                let mut labels: Vec<(String, thinoda_core::Vec2, bool, bool)> = Vec::new();
-                if unset && !editing {
+                let mut labels = Vec::new();
+                if unset && !editing_primary {
                     labels.push((
                         thinoda_core::sankey::flow_label(connector, 0.0),
                         label_center.expect("a connector path has points"),
                         true,
-                        true,
+                        object.label_rich_text.as_deref(),
                     ));
-                } else if !editing
+                } else if !editing_primary
                     && (!connector.label.is_empty() || object.has_label_list())
                     && let Some(anchor) = connector.primary_label_anchor(points)
                 {
-                    labels.push((connector.label.clone(), anchor, false, true));
+                    labels.push((
+                        connector.label.clone(),
+                        anchor,
+                        false,
+                        object.label_rich_text.as_deref(),
+                    ));
                 }
-                labels.extend(
-                    connector
-                        .label_anchors(points)
-                        .into_iter()
-                        .skip(usize::from(!connector.label.is_empty()))
-                        .map(|(text, anchor)| (text.to_owned(), anchor, false, false)),
-                );
-                for (label, anchor, flow, primary) in labels {
-                    let mid = xf.pos(anchor);
-                    let font = opts.label_font(z);
+                labels.extend(connector.extra_labels.iter().enumerate().filter_map(
+                    |(index, label)| {
+                        if editing_board_label
+                            == Some(BoardLabelTarget {
+                                object: object.id,
+                                extra_label: Some(index),
+                            })
+                        {
+                            return None;
+                        }
+                        let anchor =
+                            thinoda_core::board::connector_label_point(points, label.placement)?;
+                        Some((
+                            label.text.clone(),
+                            anchor,
+                            false,
+                            label.rich_text.as_deref(),
+                        ))
+                    },
+                ));
+                for (label, anchor, flow, rich) in labels {
                     let text_color = object
                         .style
                         .text_color
@@ -2105,27 +2175,18 @@ fn paint_canvas_object(
                     } else {
                         background
                     };
-                    if primary && let Some(rich) = object.label_rich_text.as_deref() {
-                        let layout =
-                            thinoda_core::label_style::layout_connector(anchor, &label, rich, flow);
-                        crate::label_text::paint_connector(
-                            painter,
-                            &layout,
-                            text_color,
-                            backdrop,
-                            object.style.opacity,
-                            xf,
-                        );
-                        continue;
-                    }
-                    let galley = if flow {
-                        painter.layout(label, FontId::proportional(12.0 * z), text_color, 200.0 * z)
-                    } else {
-                        painter.layout_no_wrap(label, font, text_color)
-                    };
-                    let rect = Rect::from_center_size(mid, galley.size() + vec2(8.0, 4.0) * z);
-                    painter.rect_filled(rect, CornerRadius::same((4.0 * z) as u8), backdrop);
-                    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
+                    paint_connector_label(
+                        painter,
+                        &label,
+                        anchor,
+                        rich,
+                        flow,
+                        text_color,
+                        backdrop,
+                        object.style.opacity,
+                        xf,
+                        opts,
+                    );
                 }
             }
         }
@@ -2943,7 +3004,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rich_connector_paints_primary_runs_and_keeps_extra_labels_plain() {
+    fn rich_connector_paints_primary_and_extra_runs_independently() {
         use thinoda_core::{
             Endpoint, InlineText,
             board::{CanvasConnector, ConnectorLabel, ConnectorLabelPlacement},
@@ -2962,6 +3023,19 @@ mod tests {
                 orthogonal: -60.0,
                 ..Default::default()
             },
+            rich_text: None,
+        });
+        let mut extra_rich = InlineText::default();
+        extra_rich
+            .update_range("Styled", 0..6, |style| style.italic = Some(true))
+            .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "Styled".into(),
+            placement: ConnectorLabelPlacement {
+                orthogonal: -100.0,
+                ..Default::default()
+            },
+            rich_text: Some(Arc::new(extra_rich)),
         });
         let mut object = CanvasObject::connector(connector);
         let mut rich = InlineText::default();
@@ -3028,6 +3102,11 @@ mod tests {
             .find(|text| text.galley.job.text == "Extra")
             .unwrap();
         assert!(!extra.galley.job.sections[0].format.italics);
+        let styled = text
+            .iter()
+            .find(|text| text.galley.job.text == "Styled")
+            .unwrap();
+        assert!(styled.galley.job.sections[0].format.italics);
         assert!(text.iter().any(|text| text.galley.job.text == "• "));
     }
 
@@ -3673,7 +3752,7 @@ mod tests {
     fn interactive_edit_hides_only_the_active_board_label() {
         use thinoda_core::{
             SheetRootMode,
-            board::{CanvasConnector, Endpoint},
+            board::{CanvasConnector, ConnectorLabel, ConnectorLabelPlacement, Endpoint},
         };
 
         let mut sheet = Sheet::new("Board", "");
@@ -3695,13 +3774,31 @@ mod tests {
             Endpoint::Point(Vec2::new(80.0, 80.0)),
         );
         connector.label = "Connector label".into();
+        connector.extra_labels = vec![
+            ConnectorLabel {
+                text: "First extra".into(),
+                placement: ConnectorLabelPlacement {
+                    orthogonal: -40.0,
+                    ..Default::default()
+                },
+                rich_text: None,
+            },
+            ConnectorLabel {
+                text: "Second extra".into(),
+                placement: ConnectorLabelPlacement {
+                    orthogonal: -80.0,
+                    ..Default::default()
+                },
+                rich_text: None,
+            },
+        ];
         let connector = sheet
             .add_canvas_object(CanvasObject::connector(connector))
             .unwrap();
         let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
         let scene = build_scene(&sheet, &layout);
         let ctx = egui::Context::default();
-        let rendered_labels = |editing_board_object| {
+        let rendered_labels = |editing_board_label| {
             let mut output = ctx.run_pass(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
@@ -3719,7 +3816,7 @@ mod tests {
                         &PaintOptions::default(),
                         &scene,
                         PaintSceneExtras {
-                            editing_board_object,
+                            editing_board_label,
                             ..Default::default()
                         },
                     );
@@ -3740,16 +3837,121 @@ mod tests {
         assert!(all.contains(&"First shape".into()));
         assert!(all.contains(&"Second shape".into()));
         assert!(all.contains(&"Connector label".into()));
+        assert!(all.contains(&"First extra".into()));
+        assert!(all.contains(&"Second extra".into()));
 
-        let shape_edit = rendered_labels(Some(first));
+        let shape_edit = rendered_labels(Some(BoardLabelTarget {
+            object: first,
+            extra_label: None,
+        }));
         assert!(!shape_edit.contains(&"First shape".into()));
         assert!(shape_edit.contains(&"Second shape".into()));
         assert!(shape_edit.contains(&"Connector label".into()));
 
-        let connector_edit = rendered_labels(Some(connector));
+        let connector_edit = rendered_labels(Some(BoardLabelTarget {
+            object: connector,
+            extra_label: None,
+        }));
         assert!(connector_edit.contains(&"First shape".into()));
         assert!(connector_edit.contains(&"Second shape".into()));
         assert!(!connector_edit.contains(&"Connector label".into()));
+        assert!(connector_edit.contains(&"First extra".into()));
+        assert!(connector_edit.contains(&"Second extra".into()));
+
+        let extra_edit = rendered_labels(Some(BoardLabelTarget {
+            object: connector,
+            extra_label: Some(0),
+        }));
+        assert!(extra_edit.contains(&"Connector label".into()));
+        assert!(!extra_edit.contains(&"First extra".into()));
+        assert!(extra_edit.contains(&"Second extra".into()));
+    }
+
+    #[test]
+    fn sankey_extra_label_is_painted_independently_of_the_primary_label() {
+        use thinoda_core::board::{ConnectorLabel, ConnectorLabelPlacement};
+
+        let mut book = thinoda_core::templates::instantiate("sankey-budget");
+        let sheet = book.active_mut();
+        let object = &mut sheet.canvas.objects[0];
+        let id = object.id;
+        let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+            panic!("expected Sankey connector");
+        };
+        connector.label = "Ribbon primary".into();
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("Ribbon extra", 0..12, |style| style.italic = Some(true))
+            .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "Ribbon extra".into(),
+            placement: ConnectorLabelPlacement {
+                orthogonal: -70.0,
+                ..Default::default()
+            },
+            rich_text: Some(Arc::new(rich)),
+        });
+        let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
+        let scene = build_scene(sheet, &layout);
+        let ctx = egui::Context::default();
+        let labels = |editing_board_label| {
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(4000.0, 4000.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map_scene(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        sheet,
+                        &layout,
+                        Xf {
+                            origin: pos2(2000.0, 2000.0),
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                        &scene,
+                        PaintSceneExtras {
+                            editing_board_label,
+                            ..Default::default()
+                        },
+                    );
+                },
+            );
+            let labels = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            output.textures_delta.clear();
+            labels
+        };
+        let primary_edit = labels(Some(BoardLabelTarget {
+            object: id,
+            extra_label: None,
+        }));
+        assert!(
+            primary_edit
+                .iter()
+                .any(|text| text.contains("Ribbon extra"))
+        );
+        assert!(
+            !primary_edit
+                .iter()
+                .any(|text| text.contains("Ribbon primary"))
+        );
+        let extra_edit = labels(Some(BoardLabelTarget {
+            object: id,
+            extra_label: Some(0),
+        }));
+        assert!(
+            extra_edit
+                .iter()
+                .any(|text| text.contains("Ribbon primary"))
+        );
+        assert!(!extra_edit.iter().any(|text| text.contains("Ribbon extra")));
     }
 
     #[test]

@@ -3230,6 +3230,7 @@ fn positioned_connector_labels_are_hit_and_bounded_away_from_the_path() {
             orthogonal: -60.0,
             offset: Vec2::ZERO,
         },
+        rich_text: None,
     });
     let id = sheet
         .add_canvas_object(CanvasObject::connector(connector))
@@ -3282,6 +3283,47 @@ fn rich_connector_labels_extend_scene_bounds_and_empty_lists_are_selectable() {
             .unwrap()
             .bounds
             .contains(anchor)
+    );
+}
+
+#[test]
+fn rich_extra_connector_label_extends_scene_bounds_and_hit_testing() {
+    use crate::InlineText;
+    use crate::board::{ConnectorLabel, ConnectorLabelPlacement};
+    use std::sync::Arc;
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let mut rich = InlineText::default();
+    rich.update_range("BIG", 0..3, |style| style.font_size = Some(48.0))
+        .unwrap();
+    connector.extra_labels.push(ConnectorLabel {
+        text: "BIG".into(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -60.0,
+            ..Default::default()
+        },
+        rich_text: Some(Arc::new(rich)),
+    });
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let (_, scene) = scene(&sheet);
+    let point = Vec2::new(85.0, 60.0);
+    assert!(
+        scene
+            .item(SceneId::Object(id))
+            .unwrap()
+            .bounds
+            .contains(point)
+    );
+    assert_eq!(
+        scene.hit_test_tolerance(point, 0.0),
+        Some(SceneHit::Object(id))
     );
 }
 

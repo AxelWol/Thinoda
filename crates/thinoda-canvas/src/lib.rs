@@ -60,9 +60,9 @@ pub use render::{
     color32, paint_map, paint_marker_colored, paint_thumbnail, resource_preview_texture,
 };
 pub use view::{
-    AddControlLabels, BoardLabels, BoardTool, CanvasOutput, MapCanvas, MapView, NewTopicTitles,
-    ObjectSelection, ShapeDrop, StencilDrop, TitleEditContinuation, protect_ime_candidate_keys,
-    shortcut_bindings,
+    AddControlLabels, BoardLabelTarget, BoardLabels, BoardTool, CanvasOutput, MapCanvas, MapView,
+    NewTopicTitles, ObjectSelection, ShapeDrop, StencilDrop, TitleEditContinuation,
+    protect_ime_candidate_keys, shortcut_bindings,
 };
 
 /// Shared palette for text and object formatting controls.

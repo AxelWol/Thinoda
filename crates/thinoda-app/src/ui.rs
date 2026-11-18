@@ -1424,6 +1424,19 @@ fn sheet_font_families(sheet: &thinoda_core::Sheet) -> impl Iterator<Item = &Str
                 .flat_map(|rich| rich.runs.iter())
                 .filter_map(|run| run.style.font_family.as_ref())
         }))
+        .chain(sheet.canvas.objects.iter().flat_map(|object| {
+            let labels = match &object.kind {
+                thinoda_core::board::CanvasObjectKind::Connector(connector) => {
+                    connector.extra_labels.as_slice()
+                }
+                _ => &[],
+            };
+            labels
+                .iter()
+                .flat_map(|label| label.rich_text.iter())
+                .flat_map(|rich| rich.runs.iter())
+                .filter_map(|run| run.style.font_family.as_ref())
+        }))
 }
 
 fn font_choice(
@@ -8643,6 +8656,8 @@ mod font_family_tests {
 
     #[test]
     fn document_font_collection_includes_shape_and_inline_families() {
+        use thinoda_core::Endpoint;
+        use thinoda_core::board::{CanvasConnector, ConnectorLabel};
         let mut sheet = sheet_with_label_fonts("Whole family", "Inline family");
         let card = sheet
             .add_card(
@@ -8659,10 +8674,29 @@ mod font_family_tests {
                 style.font_family = Some("Card run family".into())
             })
             .unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let mut extra_rich = InlineText::default();
+        extra_rich
+            .update_range("Extra", 0..5, |style| {
+                style.font_family = Some("Extra label family".into())
+            })
+            .unwrap();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "Extra".into(),
+            rich_text: Some(Arc::new(extra_rich)),
+            ..Default::default()
+        });
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
         let families: BTreeSet<_> = sheet_font_families(&sheet).map(String::as_str).collect();
         assert!(families.contains("Whole family"));
         assert!(families.contains("Inline family"));
         assert!(families.contains("Card run family"));
+        assert!(families.contains("Extra label family"));
     }
 
     #[test]

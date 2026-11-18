@@ -3576,6 +3576,9 @@ impl ThinodaApp {
         let mut edited = original.clone();
         let mut clear_waypoints = false;
         let mut open_link = None;
+        let mut label_error = None;
+        let mut edit_extra_label = None;
+        let mut removed_extra_label = None;
         let page_titles: Vec<(String, String)> = doc
             .doc
             .workbook()
@@ -3852,9 +3855,8 @@ impl ThinodaApp {
                     });
                     optional_color(ui, "Stroke", &mut connector.color, Color::BLACK);
                     if connector.sankey.is_none() {width_field(ui, &mut connector.width);}
-                    if connector.sankey.is_none() {
+                    (label_error, edit_extra_label, removed_extra_label) =
                         connector_label_fields(ui, id, connector);
-                    }
                 }
                 CanvasObjectKind::Ink(ink) => {
                     color_field(ui, "Stroke", &mut ink.color);
@@ -3955,12 +3957,75 @@ impl ThinodaApp {
         if let Some(link) = open_link {
             self.open_link(&link);
         }
+        if let Some(error) = label_error {
+            self.toasts.error(error);
+        }
+        let labels_changed = matches!(
+            (&original.kind, &edited.kind),
+            (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after))
+                if before.extra_labels != after.extra_labels
+        );
+        let mut properties_applied = true;
         if edited != original || clear_waypoints {
             let result = (|| {
                 let doc = self
                     .doc_mut()
                     .ok_or_else(|| t("Not possible here").to_owned())?;
+                let mut merge_extra_label = None;
+                if labels_changed
+                    && doc.view.has_board_label_changes()
+                    && let Some(target) = doc.view.editing_board_label_target()
+                    && target.object == id
+                    && let Some(index) = target.extra_label
+                    && removed_extra_label != Some(index)
+                {
+                    let new_index = index
+                        - usize::from(removed_extra_label.is_some_and(|removed| removed < index));
+                    let (CanvasObjectKind::Connector(before), CanvasObjectKind::Connector(after)) =
+                        (&original.kind, &edited.kind)
+                    else {
+                        return Err(t("Not possible here").to_owned());
+                    };
+                    let before = before
+                        .extra_labels
+                        .get(index)
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    let after = after
+                        .extra_labels
+                        .get(new_index)
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    if before.text != after.text || before.rich_text != after.rich_text {
+                        return Err(t(
+                            "Finish editing the connector label before changing its text.",
+                        )
+                        .to_owned());
+                    }
+                    merge_extra_label = Some((index, new_index));
+                }
                 doc.commit_canvas_drafts()?;
+                if let Some((old_index, new_index)) = merge_extra_label {
+                    let committed = doc
+                        .doc
+                        .sheet()
+                        .canvas
+                        .object(id)
+                        .and_then(|object| match &object.kind {
+                            CanvasObjectKind::Connector(connector) => {
+                                connector.extra_labels.get(old_index)
+                            }
+                            _ => None,
+                        })
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    let CanvasObjectKind::Connector(connector) = &mut edited.kind else {
+                        return Err(t("Not possible here").to_owned());
+                    };
+                    let label = connector
+                        .extra_labels
+                        .get_mut(new_index)
+                        .ok_or_else(|| t("Not possible here").to_owned())?;
+                    label.text.clone_from(&committed.text);
+                    label.rich_text.clone_from(&committed.rich_text);
+                }
                 doc.doc
                     .update_canvas_object("Board properties", id, |current| {
                         current.alt_text = edited.alt_text;
@@ -3991,7 +4056,9 @@ impl ThinodaApp {
                                 current.line_jumps = value.line_jumps;
                                 current.edge_shape = value.edge_shape;
                                 current.label_placement = value.label_placement;
-                                current.extra_labels = value.extra_labels;
+                                if labels_changed {
+                                    current.extra_labels = value.extra_labels;
+                                }
                                 current.color = value.color;
                                 current.width = value.width;
                                 if clear_waypoints {
@@ -4006,6 +4073,23 @@ impl ThinodaApp {
                         }
                     })
                     .map_err(|error| error.to_string())
+            })();
+            if let Err(error) = result {
+                properties_applied = false;
+                self.toasts.error(error);
+            }
+        }
+        if properties_applied && let Some(index) = edit_extra_label {
+            let result = (|| {
+                let doc = self
+                    .doc_mut()
+                    .ok_or_else(|| t("Not possible here").to_owned())?;
+                doc.commit_canvas_drafts()?;
+                if doc.view.begin_board_extra_label(&doc.doc, id, index) {
+                    Ok(())
+                } else {
+                    Err(t("Not possible here").to_owned())
+                }
             })();
             if let Err(error) = result {
                 self.toasts.error(error);
@@ -5446,38 +5530,55 @@ fn object_data_fields(
 }
 
 /// Positioned connector labels (draw.io edge-label children).
-fn connector_label_fields(ui: &mut Ui, id: CanvasObjectId, connector: &mut CanvasConnector) {
+fn connector_label_fields(
+    ui: &mut Ui,
+    id: CanvasObjectId,
+    connector: &mut CanvasConnector,
+) -> (Option<String>, Option<usize>, Option<usize>) {
     ui.separator();
     ui.strong(t("Connector labels"));
-    let mut positioned = connector.label_placement.is_some();
-    if ui
-        .checkbox(&mut positioned, t("Position main label"))
-        .changed()
-    {
-        connector.label_placement = positioned.then(ConnectorLabelPlacement::default);
-    }
-    if let Some(placement) = &mut connector.label_placement {
-        ui.push_id(("main-connector-label", id), |ui| {
-            label_placement_fields(ui, placement)
-        });
+    if connector.sankey.is_none() {
+        let mut positioned = connector.label_placement.is_some();
+        if ui
+            .checkbox(&mut positioned, t("Position main label"))
+            .changed()
+        {
+            connector.label_placement = positioned.then(ConnectorLabelPlacement::default);
+        }
+        if let Some(placement) = &mut connector.label_placement {
+            ui.push_id(("main-connector-label", id), |ui| {
+                label_placement_fields(ui, placement)
+            });
+        }
     }
     let mut remove = None;
+    let mut error = None;
+    let mut edit = None;
     for (index, label) in connector.extra_labels.iter_mut().enumerate() {
         ui.push_id(("connector-label", id, index), |ui| {
             ui.separator();
-            let previous = label.text.clone();
+            let mut text = label.text.clone();
             widgets::property_field(ui, t("Label text"), |ui| {
                 ui.add(
-                    egui::TextEdit::multiline(&mut label.text)
+                    egui::TextEdit::multiline(&mut text)
                         .desired_rows(1)
                         .char_limit(MAX_BOARD_TEXT_CHARS),
                 )
                 .on_hover_text(t("Use Remove label to delete a label."))
             });
-            if label.text.is_empty() {
-                label.text = previous;
+            if (!text.is_empty() || label.has_list())
+                && text != label.text
+                && let Err(message) = label.set_text(text)
+            {
+                error = Some(message);
             }
             label_placement_fields(ui, &mut label.placement);
+            if ui
+                .button(format!("{} {}", t("Edit label formatting"), index + 1))
+                .clicked()
+            {
+                edit = Some(index);
+            }
             if ui.button(t("Remove label")).clicked() {
                 remove = Some(index);
             }
@@ -5485,6 +5586,17 @@ fn connector_label_fields(ui: &mut Ui, id: CanvasObjectId, connector: &mut Canva
     }
     if let Some(index) = remove {
         connector.extra_labels.remove(index);
+        edit = edit.and_then(|selected| {
+            if selected == index {
+                None
+            } else {
+                Some(if selected > index {
+                    selected - 1
+                } else {
+                    selected
+                })
+            }
+        });
     }
     if ui
         .add_enabled(
@@ -5499,8 +5611,10 @@ fn connector_label_fields(ui: &mut Ui, id: CanvasObjectId, connector: &mut Canva
                 orthogonal: -16.0,
                 ..ConnectorLabelPlacement::default()
             },
+            rich_text: None,
         });
     }
+    (error, edit, remove)
 }
 
 fn label_placement_fields(ui: &mut Ui, placement: &mut ConnectorLabelPlacement) {
@@ -11601,11 +11715,183 @@ mod tests {
         assert_eq!(current.extra_labels.len(), 1);
         assert_eq!(current.extra_labels[0].text, "Label");
         assert!(current.extra_labels[0].placement.is_valid());
+        harness.get_by_label("Edit label formatting 1").click();
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .view
+                .editing_board_label_target(),
+            Some(thinoda_canvas::BoardLabelTarget {
+                object: id,
+                extra_label: Some(0)
+            })
+        );
+        harness.state_mut().doc_mut().unwrap().view.cancel_edit();
         harness.get_by_label("Remove label").click();
         harness.run_steps(3);
         assert!(connector(&harness).extra_labels.is_empty());
         assert!(harness.state_mut().doc_mut().unwrap().doc.undo());
         assert_eq!(connector(&harness).extra_labels.len(), 1);
+    }
+
+    #[test]
+    fn connector_inspector_preserves_pending_extra_label_edits() {
+        struct State {
+            app: ThinodaApp,
+            inspector: bool,
+        }
+
+        for action in [
+            "Position main label",
+            "Add label",
+            "Remove label",
+            "Edit active label",
+            "Remove active label",
+        ] {
+            let mut app = ThinodaApp::headless();
+            let doc = app.doc_mut().unwrap();
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-100.0, -180.0)),
+                Endpoint::Point(Vec2::new(100.0, -180.0)),
+            );
+            connector.extra_labels = vec![
+                ConnectorLabel {
+                    text: "First".into(),
+                    ..Default::default()
+                },
+                ConnectorLabel {
+                    text: "Second".into(),
+                    ..Default::default()
+                },
+            ];
+            let id = doc
+                .doc
+                .add_canvas_object(CanvasObject::connector(connector))
+                .unwrap();
+            doc.view.select_board_object(id);
+            assert!(doc.view.begin_board_extra_label(&doc.doc, id, 1));
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 1600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        if state.inspector {
+                            state.app.board_object_properties(ui);
+                        } else {
+                            let doc = state.app.doc_mut().unwrap();
+                            thinoda_canvas::MapCanvas::show(ui, &mut doc.doc, &mut doc.view);
+                        }
+                    },
+                    State {
+                        app,
+                        inspector: false,
+                    },
+                );
+            harness.run_steps(3);
+            harness
+                .get_by_label("Board object label")
+                .type_text("Edited");
+            harness.run_steps(2);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+            harness.run_steps(2);
+            assert!(
+                harness
+                    .state()
+                    .app
+                    .doc()
+                    .unwrap()
+                    .view
+                    .has_board_label_changes()
+            );
+            harness.state_mut().inspector = true;
+            harness.run_steps(2);
+            match action {
+                "Edit active label" => harness
+                    .get_all_by_label("Label text")
+                    .nth(1)
+                    .unwrap()
+                    .type_text("Inspector edit"),
+                "Remove active label" => harness
+                    .get_all_by_label("Remove label")
+                    .nth(1)
+                    .unwrap()
+                    .click(),
+                _ => harness.get_all_by_label(action).next().unwrap().click(),
+            }
+            harness.run_steps(3);
+
+            if action == "Edit active label" {
+                let doc = harness.state().app.doc().unwrap();
+                assert!(doc.view.has_board_label_changes());
+                let CanvasObjectKind::Connector(connector) =
+                    &doc.doc.sheet().canvas.object(id).unwrap().kind
+                else {
+                    panic!("expected connector");
+                };
+                assert_eq!(connector.extra_labels[1].text, "Second");
+                continue;
+            }
+            if action == "Remove active label" {
+                assert!(harness.state_mut().app.doc_mut().unwrap().doc.undo());
+            }
+            let doc = harness.state().app.doc().unwrap();
+            let CanvasObjectKind::Connector(connector) =
+                &doc.doc.sheet().canvas.object(id).unwrap().kind
+            else {
+                panic!("expected connector");
+            };
+            let index = usize::from(action != "Remove label");
+            assert_eq!(connector.extra_labels[index].text, "Edited", "{action}");
+            assert_eq!(
+                connector.extra_labels[index]
+                    .rich_text
+                    .as_ref()
+                    .unwrap()
+                    .runs[0]
+                    .style
+                    .bold,
+                Some(true),
+                "{action}"
+            );
+        }
+    }
+
+    #[test]
+    fn sankey_inspector_can_add_and_edit_positioned_labels() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let book = thinoda_core::templates::instantiate("sankey-budget");
+        let id = book.active().canvas.objects[0].id;
+        doc.doc = thinoda_core::Document::new(book);
+        doc.view.select_board_object(id);
+        let mut harness = Harness::builder()
+            .with_size(vec2(450.0, 1600.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    app.board_object_properties(ui);
+                },
+                app,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Add label").click();
+        harness.run_steps(3);
+        harness.get_by_label("Edit label formatting 1").click();
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .view
+                .editing_board_label_target(),
+            Some(thinoda_canvas::BoardLabelTarget {
+                object: id,
+                extra_label: Some(0)
+            })
+        );
     }
 
     #[test]

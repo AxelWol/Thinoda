@@ -748,7 +748,19 @@ v50, sheet clipboard v39, board clipboard v43, XMind
 `THINODA-XMIND-RICH-CONNECTOR-LABELS-1`, and recovery
 `THINODA-RECOVERY-RICH-CONNECTOR-LABELS-1` /
 `THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1` gate connector content separately
-from shapes. Extra connector labels and unsupported source HTML remain open.
+from shapes. Unsupported source HTML remains open.
+
+*As implemented in D9 (rich extra connector-label subset):* positioned labels
+carry their own bounded `InlineText`, with exact-target draft editing,
+conflict-aware inspector updates, recovery, search and placeholder remapping,
+shared canvas and visual-export rendering, and inert draw.io HTML interchange.
+Sankey labels use the ribbon centreline for placement. Native v51, sheet
+clipboard v40, board clipboard v44, XMind
+`THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1`, and recovery
+`THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1` /
+`THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1` gate this content,
+including combinations with earlier rich-label and style features. Unsupported
+HTML and other label kinds remain open.
 
 *As implemented in D9 (inline typography):* shape and primary connector
 label drafts can adjust a selected grapheme range or pending caret style's size

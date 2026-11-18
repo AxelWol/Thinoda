@@ -969,6 +969,7 @@ pub enum SceneGeometry {
         mass: f64,
         color: Option<crate::Color>,
         label_bounds: Rect,
+        extra_label_bounds: Vec<Rect>,
     },
     /// Unrotated rect turned by `rotation` degrees around its centre.
     Rect { rect: Rect, rotation: f32 },
@@ -1011,9 +1012,13 @@ impl SceneGeometry {
             SceneGeometry::Ribbon {
                 outline,
                 label_bounds,
+                extra_label_bounds,
                 ..
             } => {
                 label_bounds.expand(tolerance).contains(p)
+                    || extra_label_bounds
+                        .iter()
+                        .any(|bounds| bounds.expand(tolerance).contains(p))
                     || point_in_polygon(p, outline)
                     || distance_to_outline(p, outline) <= tolerance
             }
@@ -1381,12 +1386,29 @@ fn build_scene_with_collapse<'a>(
                             label_bounds =
                                 label_bounds.union(&crate::label_style::connector_bounds(&layout));
                         }
+                        let extra_label_bounds: Vec<_> = if c.extra_labels.is_empty() {
+                            Vec::new()
+                        } else {
+                            let centerline = crate::sankey::ribbon_centerline(outline);
+                            c.extra_labels
+                                .iter()
+                                .filter_map(|label| {
+                                    extra_connector_label_bounds(label, &centerline)
+                                })
+                                .collect()
+                        };
+                        let bounds = extra_label_bounds
+                            .iter()
+                            .fold(bounds.union(&label_bounds), |bounds, label| {
+                                bounds.union(label)
+                            });
                         items.push(SceneItem {
-                            bounds: bounds.union(&label_bounds),
+                            bounds,
                             geometry: SceneGeometry::Ribbon {
                                 outline: outline.clone(),
                                 mass,
                                 label_bounds,
+                                extra_label_bounds,
                                 color: sheet.sankey.as_ref().filter(|s| s.color_scale).map(|_| {
                                     crate::sankey::weight_color(
                                         flow_values.mass.get(&object.id).copied().unwrap_or(0.0),
@@ -1661,12 +1683,25 @@ fn positioned_label_bounds(
         }
     }
     bounds.extend(
-        c.label_anchors(points)
-            .into_iter()
-            .skip(usize::from(!c.label.is_empty()))
-            .map(|(text, anchor)| crate::board::approx_connector_label_bounds(anchor, text)),
+        c.extra_labels
+            .iter()
+            .filter_map(|label| extra_connector_label_bounds(label, points)),
     );
     bounds
+}
+
+/// Bounds of one positioned connector label on its rendered path.
+pub fn extra_connector_label_bounds(
+    label: &crate::board::ConnectorLabel,
+    points: &[Vec2],
+) -> Option<Rect> {
+    let anchor = crate::board::connector_label_point(points, label.placement)?;
+    Some(if let Some(rich) = label.rich_text.as_deref() {
+        let layout = crate::label_style::layout_connector(anchor, &label.text, rich, false);
+        crate::label_style::connector_bounds(&layout)
+    } else {
+        crate::board::approx_connector_label_bounds(anchor, &label.text)
+    })
 }
 
 fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
@@ -1675,8 +1710,13 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
         SceneGeometry::Ribbon {
             outline,
             label_bounds,
+            extra_label_bounds,
             ..
-        } => crate::board::points_bounds(outline).map(|r| r.union(label_bounds)),
+        } => crate::board::points_bounds(outline).map(|r| {
+            extra_label_bounds
+                .iter()
+                .fold(r.union(label_bounds), |bounds, label| bounds.union(label))
+        }),
         SceneGeometry::Polygon { outline, details } => {
             let mut r = points_bounds(outline)?;
             for d in details {

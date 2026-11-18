@@ -88,6 +88,13 @@ pub enum BoardTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShapeDrop(pub ShapeKind);
 
+/// A primary board-object label or one positioned extra connector label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardLabelTarget {
+    pub object: CanvasObjectId,
+    pub extra_label: Option<usize>,
+}
+
 /// Drag-and-drop payload of a stencil: converted board content dragged from
 /// a host's stencil library. Releasing it over unobscured board space pastes
 /// it centred on the pointer as one undoable edit labelled `label`.
@@ -1067,9 +1074,30 @@ impl MapView {
         board_input::begin_label(self, doc, id)
     }
 
+    /// Begin editing one positioned connector label.
+    pub fn begin_board_extra_label(
+        &mut self,
+        doc: &Document,
+        id: CanvasObjectId,
+        index: usize,
+    ) -> bool {
+        board_input::begin_extra_label(self, doc, id, index)
+    }
+
     /// Object whose label is currently being edited, if any.
     pub fn editing_board_object(&self) -> Option<CanvasObjectId> {
         self.board_input.label.as_ref().map(|edit| edit.id)
+    }
+
+    /// Identifies precisely which label is being edited.
+    pub fn editing_board_label_target(&self) -> Option<BoardLabelTarget> {
+        self.board_input
+            .label
+            .as_ref()
+            .map(|edit| BoardLabelTarget {
+                object: edit.id,
+                extra_label: edit.extra_label,
+            })
     }
 
     /// Commit the object-label draft; validation failures keep the draft intact.
@@ -2573,7 +2601,7 @@ impl MapCanvas {
             &opts,
             &paint_scene,
             PaintSceneExtras {
-                editing_board_object: view.editing_board_object(),
+                editing_board_label: view.editing_board_label_target(),
                 stencil_handle_preview: board_input::stencil_handle_preview(view),
                 ..Default::default()
             },

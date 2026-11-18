@@ -54,6 +54,8 @@ const SHAPE_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SHAPE-STYLES-1";
 const LABEL_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LABEL-STYLES-1";
 const RICH_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-LABELS-1";
 const RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-CONNECTOR-LABELS-1";
+const RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str =
+    "THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -743,7 +745,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_rich_connector_labels() {
+    if book.has_rich_extra_connector_labels() {
+        Ok(serde_json::to_string(&(
+            RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rich_connector_labels() {
         Ok(serde_json::to_string(&(
             RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION,
             book,
@@ -955,6 +962,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == LABEL_STYLES_SNAPSHOT_VERSION
                 || version == RICH_LABELS_SNAPSHOT_VERSION
                 || version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
+                || version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
         })
 }
 
@@ -1085,32 +1093,47 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != LABEL_STYLES_SNAPSHOT_VERSION
             && version != RICH_LABELS_SNAPSHOT_VERSION
             && version != RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            && version != RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
-        let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION;
+        let rich_extra_connector_labels_envelope =
+            version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION;
+        if workbook.has_rich_extra_connector_labels() != rich_extra_connector_labels_envelope {
+            return Err(IoError::NewerVersion(
+                "rich extra connector labels require a rich-extra-connector-label-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            || rich_extra_connector_labels_envelope && workbook.has_rich_connector_labels();
         if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich connector labels require a rich-connector-label-aware private XMind snapshot"
                     .into(),
             ));
         }
-        let rich_labels_envelope =
-            version == RICH_LABELS_SNAPSHOT_VERSION || rich_connector_labels_envelope;
+        let rich_labels_envelope = version == RICH_LABELS_SNAPSHOT_VERSION
+            || rich_connector_labels_envelope
+            || rich_extra_connector_labels_envelope && workbook.has_rich_labels();
         if workbook.has_rich_labels() != rich_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich labels require a rich-label-aware private XMind snapshot".into(),
             ));
         }
         let label_styles_envelope = version == LABEL_STYLES_SNAPSHOT_VERSION
-            || rich_labels_envelope && workbook.has_label_styles();
+            || (rich_labels_envelope || rich_extra_connector_labels_envelope)
+                && workbook.has_label_styles();
         if workbook.has_label_styles() != label_styles_envelope {
             return Err(IoError::NewerVersion(
                 "label styles require a label-style-aware private XMind snapshot".into(),
             ));
         }
-        let version = if !label_styles_envelope && !rich_labels_envelope {
+        let version = if !label_styles_envelope
+            && !rich_labels_envelope
+            && !rich_extra_connector_labels_envelope
+        {
             version
         } else if workbook.has_shape_styles() {
             SHAPE_STYLES_SNAPSHOT_VERSION.to_owned()
@@ -3188,6 +3211,76 @@ mod tests {
     }
 
     #[test]
+    fn rich_extra_connector_labels_require_matching_private_snapshot_envelope() {
+        use std::sync::Arc;
+        use thinoda_core::board::{CanvasConnector, CanvasObject, ConnectorLabel, ShapeKind};
+        use thinoda_core::{Endpoint, Vec2};
+
+        for primary in [false, true] {
+            for (label_style, shape_rich) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let mut book = Workbook::default();
+                let mut connector = CanvasConnector::new(
+                    Endpoint::Point(Vec2::ZERO),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                let mut rich = thinoda_core::InlineText::default();
+                rich.update_range("A🙂B", 1..2, |style| style.bold = Some(true))
+                    .unwrap();
+                connector.extra_labels.push(ConnectorLabel {
+                    text: "A🙂B".into(),
+                    rich_text: Some(Arc::new(rich.clone())),
+                    ..Default::default()
+                });
+                let mut object = CanvasObject::connector(connector);
+                if primary {
+                    object.set_label("A🙂B").unwrap();
+                    object.label_rich_text = Some(Arc::new(rich));
+                }
+                book.active_mut().add_canvas_object(object).unwrap();
+                if label_style || shape_rich {
+                    let mut shape = CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 30.0)),
+                    );
+                    if label_style {
+                        shape.label_style = Some(Arc::new(thinoda_core::label_style::LabelStyle {
+                            bold: true,
+                            ..Default::default()
+                        }));
+                    }
+                    if shape_rich {
+                        shape.set_label("shape").unwrap();
+                        let mut rich = thinoda_core::InlineText::default();
+                        rich.update_range("shape", 0..5, |style| style.italic = Some(true))
+                            .unwrap();
+                        shape.label_rich_text = Some(Arc::new(rich));
+                    }
+                    book.active_mut().add_canvas_object(shape).unwrap();
+                }
+                let snapshot = private_snapshot(&book).unwrap();
+                assert!(snapshot.contains(RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION));
+                assert!(strict_private_snapshot(&snapshot));
+                assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+                for forged in [
+                    serde_json::to_string(&book).unwrap(),
+                    serde_json::to_string(&(RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION, &book))
+                        .unwrap(),
+                    serde_json::to_string(&(
+                        RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION,
+                        &Workbook::default(),
+                    ))
+                    .unwrap(),
+                ] {
+                    assert!(read_private_snapshot(&forged).is_err());
+                }
+                assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+            }
+        }
+    }
+
+    #[test]
     fn label_styles_require_matching_private_snapshot_envelope() {
         use thinoda_core::Vec2;
         use thinoda_core::board::{CanvasObject, ShapeKind};
@@ -3395,6 +3488,7 @@ mod tests {
                 connector.extra_labels.push(ConnectorLabel {
                     text: "n".into(),
                     placement: Default::default(),
+                    rich_text: None,
                 });
             }
             let mut object = CanvasObject::connector(connector);
@@ -3451,6 +3545,7 @@ mod tests {
                     orthogonal: 6.0,
                     offset: Vec2::ZERO,
                 },
+                rich_text: None,
             });
             if edge_shape {
                 connector.edge_shape = Some(EdgeShape::new(EdgeShapeKind::Link));

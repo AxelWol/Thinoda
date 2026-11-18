@@ -2533,6 +2533,45 @@ fn rich_connector_label_board_clipboard_requires_version_forty_three() {
 }
 
 #[test]
+fn rich_extra_connector_label_board_clipboard_requires_version_forty_four() {
+    use crate::board::ConnectorLabel;
+    let mut source = Sheet::new("Source", "Root");
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    let mut rich = crate::InlineText::default();
+    rich.update_range("A🙂B", 1..2, |style| style.italic = Some(true))
+        .unwrap();
+    connector.extra_labels.push(ConnectorLabel {
+        text: "A🙂B".into(),
+        rich_text: Some(std::sync::Arc::new(rich)),
+        ..Default::default()
+    });
+    let id = source
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let payload = copy(&source, &[], &[id]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let forged = encoded.replacen(
+        RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX,
+        RICH_CONNECTOR_LABELS_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&forged)
+            .unwrap_err()
+            .contains("rich extra connector labels require board clipboard version 44")
+    );
+}
+
+#[test]
 fn label_style_board_clipboard_requires_version_forty_one() {
     let mut source = Sheet::new("Source", "Root");
     let mut object = CanvasObject::shape(

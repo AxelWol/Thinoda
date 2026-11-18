@@ -1729,6 +1729,43 @@ fn rich_connector_html_imports_and_round_trips_primary_label() {
 }
 
 #[test]
+fn rich_extra_connector_html_imports_and_round_trips() {
+    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="edge" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="label" value="{}" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontColor=#000000;" vertex="1" parent="edge"><mxGeometry x="0.5" y="-25" relative="1" as="geometry"/></mxCell>"##,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    let label = &connectors(&report.workbook.sheets[0])[0].extra_labels[0];
+    assert_eq!(label.text, "A🙂\ntwo");
+    let rich = label.rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.runs[1].style.baseline,
+        Some(thinoda_core::InlineBaseline::Superscript)
+    );
+    assert_eq!(rich.paragraphs.len(), 2);
+    assert_eq!(feature_version(&report.workbook), 51);
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    assert_eq!(connectors(&restored.sheets[0])[0].extra_labels[0], *label);
+}
+
+#[test]
+fn empty_rich_extra_connector_list_imports_and_round_trips() {
+    let xml = page(&format!(
+        r##"<mxCell id="edge" style="endArrow=none;strokeColor=#000;fontColor=#000000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell><mxCell id="label" value="{}" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontColor=#000000;" vertex="1" parent="edge"><mxGeometry x="0.5" y="-25" relative="1" as="geometry"/></mxCell>"##,
+        esc("<ul><li></li></ul>")
+    ));
+    let report = load(&xml);
+    let label = &connectors(&report.workbook.sheets[0])[0].extra_labels[0];
+    assert!(label.text.is_empty());
+    assert!(label.has_list());
+    let restored = import(&export(&report.workbook).unwrap()).unwrap().workbook;
+    assert_eq!(connectors(&restored.sheets[0])[0].extra_labels[0], *label);
+}
+
+#[test]
 fn rich_connector_empty_list_placement_and_unsupported_children_are_disclosed() {
     let xml = page(&format!(
         r##"<mxCell id="e" value="{}" style="html=1;endArrow=none;strokeColor=#000;fontColor=#000;fontSize=12;" edge="1" parent="1"><mxGeometry x="0.5" y="-10" relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
@@ -1818,6 +1855,21 @@ fn rich_sankey_drawio_export_styles_only_the_authored_label() {
     rich.update_range("Ribbon", 0..6, |style| style.italic = Some(true))
         .unwrap();
     object.label_rich_text = Some(Arc::new(rich));
+    let mut extra_rich = thinoda_core::InlineText::default();
+    extra_rich
+        .update_range("Extra", 0..5, |style| style.bold = Some(true))
+        .unwrap();
+    let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+        panic!()
+    };
+    connector.extra_labels.push(ConnectorLabel {
+        text: "Extra".into(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -60.0,
+            ..Default::default()
+        },
+        rich_text: Some(Arc::new(extra_rich)),
+    });
     let object_id = object.id;
     let values = thinoda_core::sankey::evaluate(book.active()).unwrap();
     let object = book.active().canvas.object(object_id).unwrap();
@@ -1834,6 +1886,16 @@ fn rich_sankey_drawio_export_styles_only_the_authored_label() {
         .find(|object| object.label() == "Ribbon")
         .unwrap();
     assert!(matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()));
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        panic!()
+    };
+    assert_eq!(connector.extra_labels[0].text, "Extra");
+    assert_eq!(
+        connector.extra_labels[0].rich_text.as_ref().unwrap().runs[0]
+            .style
+            .bold,
+        Some(true)
+    );
     let rich = object.label_rich_text.as_ref().unwrap();
     assert_eq!(rich.runs.len(), 1);
     assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 6));
@@ -10747,6 +10809,7 @@ fn connector_labels_import_positioned_and_round_trip() {
                     orthogonal: 6.0,
                     offset: Vec2::new(3.0, -4.0),
                 },
+                rich_text: None,
             },
             ConnectorLabel {
                 text: "n".into(),
@@ -10755,6 +10818,7 @@ fn connector_labels_import_positioned_and_round_trip() {
                     orthogonal: 0.0,
                     offset: Vec2::new(13.0, 1.0),
                 },
+                rich_text: None,
             },
         ]
     );

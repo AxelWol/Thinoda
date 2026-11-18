@@ -4677,8 +4677,12 @@ impl<'a> PageImport<'a> {
         for child in self.children[index].clone() {
             let child = &cells[child];
             if child.vertex && child.visible {
-                let text = self.label(child);
-                if text.is_empty() {
+                let (text, rich_text) = self.rich_label(child);
+                if text.is_empty()
+                    && rich_text
+                        .as_ref()
+                        .is_none_or(|rich| rich.paragraphs.is_empty())
+                {
                     continue;
                 }
                 if child.geometry.relative && !child.geometry.invalid_frame {
@@ -4698,6 +4702,7 @@ impl<'a> PageImport<'a> {
                     extra_labels.push(ConnectorLabel {
                         text: truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings),
                         placement,
+                        rich_text: rich_text.map(Arc::new),
                     });
                 } else {
                     // Absolute children have no edge-relative position; fold them.
@@ -6646,10 +6651,14 @@ impl<'a> PageWriter<'a> {
                     num(placement.offset.y)
                 )
             };
+            let value = label.rich_text.as_deref().map_or_else(
+                || html(&label.text),
+                |rich| html_rich_label(&label.text, rich, None),
+            );
             self.out.push_str(&format!(
                 "<mxCell id=\"{}\" value=\"{}\" style=\"{}\" vertex=\"1\" connectable=\"0\" parent=\"{}\"><mxGeometry{position} relative=\"1\" as=\"geometry\">{offset}</mxGeometry></mxCell>\n",
                 esc(&id),
-                esc(&html(&label.text)),
+                esc(&value),
                 esc(&style),
                 esc(edge_id)
             ));
