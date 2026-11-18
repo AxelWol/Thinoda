@@ -92,7 +92,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards, including baseline overrides, render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; PowerPoint exports editable styled runs, but splits text into line shapes and flattens list semantics, with a warning. Card run editing remains unsupported; zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards, including baseline overrides, render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; editable PowerPoint branch/zone slides emit each card title as one styled text box with native paragraphs and lists, subject to a warning and unverified Office rendering. Card run editing remains unsupported; zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
@@ -253,8 +253,9 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
+  - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
   - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
-  - [ ] Complete rich-card run editing and PowerPoint paragraph/list semantics; cover other label kinds and preserve unsupported source HTML
+  - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
 
@@ -297,7 +298,8 @@ recovery) and binary `.vsd`.
 |---|---|---|
 | 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |
 | 2026-11-18 | D9 card baselines (partial) | Sticky/text-card superscript, subscript and explicit normal baselines survive supported draw.io HTML, rendering and persistence. Compatibility gates: native v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind `THINODA-XMIND-CARD-BASELINE-1`, recovery `THINODA-RECOVERY-CARD-BASELINE-1` and `THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open. |
-| 2026-11-18 | D9 formatted-card PowerPoint (partial) | Editable branch/zone slides export styled runs and visible list markers in line shapes, including card rotation. List structure and whole-paragraph editability are not preserved, so preflight retains a localized flattening warning. Viewport slides remain rasterized. |
+| 2026-11-18 | D9 formatted-card PowerPoint paragraphs (partial) | Editable branch/zone slides now emit a single text box per formatted card, with styled runs, blank paragraphs, native bullet/number properties and card rotation. List and text layout in PowerPoint/LibreOffice has not been validated; wrapping can differ and viewport slides remain rasterized, so the loss warning remains. |
+| 2026-11-18 | D9 formatted-card PowerPoint (partial) | Editable branch/zone slides exported styled runs and visible list markers in line shapes, including card rotation. This earlier representation was superseded by native paragraph/list output above. |
 | 2026-11-18 | D9 formatted-card visual export (partial) | SVG, PNG, JPEG and PDF use the same rich-card layout as the canvas, including inline styles and list markers, and no longer report inline-text loss. Rewrapping caused by coordinate rounding is bounded. PowerPoint line-run output is a separate partial slice. Corrected draw.io import to warn and remove unsupported card baseline overrides rather than producing an invalid native document. |
 | 2026-11-18 | D9 style reuse (partial) | Copy/paste style for objects and cards, including undo-safe dimension handling, and reusable quick styles are implemented and covered by focused app regressions. Default styles and declarative style rules remain open. |
 | 2026-11-18 | D9 formatted-card draw.io interchange (partial) | Sticky/text-card titles import and export supported inert draw.io HTML inline styles and list paragraphs; initially baseline overrides warned and were dropped, until the later baseline slice. Native values are round-trip tested and `InlineTextDropped` is no longer reported for draw.io. Run-level card editing and unsupported source HTML preservation remain open. |
@@ -811,7 +813,7 @@ remapping as shape and connector labels, inheriting the formatting at each
 changed replacement's start; identical replacements retain mixed formatting.
 Locked cards and values exceeding the rich-text bounds reject the whole
 operation. Direct plain title editing still rejects formatted cards; run-level
-editing is not exposed, PowerPoint still flattens paragraph semantics, and the
+editing is not exposed, viewport PowerPoint slides remain flattened, and the
 supported draw.io HTML subset is handled by a separate interchange slice. This
 does not claim complete rich-card support.
 
@@ -835,7 +837,7 @@ normal baselines are retained by draw.io interchange and the shared renderers.
 Duck check: a new field value changes validation compatibility even though the
 JSON schema already contained it, so native files, clipboard payloads, XMind
 snapshots and recovery use newer gates; downgraded payloads are rejected.
-Canvas run editing and real PowerPoint paragraph semantics remain open.
+Canvas run editing and external PowerPoint paragraph/list validation remain open.
 
 **D9 card editing foundation (partial).** The sheet and document expose one
 validated mutation for title text and inline data, with locks and one undo
@@ -852,12 +854,12 @@ and zone clips retain their clipping semantics. Duck check: line widths are
 estimates rather than shaped advances, so wrapping can differ for unusual
 fonts; the shared rich-label renderer has the same limitation.
 
-**D9 formatted-card PowerPoint (partial).** Branch/zone slides use the shared
-rich layout and write DrawingML text runs in separately positioned editable
-line shapes; list markers are literal text rather than paragraph properties.
-Duck check: wrapping and multiline editing cannot round-trip as a single
-paragraph, and viewport slides are rasterized. Keep the flattening warning
-until real paragraph/list semantics are implemented.
+**D9 formatted-card PowerPoint (partial).** Branch/zone slides write one
+editable DrawingML text box per formatted card, with original paragraphs,
+styled runs and native list properties. Duck check: PowerPoint's own font
+metrics and wrapping can differ from the canvas; numbering, indentation,
+rotation and blank-list rendering still require validation in Office and
+LibreOffice. Viewport slides are rasterized; retain the loss warning.
 
 **D9 style reuse (partial).** Object/card copy-paste and named quick styles are
 already implemented and regression-tested. Duck check: do not treat named

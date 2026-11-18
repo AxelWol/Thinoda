@@ -216,8 +216,6 @@ impl Drawing {
         color: Color,
         opacity: f32,
     ) {
-        use thinoda_core::rich_text::InlineBaseline;
-
         let id = self.id();
         let left = if line.align == layout.align {
             layout.frame.min.x
@@ -238,54 +236,233 @@ impl Drawing {
         };
         let mut runs = String::new();
         for run in &line.runs {
-            let size = (thinoda_core::label_style::run_font_size(layout.size, &run.style)
-                * self.scale
-                / 127.0)
-                .round()
-                .clamp(100.0, 400_000.0) as u32;
-            let family = esc(run
-                .style
-                .font_family
-                .as_deref()
-                .or(style.font_family.as_deref())
-                .unwrap_or("Segoe UI")
-                .split(',')
-                .next()
-                .unwrap_or("Segoe UI")
-                .trim()
-                .trim_matches('"'));
-            let baseline = match run.style.baseline {
-                Some(InlineBaseline::Subscript) => r#" baseline="-25000""#,
-                Some(InlineBaseline::Superscript) => r#" baseline="30000""#,
-                _ => "",
-            };
-            let color = run.style.color.map_or(color, |value| {
-                Color::rgba(
-                    value.r,
-                    value.g,
-                    value.b,
-                    (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
-                )
-            });
-            let preserve = if run.text.starts_with(char::is_whitespace)
-                || run.text.ends_with(char::is_whitespace)
-            {
-                r#" xml:space="preserve""#
-            } else {
-                ""
-            };
-            runs.push_str(&format!(
-                r#"<a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}"{baseline}>{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t{preserve}>{}</a:t></a:r>"#,
-                u8::from(run.style.bold.unwrap_or(style.bold)),
-                u8::from(run.style.italic.unwrap_or(style.italic)),
-                if run.style.underline.unwrap_or(style.underline) { "sng" } else { "none" },
-                if run.style.strikethrough.unwrap_or(style.strikethrough) { "sngStrike" } else { "noStrike" },
-                fill(Some(color)),
-                esc(&run.text),
+            runs.push_str(&self.rich_run(
+                &run.text,
+                &run.style,
+                layout.size,
+                style,
+                color,
+                opacity,
             ));
         }
         self.xml.push_str(&format!(
             r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Label"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="{align}"/>{runs}</a:p></p:txBody></p:sp>"#,
+            self.transform(rect),
+        ));
+    }
+
+    fn rich_run(
+        &self,
+        text: &str,
+        run: &thinoda_core::InlineTextStyle,
+        base_size: f32,
+        style: &thinoda_core::label_style::LabelStyle,
+        color: Color,
+        opacity: f32,
+    ) -> String {
+        use thinoda_core::rich_text::InlineBaseline;
+
+        let size = (thinoda_core::label_style::run_font_size(base_size, run) * self.scale / 127.0)
+            .round()
+            .clamp(100.0, 400_000.0) as u32;
+        let family = esc(run
+            .font_family
+            .as_deref()
+            .or(style.font_family.as_deref())
+            .unwrap_or("Segoe UI")
+            .split(',')
+            .next()
+            .unwrap_or("Segoe UI")
+            .trim()
+            .trim_matches('"'));
+        let baseline = match run.baseline {
+            Some(InlineBaseline::Subscript) => r#" baseline="-25000""#,
+            Some(InlineBaseline::Superscript) => r#" baseline="30000""#,
+            _ => "",
+        };
+        let color = run.color.map_or(color, |value| {
+            Color::rgba(
+                value.r,
+                value.g,
+                value.b,
+                (f32::from(value.a) * opacity.clamp(0.0, 1.0)).round() as u8,
+            )
+        });
+        let preserve =
+            if text.starts_with(char::is_whitespace) || text.ends_with(char::is_whitespace) {
+                r#" xml:space="preserve""#
+            } else {
+                ""
+            };
+        format!(
+            r#"<a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}"{baseline}>{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t{preserve}>{}</a:t></a:r>"#,
+            u8::from(run.bold.unwrap_or(style.bold)),
+            u8::from(run.italic.unwrap_or(style.italic)),
+            if run.underline.unwrap_or(style.underline) {
+                "sng"
+            } else {
+                "none"
+            },
+            if run.strikethrough.unwrap_or(style.strikethrough) {
+                "sngStrike"
+            } else {
+                "noStrike"
+            },
+            fill(Some(color)),
+            esc(text),
+        )
+    }
+
+    fn rich_card_title(
+        &mut self,
+        text: &str,
+        rich: &thinoda_core::InlineText,
+        layout: &thinoda_core::label_style::LabelLayout,
+        style: &thinoda_core::label_style::LabelStyle,
+        color: Color,
+    ) {
+        use thinoda_core::{InlineTextStyle, ListKind};
+
+        let id = self.id();
+        let top = layout
+            .lines
+            .first()
+            .map_or(layout.frame.min.y, |line| line.rect.min.y);
+        let rect = Rect::from_min_size(
+            Vec2::new(layout.frame.min.x, top),
+            Vec2::new(
+                layout.frame.size.x,
+                (layout.frame.max().y - top)
+                    .max(layout.block.size.y)
+                    .max(layout.line_height),
+            ),
+        );
+        let align = match style.align {
+            TextAlign::Left => "l",
+            TextAlign::Center => "ctr",
+            TextAlign::Right => "r",
+        };
+        let line_spacing = (layout.line_height * self.scale / 127.0)
+            .round()
+            .clamp(1.0, 158_400.0) as u32;
+        let default_size = (layout.size * self.scale / 127.0)
+            .round()
+            .clamp(100.0, 400_000.0) as u32;
+        let family = esc(style
+            .font_family
+            .as_deref()
+            .unwrap_or("Segoe UI")
+            .split(',')
+            .next()
+            .unwrap_or("Segoe UI")
+            .trim()
+            .trim_matches('"'));
+        let defaults = format!(
+            r#"<a:defRPr lang="en-US" sz="{default_size}" b="{}" i="{}" u="{}" strike="{}">{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:defRPr>"#,
+            u8::from(style.bold),
+            u8::from(style.italic),
+            if style.underline { "sng" } else { "none" },
+            if style.strikethrough {
+                "sngStrike"
+            } else {
+                "noStrike"
+            },
+            fill(Some(color)),
+        );
+        let mut numbered_prefixes = HashMap::new();
+        let mut index = 0;
+        while index < rich.paragraphs.len() {
+            if rich.paragraphs[index].list != ListKind::Numbered {
+                index += 1;
+                continue;
+            }
+            let first = index;
+            index += 1;
+            while index < rich.paragraphs.len()
+                && rich.paragraphs[index].list == ListKind::Numbered
+                && rich.paragraphs[index].index == rich.paragraphs[index - 1].index + 1
+            {
+                index += 1;
+            }
+            let prefix_chars = (index - first).to_string().len() + 2;
+            for paragraph in &rich.paragraphs[first..index] {
+                numbered_prefixes.insert(paragraph.index as usize, prefix_chars);
+            }
+        }
+        let mut paragraphs = String::new();
+        let mut scalar = 0usize;
+        let mut run_index = 0usize;
+        let mut previous_list = None;
+        for (index, paragraph) in text.split('\n').enumerate() {
+            let list = rich
+                .paragraphs
+                .iter()
+                .find(|p| p.index as usize == index)
+                .map(|p| p.list);
+            let bullet = match list {
+                Some(ListKind::Bulleted) => "<a:buChar char=\"•\"/>".to_owned(),
+                Some(ListKind::Numbered) if previous_list == list => {
+                    r#"<a:buAutoNum type="arabicPeriod"/>"#.to_owned()
+                }
+                Some(ListKind::Numbered) => {
+                    r#"<a:buAutoNum type="arabicPeriod" startAt="1"/>"#.to_owned()
+                }
+                None => "<a:buNone/>".to_owned(),
+            };
+            previous_list = list;
+            let indent = list.map_or_else(String::new, |_| {
+                let prefix_chars = numbered_prefixes.get(&index).copied().unwrap_or(2);
+                let margin = self
+                    .emu(
+                        style.size() * thinoda_core::label_style::GLYPH_WIDTH * prefix_chars as f32,
+                    )
+                    .clamp(1, 51_206_400);
+                format!(r#" marL="{margin}" indent="-{margin}""#)
+            });
+            let mut runs = String::new();
+            let mut segment = String::new();
+            let mut segment_style = InlineTextStyle::default();
+            for ch in paragraph.chars() {
+                while run_index < rich.runs.len() && rich.runs[run_index].end as usize <= scalar {
+                    run_index += 1;
+                }
+                let current = rich
+                    .runs
+                    .get(run_index)
+                    .filter(|run| run.start as usize <= scalar && scalar < run.end as usize)
+                    .map_or_else(InlineTextStyle::default, |run| run.style.clone());
+                if !segment.is_empty() && segment_style != current {
+                    runs.push_str(&self.rich_run(
+                        &segment,
+                        &segment_style,
+                        layout.size,
+                        style,
+                        color,
+                        1.0,
+                    ));
+                    segment.clear();
+                }
+                segment_style = current;
+                segment.push(ch);
+                scalar += 1;
+            }
+            if !segment.is_empty() {
+                runs.push_str(&self.rich_run(
+                    &segment,
+                    &segment_style,
+                    layout.size,
+                    style,
+                    color,
+                    1.0,
+                ));
+            }
+            scalar += 1;
+            paragraphs.push_str(&format!(
+                r#"<a:p><a:pPr algn="{align}"{indent}><a:lnSpc><a:spcPts val="{line_spacing}"/></a:lnSpc>{bullet}{defaults}</a:pPr>{runs}<a:endParaRPr sz="{default_size}"/></a:p>"#
+            ));
+        }
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Card title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t"><a:noAutofit/></a:bodyPr><a:lstStyle/>{paragraphs}</p:txBody></p:sp>"#,
             self.transform(rect),
         ));
     }
@@ -923,11 +1100,7 @@ pub(crate) fn editable_slide(
                 &topic.title,
                 &topic.inline_text,
             );
-            for line in &rich.lines {
-                if !line.runs.is_empty() {
-                    draw.rich_label_line(&rich, line, &style, text_color, 1.0);
-                }
-            }
+            draw.rich_card_title(&topic.title, &topic.inline_text, &rich, &style, text_color);
         } else {
             let block = text.topic(*id);
             for (index, line) in block.lines.iter().enumerate() {

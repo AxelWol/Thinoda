@@ -267,7 +267,7 @@ fn formatted_card_powerpoint_contains_editable_runs_and_rotated_text() {
     assert!(run.contains(r#"i="1""#), "{run}");
     assert!(run.contains(r#"typeface="Arial""#), "{run}");
     assert!(run.contains("C81E28"), "{run}");
-    assert!(slide.contains(r#"<a:t xml:space="preserve">• </a:t>"#));
+    assert!(slide.contains(r#"<a:buChar char="•"/>"#));
     assert!(slide.contains(r#"<a:t xml:space="preserve"> plain</a:t>"#));
     assert!(slide.contains("<a:t>Next</a:t>"));
     let shape_start = slide[..end].rfind("<p:sp>").unwrap();
@@ -277,6 +277,121 @@ fn formatted_card_powerpoint_contains_editable_runs_and_rotated_text() {
             .iter()
             .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_)))
     );
+}
+
+#[test]
+fn formatted_card_powerpoint_preserves_editable_paragraphs_and_list_numbering() {
+    use thinoda_core::{InlineParagraph, ListKind};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "A🙂 & B\n\nSecond\nplain\nRestart\n",
+            Vec2::ZERO,
+            Card::new(CardKind::Text, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic.inline_text.paragraphs = [
+        (0, ListKind::Bulleted),
+        (1, ListKind::Numbered),
+        (2, ListKind::Numbered),
+        (4, ListKind::Numbered),
+    ]
+    .into_iter()
+    .map(|(index, list)| InlineParagraph { index, list })
+    .collect();
+    topic
+        .inline_text
+        .update_range(&topic.title, 1..13, |style| style.bold = Some(true))
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let name = slide.find(r#"name="Card title""#).unwrap();
+    let start = slide[..name].rfind("<p:sp>").unwrap();
+    let end = slide[name..].find("</p:sp>").unwrap() + name + "</p:sp>".len();
+    let shape = &slide[start..end];
+    assert_eq!(shape.matches("<a:p>").count(), 6);
+    assert_eq!(shape.matches(r#"<a:buChar char="•"/>"#).count(), 1);
+    assert_eq!(
+        shape.matches(r#"type="arabicPeriod" startAt="1""#).count(),
+        2
+    );
+    assert_eq!(
+        shape
+            .matches(r#"<a:buAutoNum type="arabicPeriod"/>"#)
+            .count(),
+        1
+    );
+    assert_eq!(shape.matches("<a:defRPr ").count(), 6);
+    assert_eq!(shape.matches("<a:buNone/>").count(), 2);
+    assert!(shape.contains("<a:t>A</a:t>"));
+    assert!(shape.contains("<a:t>🙂 &amp; B</a:t>"));
+    assert!(shape.contains("<a:t>Secon</a:t>"));
+    assert!(shape.contains("<a:t>d</a:t>"));
+    assert!(shape.contains("<a:t>plain</a:t>"));
+    assert!(shape.contains("<a:t>Restart</a:t>"));
+    assert!(!shape.contains("<a:t>• "));
+    assert!(!shape.contains("<a:t>1. "));
+    let mut reader = quick_xml::Reader::from_str(&slide);
+    loop {
+        if matches!(reader.read_event().unwrap(), quick_xml::events::Event::Eof) {
+            break;
+        }
+    }
+}
+
+#[test]
+fn formatted_card_numbered_list_uses_one_indent_across_double_digit_items() {
+    use thinoda_core::{InlineParagraph, ListKind};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            &["item"; 12].join("\n"),
+            Vec2::ZERO,
+            Card::new(CardKind::Text, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    sheet.topic_mut(id).unwrap().inline_text.paragraphs = (0..12)
+        .map(|index| InlineParagraph {
+            index,
+            list: ListKind::Numbered,
+        })
+        .collect();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let start = slide.find(r#"name="Card title""#).unwrap();
+    let end = slide[start..].find("</p:sp>").unwrap() + start;
+    let shape = &slide[start..end];
+    assert_eq!(shape.matches(r#"startAt="1""#).count(), 1);
+    assert_eq!(
+        shape
+            .matches(r#"<a:buAutoNum type="arabicPeriod"/>"#)
+            .count(),
+        11
+    );
+    let indents: Vec<_> = shape
+        .split(" marL=\"")
+        .skip(1)
+        .map(|part| part.split('"').next().unwrap())
+        .collect();
+    assert_eq!(indents.len(), 12);
+    assert!(indents.iter().all(|indent| *indent == indents[0]));
 }
 
 #[test]

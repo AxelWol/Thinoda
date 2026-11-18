@@ -1961,9 +1961,10 @@ Implementation contract and remaining work:
    limits below; canvas, SVG/PNG/JPEG/PDF rendering and the supported draw.io
    HTML subset, including baseline overrides, are available for formatted
    sticky/text-card titles.
-   PowerPoint branch/zone slides now carry styled editable runs, but split
-   lines and flatten list structure with a warning. Run-level card editing and
-   editable PowerPoint paragraph semantics remain open. A validated, locked-
+   PowerPoint branch/zone slides emit each formatted title as one editable
+   text box with styled runs and native paragraph/list properties; Office
+   rendering remains unverified, and viewport slides are rasterized. Run-level
+   card editing remains open. A validated, locked-
    aware title-and-inline mutation now supplies an atomic undoable commit for
    a future editor; it does not yet expose editing controls or drafts.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
@@ -1977,11 +1978,11 @@ Implementation contract and remaining work:
    shared rich-label layout, including wrapping and list markers; SVG and its
    raster/PDF derivatives use the same layout, and draw.io import/export
    round-trips the supported inert HTML subset, including baseline overrides.
-   Editable PowerPoint now renders mixed styles as line-level text runs; retain
-   and improve paragraph/list semantics, including clipping and rotation. Extend export preflight and
+   Editable PowerPoint emits mixed styles and paragraph/list properties in a
+   single card-title text box; validate wrapping, lists, clipping and rotation
+   in Office. Extend export preflight and
    clipboard fallbacks so unsupported formatting or list structure is
-   reported, not silently discarded. Editable PowerPoint requires real text
-   paragraph properties, not literal markers and separate line shapes.
+   reported, not silently discarded.
 
 Rubber-duck blockers: egui's existing text undo stores plain text, so rich
 draft undo and IME updates need a coherent edit-operation history rather than
