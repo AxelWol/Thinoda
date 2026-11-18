@@ -478,6 +478,64 @@ mod tests {
         masked.validate().unwrap();
     }
 
+    #[test]
+    fn connector_label_formatting_edits_and_undoes_atomically() {
+        use crate::board::{CanvasConnector, CanvasObject};
+        use crate::{Document, Endpoint, Vec2, Workbook};
+
+        let mut workbook = Workbook::default();
+        let connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        let mut object = CanvasObject::connector(connector);
+        object.set_label("A🙂B").unwrap();
+        let id = workbook.active_mut().add_canvas_object(object).unwrap();
+        let mut document = Document::new(workbook);
+        let mut rich = InlineText::default();
+        rich.update_range("A🙂B", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        document
+            .set_canvas_object_label_with_rich_text("Format", id, "A🙂B", Some(rich.clone()))
+            .unwrap();
+        document
+            .set_canvas_object_label("Edit", id, "AA🙂B")
+            .unwrap();
+        let object = document.sheet().canvas.object(id).unwrap();
+        assert_eq!(object.label(), "AA🙂B");
+        assert_eq!(
+            (
+                object.label_rich_text.as_ref().unwrap().runs[0].start,
+                object.label_rich_text.as_ref().unwrap().runs[0].end
+            ),
+            (2, 3)
+        );
+        assert!(document.undo());
+        assert_eq!(
+            document
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label_rich_text
+                .as_deref(),
+            Some(&rich)
+        );
+        assert!(document.undo());
+        assert!(
+            document
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label_rich_text
+                .is_none()
+        );
+        assert!(document.redo());
+        assert!(document.redo());
+        document.sheet().validate().unwrap();
+    }
+
     fn bold() -> InlineTextStyle {
         InlineTextStyle {
             bold: Some(true),

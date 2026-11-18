@@ -1691,6 +1691,179 @@ fn rich_shape_html_imports_and_round_trips_styles_lists_and_newlines() {
 }
 
 #[test]
+fn rich_connector_html_imports_and_round_trips_primary_label() {
+    use thinoda_core::InlineBaseline;
+
+    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="edge" value="{}" style="html=1;endArrow=none;strokeColor=#000;fontColor=#000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(object.label(), "A🙂\ntwo");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.runs[1].style.baseline,
+        Some(InlineBaseline::Superscript)
+    );
+    assert_eq!(rich.paragraphs.len(), 2);
+    assert_eq!(feature_version(&report.workbook), 50);
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = restored.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(restored.label(), object.label());
+    assert_eq!(restored.label_rich_text, object.label_rich_text);
+}
+
+#[test]
+fn rich_connector_empty_list_placement_and_unsupported_children_are_disclosed() {
+    let xml = page(&format!(
+        r##"<mxCell id="e" value="{}" style="html=1;endArrow=none;strokeColor=#000;fontColor=#000;fontSize=12;" edge="1" parent="1"><mxGeometry x="0.5" y="-10" relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        esc("<ul><li></li></ul>"),
+    ));
+    let report = load(&xml);
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert!(object.has_label_list());
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        unreachable!()
+    };
+    assert!(connector.label_placement.is_some());
+    let exported = export(&report.workbook).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = restored.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert!(restored.has_label_list());
+    let CanvasObjectKind::Connector(back) = &restored.kind else {
+        unreachable!()
+    };
+    assert_eq!(back.label_placement, connector.label_placement);
+
+    let folded = xml.replace(
+        "</root>",
+        r#"<mxCell id="child" value="child" vertex="1" parent="e"><mxGeometry width="20" height="10" as="geometry"/></mxCell></root>"#,
+    );
+    let report = load(&folded);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(object.label(), "\nchild");
+    assert!(object.has_label_list());
+}
+
+#[test]
+fn rich_connector_unsupported_html_is_inert_and_warned() {
+    let markup = r#"<b>safe</b><img src="https://invalid.example/x"><script>bad()</script>"#;
+    let xml = page(&format!(
+        r##"<mxCell id="e" value="{}" style="html=1;endArrow=none;strokeColor=#000;fontColor=#000;fontSize=12;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint as="sourcePoint"/><mxPoint x="100" as="targetPoint"/></mxGeometry></mxCell>"##,
+        esc(markup),
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.is_connector())
+        .unwrap();
+    assert_eq!(object.label(), "safe");
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0].style.bold,
+        Some(true)
+    );
+    let exported = String::from_utf8(export(&report.workbook).unwrap()).unwrap();
+    assert!(!exported.contains("invalid.example"));
+    assert!(!exported.contains("bad()"));
+}
+
+#[test]
+fn rich_sankey_drawio_export_styles_only_the_authored_label() {
+    let mut book = thinoda_core::templates::instantiate("sankey-budget");
+    let object = book
+        .active_mut()
+        .canvas
+        .objects
+        .iter_mut()
+        .find(|object| {
+            matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some_and(|f| f.weight.is_some()))
+        })
+        .unwrap();
+    object.set_label("Ribbon").unwrap();
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("Ribbon", 0..6, |style| style.italic = Some(true))
+        .unwrap();
+    object.label_rich_text = Some(Arc::new(rich));
+    let object_id = object.id;
+    let values = thinoda_core::sankey::evaluate(book.active()).unwrap();
+    let object = book.active().canvas.object(object_id).unwrap();
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        unreachable!()
+    };
+    let display = thinoda_core::sankey::flow_label(connector, values.mass[&object_id]);
+    let exported = String::from_utf8(export(&book).unwrap()).unwrap();
+    let restored = import(exported.as_bytes()).unwrap().workbook;
+    let object = restored.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == "Ribbon")
+        .unwrap();
+    assert!(matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_some()));
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!(rich.runs.len(), 1);
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 6));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+
+    let original = esc(&html_rich_label(&display, rich, None));
+    let mut edited = thinoda_core::InlineText::default();
+    edited
+        .update_range(&display, 0..display.chars().count(), |style| {
+            style.italic = Some(true)
+        })
+        .unwrap();
+    let changed = esc(&html_rich_label(&display, &edited, None));
+    assert!(exported.contains(&original));
+    let edited_xml = exported.replacen(&original, &changed, 1);
+    let report = import(edited_xml.as_bytes()).unwrap();
+    assert!(report.warnings.contains(&ImportWarning::DrawioSankeyStale));
+    let object = report.workbook.sheets[0]
+        .canvas
+        .objects
+        .iter()
+        .find(|object| object.label() == display)
+        .unwrap();
+    assert!(matches!(&object.kind, CanvasObjectKind::Connector(c) if c.sankey.is_none()));
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0].end as usize,
+        display.chars().count()
+    );
+}
+
+#[test]
 fn html_whitespace_loss_is_reported_through_file_link_and_clipboard() {
     let source = "A<span> </span><span> B</span>";
     let xml = page(&format!(

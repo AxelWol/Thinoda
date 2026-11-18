@@ -855,9 +855,14 @@ impl Sheet {
         self.canvas.has_label_styles()
     }
 
-    /// Whether any shape needs inline-label-aware persistence.
+    /// Whether any object needs inline-label-aware persistence.
     pub fn has_rich_labels(&self) -> bool {
         self.canvas.has_rich_labels()
+    }
+
+    /// Whether any connector needs rich-connector-label-aware persistence.
+    pub fn has_rich_connector_labels(&self) -> bool {
+        self.canvas.has_rich_connector_labels()
     }
 
     /// Whether the sheet needs layer-aware persistence.
@@ -2710,6 +2715,11 @@ impl Workbook {
     /// Whether any sheet needs inline-label-aware persistence.
     pub fn has_rich_labels(&self) -> bool {
         self.sheets.iter().any(Sheet::has_rich_labels)
+    }
+
+    /// Whether any sheet needs rich-connector-label-aware persistence.
+    pub fn has_rich_connector_labels(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_rich_connector_labels)
     }
 
     /// Whether any sheet needs layer-aware persistence.

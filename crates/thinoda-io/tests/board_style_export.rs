@@ -390,6 +390,7 @@ fn rich_shape_runs_flow_together_in_svg_and_editable_powerpoint() {
     if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
         *label = "WWWWii 2!".into();
     }
+
     shape.label_style = Some(Arc::new(LabelStyle {
         align: TextAlign::Right,
         ..Default::default()
@@ -478,4 +479,219 @@ fn rich_shape_runs_flow_together_in_svg_and_editable_powerpoint() {
     assert!(label.contains(r#"<a:pPr algn="r"/>"#));
     assert!(label.contains(r#"baseline="30000""#));
     assert!(label.contains(r#"<a:t xml:space="preserve"> </a:t>"#));
+}
+
+#[test]
+fn rich_connector_runs_export_to_svg_png_pdf_and_editable_powerpoint() {
+    use std::sync::Arc;
+    use thinoda_core::{
+        Endpoint, InlineText,
+        board::{CanvasConnector, ConnectorLabel, ConnectorLabelPlacement},
+    };
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 0.0)),
+        Endpoint::Point(Vec2::new(200.0, 0.0)),
+    );
+    connector.label = "BOLD plain".into();
+    connector.extra_labels.push(ConnectorLabel {
+        text: "Extra".into(),
+        placement: ConnectorLabelPlacement {
+            orthogonal: -60.0,
+            ..Default::default()
+        },
+    });
+    let mut object = CanvasObject::connector(connector);
+    let mut rich = InlineText::default();
+    rich.update_range(object.label(), 0..4, |style| {
+        style.bold = Some(true);
+        style.color = Some(Color::rgb(200, 30, 40));
+    })
+    .unwrap();
+    object.label_rich_text = Some(Arc::new(rich));
+    sheet.add_canvas_object(object).unwrap();
+    let mut empty = CanvasObject::connector(CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 120.0)),
+        Endpoint::Point(Vec2::new(200.0, 120.0)),
+    ));
+    empty.label_rich_text = Some(Arc::new(InlineText {
+        paragraphs: vec![thinoda_core::InlineParagraph {
+            index: 0,
+            list: thinoda_core::ListKind::Bulleted,
+        }],
+        ..Default::default()
+    }));
+    sheet.add_canvas_object(empty).unwrap();
+    let mut list = CanvasObject::connector(CanvasConnector::new(
+        Endpoint::Point(Vec2::new(0.0, 180.0)),
+        Endpoint::Point(Vec2::new(200.0, 180.0)),
+    ));
+    list.set_label("Short\nMuch longer").unwrap();
+    list.label_rich_text = Some(Arc::new(InlineText {
+        paragraphs: (0..2)
+            .map(|index| thinoda_core::InlineParagraph {
+                index,
+                list: thinoda_core::ListKind::Bulleted,
+            })
+            .collect(),
+        ..Default::default()
+    }));
+    sheet.add_canvas_object(list).unwrap();
+    let card = sheet
+        .add_card(
+            "Anchor",
+            Vec2::new(0.0, 200.0),
+            Card::new(CardKind::Text, Vec2::new(80.0, 40.0)),
+        )
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "All",
+            PresentationSource::Branch(card),
+            Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(400.0, 300.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet.clone());
+    book.validate().unwrap();
+    let svg = String::from_utf8(
+        export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+    )
+    .unwrap();
+    let end = svg.find(">BOLD</tspan>").unwrap();
+    let start = svg[..end].rfind("<text ").unwrap();
+    let stop = end + svg[end..].find("</text>").unwrap() + "</text>".len();
+    let label = &svg[start..stop];
+    assert!(label.contains("font-weight=\"bold\""), "{label}");
+    assert!(label.contains("fill=\"#C81E28\""), "{label}");
+    assert!(label.contains("> plain</tspan>"), "{label}");
+    assert!(svg.contains(">Extra</text>"));
+    assert!(svg.contains(">• </tspan>"));
+    let svg_list_line = |text: &str| {
+        let end = svg.find(text).unwrap();
+        let start = svg[..end].rfind("<text ").unwrap();
+        &svg[start..end]
+    };
+    let first = svg_list_line(">• Short</tspan>");
+    let second = svg_list_line(">• Much longer</tspan>");
+    let x = |tag: &str| {
+        tag.split("x=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(first.contains("text-anchor=\"start\""));
+    assert!(second.contains("text-anchor=\"start\""));
+    assert_eq!(x(first), x(second));
+    for format in [Format::Png, Format::Pdf] {
+        assert!(
+            !export_bytes_with_consent(&book, format, &ExportOptions::default(), true)
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let end = slide.find("<a:t>BOLD</a:t>").unwrap();
+    let start = slide[..end].rfind("<p:sp>").unwrap();
+    let stop = end + slide[end..].find("</p:sp>").unwrap() + "</p:sp>".len();
+    let label = &slide[start..stop];
+    assert!(label.contains("b=\"1\""), "{label}");
+    assert!(label.contains("C81E28"), "{label}");
+    assert!(
+        label.contains(r#"<a:t xml:space="preserve"> plain</a:t>"#),
+        "{label}"
+    );
+    assert!(slide.contains("<a:t>Extra</a:t>"));
+    assert!(slide.contains(r#"<a:t xml:space="preserve">• </a:t>"#));
+    let slide_list_line = |text: &str| {
+        let end = slide.find(text).unwrap();
+        let start = slide[..end].rfind("<p:sp>").unwrap();
+        &slide[start..end]
+    };
+    let first = slide_list_line("<a:t>• Short</a:t>");
+    let second = slide_list_line("<a:t>• Much longer</a:t>");
+    assert!(first.contains(r#"<a:pPr algn="l"/>"#));
+    assert!(second.contains(r#"<a:pPr algn="l"/>"#));
+    let offset = |shape: &str| {
+        shape
+            .split("<a:off x=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(offset(first), offset(second));
+}
+
+#[test]
+fn rich_sankey_labels_export_formatted_prefix_and_plain_generated_value() {
+    use std::sync::Arc;
+    use thinoda_core::InlineText;
+
+    let mut sheet = thinoda_core::templates::instantiate("sankey-budget")
+        .active()
+        .clone();
+    let mut count = 0;
+    for object in &mut sheet.canvas.objects {
+        let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+            continue;
+        };
+        if connector.sankey.is_none() {
+            continue;
+        }
+        let label = if count == 0 { "Ribbon" } else { "Unset" };
+        connector.label = label.into();
+        if count == 1 {
+            connector.sankey.as_mut().unwrap().weight = None;
+        }
+        let mut rich = InlineText::default();
+        rich.update_range(label, 0..label.len(), |style| style.italic = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        count += 1;
+        if count == 2 {
+            break;
+        }
+    }
+    assert_eq!(count, 2);
+    let card = sheet
+        .add_card(
+            "Anchor",
+            Vec2::new(0.0, 300.0),
+            Card::new(CardKind::Text, Vec2::new(80.0, 40.0)),
+        )
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "All",
+            PresentationSource::Branch(card),
+            Rect::from_min_size(Vec2::new(-200.0, -150.0), Vec2::new(900.0, 600.0)),
+        )
+        .unwrap();
+    sheet.presentation.slides.last_mut().unwrap().scope = thinoda_core::PresentationScope::Context;
+    let book = Workbook::new(sheet.clone());
+    book.validate().unwrap();
+    let svg = String::from_utf8(
+        export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+    )
+    .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    for text in ["Ribbon", "Unset"] {
+        let end = svg.find(&format!(">{text}</tspan>")).unwrap();
+        let start = svg[..end].rfind("<tspan ").unwrap();
+        assert!(svg[start..end].contains("font-style=\"italic\""));
+        let suffix = &svg[end..end + svg[end..].find("</text>").unwrap()];
+        assert!(suffix.contains("font-style=\"normal\""), "{suffix}");
+        let end = slide.find(&format!("<a:t>{text}</a:t>")).unwrap();
+        let start = slide[..end].rfind("<a:r>").unwrap();
+        assert!(slide[start..end].contains("i=\"1\""));
+        let suffix = &slide[end..end + slide[end..].find("</p:sp>").unwrap()];
+        assert!(suffix.contains("i=\"0\""), "{suffix}");
+    }
 }

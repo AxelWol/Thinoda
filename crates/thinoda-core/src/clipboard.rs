@@ -55,12 +55,15 @@ const TABLES_SHEET_PREFIX: &str = "THINODA-SHEET-35\n";
 const SHAPE_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-36\n";
 const LABEL_STYLES_SHEET_PREFIX: &str = "THINODA-SHEET-37\n";
 const RICH_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-38\n";
+const RICH_CONNECTOR_LABELS_SHEET_PREFIX: &str = "THINODA-SHEET-39\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.has_rich_labels() {
+    let prefix = if sheet.has_rich_connector_labels() {
+        RICH_CONNECTOR_LABELS_SHEET_PREFIX
+    } else if sheet.has_rich_labels() {
         RICH_LABELS_SHEET_PREFIX
     } else if sheet.has_label_styles() {
         LABEL_STYLES_SHEET_PREFIX
@@ -155,9 +158,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(RICH_LABELS_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-38\r\n"))
-        .map(|json| (38, json))
+        .strip_prefix(RICH_CONNECTOR_LABELS_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-39\r\n"))
+        .map(|json| (39, json))
+        .or_else(|| {
+            text.strip_prefix(RICH_LABELS_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-38\r\n"))
+                .map(|json| (38, json))
+        })
         .or_else(|| {
             text.strip_prefix(SCENE_LAYOUT_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-25\r\n"))
@@ -345,6 +353,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 39 && sheet.has_rich_connector_labels() {
+        return Err("rich connector labels require sheet clipboard version 39".into());
+    }
     if version < 38 && sheet.has_rich_labels() {
         return Err("rich labels require sheet clipboard version 38".into());
     }
@@ -1608,6 +1619,40 @@ mod tests {
             decode_sheet(&forged)
                 .unwrap_err()
                 .contains("rich labels require sheet clipboard version 38")
+        );
+    }
+
+    #[test]
+    fn rich_connector_label_sheet_clipboard_requires_version_thirty_nine() {
+        use crate::board::{CanvasConnector, CanvasObject};
+        let mut sheet = Sheet::new("Rich connector", "Root");
+        let connector = CanvasConnector::new(
+            crate::Endpoint::Point(crate::Vec2::ZERO),
+            crate::Endpoint::Point(crate::Vec2::new(100.0, 0.0)),
+        );
+        let mut object = CanvasObject::connector(connector);
+        object.set_label("A🙂B").unwrap();
+        let mut rich = crate::InlineText::default();
+        rich.update_range(object.label(), 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        sheet.add_canvas_object(object).unwrap();
+        let encoded = encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with(RICH_CONNECTOR_LABELS_SHEET_PREFIX));
+        assert_eq!(decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        let forged = encoded.replacen(
+            RICH_CONNECTOR_LABELS_SHEET_PREFIX,
+            RICH_LABELS_SHEET_PREFIX,
+            1,
+        );
+        assert!(
+            decode_sheet(&forged)
+                .unwrap_err()
+                .contains("rich connector labels require sheet clipboard version 39")
         );
     }
 

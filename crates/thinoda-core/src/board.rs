@@ -439,11 +439,18 @@ impl CanvasLayer {
             .any(|object| object.label_style.is_some())
     }
 
-    /// Whether a shape has inline label formatting.
+    /// Whether an object has inline label formatting.
     pub fn has_rich_labels(&self) -> bool {
         self.objects
             .iter()
             .any(|object| object.label_rich_text.is_some())
+    }
+
+    /// Whether a connector has inline formatting on its primary label.
+    pub fn has_rich_connector_labels(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|object| object.is_connector() && object.label_rich_text.is_some())
     }
 }
 
@@ -745,7 +752,7 @@ pub struct CanvasObject {
     /// Shape label text style; `None` is the default label style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label_style: Option<std::sync::Arc<crate::label_style::LabelStyle>>,
-    /// Inline formatting in the shape label, indexed by Unicode scalars.
+    /// Inline formatting in the shape or primary connector label, indexed by Unicode scalars.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label_rich_text: Option<std::sync::Arc<crate::rich_text::InlineText>>,
 }
@@ -830,18 +837,22 @@ impl CanvasObject {
     /// Changes the label without discarding formatting outside the edited span.
     pub fn set_label(&mut self, text: &str) -> Result<(), String> {
         valid_text(text, "canvas label")?;
-        match &mut self.kind {
-            CanvasObjectKind::Shape { label, .. } => {
-                if let Some(rich) = &self.label_rich_text {
-                    let updated = rich.reconcile_label(label, text)?;
-                    self.label_rich_text =
-                        (!updated.is_empty()).then(|| std::sync::Arc::new(updated));
-                }
-                *label = text.to_owned();
-            }
-            CanvasObjectKind::Connector(connector) => connector.label = text.to_owned(),
-            CanvasObjectKind::Ink(_) => return Err("ink strokes have no label".into()),
+        if matches!(self.kind, CanvasObjectKind::Ink(_)) {
+            return Err("ink strokes have no label".into());
         }
+        let updated = self
+            .label_rich_text
+            .as_deref()
+            .map(|rich| rich.reconcile_label(self.label(), text))
+            .transpose()?;
+        match &mut self.kind {
+            CanvasObjectKind::Shape { label, .. } => *label = text.to_owned(),
+            CanvasObjectKind::Connector(connector) => connector.label = text.to_owned(),
+            CanvasObjectKind::Ink(_) => unreachable!("checked above"),
+        }
+        self.label_rich_text = updated
+            .filter(|rich| !rich.is_empty())
+            .map(std::sync::Arc::new);
         Ok(())
     }
 
@@ -856,20 +867,13 @@ impl CanvasObject {
             rich.validate(text)?;
         }
         match &mut self.kind {
-            CanvasObjectKind::Shape { label, .. } => {
-                *label = text.to_owned();
-                self.label_rich_text = rich
-                    .filter(|rich| !rich.is_empty())
-                    .map(std::sync::Arc::new);
-            }
-            CanvasObjectKind::Connector(connector) if rich.is_none_or(|rich| rich.is_empty()) => {
-                connector.label = text.to_owned();
-            }
-            CanvasObjectKind::Connector(_) => {
-                return Err("connector labels do not support inline formatting".into());
-            }
+            CanvasObjectKind::Shape { label, .. } => *label = text.to_owned(),
+            CanvasObjectKind::Connector(connector) => connector.label = text.to_owned(),
             CanvasObjectKind::Ink(_) => return Err("ink strokes have no label".into()),
         }
+        self.label_rich_text = rich
+            .filter(|rich| !rich.is_empty())
+            .map(std::sync::Arc::new);
         Ok(())
     }
 
@@ -2263,15 +2267,22 @@ impl CanvasConnector {
         self.label_placement.is_some() || !self.extra_labels.is_empty()
     }
 
+    /// Anchor of the primary label, including an empty formatted paragraph.
+    pub fn primary_label_anchor(&self, points: &[Vec2]) -> Option<Vec2> {
+        match self.label_placement {
+            Some(placement) => connector_label_point(points, placement),
+            None => polyline_midpoint(points),
+        }
+    }
+
     /// Non-empty labels with their anchors on the routed `points`.
     pub fn label_anchors<'a>(&'a self, points: &[Vec2]) -> Vec<(&'a str, Vec2)> {
         let mut anchors = Vec::with_capacity(1 + self.extra_labels.len());
         if !self.label.is_empty() {
-            let anchor = match self.label_placement {
-                Some(placement) => connector_label_point(points, placement),
-                None => polyline_midpoint(points),
-            };
-            anchors.extend(anchor.map(|anchor| (self.label.as_str(), anchor)));
+            anchors.extend(
+                self.primary_label_anchor(points)
+                    .map(|anchor| (self.label.as_str(), anchor)),
+            );
         }
         for label in &self.extra_labels {
             if let Some(anchor) = connector_label_point(points, label.placement) {
@@ -2588,15 +2599,15 @@ pub fn validate_object(object: &CanvasObject) -> Result<(), String> {
             .map_err(|error| format!("canvas object {id}: {error}"))?;
     }
     if let Some(rich) = &object.label_rich_text {
-        let CanvasObjectKind::Shape { label, .. } = &object.kind else {
+        if matches!(object.kind, CanvasObjectKind::Ink(_)) {
             return Err(format!(
-                "canvas object {id} has rich label text but is not a shape"
+                "canvas object {id} has rich label text but no label"
             ));
-        };
+        }
         if rich.is_empty() {
             return Err(format!("canvas object {id} has empty rich label text"));
         }
-        rich.validate(label)
+        rich.validate(object.label())
             .map_err(|error| format!("canvas object {id}: {error}"))?;
     }
     if let Some(rounding) = object.rounding

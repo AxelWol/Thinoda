@@ -9,8 +9,8 @@ use thinoda_core::{
     CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorPort, EditError,
     EditResult, Endpoint, Scene, SceneId, SheetRootMode, TopicShape, ZOrder, Zone, ZoneId,
     board::{
-        BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, polyline_midpoint,
-        rotate_around, rotated_corners, shape_geometry_with_style,
+        BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, rotate_around, rotated_corners,
+        shape_geometry_with_style,
     },
     rich_text::InlineText,
     scene::{SceneGeometry, SceneItem},
@@ -426,6 +426,21 @@ impl MapView {
             .label
             .as_ref()
             .map(|edit| (edit.id, edit.original.as_str(), edit.text.as_str()))
+    }
+
+    /// Unvalidated draft contents for change tracking; save and recovery must
+    /// still use the conflict-checked variant.
+    pub fn board_rich_label_draft(
+        &self,
+    ) -> Option<(CanvasObjectId, &str, &str, Option<&InlineText>)> {
+        self.board_input.label.as_ref().map(|edit| {
+            (
+                edit.id,
+                edit.original.as_str(),
+                edit.text.as_str(),
+                edit.rich_text.as_ref(),
+            )
+        })
     }
 
     /// Validates and returns the draft against the document that owns the edit.
@@ -6127,12 +6142,12 @@ fn label_editor_rect(object: &CanvasObject, item: &SceneItem, view: &MapView) ->
         CanvasObjectKind::Connector(connector) => {
             let point = match &item.geometry {
                 SceneGeometry::Polyline { points, .. } => connector
-                    .label_placement
-                    .and_then(|placement| {
-                        thinoda_core::board::connector_label_point(points, placement)
-                    })
-                    .or_else(|| polyline_midpoint(points))
+                    .primary_label_anchor(points)
                     .unwrap_or(item.bounds.center()),
+                SceneGeometry::Ribbon { outline, .. } => {
+                    thinoda_core::sankey::ribbon_label_anchor(outline)
+                        .unwrap_or(item.bounds.center())
+                }
                 _ => item.bounds.center(),
             };
             thinoda_core::Rect::from_center_size(point, Vec2::new(140.0, 40.0))
@@ -6464,11 +6479,12 @@ pub(super) fn show_label_editor(
         && ui.memory(|memory| memory.has_focus(edit_id))
         && view.board_input.label.as_ref().is_some_and(|edit| {
             !edit.ime_composing
-                && doc
-                    .sheet()
-                    .canvas
-                    .object(edit.id)
-                    .is_some_and(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+                && doc.sheet().canvas.object(edit.id).is_some_and(|object| {
+                    matches!(
+                        object.kind,
+                        CanvasObjectKind::Shape { .. } | CanvasObjectKind::Connector(_)
+                    )
+                })
         })
         && ui.input(|input| {
             input.focused
@@ -6704,8 +6720,7 @@ fn show_label_editor_pass(
             ])
         });
     let is_shape = matches!(object.kind, CanvasObjectKind::Shape { .. });
-    let formatting_focus = is_shape
-        && !input_only
+    let formatting_focus = !input_only
         && !minimap_blocks_keyboard
         && (editor_owns_keyboard || toolbar_focused)
         && !view
@@ -6714,8 +6729,7 @@ fn show_label_editor_pass(
             .as_ref()
             .is_some_and(|edit| edit.ime_composing)
         && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::F6));
-    let formatting_shortcuts = if is_shape
-        && editor_owns_keyboard
+    let formatting_shortcuts = if editor_owns_keyboard
         && !minimap_blocks_keyboard
         && !view
             .board_input
@@ -6742,7 +6756,7 @@ fn show_label_editor_pass(
     let zoom = view.zoom;
     let edit = view.board_input.label.as_mut().unwrap();
     let empty = edit.text.is_empty();
-    let use_rich_layout = is_shape && (edit.rich_text.is_some() || label_style.is_some());
+    let use_rich_layout = edit.rich_text.is_some() || label_style.is_some();
     let mut layout_rich = edit.rich_text.clone();
     let mut layout_source = edit.rich_source_text.clone();
     let base = edit
@@ -6916,7 +6930,7 @@ fn show_label_editor_pass(
     let mut toolbar_now_focused = false;
     let mut toolbar_lost_focus = false;
     let mut format_actions = formatting_shortcuts;
-    if !input_only && is_shape {
+    if !input_only {
         let toolbar = show_label_format_toolbar(ui, canvas, rect, &labels, edit);
         toolbar_pointer = ui.input(|input| {
             (input.pointer.any_down()

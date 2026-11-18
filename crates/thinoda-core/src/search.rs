@@ -483,8 +483,10 @@ pub fn replace_in_canvas(
                 let end = text[..range.end].chars().count();
                 (text, rich) = rich.replace_label_range(&text, start..end, replacement)?;
             }
-            if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
-                *label = text;
+            match &mut object.kind {
+                CanvasObjectKind::Shape { label, .. } => *label = text,
+                CanvasObjectKind::Connector(connector) => connector.label = text,
+                CanvasObjectKind::Ink(_) => unreachable!("ink has no label"),
             }
             object.label_rich_text = (!rich.is_empty()).then(|| std::sync::Arc::new(rich));
             count += matches.len();
@@ -863,6 +865,35 @@ mod tests {
         let shape = sheet.canvas.object(id).unwrap();
         assert_eq!(shape.label(), "long 🙂 middle long");
         let run = &shape.label_rich_text.as_ref().unwrap().runs[0];
+        assert_eq!((run.start, run.end), (7, 13));
+        assert_eq!(run.style.bold, Some(true));
+        sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn connector_replacement_preserves_rich_styles_between_matches() {
+        use crate::board::{CanvasConnector, CanvasObject};
+        use crate::{Endpoint, InlineText, Vec2};
+        use std::sync::Arc;
+
+        let mut sheet = Sheet::new("Board", "");
+        let mut object = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        ));
+        object.set_label("x 🙂 middle x").unwrap();
+        let mut rich = InlineText::default();
+        rich.update_range(object.label(), 4..10, |style| style.bold = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        let id = sheet.add_canvas_object(object).unwrap();
+        assert_eq!(
+            replace_in_canvas(&mut sheet, &[id], "x", "long", &SearchOptions::default()).unwrap(),
+            2
+        );
+        let object = sheet.canvas.object(id).unwrap();
+        assert_eq!(object.label(), "long 🙂 middle long");
+        let run = &object.label_rich_text.as_ref().unwrap().runs[0];
         assert_eq!((run.start, run.end), (7, 13));
         assert_eq!(run.style.bold, Some(true));
         sheet.validate().unwrap();

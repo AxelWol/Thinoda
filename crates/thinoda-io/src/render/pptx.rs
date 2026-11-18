@@ -219,11 +219,19 @@ impl Drawing {
         use thinoda_core::rich_text::InlineBaseline;
 
         let id = self.id();
+        let left = if line.align == layout.align {
+            layout.frame.min.x
+        } else {
+            line.rect.min.x
+        };
         let rect = Rect::from_min_size(
-            Vec2::new(layout.frame.min.x, line.rect.min.y),
-            Vec2::new(layout.frame.size.x, line.rect.size.y),
+            Vec2::new(left, line.rect.min.y),
+            Vec2::new(
+                (layout.frame.max().x - left).max(line.rect.size.x),
+                line.rect.size.y,
+            ),
         );
-        let align = match layout.align {
+        let align = match line.align {
             TextAlign::Left => "l",
             TextAlign::Center => "ctr",
             TextAlign::Right => "r",

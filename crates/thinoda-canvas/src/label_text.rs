@@ -112,7 +112,7 @@ pub(crate) fn paint(
                 .iter()
                 .map(|(_, galley, _)| galley.size().x)
                 .sum::<f32>();
-            let mut x = match layout.align {
+            let mut x = match line.align {
                 TextAlign::Left => rect.left(),
                 TextAlign::Center => rect.center().x - width / 2.0,
                 TextAlign::Right => rect.right() - width,
@@ -163,7 +163,7 @@ pub(crate) fn paint(
         let galley = painter.layout_job(job);
         let size = galley.size();
         let rect = xf.rect(line.rect);
-        let x = match layout.align {
+        let x = match line.align {
             TextAlign::Left => rect.left(),
             TextAlign::Center => rect.center().x - size.x / 2.0,
             TextAlign::Right => rect.right() - size.x,
@@ -182,6 +182,49 @@ pub(crate) fn paint(
         }
         painter.add(TextShape::new(origin, galley, color).with_angle(angle));
     }
+}
+
+pub(crate) fn paint_connector(
+    painter: &Painter,
+    layout: &LabelLayout,
+    color: Color32,
+    background: Color32,
+    opacity: f32,
+    xf: Xf,
+) {
+    let style = LabelStyle::default();
+    let mut bounds = xf.rect(layout.block);
+    for line in &layout.lines {
+        let mut runs = Vec::with_capacity(line.runs.len());
+        for run in &line.runs {
+            let size = run_font_size(layout.size, &run.style);
+            let font = FontId::new(
+                crate::measure::render_font_size(size * xf.zoom),
+                crate::measure::font_family(painter.ctx(), run.style.font_family.as_deref()),
+            );
+            let galley = painter.layout_no_wrap(run.text.clone(), font, color);
+            runs.push((run, galley));
+        }
+        let width = runs.iter().map(|(_, galley)| galley.size().x).sum::<f32>();
+        let rect = xf.rect(line.rect);
+        let mut x = match line.align {
+            TextAlign::Left => rect.left(),
+            TextAlign::Center => rect.center().x - width / 2.0,
+            TextAlign::Right => rect.right() - width,
+        };
+        for (run, galley) in runs {
+            let y = xf.rect(line.rect).center().y - galley.size().y / 2.0
+                + run_baseline_shift(layout.size, &run.style) * xf.zoom;
+            bounds = bounds.union(egui::Rect::from_min_size(Pos2::new(x, y), galley.size()));
+            x += galley.size().x;
+        }
+    }
+    painter.rect_filled(
+        bounds.expand2(vec2(4.0, 2.0) * xf.zoom),
+        4.0 * xf.zoom,
+        background,
+    );
+    paint(painter, layout, &style, color, opacity, xf);
 }
 
 #[cfg(test)]
@@ -263,5 +306,56 @@ mod tests {
             };
             assert!((expected.0 - expected.1).abs() < 0.01, "{align:?}");
         }
+    }
+
+    #[test]
+    fn connector_list_items_share_the_same_canvas_left_edge() {
+        let text = "Short\nMuch longer";
+        let rich = InlineText {
+            paragraphs: (0..2)
+                .map(|index| thinoda_core::InlineParagraph {
+                    index,
+                    list: thinoda_core::ListKind::Bulleted,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let layout = thinoda_core::label_style::layout_connector(
+            Vec2::new(200.0, 100.0),
+            text,
+            &rich,
+            false,
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_connector(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &layout,
+                    Color32::BLACK,
+                    Color32::WHITE,
+                    1.0,
+                    Xf {
+                        origin: Pos2::ZERO,
+                        zoom: 1.0,
+                    },
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let lines: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert!((lines[0].pos.x - lines[1].pos.x).abs() < 0.01);
     }
 }

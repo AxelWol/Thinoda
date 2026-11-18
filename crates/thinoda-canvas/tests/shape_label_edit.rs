@@ -72,6 +72,21 @@ fn double_click_shape(h: &mut Harness<'_, State>) {
     assert_eq!(h.state().view.editing_board_object(), Some(h.state().shape));
 }
 
+fn begin_connector_label(h: &mut Harness<'_, State>, label: &str) -> CanvasObjectId {
+    use thinoda_core::{Endpoint, board::CanvasConnector};
+
+    let state = h.state_mut();
+    let mut object = CanvasObject::connector(CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-100.0, -180.0)),
+        Endpoint::Point(Vec2::new(100.0, -180.0)),
+    ));
+    object.set_label(label).unwrap();
+    let id = state.doc.add_canvas_object(object).unwrap();
+    assert!(state.view.begin_board_label(&state.doc, id));
+    h.run_steps(3);
+    id
+}
+
 #[test]
 fn rich_label_toolbar_keeps_the_draft_and_commits_one_undoable_change() {
     let mut h = harness("Formatted label");
@@ -135,6 +150,185 @@ fn rich_label_toolbar_keeps_the_draft_and_commits_one_undoable_change() {
         Some(&rich)
     );
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn primary_connector_label_formats_and_commits_as_one_undoable_change() {
+    let mut h = harness("Shape");
+    let id = begin_connector_label(&mut h, "Connector");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(id));
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "Connector");
+    let rich = rich.unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .label_rich_text
+            .as_deref(),
+        Some(&rich)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .label_rich_text
+            .is_none()
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connector_toolbar_and_batched_input_commit_before_an_outside_click() {
+    let mut h = harness("Shape");
+    let id = begin_connector_label(&mut h, "Connector");
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.key_press(Key::Tab);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Board object label").is_focused());
+
+    let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::B,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::Text("x".into()),
+        egui::Event::PointerMoved(outside),
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    assert_eq!(object.label(), "x");
+    let style = &object.label_rich_text.as_ref().unwrap().runs[0].style;
+    assert_eq!(style.bold, Some(true));
+    assert_eq!(style.italic, Some(true));
+    assert_eq!(h.state().view.editing_board_object(), None);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connector_rich_label_conflict_keeps_the_draft_until_resolved() {
+    let mut h = harness("Shape");
+    let id = begin_connector_label(&mut h, "Connector");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    let mut competing = thinoda_core::InlineText::default();
+    competing
+        .update_range("Connector", 0..9, |style| style.italic = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Concurrent formatting", id, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(competing));
+        })
+        .unwrap();
+    let state = h.state_mut();
+    assert!(
+        state
+            .view
+            .validated_board_rich_label_draft(&state.doc)
+            .is_err()
+    );
+    assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+    assert!(state.view.has_board_label_changes());
+    assert!(state.doc.undo());
+    assert!(state.view.try_commit_board_label(&mut state.doc).unwrap());
+    let rich = state
+        .doc
+        .sheet()
+        .canvas
+        .object(id)
+        .unwrap()
+        .label_rich_text
+        .as_ref()
+        .unwrap();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(rich.runs[0].style.italic, None);
+}
+
+#[test]
+fn connector_ime_commit_precedes_batched_finish_and_outside_click() {
+    for finish in [None, Some(Key::Enter), Some(Key::Escape)] {
+        let mut h = harness("Shape");
+        let id = begin_connector_label(&mut h, "Original");
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "composition".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(2);
+        let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+        h.input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("Composed".into())));
+        if let Some(key) = finish {
+            h.input_mut().events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(3);
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().label(),
+            "Composed",
+            "IME candidate key={finish:?}"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
 }
 
 #[test]

@@ -1467,21 +1467,16 @@ fn styled_label_svg(
     if !decoration.is_empty() {
         attributes.push_str(&format!(" text-decoration=\"{}\"", decoration.join(" ")));
     }
-    let anchor = match layout.align {
-        TextAlign::Left => "start",
-        TextAlign::Center => "middle",
-        TextAlign::Right => "end",
-    };
-    let x = |r: Rect| match layout.align {
-        TextAlign::Left => r.min.x,
-        TextAlign::Center => r.center().x,
-        TextAlign::Right => r.max().x,
-    };
     for line in &layout.lines {
+        let (anchor, x) = match line.align {
+            TextAlign::Left => ("start", line.rect.min.x),
+            TextAlign::Center => ("middle", line.rect.center().x),
+            TextAlign::Right => ("end", line.rect.max().x),
+        };
         if !line.runs.is_empty() {
             out.push_str(&format!(
                 "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\" xml:space=\"preserve\">",
-                x(line.rect),
+                x,
                 line.rect.center().y,
             ));
             let mut previous_shift = 0.0;
@@ -1545,7 +1540,7 @@ fn styled_label_svg(
         }
         out.push_str(&format!(
             "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\" font-family=\"{family}\" font-size=\"{:.2}\"{attributes} fill=\"{}\" xml:space=\"preserve\">{}</text>",
-            x(line.rect),
+            x,
             line.rect.center().y,
             layout.size,
             col(color),

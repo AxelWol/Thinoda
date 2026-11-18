@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 49;
+pub const NATIVE_FORMAT_VERSION: u64 = 50;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -36,10 +36,13 @@ pub const NATIVE_FORMAT_VERSION: u64 = 49;
 /// positioned and multiple connector labels, and 44 object data, and 45
 /// named board layers, and 46 native tables, and 47 shape style effects
 /// (dash, gradient, fill pattern, shadow, glass and flips), and 48 shape
-/// label text styles, and 49 inline shape-label formatting.
+/// label text styles, 49 inline shape-label formatting, and 50 inline
+/// primary connector-label formatting.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_rich_labels() {
+    if book.has_rich_connector_labels() {
+        50
+    } else if book.has_rich_labels() {
         49
     } else if book.has_label_styles() {
         48

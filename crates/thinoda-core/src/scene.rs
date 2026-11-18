@@ -1361,17 +1361,26 @@ fn build_scene_with_collapse<'a>(
             if let Some(item) = object_item(sheet, object, &mut connectors) {
                 if let Some(outline) = ribbons.get(&object.id) {
                     if let Some(bounds) = crate::board::points_bounds(outline) {
-                        let c = match &object.kind {
+                        let display = crate::object_data::with_resolved_placeholders(
+                            &sheet.canvas,
+                            object,
+                            Some(&sheet.title),
+                        );
+                        let c = match &display.kind {
                             CanvasObjectKind::Connector(c) => c,
                             _ => continue,
                         };
                         let mass = flow_values.mass.get(&object.id).copied().unwrap_or(0.0);
                         let anchor =
                             crate::sankey::ribbon_label_anchor(outline).unwrap_or(bounds.center());
-                        let label_bounds = crate::sankey::label_bounds(
-                            anchor,
-                            &crate::sankey::flow_label(c, mass),
-                        );
+                        let text = crate::sankey::flow_label(c, mass);
+                        let mut label_bounds = crate::sankey::label_bounds(anchor, &text);
+                        if let Some(rich) = display.label_rich_text.as_deref() {
+                            let layout =
+                                crate::label_style::layout_connector(anchor, &text, rich, true);
+                            label_bounds =
+                                label_bounds.union(&crate::label_style::connector_bounds(&layout));
+                        }
                         items.push(SceneItem {
                             bounds: bounds.union(&label_bounds),
                             geometry: SceneGeometry::Ribbon {
@@ -1472,6 +1481,14 @@ fn object_item(
             if points.len() < 2 {
                 return None;
             }
+            let display = crate::object_data::with_resolved_placeholders(
+                &sheet.canvas,
+                object,
+                Some(&sheet.title),
+            );
+            let CanvasObjectKind::Connector(display_connector) = &display.kind else {
+                unreachable!("resolving a connector does not change its kind");
+            };
             let mut markers = Box::new([
                 c.start_marker.filter(|_| c.arrow_start).and_then(|marker| {
                     connector_marker_geometry(
@@ -1499,12 +1516,17 @@ fn object_item(
                 color: (c.sankey.is_some() && sheet.sankey.as_ref().is_some_and(|s| s.color_scale))
                     .then(|| crate::sankey::weight_color(0.0)),
                 label_bounds: c.sankey.filter(|f| f.weight.is_none()).map(|_| {
-                    crate::sankey::label_bounds(
-                        crate::board::polyline_midpoint(&points).unwrap_or_default(),
-                        &crate::sankey::flow_label(c, 0.0),
-                    )
+                    let anchor = crate::board::polyline_midpoint(&points).unwrap_or_default();
+                    let text = crate::sankey::flow_label(display_connector, 0.0);
+                    let mut bounds = crate::sankey::label_bounds(anchor, &text);
+                    if let Some(rich) = display.label_rich_text.as_deref() {
+                        let layout =
+                            crate::label_style::layout_connector(anchor, &text, rich, true);
+                        bounds = bounds.union(&crate::label_style::connector_bounds(&layout));
+                    }
+                    bounds
                 }),
-                text_labels: positioned_label_bounds(c, &points),
+                text_labels: positioned_label_bounds(&display, display_connector, &points),
                 markers,
                 jumps: None,
                 body,
@@ -1618,16 +1640,33 @@ pub fn object_clip_at(sheet: &Sheet, object: CanvasObjectId, center: Vec2) -> Op
 
 /// Estimated frames of labels placed away from the default midpoint; the
 /// renderers measure text exactly, so these only widen hit testing and bounds.
-fn positioned_label_bounds(c: &CanvasConnector, points: &[Vec2]) -> Vec<Rect> {
-    if !c.has_positioned_labels() {
-        return Vec::new();
+fn positioned_label_bounds(
+    object: &CanvasObject,
+    c: &CanvasConnector,
+    points: &[Vec2],
+) -> Vec<Rect> {
+    let mut bounds = Vec::new();
+    let unset = c.sankey.is_some_and(|flow| flow.weight.is_none());
+    if !unset
+        && (!c.label.is_empty() || object.has_label_list())
+        && let Some(anchor) = c.primary_label_anchor(points)
+    {
+        if let Some(rich) = object.label_rich_text.as_deref() {
+            let layout = crate::label_style::layout_connector(anchor, &c.label, rich, false);
+            bounds.push(crate::label_style::connector_bounds(&layout));
+        } else if c.label_placement.is_some() {
+            bounds.push(crate::board::approx_connector_label_bounds(
+                anchor, &c.label,
+            ));
+        }
     }
-    let skip_main = c.label_placement.is_none() && !c.label.is_empty();
-    c.label_anchors(points)
-        .into_iter()
-        .skip(usize::from(skip_main))
-        .map(|(text, anchor)| crate::board::approx_connector_label_bounds(anchor, text))
-        .collect()
+    bounds.extend(
+        c.label_anchors(points)
+            .into_iter()
+            .skip(usize::from(!c.label.is_empty()))
+            .map(|(text, anchor)| crate::board::approx_connector_label_bounds(anchor, text)),
+    );
+    bounds
 }
 
 fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {

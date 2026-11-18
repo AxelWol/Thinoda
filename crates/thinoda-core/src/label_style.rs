@@ -244,6 +244,8 @@ pub fn wrap_lines(text: &str, width: f32, size: f32) -> Vec<String> {
 pub struct LabelLine {
     pub text: String,
     pub rect: Rect,
+    /// Alignment within this line's estimated box.
+    pub align: TextAlign,
     /// Positioned runs; empty for the existing whole-label rendering path.
     pub runs: Vec<LabelRun>,
 }
@@ -362,6 +364,32 @@ pub fn layout(object: &CanvasObject, base: Rect, text: &str) -> Option<LabelLayo
     }
 }
 
+/// Lay out a primary connector label around its routed anchor. Sankey labels
+/// wrap at 200 sheet units; ordinary connector labels remain unwrapped.
+pub fn layout_connector(anchor: Vec2, text: &str, rich: &InlineText, wrap: bool) -> LabelLayout {
+    let style = LabelStyle {
+        spacing: 0.0,
+        wrap,
+        ..Default::default()
+    };
+    let frame = Rect::from_center_size(anchor, Vec2::new(200.0, 0.0));
+    let mut layout = layout_rich(&style, frame, 0.0, frame, text, rich);
+    layout.frame = layout.block;
+    layout
+}
+
+/// Conservative connector label bounds for canvas hit testing and export crop.
+pub fn connector_bounds(layout: &LabelLayout) -> Rect {
+    let block = layout.block;
+    Rect::from_center_size(
+        block.center(),
+        Vec2::new(
+            block.size.x * 2.0 + layout.size + 8.0,
+            block.size.y + layout.line_height + 4.0,
+        ),
+    )
+}
+
 /// Layout of `text` in `base` for a shape frame `rect` turned by `rotation`.
 pub fn layout_with(
     style: &LabelStyle,
@@ -424,6 +452,7 @@ pub fn layout_with(
                     Vec2::new(left, top + index as f32 * line_height),
                     Vec2::new(width, line_height),
                 ),
+                align: style.align,
                 runs: Vec::new(),
             }
         })
@@ -518,12 +547,21 @@ fn layout_rich(
     let mut scalar = 0usize;
     let mut run_index = 0usize;
     let mut numbered = 0usize;
+    let mut previous_list = None;
+    let mut list_groups = 0usize;
     for (paragraph_index, paragraph) in text.split('\n').enumerate() {
         let list = rich
             .paragraphs
             .iter()
             .find(|item| item.index as usize == paragraph_index)
             .map(|item| item.list);
+        let group = list.map(|kind| {
+            if previous_list != Some(kind) {
+                list_groups += 1;
+            }
+            list_groups - 1
+        });
+        previous_list = list;
         let prefix = match list {
             Some(ListKind::Bulleted) => {
                 numbered = 0;
@@ -568,7 +606,18 @@ fn layout_rich(
             scalar += 1;
         }
         scalar += 1;
-        lines.extend(rich_lines(&glyphs, layout.frame.size.x, style.wrap, indent));
+        lines.extend(
+            rich_lines(&glyphs, layout.frame.size.x, style.wrap, indent)
+                .into_iter()
+                .map(|line| (line, group)),
+        );
+    }
+    let mut list_widths = vec![0.0_f32; list_groups];
+    for (glyphs, group) in &lines {
+        if let Some(group) = group {
+            let width = glyphs.iter().map(|glyph| glyph.width).sum::<f32>();
+            list_widths[*group] = list_widths[*group].max(width);
+        }
     }
     let max_size = styles
         .iter()
@@ -584,12 +633,13 @@ fn layout_rich(
     layout.lines = lines
         .into_iter()
         .enumerate()
-        .map(|(index, glyphs)| {
+        .map(|(index, (glyphs, group))| {
             let width = glyphs.iter().map(|glyph| glyph.width).sum::<f32>();
+            let aligned_width = group.map_or(width, |group| list_widths[group]);
             let left = match style.align {
                 TextAlign::Left => layout.frame.min.x,
-                TextAlign::Center => layout.frame.center().x - width / 2.0,
-                TextAlign::Right => layout.frame.max().x - width,
+                TextAlign::Center => layout.frame.center().x - aligned_width / 2.0,
+                TextAlign::Right => layout.frame.max().x - aligned_width,
             };
             let y = top + index as f32 * layout.line_height;
             let mut runs: Vec<LabelRun> = Vec::new();
@@ -616,6 +666,11 @@ fn layout_rich(
             LabelLine {
                 text: glyphs.iter().map(|glyph| glyph.ch).collect(),
                 rect: Rect::from_min_size(Vec2::new(left, y), Vec2::new(width, layout.line_height)),
+                align: if group.is_some() {
+                    TextAlign::Left
+                } else {
+                    style.align
+                },
                 runs,
             }
         })
@@ -647,6 +702,74 @@ mod tests {
     }
 
     use crate::board::CanvasObjectKind;
+
+    #[test]
+    fn connector_layout_centers_styles_and_leaves_generated_suffix_plain() {
+        let label = "AB";
+        let text = "AB · 25.000%";
+        let mut rich = InlineText::default();
+        rich.update_range(label, 0..2, |style| {
+            style.bold = Some(true);
+            style.font_size = Some(30.0);
+        })
+        .unwrap();
+        let anchor = Vec2::new(300.0, 150.0);
+        let layout = layout_connector(anchor, text, &rich, true);
+        assert_eq!(layout.block.center(), anchor);
+        assert_eq!(layout.lines[0].runs[0].text, "AB");
+        assert_eq!(layout.lines[0].runs[0].style.bold, Some(true));
+        assert_eq!(layout.lines[0].runs[1].text, " · 25.000%");
+        assert_eq!(layout.lines[0].runs[1].style.bold, None);
+        assert!(connector_bounds(&layout).contains(layout.block.min));
+
+        let rich = InlineText {
+            paragraphs: vec![crate::InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+            ..Default::default()
+        };
+        let empty = layout_connector(anchor, "", &rich, false);
+        assert_eq!(empty.lines[0].text, "• ");
+        assert_eq!(empty.block.center(), anchor);
+    }
+
+    #[test]
+    fn connector_lists_align_items_within_each_centered_list_block() {
+        let text = "one\nlonger item\ncentered\nshort\nnumbered item";
+        let rich = InlineText {
+            paragraphs: vec![
+                crate::InlineParagraph {
+                    index: 0,
+                    list: ListKind::Bulleted,
+                },
+                crate::InlineParagraph {
+                    index: 1,
+                    list: ListKind::Bulleted,
+                },
+                crate::InlineParagraph {
+                    index: 3,
+                    list: ListKind::Numbered,
+                },
+                crate::InlineParagraph {
+                    index: 4,
+                    list: ListKind::Numbered,
+                },
+            ],
+            ..Default::default()
+        };
+        let anchor = Vec2::new(100.0, 50.0);
+        let layout = layout_connector(anchor, text, &rich, false);
+        assert_eq!(layout.lines[0].rect.min.x, layout.lines[1].rect.min.x);
+        assert_eq!(layout.lines[3].rect.min.x, layout.lines[4].rect.min.x);
+        assert_eq!(layout.lines[0].align, TextAlign::Left);
+        assert_eq!(layout.lines[3].align, TextAlign::Left);
+        assert_eq!(layout.lines[2].align, TextAlign::Center);
+        assert!((layout.lines[2].rect.center().x - anchor.x).abs() < 0.01);
+        for line in [&layout.lines[1], &layout.lines[4]] {
+            assert!((line.rect.center().x - anchor.x).abs() < 0.01);
+        }
+    }
 
     #[test]
     fn font_style_bits_round_trip() {

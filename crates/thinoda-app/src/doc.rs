@@ -5,7 +5,7 @@ use thinoda_platform::fs as pfs;
 use web_time::Instant;
 
 use thinoda_canvas::MapView;
-use thinoda_core::{CanvasObjectId, Document, TopicId, Workbook};
+use thinoda_core::{CanvasObjectId, Document, InlineText, TopicId, Workbook};
 pub(crate) use thinoda_io::import_read_limit;
 use thinoda_io::{ExportOptions, Format};
 use thinoda_platform::{
@@ -167,6 +167,19 @@ struct InkSnapshotVersion {
     retry_smooth: bool,
 }
 
+type BoardLabelSnapshot = (CanvasObjectId, String, String, Option<InlineText>);
+
+fn own_board_label_draft(
+    draft: (CanvasObjectId, &str, &str, Option<&InlineText>),
+) -> BoardLabelSnapshot {
+    (
+        draft.0,
+        draft.1.to_owned(),
+        draft.2.to_owned(),
+        draft.3.cloned(),
+    )
+}
+
 /// One open document (a tab).
 pub struct OpenDoc {
     /// App-local chat binding, never serialized into the workbook or recovery.
@@ -201,8 +214,8 @@ pub struct OpenDoc {
     /// After a failed autosave, the next automatic attempt waits until then.
     pub(crate) autosave_retry_at: Option<Instant>,
     snapshot_title: Option<(TopicId, String, String)>,
-    snapshot_board_label: Option<(CanvasObjectId, String, String)>,
-    last_seen_board_label: Option<(CanvasObjectId, String, String)>,
+    snapshot_board_label: Option<BoardLabelSnapshot>,
+    last_seen_board_label: Option<BoardLabelSnapshot>,
     snapshot_saw_ink: bool,
     snapshot_ink_version: Option<InkSnapshotVersion>,
     last_ink_snapshot_attempt: Option<Instant>,
@@ -477,17 +490,22 @@ impl OpenDoc {
     pub fn tick(&mut self) {
         self.snapshot_saw_ink |= self.has_unresolved_ink();
         let s = self.doc.state_id();
-        let board_label = self
-            .view
-            .board_label_draft()
-            .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+        let board_label = self.view.board_rich_label_draft();
+        let last_board_label = self.last_seen_board_label.as_ref().map(|draft| {
+            (
+                draft.0,
+                draft.1.as_str(),
+                draft.2.as_str(),
+                draft.3.as_ref(),
+            )
+        });
         if s != self.last_seen_state
             || self.inspector_edit != self.last_seen_inspector_edit
-            || board_label != self.last_seen_board_label
+            || board_label != last_board_label
         {
             self.last_seen_state = s;
             self.last_seen_inspector_edit = self.inspector_edit.clone();
-            self.last_seen_board_label = board_label;
+            self.last_seen_board_label = board_label.map(own_board_label_draft);
             self.last_change = Instant::now();
         }
     }
@@ -873,8 +891,8 @@ impl OpenDoc {
             .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
         let board_label = self
             .view
-            .board_label_draft()
-            .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+            .board_rich_label_draft()
+            .map(own_board_label_draft);
         let dirty = self.is_dirty();
         if s == self.snapshot_state
             && dirty == self.snapshot_dirty
@@ -1658,6 +1676,78 @@ mod tests {
                 .bold,
             Some(true)
         );
+        drop(orphans);
+        recovery.resume().unwrap();
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn successive_connector_formatting_changes_refresh_recovery_and_idle_time() {
+        use thinoda_core::{CanvasObject, Endpoint, Vec2, board::CanvasConnector};
+
+        let (mut harness, _) = pending_board_label();
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        let id = {
+            let doc = harness.state_mut();
+            let mut object = CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-100.0, -180.0)),
+                Endpoint::Point(Vec2::new(100.0, -180.0)),
+            ));
+            object.set_label("Original").unwrap();
+            let id = doc.doc.add_canvas_object(object).unwrap();
+            doc.doc.mark_saved();
+            assert!(doc.view.begin_board_label(&doc.doc, id));
+            id
+        };
+        harness.run_steps(3);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+        harness.run_steps(2);
+        harness.state_mut().tick();
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = thinoda_platform::Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        harness.state_mut().snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        let first = orphans[0].docs[0].load().unwrap();
+        let style = &first
+            .active()
+            .canvas
+            .object(id)
+            .unwrap()
+            .label_rich_text
+            .as_ref()
+            .unwrap()
+            .runs[0]
+            .style;
+        assert_eq!(style.bold, Some(true));
+        assert_eq!(style.italic, None);
+        drop(orphans);
+        recovery.resume().unwrap();
+
+        harness.state_mut().backdate_change(60);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::I);
+        harness.run_steps(2);
+        harness.state_mut().tick();
+        assert!(harness.state().idle_secs() < 5.0);
+        harness.state_mut().snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        let second = orphans[0].docs[0].load().unwrap();
+        let style = &second
+            .active()
+            .canvas
+            .object(id)
+            .unwrap()
+            .label_rich_text
+            .as_ref()
+            .unwrap()
+            .runs[0]
+            .style;
+        assert_eq!(style.bold, Some(true));
+        assert_eq!(style.italic, Some(true));
         drop(orphans);
         recovery.resume().unwrap();
         recovery.finish().unwrap();

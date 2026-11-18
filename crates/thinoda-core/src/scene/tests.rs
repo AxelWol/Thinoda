@@ -3245,6 +3245,91 @@ fn positioned_connector_labels_are_hit_and_bounded_away_from_the_path() {
 }
 
 #[test]
+fn rich_connector_labels_extend_scene_bounds_and_empty_lists_are_selectable() {
+    use crate::board::ConnectorLabelPlacement;
+    use crate::{InlineParagraph, InlineText, ListKind};
+    use std::sync::Arc;
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label_placement = Some(ConnectorLabelPlacement {
+        along: 0.0,
+        orthogonal: -60.0,
+        offset: Vec2::ZERO,
+    });
+    let mut object = CanvasObject::connector(connector);
+    object.label_rich_text = Some(Arc::new(InlineText {
+        paragraphs: vec![InlineParagraph {
+            index: 0,
+            list: ListKind::Bulleted,
+        }],
+        ..Default::default()
+    }));
+    let id = sheet.add_canvas_object(object).unwrap();
+    let (_, scene) = scene(&sheet);
+    let anchor = Vec2::new(50.0, 60.0);
+    assert_eq!(
+        scene.hit_test_tolerance(anchor, 0.0),
+        Some(SceneHit::Object(id))
+    );
+    assert!(
+        scene
+            .item(SceneId::Object(id))
+            .unwrap()
+            .bounds
+            .contains(anchor)
+    );
+}
+
+#[test]
+fn rich_connector_bounds_include_expanded_placeholder_text() {
+    use crate::InlineText;
+    use crate::board::ConnectorLabelPlacement;
+    use crate::object_data::ObjectData;
+    use std::sync::Arc;
+
+    let mut sheet = Sheet::new("Connector labels", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::ZERO),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label = "%name%".into();
+    connector.label_placement = Some(ConnectorLabelPlacement {
+        orthogonal: -60.0,
+        ..Default::default()
+    });
+    let mut object = CanvasObject::connector(connector);
+    let mut rich = InlineText::default();
+    rich.update_range(object.label(), 0..6, |style| style.font_size = Some(40.0))
+        .unwrap();
+    object.label_rich_text = Some(Arc::new(rich));
+    object.data = Some(Arc::new(ObjectData {
+        placeholders: true,
+        properties: vec![("name".into(), "Expanded connector label".into())],
+        ..Default::default()
+    }));
+    let id = sheet.add_canvas_object(object).unwrap();
+    let (_, scene) = scene(&sheet);
+    let point = Vec2::new(200.0, 60.0);
+    assert!(
+        scene
+            .item(SceneId::Object(id))
+            .unwrap()
+            .bounds
+            .contains(point)
+    );
+    assert_eq!(
+        scene.hit_test_tolerance(point, 0.0),
+        Some(SceneHit::Object(id))
+    );
+}
+
+#[test]
 fn flipped_shapes_mirror_fixed_ports_and_their_perimeter() {
     let rect = Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 50.0));
     let port = ConnectorPort {

@@ -739,6 +739,17 @@ the full table above: other label kinds are not covered, and unsupported source
 HTML is warned about but discarded, not preserved; source preservation remains
 an explicit D10 requirement.
 
+*As implemented in D9 (rich primary connector-label subset):* primary
+connector labels reuse `CanvasObject.label_rich_text`; the routed anchor centers
+the renderer-neutral layout and generated Sankey values remain outside authored
+inline runs. Draft editing, recovery, search, placeholder remapping, the draw.io
+HTML subset, canvas and visual exports use the shared representation. Native
+v50, sheet clipboard v39, board clipboard v43, XMind
+`THINODA-XMIND-RICH-CONNECTOR-LABELS-1`, and recovery
+`THINODA-RECOVERY-RICH-CONNECTOR-LABELS-1` /
+`THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1` gate connector content separately
+from shapes. Extra connector labels and unsupported source HTML remain open.
+
 #### 3.2.3 Connector marker migration (compatibility-critical)
 - Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
   triangles; add optional `start_marker`/`end_marker` fields for exact draw.io

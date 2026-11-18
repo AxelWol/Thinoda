@@ -1918,7 +1918,9 @@ fn paint_canvas_object(
                 mesh.indices = indices.into_iter().map(|i| i as u32).collect();
                 painter.add(Shape::mesh(mesh));
             }
-            if let Some(anchor) = thinoda_core::sankey::ribbon_label_anchor(outline) {
+            if editing_board_object != Some(object.id)
+                && let Some(anchor) = thinoda_core::sankey::ribbon_label_anchor(outline)
+            {
                 let center = xf.pos(anchor);
                 let label = thinoda_core::sankey::flow_label(connector, *mass);
                 let background = sheet_background(sheet, opts.dark);
@@ -1928,15 +1930,29 @@ fn paint_canvas_object(
                     }),
                     object.style.opacity,
                 );
-                let galley =
-                    painter.layout(label, FontId::proportional(12.0 * z), text_color, 200.0 * z);
-                let rect = Rect::from_center_size(center, galley.size() + vec2(8.0, 4.0) * z);
-                painter.rect_filled(
-                    rect,
-                    4.0 * z,
-                    opacity_color(background, object.style.opacity),
-                );
-                painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
+                let backdrop = opacity_color(background, object.style.opacity);
+                if let Some(rich) = object.label_rich_text.as_deref() {
+                    let layout =
+                        thinoda_core::label_style::layout_connector(anchor, &label, rich, true);
+                    crate::label_text::paint_connector(
+                        painter,
+                        &layout,
+                        text_color,
+                        backdrop,
+                        object.style.opacity,
+                        xf,
+                    );
+                } else {
+                    let galley = painter.layout(
+                        label,
+                        FontId::proportional(12.0 * z),
+                        text_color,
+                        200.0 * z,
+                    );
+                    let rect = Rect::from_center_size(center, galley.size() + vec2(8.0, 4.0) * z);
+                    painter.rect_filled(rect, 4.0 * z, backdrop);
+                    painter.galley(rect.min + vec2(4.0, 2.0) * z, galley, text_color);
+                }
             }
         }
         (
@@ -2053,23 +2069,28 @@ fn paint_canvas_object(
                     }
                 }
                 let editing = editing_board_object == Some(object.id);
-                let mut labels: Vec<(String, thinoda_core::Vec2, bool)> = Vec::new();
+                let mut labels: Vec<(String, thinoda_core::Vec2, bool, bool)> = Vec::new();
                 if unset && !editing {
                     labels.push((
                         thinoda_core::sankey::flow_label(connector, 0.0),
                         label_center.expect("a connector path has points"),
                         true,
+                        true,
                     ));
+                } else if !editing
+                    && (!connector.label.is_empty() || object.has_label_list())
+                    && let Some(anchor) = connector.primary_label_anchor(points)
+                {
+                    labels.push((connector.label.clone(), anchor, false, true));
                 }
-                let skip_main = usize::from(!connector.label.is_empty() && (unset || editing));
                 labels.extend(
                     connector
                         .label_anchors(points)
                         .into_iter()
-                        .skip(skip_main)
-                        .map(|(text, anchor)| (text.to_owned(), anchor, false)),
+                        .skip(usize::from(!connector.label.is_empty()))
+                        .map(|(text, anchor)| (text.to_owned(), anchor, false, false)),
                 );
-                for (label, anchor, flow) in labels {
+                for (label, anchor, flow, primary) in labels {
                     let mid = xf.pos(anchor);
                     let font = opts.label_font(z);
                     let text_color = object
@@ -2084,6 +2105,19 @@ fn paint_canvas_object(
                     } else {
                         background
                     };
+                    if primary && let Some(rich) = object.label_rich_text.as_deref() {
+                        let layout =
+                            thinoda_core::label_style::layout_connector(anchor, &label, rich, flow);
+                        crate::label_text::paint_connector(
+                            painter,
+                            &layout,
+                            text_color,
+                            backdrop,
+                            object.style.opacity,
+                            xf,
+                        );
+                        continue;
+                    }
                     let galley = if flow {
                         painter.layout(label, FontId::proportional(12.0 * z), text_color, 200.0 * z)
                     } else {
@@ -2907,6 +2941,182 @@ fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rich_connector_paints_primary_runs_and_keeps_extra_labels_plain() {
+        use thinoda_core::{
+            Endpoint, InlineText,
+            board::{CanvasConnector, ConnectorLabel, ConnectorLabelPlacement},
+        };
+
+        let mut sheet = Sheet::new("Connectors", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(0.0, 0.0)),
+            Endpoint::Point(Vec2::new(200.0, 0.0)),
+        );
+        connector.label = "Rich plain".into();
+        connector.extra_labels.push(ConnectorLabel {
+            text: "Extra".into(),
+            placement: ConnectorLabelPlacement {
+                orthogonal: -60.0,
+                ..Default::default()
+            },
+        });
+        let mut object = CanvasObject::connector(connector);
+        let mut rich = InlineText::default();
+        rich.update_range(object.label(), 0..4, |style| {
+            style.italic = Some(true);
+            style.color = Some(Color::rgb(200, 30, 40));
+        })
+        .unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        sheet.add_canvas_object(object).unwrap();
+        let mut empty = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(0.0, 120.0)),
+            Endpoint::Point(Vec2::new(200.0, 120.0)),
+        ));
+        empty.label_rich_text = Some(Arc::new(InlineText {
+            paragraphs: vec![thinoda_core::InlineParagraph {
+                index: 0,
+                list: thinoda_core::ListKind::Bulleted,
+            }],
+            ..Default::default()
+        }));
+        sheet.add_canvas_object(empty).unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_map(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &sheet,
+                    &layout,
+                    Xf {
+                        origin: pos2(100.0, 100.0),
+                        zoom: 1.0,
+                    },
+                    &PaintOptions::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let text: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        let rich = text
+            .iter()
+            .find(|text| text.galley.job.text == "Rich")
+            .unwrap();
+        assert!(rich.galley.job.sections[0].format.italics);
+        assert_eq!(
+            rich.galley.job.sections[0].format.color,
+            Color32::from_rgb(200, 30, 40)
+        );
+        assert!(text.iter().any(|text| text.galley.job.text == " plain"));
+        let extra = text
+            .iter()
+            .find(|text| text.galley.job.text == "Extra")
+            .unwrap();
+        assert!(!extra.galley.job.sections[0].format.italics);
+        assert!(text.iter().any(|text| text.galley.job.text == "• "));
+    }
+
+    #[test]
+    fn rich_sankey_ribbon_and_unset_labels_paint_prefix_without_styling_value() {
+        use thinoda_core::InlineText;
+
+        let mut sheet = thinoda_core::templates::instantiate("sankey-budget")
+            .active()
+            .clone();
+        let mut ids = Vec::new();
+        for object in &mut sheet.canvas.objects {
+            let CanvasObjectKind::Connector(connector) = &mut object.kind else {
+                continue;
+            };
+            if connector.sankey.is_none() {
+                continue;
+            }
+            let label = if ids.is_empty() { "Ribbon" } else { "Unset" };
+            connector.label = label.into();
+            if !ids.is_empty() {
+                connector.sankey.as_mut().unwrap().weight = None;
+            }
+            let mut rich = InlineText::default();
+            rich.update_range(label, 0..label.len(), |style| style.italic = Some(true))
+                .unwrap();
+            object.label_rich_text = Some(Arc::new(rich));
+            ids.push(object.id);
+            if ids.len() == 2 {
+                break;
+            }
+        }
+        assert_eq!(ids.len(), 2);
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        assert!(matches!(
+            scene.item(SceneId::Object(ids[0])).unwrap().geometry,
+            SceneGeometry::Ribbon { .. }
+        ));
+        assert!(matches!(
+            scene.item(SceneId::Object(ids[1])).unwrap().geometry,
+            SceneGeometry::Polyline { .. }
+        ));
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_map(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &sheet,
+                    &layout,
+                    Xf {
+                        origin: pos2(300.0, 300.0),
+                        zoom: 1.0,
+                    },
+                    &PaintOptions::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let text: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        for label in ["Ribbon", "Unset"] {
+            let run = text
+                .iter()
+                .find(|text| text.galley.job.text == label)
+                .unwrap();
+            assert!(run.galley.job.sections[0].format.italics);
+        }
+        let suffixes: Vec<_> = text
+            .iter()
+            .filter(|text| text.galley.job.text.starts_with(" · "))
+            .collect();
+        assert_eq!(suffixes.len(), 2);
+        assert!(
+            suffixes
+                .iter()
+                .all(|text| !text.galley.job.sections[0].format.italics)
+        );
+    }
 
     #[test]
     fn thumbnail_labels_scale_below_the_interactive_floor() {

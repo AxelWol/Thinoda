@@ -53,6 +53,7 @@ const TABLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-TABLES-1";
 const SHAPE_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-SHAPE-STYLES-1";
 const LABEL_STYLES_SNAPSHOT_VERSION: &str = "THINODA-XMIND-LABEL-STYLES-1";
 const RICH_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-LABELS-1";
+const RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-CONNECTOR-LABELS-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -742,7 +743,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_rich_labels() {
+    if book.has_rich_connector_labels() {
+        Ok(serde_json::to_string(&(
+            RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rich_labels() {
         Ok(serde_json::to_string(&(
             RICH_LABELS_SNAPSHOT_VERSION,
             book,
@@ -948,6 +954,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == SHAPE_STYLES_SNAPSHOT_VERSION
                 || version == LABEL_STYLES_SNAPSHOT_VERSION
                 || version == RICH_LABELS_SNAPSHOT_VERSION
+                || version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
         })
 }
 
@@ -1077,11 +1084,20 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != SHAPE_STYLES_SNAPSHOT_VERSION
             && version != LABEL_STYLES_SNAPSHOT_VERSION
             && version != RICH_LABELS_SNAPSHOT_VERSION
+            && version != RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
-        let rich_labels_envelope = version == RICH_LABELS_SNAPSHOT_VERSION;
+        let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION;
+        if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
+            return Err(IoError::NewerVersion(
+                "rich connector labels require a rich-connector-label-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let rich_labels_envelope =
+            version == RICH_LABELS_SNAPSHOT_VERSION || rich_connector_labels_envelope;
         if workbook.has_rich_labels() != rich_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich labels require a rich-label-aware private XMind snapshot".into(),
@@ -3138,6 +3154,37 @@ mod tests {
                 assert!(read_private_snapshot(&forged).is_err());
             }
         }
+    }
+
+    #[test]
+    fn rich_connector_labels_require_matching_private_snapshot_envelope() {
+        use thinoda_core::board::{CanvasConnector, CanvasObject};
+        use thinoda_core::{Endpoint, Vec2};
+
+        let mut book = Workbook::default();
+        let mut object = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        ));
+        object.set_label("A🙂B").unwrap();
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range(object.label(), 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        for forged in [
+            serde_json::to_string(&book).unwrap(),
+            serde_json::to_string(&(RICH_LABELS_SNAPSHOT_VERSION, &book)).unwrap(),
+            serde_json::to_string(&(RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION, &Workbook::default()))
+                .unwrap(),
+        ] {
+            assert!(read_private_snapshot(&forged).is_err());
+        }
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
     }
 
     #[test]

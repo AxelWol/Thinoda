@@ -2768,6 +2768,23 @@ impl<'a> PageImport<'a> {
         truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings)
     }
 
+    fn rich_label(&mut self, cell: &Cell) -> (String, Option<thinoda_core::InlineText>) {
+        if !cell.style.flag("html") {
+            return (self.label(cell), None);
+        }
+        let (text, rich) = parse_rich_html(&cell.value, self.warnings);
+        let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
+        let rich = rich.filter(|value| {
+            if value.validate(&text).is_err() {
+                self.warnings.insert(ImportWarning::Formatting);
+                false
+            } else {
+                true
+            }
+        });
+        (text, rich)
+    }
+
     fn translated_point(&mut self, origin: Vec2, point: Vec2) -> Option<Vec2> {
         let point = origin + point;
         if valid_board_position(point) {
@@ -3911,22 +3928,11 @@ impl<'a> PageImport<'a> {
         let cells = self.cells;
         let cell = &cells[index];
         let style = &cell.style;
-        let (label, rich_label) =
-            if style.flag("html") && !matches!(kind, Kind::Line | Kind::Card(_) | Kind::Image) {
-                let (text, rich) = parse_rich_html(&cell.value, self.warnings);
-                let text = truncate_chars(text, MAX_BOARD_TEXT_CHARS, self.warnings);
-                let rich = rich.filter(|value| {
-                    if value.validate(&text).is_err() {
-                        self.warnings.insert(ImportWarning::Formatting);
-                        false
-                    } else {
-                        true
-                    }
-                });
-                (text, rich)
-            } else {
-                (self.label(cell), None)
-            };
+        let (label, rich_label) = if !matches!(kind, Kind::Line | Kind::Card(_) | Kind::Image) {
+            self.rich_label(cell)
+        } else {
+            (self.label(cell), None)
+        };
         if style.opacity() < 1.0 && matches!(kind, Kind::Card(_) | Kind::Image)
             || !label.is_empty()
                 && (style.label_opacity_loss()
@@ -4664,7 +4670,7 @@ impl<'a> PageImport<'a> {
         {
             self.warn(ImportWarning::Formatting);
         }
-        let mut label = self.label(cell);
+        let (mut label, mut rich_label) = self.rich_label(cell);
         let label_style_loss = !label.is_empty() && style.label_style_loss(true, false);
         let label_placement = self.edge_label_placement(&cell.geometry);
         let mut extra_labels = Vec::new();
@@ -4696,7 +4702,11 @@ impl<'a> PageImport<'a> {
                 } else {
                     // Absolute children have no edge-relative position; fold them.
                     self.warn(ImportWarning::Formatting);
-                    if !label.is_empty() {
+                    if !label.is_empty()
+                        || rich_label
+                            .as_ref()
+                            .is_some_and(|rich| !rich.paragraphs.is_empty())
+                    {
                         label.push('\n');
                     }
                     label.push_str(&text);
@@ -4728,13 +4738,25 @@ impl<'a> PageImport<'a> {
         connector.line_jumps = style.line_jumps();
         connector.edge_shape = edge_shape;
         connector.label = truncate_chars(label, MAX_BOARD_TEXT_CHARS, self.warnings);
-        if !connector.label.is_empty() {
+        if rich_label
+            .as_ref()
+            .is_some_and(|rich| rich.validate(&connector.label).is_err())
+        {
+            self.warn(ImportWarning::Formatting);
+            rich_label = None;
+        }
+        if !connector.label.is_empty()
+            || rich_label
+                .as_ref()
+                .is_some_and(|rich| !rich.paragraphs.is_empty())
+        {
             connector.label_placement = label_placement;
         }
         connector.extra_labels = extra_labels;
         connector.color = style.color("strokeColor", "strokeOpacity");
         connector.width = style.stroke_width();
         let mut object = CanvasObject::connector(connector);
+        object.label_rich_text = rich_label.map(Arc::new);
         object.style.text_color = style.text_color();
         object.style.opacity = style.opacity();
         object.band = style.band();
@@ -6530,6 +6552,7 @@ impl<'a> PageWriter<'a> {
         ends: [Terminal; 2],
         points: &[Vec2],
         tooltip: &str,
+        rich: Option<&thinoda_core::InlineText>,
     ) {
         let mut terminals = String::new();
         let mut geometry = String::new();
@@ -6576,7 +6599,8 @@ impl<'a> PageWriter<'a> {
             "style=\"{}\" edge=\"1\" parent=\"{parent}\"{terminals}><mxGeometry{position} relative=\"1\" as=\"geometry\">{geometry}</mxGeometry></mxCell>",
             esc(style)
         );
-        let label = esc(&html(label));
+        let label =
+            esc(&rich.map_or_else(|| html(label), |rich| html_rich_label(label, rich, None)));
         let extra = self.take_attributes();
         if tooltip.is_empty() && extra.is_empty() {
             self.out
@@ -7224,9 +7248,10 @@ impl<'a> PageWriter<'a> {
                     }
                 }
                 passthrough_style(&mut style, drawio);
-                self.label_placement = connector
-                    .label_placement
-                    .filter(|_| connector.sankey.is_none() && !connector.label.is_empty());
+                self.label_placement = connector.label_placement.filter(|_| {
+                    connector.sankey.is_none()
+                        && (!connector.label.is_empty() || object.has_label_list())
+                });
                 self.edge(
                     &cell_id,
                     &if connector.sankey.is_some() {
@@ -7243,6 +7268,7 @@ impl<'a> PageWriter<'a> {
                     ends,
                     &connector.waypoints,
                     &object.alt_text,
+                    object.label_rich_text.as_deref(),
                 );
                 self.edge_labels(&cell_id, &connector.extra_labels, object.style.text_color);
             }
@@ -7413,7 +7439,17 @@ impl<'a> PageWriter<'a> {
                 self.topic_terminal(connector.parent, connector.start),
                 self.topic_terminal(connector.child, connector.end),
             ];
-            self.edge(&format!("e{n}"), "", &style, "1", Vec2::ZERO, ends, &[], "");
+            self.edge(
+                &format!("e{n}"),
+                "",
+                &style,
+                "1",
+                Vec2::ZERO,
+                ends,
+                &[],
+                "",
+                None,
+            );
         }
         for id in self.layout.order.clone() {
             let Some(topic) = sheet.topic(id) else {
@@ -7485,6 +7521,7 @@ impl<'a> PageWriter<'a> {
                 ends,
                 &[],
                 "",
+                None,
             );
         }
         for summary in self.layout.summaries.clone() {
@@ -7497,6 +7534,7 @@ impl<'a> PageWriter<'a> {
                 [Terminal::Point(summary.start), Terminal::Point(summary.end)],
                 &[summary.tip],
                 "",
+                None,
             );
         }
     }

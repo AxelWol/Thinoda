@@ -119,6 +119,9 @@ const LABEL_STYLES_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-LABEL-STYLES-1";
 const LABEL_STYLES_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-LABEL-STYLES-1";
 const RICH_LABELS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-RICH-LABELS-1";
 const RICH_LABELS_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-RICH-LABELS-1";
+const RICH_CONNECTOR_LABELS_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-RICH-CONNECTOR-LABELS-1";
+const RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION: &str =
+    "THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -140,7 +143,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_rich_labels() {
+        tuple.serialize_element(if self.workbook.has_rich_connector_labels() {
+            RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rich_labels() {
             RICH_LABELS_INK_WORKBOOK_VERSION
         } else if self.workbook.has_label_styles() {
             LABEL_STYLES_INK_WORKBOOK_VERSION
@@ -282,7 +287,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_rich_labels() {
+    let version = if workbook.has_rich_connector_labels() {
+        RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+    } else if workbook.has_rich_labels() {
         RICH_LABELS_WORKBOOK_VERSION
     } else if workbook.has_label_styles() {
         LABEL_STYLES_WORKBOOK_VERSION
@@ -596,6 +603,8 @@ where
                 && version != LABEL_STYLES_INK_WORKBOOK_VERSION
                 && version != RICH_LABELS_WORKBOOK_VERSION
                 && version != RICH_LABELS_INK_WORKBOOK_VERSION
+                && version != RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+                && version != RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -605,8 +614,16 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+                || version == RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION;
+            if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
+                return Err(A::Error::custom(
+                    "rich connector labels require a rich-connector-label-aware recovery workbook",
+                ));
+            }
             let rich_labels_envelope = version == RICH_LABELS_WORKBOOK_VERSION
-                || version == RICH_LABELS_INK_WORKBOOK_VERSION;
+                || version == RICH_LABELS_INK_WORKBOOK_VERSION
+                || rich_connector_labels_envelope;
             if workbook.has_rich_labels() != rich_labels_envelope {
                 return Err(A::Error::custom(
                     "rich labels require a rich-label-aware recovery workbook",
@@ -3071,6 +3088,54 @@ mod lock_tests {
                 mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
                 assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn rich_connector_labels_require_aware_recovery_with_and_without_pending_ink() {
+        use thinoda_core::board::{CanvasConnector, CanvasObject};
+        use thinoda_core::{Endpoint, Vec2};
+
+        let mut book = Workbook::default();
+        let mut object = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        ));
+        object.set_label("A🙂B").unwrap();
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range(object.label(), 1..2, |style| style.italic = Some(true))
+            .unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                } else {
+                    RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                RICH_LABELS_INK_WORKBOOK_VERSION
+            } else {
+                RICH_LABELS_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut mismatched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            mismatched["workbook"][1] = serde_json::to_value(Workbook::default()).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
         }
     }
 
