@@ -39,6 +39,13 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.27.1](https://github.com/AxelWol/Thinoda/compare/v0.27.0...v0.27.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **ci:** repair fuzz lockfile and retry Apple signing timestamps ([10c4acc](https://github.com/AxelWol/Thinoda/commit/10c4acced80c2ee9598ab062baf7bf652239d325))
+
 ## [0.27.0](https://github.com/AxelWol/Thinoda/compare/v0.26.0...v0.27.0) (2026-11-17)
 
 
