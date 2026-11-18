@@ -1693,7 +1693,7 @@ fn rich_shape_html_imports_and_round_trips_styles_lists_and_newlines() {
 
 #[test]
 fn rich_card_html_imports_and_round_trips_styles_and_lists() {
-    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let markup = "<ul><li><b>A🙂</b></li><li><i>two</i></li></ul>";
     let xml = page(&format!(
         r##"<mxCell id="rich-card" value="{}" style="shape=note;thinodaCard=sticky;html=1;fillColor=#FFFF88;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="160" height="100" as="geometry"/></mxCell>"##,
         esc(markup),
@@ -1713,10 +1713,7 @@ fn rich_card_html_imports_and_round_trips_styles_and_lists() {
     assert_eq!(card.title, "A🙂\ntwo");
     let rich = card.inline_text.clone();
     assert_eq!(rich.runs[0].style.bold, Some(true));
-    assert_eq!(
-        rich.runs[1].style.baseline,
-        Some(thinoda_core::InlineBaseline::Superscript)
-    );
+    assert_eq!(rich.runs[1].style.italic, Some(true));
     assert_eq!(rich.paragraphs.len(), 2);
 
     let losses = export_losses(&book, Format::DrawIo, &ExportOptions::default());
@@ -1735,6 +1732,46 @@ fn rich_card_html_imports_and_round_trips_styles_and_lists() {
         .unwrap();
     assert_eq!(restored.title, card.title);
     assert_eq!(restored.inline_text, rich);
+    book.validate().unwrap();
+}
+
+#[test]
+fn rich_card_baseline_is_warned_and_other_styles_are_preserved() {
+    let markup = "<b>Bold</b> <sup><i>up</i></sup>";
+    let xml = page(&format!(
+        r#"<mxCell id="card" value="{}" style="shape=note;html=1;" vertex="1" parent="1"><mxGeometry width="160" height="100" as="geometry"/></mxCell>"#,
+        esc(markup)
+    ));
+    let report = load(&xml);
+    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    report.workbook.validate().unwrap();
+    let card = report.workbook.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.card.is_some())
+        .unwrap();
+    assert_eq!(card.title, "Bold up");
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .all(|run| run.style.baseline.is_none())
+    );
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .any(|run| run.style.bold == Some(true))
+    );
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .any(|run| run.style.italic == Some(true))
+    );
+    let bytes = export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
+    let restored = crate::import_bytes(Format::Thinoda, &bytes).unwrap();
+    assert_eq!(restored, report.workbook);
 }
 
 #[test]

@@ -1951,15 +1951,16 @@ Implementation contract and remaining work:
    while `Some(false)` explicitly disables a property.
 2. Native format v8 is required only when inline content is present; older
    documents retain their previous version. The importer rejects inline data
-   in pre-v8 archives and legacy unversioned JSON. Non-native export preflight
-   reports inline formatting/list loss. Until rich-aware editing is complete,
-   plain title edits reject affected cards without changing the title or
+   in pre-v8 archives and legacy unversioned JSON. Export preflight reports
+   inline formatting/list loss for unsupported formats. Until rich-aware
+   editing is complete, plain title edits reject affected cards without changing the title or
    formatting. Search/replace now remaps runs and list paragraphs atomically,
    while keeping the existing lock and size guards. Internal clipboard and
    recovery propagation preserve this model with the version and compatibility
-   limits below; canvas rendering and the supported draw.io HTML subset are
-   now available for formatted sticky/text-card titles, while run-level editing
-   and visual export fidelity remain open.
+   limits below; canvas, SVG/PNG/JPEG/PDF rendering and the supported draw.io
+   HTML subset are available for formatted sticky/text-card titles. Baseline
+   overrides are not valid card data: draw.io import warns and drops them.
+   Run-level editing and editable PowerPoint remain open.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,
@@ -1968,14 +1969,14 @@ Implementation contract and remaining work:
    multiple edits. Lists need explicit paragraph semantics rather than merely
    painting a bullet.
 4. Canvas rendering now paints formatted sticky/text-card titles with the
-   shared rich-label layout, including wrapping and list markers; draw.io
-   import/export round-trips the supported inert HTML subset. Measure and
-   render mixed fonts, sizes and decorations consistently in other export
-   paths, including clipping and rotation. Extend export preflight and
+   shared rich-label layout, including wrapping and list markers; SVG and its
+   raster/PDF derivatives use the same layout, and draw.io import/export
+   round-trips the supported inert HTML subset except baseline overrides.
+   Measure and render mixed fonts, sizes and decorations in editable PowerPoint,
+   including clipping and rotation. Extend export preflight and
    clipboard fallbacks so unsupported formatting or list structure is
    reported, not silently discarded. Editable PowerPoint requires real text
-   runs and paragraph properties; SVG-derived PDF and raster output need the
-   same visual layout, not a plain-text substitute.
+   runs and paragraph properties, not a plain-text substitute.
 
 Rubber-duck blockers: egui's existing text undo stores plain text, so rich
 draft undo and IME updates need a coherent edit-operation history rather than
@@ -2015,9 +2016,9 @@ history-memory accounting, and native/export loss gates are production code.
 Egui event/undo integration, empty-commit versus cancellation, grapheme
 behavior, card paragraph-list editing, external rich-text clipboard
 interoperability, cross-format rendering and accessibility are not complete
-production implementations. Canvas painting and the draw.io HTML subset are
-implemented for formatted card titles; other label editors retain their own
-already-shipped rich-text controls.
+production implementations. Canvas and SVG-derived visual painting and the
+supported draw.io HTML subset are implemented for formatted card titles; other
+label editors retain their own already-shipped rich-text controls.
 
 #### Internal clipboard and recovery checkpoint: critique
 

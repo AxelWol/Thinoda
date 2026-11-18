@@ -2365,8 +2365,15 @@ fn inline_card_text_requires_native_v8_and_reports_non_native_loss() {
         export_losses(&wb, Format::PlainText, &ExportOptions::default())
             .contains(&ExportLoss::InlineTextDropped(1))
     );
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        assert!(
+            !export_losses(&wb, format, &ExportOptions::default())
+                .contains(&ExportLoss::InlineTextDropped(1)),
+            "{format:?}"
+        );
+    }
     assert!(
-        export_losses(&wb, Format::Svg, &ExportOptions::default())
+        export_losses(&wb, Format::PowerPoint, &ExportOptions::default())
             .contains(&ExportLoss::InlineTextDropped(1))
     );
 }

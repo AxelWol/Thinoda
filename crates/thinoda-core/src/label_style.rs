@@ -503,7 +503,9 @@ fn rich_lines(glyphs: &[RichGlyph], width: f32, wrap: bool, indent: usize) -> Ve
         let mut used = padding.iter().map(|glyph| glyph.width).sum::<f32>();
         let mut end = start;
         let mut last_space = None;
-        while end < glyphs.len() && (used + glyphs[end].width <= width || end == start) {
+        // Frame coordinates can be large enough for f32 subtraction to lose
+        // fractions of a sheet unit; avoid rewrapping a measured line there.
+        while end < glyphs.len() && (used + glyphs[end].width <= width + 0.25 || end == start) {
             used += glyphs[end].width;
             if glyphs[end].ch.is_whitespace() {
                 last_space = Some(end);
@@ -693,6 +695,21 @@ pub fn layout_rich_in_frame(
     rich: &InlineText,
 ) -> LabelLayout {
     layout_rich(style, frame, 0.0, frame, text, rich)
+}
+
+/// Whole-card typography used as the inheritance base for rich card titles.
+pub fn card_title_style(style: &crate::theme::ResolvedStyle) -> LabelStyle {
+    LabelStyle {
+        font_family: style.font_family.clone(),
+        font_size: Some(style.font_size),
+        bold: style.bold,
+        italic: style.italic,
+        underline: style.underline,
+        strikethrough: style.strikethrough,
+        align: style.align,
+        spacing: 0.0,
+        ..Default::default()
+    }
 }
 
 /// Estimate the wrapped dimensions of rich text without allocating a text renderer.
@@ -934,6 +951,32 @@ mod tests {
                 && run.style.baseline == Some(InlineBaseline::Superscript)
         }));
         assert_eq!(layout.lines.last().unwrap().text, "last");
+    }
+
+    #[test]
+    fn measured_rich_card_lines_do_not_rewrap_at_large_coordinates() {
+        let text = "Bold🙂\nSmall";
+        let mut rich = InlineText {
+            paragraphs: vec![crate::InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+            ..Default::default()
+        };
+        rich.update_range(text, 0..5, |style| style.font_size = Some(24.0))
+            .unwrap();
+        let size = measure_rich_text(text, &rich, 16.0, 192.0);
+        let style = LabelStyle {
+            font_size: Some(16.0),
+            spacing: 0.0,
+            ..Default::default()
+        };
+        for x in [0.0, 260.0, -999_000.0, 999_000.0] {
+            let frame = Rect::from_min_size(Vec2::new(x, 0.0), size);
+            let layout = layout_rich_in_frame(&style, frame, text, &rich);
+            assert_eq!(layout.lines.len(), 2, "{x}: {:?}", layout.lines);
+            assert_eq!(layout.lines[0].text, "• Bold🙂");
+        }
     }
 
     #[test]

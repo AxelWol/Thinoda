@@ -2584,17 +2584,7 @@ fn paint_topic(
     if !editing && let Some(topic) = topic {
         let tr = xf.rect(t.title_rect);
         if !topic.inline_text.is_empty() {
-            let style = thinoda_core::label_style::LabelStyle {
-                font_family: st.font_family.clone(),
-                font_size: Some(st.font_size),
-                bold: st.bold,
-                italic: st.italic,
-                underline: st.underline,
-                strikethrough: st.strikethrough,
-                align: st.align,
-                spacing: 0.0,
-                ..Default::default()
-            };
+            let style = thinoda_core::label_style::card_title_style(st);
             let layout = thinoda_core::label_style::layout_rich_in_frame(
                 &style,
                 t.title_rect,

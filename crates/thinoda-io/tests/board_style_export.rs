@@ -27,6 +27,143 @@ fn slide_xml(bytes: &[u8]) -> String {
 }
 
 #[test]
+fn formatted_card_titles_render_in_visual_exports() {
+    use thinoda_core::{InlineParagraph, ListKind};
+    use thinoda_io::{ExportLoss, export_losses};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    for (index, kind) in [CardKind::Sticky, CardKind::Text].into_iter().enumerate() {
+        let mut card = Card::new(kind, Vec2::new(220.0, 130.0));
+        if kind == CardKind::Sticky {
+            card.rotation = 15.0;
+        }
+        let id = sheet
+            .add_card("Bold🙂\nSmall", Vec2::new(index as f32 * 260.0, 0.0), card)
+            .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic.style.bold = Some(true);
+        topic.inline_text.paragraphs = vec![
+            InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            },
+            InlineParagraph {
+                index: 1,
+                list: ListKind::Numbered,
+            },
+        ];
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..5, |style| {
+                style.bold = Some(false);
+                style.italic = Some(true);
+                style.font_size = Some(24.0);
+                style.color = Some(Color::rgb(200, 30, 40));
+            })
+            .unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 6..11, |style| style.underline = Some(true))
+            .unwrap();
+    }
+    let book = Workbook::new(sheet);
+    book.validate().unwrap();
+    let options = ExportOptions::default();
+    let svg =
+        String::from_utf8(export_bytes_with_consent(&book, Format::Svg, &options, true).unwrap())
+            .unwrap();
+    assert_eq!(svg.matches(">Bold🙂</tspan>").count(), 2, "{svg}");
+    assert_eq!(svg.matches(">• </tspan>").count(), 2);
+    assert_eq!(svg.matches(">1. </tspan>").count(), 2);
+    let end = svg.find(">Bold🙂</tspan>").unwrap();
+    let start = svg[..end].rfind("<tspan ").unwrap();
+    let run = &svg[start..end];
+    assert!(run.contains(r#"font-weight="normal""#), "{run}");
+    assert!(run.contains(r#"font-style="italic""#), "{run}");
+    assert!(run.contains(r#"font-size="24.00""#), "{run}");
+    assert!(run.contains(r##"fill="#C81E28""##), "{run}");
+    assert!(svg.contains("rotate(15.00"));
+    let end = svg.find(">Small</tspan>").unwrap();
+    let start = svg[..end].rfind("<tspan ").unwrap();
+    assert!(svg[start..end].contains(r#"text-decoration="underline""#));
+
+    let mut plain = book.clone();
+    for topic in plain.sheets[0].topics.values_mut() {
+        topic.inline_text = Default::default();
+    }
+    let formatted_png = export_bytes_with_consent(&book, Format::Png, &options, true).unwrap();
+    let plain_png = export_bytes_with_consent(&plain, Format::Png, &options, true).unwrap();
+    assert_ne!(formatted_png, plain_png);
+    let red_pixels = |bytes: &[u8]| {
+        image::load_from_memory(bytes)
+            .unwrap()
+            .to_rgba8()
+            .pixels()
+            .filter(|pixel| pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100 && pixel[3] > 0)
+            .count()
+    };
+    assert!(red_pixels(&formatted_png) > 10);
+    assert_eq!(red_pixels(&plain_png), 0);
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        assert!(
+            !export_losses(&book, format, &options)
+                .iter()
+                .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_))),
+            "{format:?}"
+        );
+        assert!(
+            !export_bytes_with_consent(&book, format, &options, true)
+                .unwrap()
+                .is_empty()
+        );
+    }
+    assert!(
+        export_losses(&book, Format::PowerPoint, &options)
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_)))
+    );
+}
+
+#[test]
+fn formatted_card_overflow_is_inside_the_svg_export_frame() {
+    for rotation in [0.0, 90.0] {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut card = Card::new(CardKind::Text, Vec2::new(120.0, 80.0));
+        card.rotation = rotation;
+        let id = sheet.add_card("A\nB\nC\nD", Vec2::ZERO, card).unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic
+            .inline_text
+            .update_range(&topic.title, 0..7, |style| style.font_size = Some(256.0))
+            .unwrap();
+        let book = Workbook::new(sheet);
+        book.validate().unwrap();
+        let svg = String::from_utf8(
+            export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+        )
+        .unwrap();
+        let view_box = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .map(|part| part.parse::<f32>().unwrap())
+            .collect::<Vec<_>>();
+        let extent = if rotation == 0.0 {
+            view_box[3]
+        } else {
+            view_box[2]
+        };
+        assert!(extent > 1000.0, "{rotation}: {view_box:?}");
+    }
+}
+
+#[test]
 fn styled_board_text_round_trips_and_renders_in_svg_and_powerpoint() {
     let mut sheet = Sheet::new("Board", "Anchor");
     sheet.root_mode = SheetRootMode::Hidden;

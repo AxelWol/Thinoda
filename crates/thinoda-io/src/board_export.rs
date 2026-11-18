@@ -444,7 +444,9 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
         {
             push(ExportLoss::ZoneClipDropped, c.zone_clip);
         }
-        push(ExportLoss::InlineTextDropped, c.inline_text);
+        if format == Format::PowerPoint {
+            push(ExportLoss::InlineTextDropped, c.inline_text);
+        }
     } else {
         push(ExportLoss::ShapesDropped, c.shapes);
         push(ExportLoss::InkDropped, c.ink);
