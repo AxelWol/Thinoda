@@ -82,6 +82,45 @@ fn undo(h: &mut Harness<'_, ThinodaApp>) {
 }
 
 #[test]
+fn rich_label_keyboard_undo_stays_in_the_draft() {
+    let (mut app, id) = app_with_shape();
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Set label", id, |object| {
+            object.set_label("aaa").unwrap();
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    let mut h = harness(app);
+    {
+        let doc = h.state_mut().doc_mut().unwrap();
+        assert!(doc.view.begin_board_label(&doc.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = thinoda_canvas::MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(1),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.event(egui::Event::Text("a".into()));
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let doc = h.state().doc().unwrap();
+    let (_, _, text, restored) = doc.view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(&rich));
+    assert_eq!(doc.doc.sheet().canvas.object(id).unwrap().label(), "aaa");
+}
+
+#[test]
 fn selected_shape_options_overlay_a_stationary_canvas_and_toolbox() {
     for size in [vec2(320.0, 240.0), vec2(1000.0, 700.0)] {
         let (mut app, id) = app_with_shape();

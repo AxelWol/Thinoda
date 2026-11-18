@@ -4,6 +4,7 @@ use egui::{TextBuffer, text::CharIndex};
 use thinoda_core::{
     label_style::LabelStyle,
     rich_text::{InlineBaseline, InlineParagraph, InlineText, InlineTextStyle, ListKind},
+    rich_text_draft::{DraftSelection, RichTextDraft},
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -63,6 +64,135 @@ impl Format {
 pub(super) struct TypingStyle {
     pub position: usize,
     pub style: InlineTextStyle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum HistoryInput {
+    Typing,
+    Ime,
+    Other,
+}
+
+pub(super) struct HistoryEvent {
+    pub input: HistoryInput,
+    pub time: f64,
+    pub ime_composing: bool,
+}
+
+#[derive(Clone, Copy)]
+enum HistoryGroup {
+    Typing { started: f64, last_change: f64 },
+    Ime,
+}
+
+pub(super) struct LabelHistory {
+    draft: RichTextDraft,
+    group: Option<HistoryGroup>,
+}
+
+impl LabelHistory {
+    pub(super) fn new(
+        text: String,
+        rich: InlineText,
+        selection: DraftSelection,
+        typing: Option<InlineTextStyle>,
+    ) -> Result<Self, String> {
+        let mut draft = RichTextDraft::new(text, rich, selection)?;
+        draft.set_typing_style(typing)?;
+        Ok(Self { draft, group: None })
+    }
+
+    pub(super) fn draft(&self) -> &RichTextDraft {
+        &self.draft
+    }
+
+    pub(super) fn set_context(
+        &mut self,
+        selection: DraftSelection,
+        typing: Option<InlineTextStyle>,
+    ) -> Result<(), String> {
+        self.draft.set_selection(selection)?;
+        self.draft.set_typing_style(typing)
+    }
+
+    fn finish_group(&mut self) -> Result<(), String> {
+        if self.group.take().is_some() {
+            self.draft.commit_composition()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn record(
+        &mut self,
+        text: &str,
+        rich: &InlineText,
+        selection: DraftSelection,
+        typing: Option<InlineTextStyle>,
+        event: HistoryEvent,
+    ) -> Result<(), String> {
+        let HistoryEvent {
+            input,
+            time: now,
+            ime_composing,
+        } = event;
+        let changed = self.draft.text() != text || self.draft.formatting() != rich;
+        if changed || self.draft.typing_style() != typing.as_ref() {
+            // Validate before opening a group so rejection cannot disturb history.
+            let mut candidate = RichTextDraft::new(text.to_owned(), rich.clone(), selection)?;
+            candidate.set_typing_style(typing.clone())?;
+        }
+        if matches!(self.group, Some(HistoryGroup::Typing { started, last_change })
+            if now - last_change >= 1.0 || now - started >= 30.0)
+            || matches!(
+                (self.group, input),
+                (Some(HistoryGroup::Typing { .. }), HistoryInput::Ime)
+                    | (Some(HistoryGroup::Ime), HistoryInput::Typing)
+            )
+            || (changed && input == HistoryInput::Other && self.group.is_some())
+        {
+            self.finish_group()?;
+        }
+        if changed {
+            if self.group.is_none() {
+                match input {
+                    HistoryInput::Typing => {
+                        self.draft.begin_composition()?;
+                        self.group = Some(HistoryGroup::Typing {
+                            started: now,
+                            last_change: now,
+                        });
+                    }
+                    HistoryInput::Ime => {
+                        self.draft.begin_composition()?;
+                        self.group = Some(HistoryGroup::Ime);
+                    }
+                    HistoryInput::Other => {}
+                }
+            }
+            self.draft
+                .replace_content(text.to_owned(), rich.clone(), selection)?;
+            if let Some(HistoryGroup::Typing { last_change, .. }) = &mut self.group {
+                *last_change = now;
+            }
+        } else {
+            self.draft.set_selection(selection)?;
+        }
+        self.draft.set_typing_style(typing)?;
+        if matches!(self.group, Some(HistoryGroup::Ime)) && !ime_composing {
+            self.finish_group()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn undo(&mut self) -> Result<bool, String> {
+        self.finish_group()?;
+        self.draft.undo()
+    }
+
+    pub(super) fn redo(&mut self) -> Result<bool, String> {
+        self.finish_group()?;
+        self.draft.redo()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -450,6 +580,153 @@ pub(super) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn label_history_groups_typing_and_composition_without_losing_styles() {
+        let selection = |index| DraftSelection {
+            anchor: index,
+            focus: index,
+        };
+        let mut original = InlineText::default();
+        original
+            .update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        let mut history =
+            LabelHistory::new("aaa".into(), original.clone(), selection(1), None).unwrap();
+        let (text, first) = original.replace_label_range("aaa", 1..1, "a").unwrap();
+        history
+            .record(
+                &text,
+                &first,
+                selection(2),
+                None,
+                HistoryEvent {
+                    input: HistoryInput::Typing,
+                    time: 0.1,
+                    ime_composing: false,
+                },
+            )
+            .unwrap();
+        let (text, second) = first.replace_label_range(&text, 2..2, "a").unwrap();
+        history
+            .record(
+                &text,
+                &second,
+                selection(3),
+                None,
+                HistoryEvent {
+                    input: HistoryInput::Typing,
+                    time: 0.2,
+                    ime_composing: false,
+                },
+            )
+            .unwrap();
+        assert!(history.undo().unwrap());
+        assert_eq!(history.draft().text(), "aaa");
+        assert_eq!(history.draft().formatting(), &original);
+        assert_eq!(history.draft().selection(), selection(1));
+        assert!(history.redo().unwrap());
+        assert_eq!(history.draft().text(), text);
+        assert_eq!(history.draft().formatting(), &second);
+
+        history
+            .record(
+                "preedit",
+                &InlineText::default(),
+                selection(7),
+                None,
+                HistoryEvent {
+                    input: HistoryInput::Ime,
+                    time: 0.3,
+                    ime_composing: true,
+                },
+            )
+            .unwrap();
+        history
+            .record(
+                "commit",
+                &InlineText::default(),
+                selection(6),
+                None,
+                HistoryEvent {
+                    input: HistoryInput::Ime,
+                    time: 0.4,
+                    ime_composing: false,
+                },
+            )
+            .unwrap();
+        assert!(history.undo().unwrap());
+        assert_eq!(history.draft().text(), text);
+        assert_eq!(history.draft().formatting(), &second);
+    }
+
+    #[test]
+    fn label_history_bounds_groups_and_keeps_redo_after_rejection() {
+        let selection = |index| DraftSelection {
+            anchor: index,
+            focus: index,
+        };
+        let plain = InlineText::default();
+        let event = |input, time| HistoryEvent {
+            input,
+            time,
+            ime_composing: false,
+        };
+        let mut history = LabelHistory::new("a".into(), plain.clone(), selection(1), None).unwrap();
+        history
+            .record(
+                "ab",
+                &plain,
+                selection(2),
+                None,
+                event(HistoryInput::Typing, 0.1),
+            )
+            .unwrap();
+        history
+            .record(
+                "ab",
+                &plain,
+                selection(2),
+                None,
+                event(HistoryInput::Other, 1.2),
+            )
+            .unwrap();
+        history
+            .record(
+                "abc",
+                &plain,
+                selection(3),
+                None,
+                event(HistoryInput::Typing, 1.3),
+            )
+            .unwrap();
+        assert!(history.undo().unwrap());
+        assert_eq!(history.draft().text(), "ab");
+        assert!(
+            history
+                .record(
+                    &"x".repeat(thinoda_core::MAX_INLINE_TEXT_CHARS + 1),
+                    &plain,
+                    selection(0),
+                    None,
+                    event(HistoryInput::Typing, 1.4),
+                )
+                .is_err()
+        );
+        assert!(history.redo().unwrap());
+        assert_eq!(history.draft().text(), "abc");
+        assert!(history.undo().unwrap());
+        history
+            .record(
+                "abd",
+                &plain,
+                selection(3),
+                None,
+                event(HistoryInput::Typing, 1.5),
+            )
+            .unwrap();
+        assert!(!history.redo().unwrap());
+    }
 
     #[test]
     fn tracked_insertions_preserve_pending_grapheme_style_and_reject_other_traces() {

@@ -331,6 +331,8 @@ pub(super) struct LabelEdit {
     original_label_style: Option<std::sync::Arc<thinoda_core::label_style::LabelStyle>>,
     selection: Option<std::ops::Range<usize>>,
     typing_style: Option<label_format::TypingStyle>,
+    history: Option<label_format::LabelHistory>,
+    history_plain_fallback: bool,
     rich_reconciliation_error: Option<String>,
     toolbar_page: LabelToolbarPage,
     family_filter: String,
@@ -348,6 +350,57 @@ pub(super) struct LabelEdit {
     /// Started by typing: the draft holds the typed text and the caret must follow it.
     seeded: bool,
     ime_composing: bool,
+}
+
+fn label_history_selection(
+    ctx: &egui::Context,
+    edit_id: Id,
+    edit: &LabelEdit,
+) -> thinoda_core::rich_text_draft::DraftSelection {
+    let range = TextEdit::load_state(ctx, edit_id).and_then(|state| state.cursor.char_range());
+    if let Some(range) = range {
+        let end = edit.text.chars().count();
+        thinoda_core::rich_text_draft::DraftSelection {
+            anchor: range.secondary.index.0.min(end),
+            focus: range.primary.index.0.min(end),
+        }
+    } else {
+        let end = edit.text.chars().count();
+        thinoda_core::rich_text_draft::DraftSelection {
+            anchor: end,
+            focus: end,
+        }
+    }
+}
+
+fn restore_label_history(ctx: &egui::Context, edit_id: Id, edit: &mut LabelEdit) {
+    let Some(history) = &edit.history else {
+        return;
+    };
+    let draft = history.draft();
+    let selection = draft.selection();
+    edit.text = draft.text().to_owned();
+    edit.rich_source_text.clone_from(&edit.text);
+    edit.rich_text = (!draft.formatting().is_empty()).then(|| draft.formatting().clone());
+    edit.typing_style = draft
+        .typing_style()
+        .cloned()
+        .map(|style| label_format::TypingStyle {
+            position: selection.focus,
+            style,
+        });
+    edit.rich_reconciliation_error = None;
+    edit.selection =
+        Some(selection.anchor.min(selection.focus)..selection.anchor.max(selection.focus));
+    let mut state = TextEdit::load_state(ctx, edit_id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(selection.focus),
+            egui::text::CCursor::new(selection.anchor),
+        )));
+    state.store(ctx, edit_id);
+    ctx.request_repaint();
 }
 
 impl MapView {
@@ -684,6 +737,8 @@ fn begin_label_at(
         original_label_style: object.label_style.clone(),
         selection: None,
         typing_style: None,
+        history: None,
+        history_plain_fallback: false,
         rich_reconciliation_error: None,
         toolbar_page: LabelToolbarPage::Formatting,
         family_filter: String::new(),
@@ -7348,39 +7403,40 @@ pub(super) fn show_label_editor(
             return;
         }
     }
-    let split_shortcuts =
-        !minimap_blocks_keyboard
-            && ui.memory(|memory| memory.has_focus(edit_id))
-            && view.board_input.label.as_ref().is_some_and(|edit| {
-                !edit.ime_composing
-                    && doc.sheet().canvas.object(edit.id).is_some_and(|object| {
-                        matches!(
-                            object.kind,
-                            CanvasObjectKind::Shape { .. } | CanvasObjectKind::Connector(_)
-                        )
-                    })
-            })
-            && ui.input(|input| {
-                input.focused
-                    && (view.board_input.label.as_ref().is_some_and(|edit| {
-                        edit.typing_style.is_some() || edit.rich_text.is_some()
-                    }) || input
-                        .events
-                        .iter()
-                        .any(|event| label_format_shortcut(event).is_some()))
-                    && input
-                        .events
-                        .iter()
-                        .filter(|event| label_keyboard_event(event))
-                        .count()
-                        > 1
-                    && !input.events.iter().any(|event| {
-                        matches!(
-                            event,
-                            egui::Event::PointerButton { .. } | egui::Event::Ime(_)
-                        ) || plain_key_press(event, Key::F6)
-                    })
-            });
+    let split_shortcuts = !minimap_blocks_keyboard
+        && ui.memory(|memory| memory.has_focus(edit_id))
+        && view.board_input.label.as_ref().is_some_and(|edit| {
+            !edit.ime_composing
+                && doc.sheet().canvas.object(edit.id).is_some_and(|object| {
+                    matches!(
+                        object.kind,
+                        CanvasObjectKind::Shape { .. } | CanvasObjectKind::Connector(_)
+                    )
+                })
+        })
+        && ui.input(|input| {
+            input.focused
+                && (view.board_input.label.as_ref().is_some_and(|edit| {
+                    edit.typing_style.is_some()
+                        || edit.rich_text.is_some()
+                        || edit.history.is_some()
+                }) || input
+                    .events
+                    .iter()
+                    .any(|event| label_format_shortcut(event).is_some()))
+                && input
+                    .events
+                    .iter()
+                    .filter(|event| label_keyboard_event(event))
+                    .count()
+                    > 1
+                && !input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::PointerButton { .. } | egui::Event::Ime(_)
+                    ) || plain_key_press(event, Key::F6)
+                })
+        });
     if split_shortcuts {
         // Keep ordered keyboard events separate so each edit has its own range.
         let (events, pointer) = ui.input_mut(|input| {
@@ -7503,6 +7559,100 @@ fn show_label_editor_pass(
         && let Some(edit) = &mut view.board_input.label
     {
         protect_ime_candidate_keys(ui.ctx(), edit_id, &mut edit.ime_composing);
+    }
+    let history_input = ui.input(|input| {
+        if input
+            .events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Ime(_)))
+        {
+            label_format::HistoryInput::Ime
+        } else if input.events.iter().any(|event| match event {
+            egui::Event::Text(_) | egui::Event::Paste(_) | egui::Event::Cut => true,
+            egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => {
+                matches!(key, Key::Backspace | Key::Delete)
+                    || (*key == Key::Enter && modifiers.matches_exact(Modifiers::SHIFT))
+            }
+            _ => false,
+        }) {
+            label_format::HistoryInput::Typing
+        } else {
+            label_format::HistoryInput::Other
+        }
+    });
+    if let Some(edit) = &mut view.board_input.label {
+        let selection = label_history_selection(ui.ctx(), edit_id, edit);
+        let typing = edit
+            .typing_style
+            .as_ref()
+            .map(|typing| typing.style.clone());
+        if edit.history.is_none()
+            && !edit.history_plain_fallback
+            && edit.rich_reconciliation_error.is_none()
+            && edit.rich_source_text == edit.text
+            && edit.text.chars().count() <= thinoda_core::MAX_INLINE_TEXT_CHARS
+        {
+            match label_format::LabelHistory::new(
+                edit.text.clone(),
+                edit.rich_text.clone().unwrap_or_default(),
+                selection,
+                typing.clone(),
+            ) {
+                Ok(history) => edit.history = Some(history),
+                Err(error) => *edit_error = Some(EditError::Invalid(error)),
+            }
+        }
+        if let Some(history) = &mut edit.history {
+            let synchronized = history.draft().text() == edit.text
+                && edit.rich_reconciliation_error.is_none()
+                && edit.rich_source_text == edit.text
+                && edit.rich_text.as_ref().map_or_else(
+                    || history.draft().formatting().is_empty(),
+                    |rich| rich == history.draft().formatting(),
+                );
+            if synchronized && let Err(error) = history.set_context(selection, typing) {
+                *edit_error = Some(EditError::Invalid(error));
+            }
+            let undo = if editor_owns_keyboard && !minimap_blocks_keyboard {
+                ui.input_mut(|input| {
+                    if input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+                        || input.consume_key(Modifiers::COMMAND, Key::Y)
+                    {
+                        Some(true)
+                    } else if input.consume_key(Modifiers::COMMAND, Key::Z) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            if let Some(redo) = undo {
+                let result =
+                    if edit.ime_composing || history_input == label_format::HistoryInput::Ime {
+                        Err("cannot undo or redo during rich-text composition".into())
+                    } else if !synchronized && redo {
+                        Err("resolve the invalid rich-text edit before redo".into())
+                    } else if !synchronized {
+                        Ok(true)
+                    } else if redo {
+                        history.redo()
+                    } else {
+                        history.undo()
+                    };
+                match result {
+                    Ok(true) => restore_label_history(ui.ctx(), edit_id, edit),
+                    Ok(false) => {}
+                    Err(error) => *edit_error = Some(EditError::Invalid(error)),
+                }
+            }
+        }
     }
     let family_filter_id = MapCanvas::id().with("board-label-family-filter");
     let toolbar_value_id = MapCanvas::id().with("board-label-toolbar-value");
@@ -8033,7 +8183,14 @@ fn show_label_editor_pass(
                 .is_some_and(|id| edit.toolbar_buttons.contains(&id))
         });
     }
-    if !format_actions.is_empty() {
+    if edit.history_plain_fallback && !format_actions.is_empty() {
+        format_actions.clear();
+        *edit_error = Some(EditError::Invalid(
+            "finish and reopen this label before applying formatting; its plain-text undo history is active".into(),
+        ));
+    }
+    let formatting_changed = !format_actions.is_empty();
+    if formatting_changed {
         let selection = edit
             .selection
             .clone()
@@ -8134,6 +8291,42 @@ fn show_label_editor_pass(
         }
         ui.ctx().request_repaint();
         toolbar_now_focused = false;
+    }
+    if edit.rich_reconciliation_error.is_none() && edit.rich_source_text == edit.text {
+        if edit.rich_text.is_none()
+            && edit.typing_style.is_none()
+            && edit.text.chars().count() > thinoda_core::MAX_INLINE_TEXT_CHARS
+        {
+            edit.history = None;
+            edit.history_plain_fallback = true;
+        } else {
+            let selection = label_history_selection(ui.ctx(), edit_id, edit);
+            if let Some(history) = &mut edit.history {
+                let input = if formatting_changed {
+                    label_format::HistoryInput::Other
+                } else {
+                    history_input
+                };
+                let time = ui.input(|input| input.time);
+                let default_rich = InlineText::default();
+                if let Err(error) = history.record(
+                    &edit.text,
+                    edit.rich_text.as_ref().unwrap_or(&default_rich),
+                    selection,
+                    edit.typing_style
+                        .as_ref()
+                        .map(|typing| typing.style.clone()),
+                    label_format::HistoryEvent {
+                        input,
+                        time,
+                        ime_composing: edit.ime_composing,
+                    },
+                ) {
+                    edit.rich_reconciliation_error = Some(error.clone());
+                    *edit_error = Some(EditError::Invalid(error));
+                }
+            }
+        }
     }
     if commit {
         match view.try_commit_board_label(doc) {

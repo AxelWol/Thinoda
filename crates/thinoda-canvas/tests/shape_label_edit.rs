@@ -153,6 +153,33 @@ fn set_label_selection(h: &mut Harness<'_, State>, start: usize, end: usize) {
 }
 
 #[test]
+fn selected_formatting_has_local_rich_undo_and_directional_redo() {
+    let mut h = harness("abcd");
+    double_click_shape(&mut h);
+    set_label_selection(&mut h, 3, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    let rich = h.state().view.board_rich_label_draft().unwrap().3.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 3));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert!(h.state().view.board_rich_label_draft().unwrap().3.is_none());
+    let cursor = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+        .unwrap()
+        .cursor
+        .char_range()
+        .unwrap();
+    assert_eq!((cursor.primary.index.0, cursor.secondary.index.0), (3, 1));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    let rich = h.state().view.board_rich_label_draft().unwrap().3.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 3));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn repeated_input_and_deletion_preserve_extra_connector_label_formatting() {
     let mut h = harness("Shape");
     let id = add_positioned_connector(&mut h);
@@ -176,6 +203,13 @@ fn repeated_input_and_deletion_preserve_extra_connector_label_formatting() {
     h.run_steps(3);
     set_label_cursor(&mut h, 1);
     h.event(egui::Event::Text("a".into()));
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, _, text, restored) = h.state().view.board_rich_label_draft().unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(&rich));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
     h.run_steps(2);
     h.key_press(Key::Enter);
     h.run_steps(3);
@@ -412,6 +446,137 @@ fn caret_formatting_expands_new_combining_graphemes() {
     assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
     assert_eq!(rich.runs[0].style.bold, Some(true));
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn plain_label_processes_text_and_undo_in_event_order() {
+    let mut h = harness("a");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.event(egui::Event::Text("b".into()));
+    h.event(egui::Event::Key {
+        key: Key::Z,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    });
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn long_plain_label_keeps_egui_undo_when_it_becomes_short() {
+    let original = "a".repeat(thinoda_core::MAX_INLINE_TEXT_CHARS);
+    let mut h = harness(&original);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, original.len());
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(70);
+    set_label_selection(&mut h, 0, original.len() + 1);
+    h.event(egui::Event::Text("b".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "b");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        format!("{original}x")
+    );
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "b");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        format!("{original}x")
+    );
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    set_label_selection(&mut h, 0, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .view
+            .board_label_draft()
+            .unwrap()
+            .2
+            .chars()
+            .count(),
+        original.len() + 1
+    );
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run_steps(2);
+    set_label_selection(&mut h, 0, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    assert!(h.state().view.board_rich_label_draft().unwrap().3.is_none());
+    assert!(
+        h.state().errors.iter().any(|error| error
+            .to_string()
+            .contains("plain-text undo history is active")),
+        "{:?}",
+        h.state().errors
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .view
+            .board_label_draft()
+            .unwrap()
+            .2
+            .chars()
+            .count(),
+        original.len() + 1
+    );
+}
+
+#[test]
+fn local_undo_recovers_a_rejected_rich_label_insertion() {
+    let original = "a".repeat(thinoda_core::MAX_INLINE_TEXT_CHARS);
+    let mut h = harness(&original);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, original.len());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .is_err()
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, original);
+    assert!(rich.is_none());
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    h.event(egui::Event::Text("b".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert!(text.ends_with('b'));
+    assert_eq!(rich.unwrap().runs[0].style.bold, Some(true));
 }
 
 #[test]

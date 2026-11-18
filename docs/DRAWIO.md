@@ -264,7 +264,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Preserve remaining rich-label formatting when an eligible cut deletes selected text
   - [x] Preserve rich runs and list paragraphs for an eligible Shift+Enter line break at the actual selection
   - [x] Process pointer-free, non-IME rich-label keyboard batches in event order
-  - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches and rich undo
+  - [x] Add bounded draft-local keyboard undo/redo for shape and connector text, formatting and synthetic IME composition
+  - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -882,6 +883,18 @@ Duck check: this model alone does not establish correct egui input,
 grapheme boundaries, per-event batching, normalization of egui's oversized
 surrounding-deletion ranges, composition detection, conflict checking or
 recovery. It is deliberately not yet wired to the title editor.
+
+**D9 local label history (partial).** Shape, primary and extra connector label
+editors now keep bounded text-and-format snapshots, directional selections and
+caret styles for keyboard undo/redo. Typing is grouped, synthetic IME updates
+are grouped through commit, and undo is blocked during an active composition.
+Invalid rich input can be undone to the last valid snapshot. A plain draft
+exceeding the rich-text limit retains egui's plain history even after becoming
+short; formatting is explicitly unavailable until that draft is finished and
+reopened, rather than silently discarding that history.
+Duck check: this is not full ordered editing or physical IME acceptance.
+Pointer/IME batches and other unsupported reconciliation paths remain open;
+the bounded history evicts old states and is not connected to card editing.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,

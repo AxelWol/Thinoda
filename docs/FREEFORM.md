@@ -2022,10 +2022,10 @@ text or paste event, Shift+Enter, Backspace, Delete or cut, preserving
 formatting at the actual position and for selected replacements or deletions.
 Pointer-free, non-IME rich-label keyboard batches are now processed one event
 at a time, allowing eligible same-frame insertions and deletions to retain
-their ranges. Pointer/IME batches and whole-string undo can still use the
-earlier reconciliation and misplace formatting. This partial fix is not a safe
-card editor: the complete replacement must retain ordered operation positions
-and handle empty deletions, rich undo, input limits and IME transactions.
+their ranges. Pointer/IME batches can still use the earlier reconciliation and
+misplace formatting. This partial fix is not a safe card editor: the complete
+replacement must retain ordered operation positions and handle empty deletions,
+input limits and IME transactions.
 
 Duck check: the single-insertion path accepts only one text or paste event,
 without IME, cut, deletion, finish keys or competing command shortcuts. It
@@ -2052,14 +2052,23 @@ Duck check: keyboard batching reuses the existing invisible per-event editor
 passes and stops when the edit closes. Synthetic repeated insertions and a
 delete-then-insert sequence retain formatting and commit with an Enter in the
 same frame. Pointer events, IME and F6 deliberately bypass batching; real input
-devices, frame-level rejection and rich undo remain separate acceptance gates.
+devices and frame-level rejection remain separate acceptance gates.
 
 Duck check: an eligible Shift+Enter uses the actual insertion or selected
 replacement range. Synthetic shape and connector cases cover repeated newlines,
 list paragraph inheritance and document undo; IME and mixed pointer input are
-not covered by this path. Separately, a synthetic editor check reproduced the
-remaining local-undo bug: after inserting a repeated character, egui restores
-the old text but leaves the rich run at its shifted position.
+not covered by this path.
+
+Duck check: label-local keyboard history stores bounded rich snapshots instead
+of using egui's plain-string undo. It retains directional selections and caret
+styles, groups typing and synthetic composition, restores the last valid
+snapshot on undo after a rejected rich edit, and refuses undo/redo during active
+composition. Shape and both connector-label kinds have synthetic coverage; the
+app's document undo stays separate until the draft is committed. A plain draft
+that exceeds the rich-text limit remains on egui's plain history even after
+shrinking; formatting reports that the label must be finished and reopened,
+avoiding a silent history reset. Physical IME, mixed pointer/IME event ordering,
+platform clipboard behavior and rich-card editing remain unverified.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,

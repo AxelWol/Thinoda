@@ -166,13 +166,39 @@ impl RichTextDraft {
         }
         selection.validate(&candidate.text)?;
         candidate.selection = selection;
+        Ok(self.commit_candidate(candidate))
+    }
+
+    /// Replace the complete draft content as one validated history transaction.
+    pub fn replace_content(
+        &mut self,
+        text: String,
+        formatting: InlineText,
+        selection: DraftSelection,
+    ) -> Result<bool, String> {
+        if text.chars().count() > MAX_INLINE_TEXT_CHARS {
+            return Err(format!(
+                "rich-text draft exceeds {MAX_INLINE_TEXT_CHARS} characters"
+            ));
+        }
+        formatting.validate(&text)?;
+        selection.validate(&text)?;
+        Ok(self.commit_candidate(DraftState {
+            text,
+            formatting,
+            selection,
+            typing_style: self.state.typing_style.clone(),
+        }))
+    }
+
+    fn commit_candidate(&mut self, candidate: DraftState) -> bool {
         let changed = !candidate.same_content(&self.state);
         if changed && self.composition.is_none() {
             push_history(&mut self.undo, self.state.clone());
             self.redo.clear();
         }
         self.state = candidate;
-        Ok(changed)
+        changed
     }
 
     /// Group successive IME updates into one undo entry until commit.
@@ -286,6 +312,39 @@ mod tests {
         assert!(draft.redo().unwrap());
         assert_eq!(draft.formatting().runs[0].style, italic);
         assert_eq!(draft.selection(), selection(2, 2));
+    }
+
+    #[test]
+    fn whole_content_replacement_is_atomic_and_undoable_without_intermediate_list_styles() {
+        let rich = InlineText {
+            paragraphs: vec![InlineParagraph {
+                index: 0,
+                list: ListKind::Bulleted,
+            }],
+            ..Default::default()
+        };
+        let mut draft = RichTextDraft::new("x".into(), rich.clone(), selection(1, 0)).unwrap();
+        let new_text = "\n".repeat(1_025);
+        assert!(
+            draft
+                .replace_content(new_text.clone(), InlineText::default(), selection(1_025, 0))
+                .unwrap()
+        );
+        assert_eq!(draft.text(), new_text);
+        assert!(draft.undo().unwrap());
+        assert_eq!(draft.text(), "x");
+        assert_eq!(draft.formatting(), &rich);
+        assert_eq!(draft.selection(), selection(1, 0));
+        assert!(draft.redo().unwrap());
+        assert_eq!(draft.selection(), selection(1_025, 0));
+
+        assert!(
+            draft
+                .replace_content("bad".into(), rich, selection(4, 0))
+                .is_err()
+        );
+        assert_eq!(draft.text(), new_text);
+        assert_eq!(draft.selection(), selection(1_025, 0));
     }
 
     #[test]
