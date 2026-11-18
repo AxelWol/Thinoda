@@ -1394,6 +1394,38 @@ pub(crate) fn font_selector(
     font_choice(ui, fonts, value, default_label, true, None)
 }
 
+fn sheet_font_families(sheet: &thinoda_core::Sheet) -> impl Iterator<Item = &String> {
+    sheet
+        .theme
+        .fonts()
+        .chain(
+            sheet
+                .topics
+                .values()
+                .filter_map(|topic| topic.style.font_family.as_ref()),
+        )
+        .chain(sheet.topics.values().flat_map(|topic| {
+            topic
+                .inline_text
+                .runs
+                .iter()
+                .filter_map(|run| run.style.font_family.as_ref())
+        }))
+        .chain(sheet.canvas.objects.iter().filter_map(|object| {
+            object
+                .label_style
+                .as_deref()
+                .and_then(|style| style.font_family.as_ref())
+        }))
+        .chain(sheet.canvas.objects.iter().flat_map(|object| {
+            object
+                .label_rich_text
+                .iter()
+                .flat_map(|rich| rich.runs.iter())
+                .filter_map(|run| run.style.font_family.as_ref())
+        }))
+}
+
 fn font_choice(
     ui: &mut Ui,
     fonts: &mut thinoda_ui::fonts::SystemFonts,
@@ -1956,14 +1988,7 @@ impl ThinodaApp {
                 self.doc()
                     .into_iter()
                     .flat_map(|doc| doc.doc.workbook().sheets.iter())
-                    .flat_map(|sheet| {
-                        sheet.theme.fonts().chain(
-                            sheet
-                                .topics
-                                .values()
-                                .filter_map(|topic| topic.style.font_family.as_ref()),
-                        )
-                    })
+                    .flat_map(sheet_font_families)
                     .chain(
                         self.settings
                             .quick_styles
@@ -8549,3 +8574,110 @@ fn track_inspector_edit(
 #[cfg(test)]
 #[path = "card_text_tests.rs"]
 mod card_text_tests;
+
+#[cfg(test)]
+mod font_family_tests {
+    use super::*;
+    use egui_kittest::Harness;
+    use std::{collections::BTreeSet, sync::Arc};
+    use thinoda_core::{
+        CanvasObject, CanvasObjectKind, Card, CardKind, InlineText, Rect, ShapeKind, Sheet,
+        SheetRootMode, Vec2, Workbook, label_style::LabelStyle,
+    };
+
+    fn sheet_with_label_fonts(whole: &str, inline: &str) -> Sheet {
+        let mut sheet = Sheet::new("Fonts", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+            *label = "Font test".into();
+        }
+        object.label_style = Some(Arc::new(LabelStyle {
+            font_family: Some(whole.into()),
+            ..Default::default()
+        }));
+        let mut rich = InlineText::default();
+        rich.update_range("Font test", 0..4, |style| {
+            style.font_family = Some(inline.into())
+        })
+        .unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        sheet.add_canvas_object(object).unwrap();
+        sheet
+    }
+
+    #[test]
+    fn document_font_collection_includes_shape_and_inline_families() {
+        let mut sheet = sheet_with_label_fonts("Whole family", "Inline family");
+        let card = sheet
+            .add_card(
+                "Card",
+                Vec2::new(200.0, 0.0),
+                Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .inline_text
+            .update_range("Card", 0..4, |style| {
+                style.font_family = Some("Card run family".into())
+            })
+            .unwrap();
+        let families: BTreeSet<_> = sheet_font_families(&sheet).map(String::as_str).collect();
+        assert!(families.contains("Whole family"));
+        assert!(families.contains("Inline family"));
+        assert!(families.contains("Card run family"));
+    }
+
+    #[test]
+    fn installed_shape_label_families_are_registered_for_canvas_rendering() {
+        let mut app = ThinodaApp::headless();
+        let names: Vec<_> = app.fonts.names().iter().take(2).cloned().collect();
+        let Some(first) = names.first() else {
+            return;
+        };
+        let second = names.get(1).unwrap_or(first);
+        app.new_doc(Workbook::new(sheet_with_label_fonts(first, second)));
+        let mut harness = Harness::new_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(4);
+        harness.ctx.fonts(|fonts| {
+            for name in &names {
+                assert!(
+                    fonts
+                        .definitions()
+                        .families
+                        .contains_key(&egui::FontFamily::Name(name.as_str().into())),
+                    "shape label family {name:?} was not registered"
+                );
+            }
+        });
+        fn paints_family(shape: &egui::Shape, text: &str, family: &str) -> bool {
+            match shape {
+                egui::Shape::Text(shape) => {
+                    shape.galley.job.text == text
+                        && shape.galley.job.sections.iter().any(|section| {
+                            section.format.font_id.family == egui::FontFamily::Name(family.into())
+                        })
+                }
+                egui::Shape::Vec(shapes) => shapes
+                    .iter()
+                    .any(|shape| paints_family(shape, text, family)),
+                _ => false,
+            }
+        }
+        for (text, family) in [("Font", second.as_str()), (" test", first.as_str())] {
+            assert!(
+                harness.output().shapes.iter().any(|shape| paints_family(
+                    &shape.shape,
+                    text,
+                    family
+                )),
+                "{text:?} was not painted with {family:?}"
+            );
+        }
+    }
+}

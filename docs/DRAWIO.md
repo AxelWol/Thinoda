@@ -280,6 +280,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 label font registration | Installed font families referenced by whole shape-label styles and inline shape or card runs are registered before canvas rendering, so their requested faces are used rather than silently falling back. Missing families retain the existing warning and fallback behavior. |
 | 2026-11-18 | D9 rich shape labels (partial) | Shape labels reuse bounded Unicode-scalar inline runs and list paragraphs; selection toolbar and Ctrl/Command+B/I/U edit the draft without changing the document until one undoable commit; drafts and formatting-only changes recover; native v49, sheet clipboard v38, board clipboard v42, XMind `THINODA-XMIND-RICH-LABELS-1`, recovery `THINODA-RECOVERY-RICH-LABELS-1` and `THINODA-RECOVERY-INK-RICH-LABELS-1`; supported draw.io HTML imports as inert text and exports escaped HTML; canvas and SVG/PNG/PDF/editable PowerPoint display the runs and list markers. Other label kinds and unsupported HTML source preservation remain open. |
 | 2026-11-17 | D9 label text | Shape labels carry an optional `LabelStyle`: font family and size, bold/italic/underline/strikethrough, horizontal and vertical alignment, label position outside the shape on either axis, overall and per-side spacing, wrap on/off, label background and border colours and vertical (`horizontal=0`) text; one core layout wraps and places the text for canvas, label editor, hit testing, scene bounds and SVG/PNG/PDF/PPTX; Label text style inspector section for single and multi-selection with one undo per edit and style copy/paste; draw.io import maps the keys natively and export writes them back (`whiteSpace=nowrap` for unwrapped labels); native v48, sheet clipboard v37, board clipboard v41, XMind `THINODA-XMIND-LABEL-STYLES-1`, recovery `THINODA-RECOVERY-LABEL-STYLES-1` and `THINODA-RECOVERY-INK-LABEL-STYLES-1` |
 | 2026-11-17 | D9 shape style | Native shape style effects on `ObjectStyle`: dash pattern with fixed-length option, linear (north/south/east/west) and radial gradients, drop shadow, glass highlight, fill patterns (hatch, cross-hatch, dots, dashed, zigzag) and horizontal/vertical flip that mirrors built-in, polygon and stencil geometry plus fixed ports about the frame centre (labels stay upright); canvas and SVG/PNG/PDF/PPTX paint them identically (stencil dashes now export too); Shape style inspector section for single and multi-selection with one undo per edit and style copy/paste; draw.io import maps the keys natively and export writes them back; native v47, sheet clipboard v36, board clipboard v40, XMind `THINODA-XMIND-SHAPE-STYLES-1`, recovery `THINODA-RECOVERY-SHAPE-STYLES-1` and `THINODA-RECOVERY-INK-SHAPE-STYLES-1` |
@@ -704,6 +705,11 @@ box with multiple runs. Known limitations:
   markers for styled line breaks, empty list items and inherited decorations
   can be discarded by other editors. D10 must preserve unsupported source
   rather than treating this conversion as lossless.
+
+**D9 label font registration.** The app's existing per-document font loader now
+includes whole shape-label families and inline shape/card runs. Unavailable
+families still warn and fall back without changing the stored name; web builds
+remain limited to fonts available to their renderer.
 
 ## 5. Rubber-duck findings
 
