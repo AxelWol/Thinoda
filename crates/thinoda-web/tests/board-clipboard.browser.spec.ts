@@ -712,7 +712,7 @@ test("draw.io paste warns about an unsupported chair placeholder", async ({ page
 test("draw.io metadata placeholders warn on paste and can be undone", async ({ page }, testInfo) => {
     const text = [
         '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>',
-        '<object id="shape" label="Width %width%" placeholders="1">',
+        '<object id="shape" label="Width %width% on %date%" placeholders="1">',
         '<mxCell style="shape=rectangle;" vertex="1" parent="1">',
         '<mxGeometry width="100" height="60" as="geometry"/></mxCell></object>',
         '</root></mxGraphModel>',
@@ -728,7 +728,7 @@ test("draw.io metadata placeholders warn on paste and can be undone", async ({ p
     const after = archive(await saveAs(page, "drawio-placeholder-after.thinoda"));
     const objects = after.content.sheets[after.content.active_sheet].canvas?.objects ?? [];
     expect(objects).toHaveLength(1);
-    expect(objects[0].kind.shape?.label).toBe("Width %width%");
+    expect(objects[0].kind.shape?.label).toBe("Width %width% on %date%");
 
     await page.locator("#thinoda_canvas").focus();
     await page.keyboard.press("Control+z");
