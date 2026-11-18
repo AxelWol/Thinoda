@@ -272,6 +272,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Cover synthetic editor and outside clicks batched with rich IME input
   - [x] Delete whole grapheme clusters with unmodified Backspace/Delete in label editors
   - [x] Preserve graphemes for eligible text/paste replacement and cut; snap an interior insertion caret to the cluster end
+  - [x] Preserve graphemes for Shift+Enter and the start of an eligible IME composition
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -923,7 +924,11 @@ egui edits it; local undo restores the original directional selection.
 Synthetic shape and connector tests cover combining marks, flags and ZWJ
 emoji. Isolated text/paste replacements and cuts expand partial selections;
 an insertion caret inside a cluster snaps to its end, retaining its typing
-style. Duck check: modified deletion, IME ranges, mixed pointer/input batches
+style. Shift+Enter and the start of an isolated IME composition use the same
+boundary policy, including pending caret style. Synthetic tests cover empty
+initial IME events and active preedit updates that join adjacent graphemes.
+Duck check: egui can reverse selection direction on an empty initial event;
+modified deletion, active IME surrounding ranges, mixed pointer/input batches
 and physical input remain separate policy and acceptance work.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF

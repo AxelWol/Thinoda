@@ -2041,11 +2041,14 @@ Delete among keyboard events and validates the captured range and resulting
 text before applying it. It keeps a pending typing style only at a matching
 deletion boundary. Unmodified Backspace/Delete now expand collapsed and
 partial selections to grapheme boundaries, with synthetic shape/connector
-coverage for combining marks, flags, ZWJ emoji and local undo. Modified
-deletions and IME ranges need separate grapheme-policy work. Isolated
-text/paste replacement and cut expand partial grapheme selections; a caret
-inside a grapheme snaps to its end before insertion, preserving its pending
-typing style.
+coverage for combining marks, flags, ZWJ emoji and local undo. Isolated
+text/paste replacement, cut, Shift+Enter and the start of an IME composition
+expand partial grapheme selections; a caret inside a grapheme snaps to its end
+before insertion, preserving its pending typing style. Modified deletion and
+active IME surrounding ranges need separate grapheme-policy work.
+Synthetic tests also cover empty initial IME events and active preedit updates
+that join adjacent graphemes. An empty initial event can reverse the selection
+direction in egui even though its selected range is preserved.
 Repeated characters, selected deletion and document undo also have synthetic
 shape and connector coverage, including an extra label.
 

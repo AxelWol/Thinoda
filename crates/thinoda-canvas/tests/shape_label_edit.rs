@@ -618,6 +618,162 @@ fn rich_label_insertion_snaps_a_caret_inside_a_grapheme() {
 }
 
 #[test]
+fn rich_label_line_break_replaces_whole_selected_grapheme() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    set_label_selection(&mut h, 2, 1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Enter);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a\nb");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        "a👩\u{200d}💻b"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_new_ime_composition_respects_graphemes() {
+    for (selected, preedit) in [(false, true), (true, true), (false, false), (true, false)] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        if selected {
+            set_label_selection(&mut h, 2, 1);
+        } else {
+            set_label_cursor(&mut h, 2);
+        }
+        if preedit {
+            h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "x".into(),
+                active_range_chars: None,
+            }));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            if selected {
+                "axb"
+            } else {
+                "a👩\u{200d}💻xb"
+            }
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_empty_initial_ime_preserves_partial_selection() {
+    for preedit in [true, false] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_selection(&mut h, 2, 1);
+        h.event(egui::Event::Ime(if preedit {
+            egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }
+        } else {
+            egui::ImeEvent::Commit(String::new())
+        }));
+        h.run_steps(1);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        let range = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        let range = range.as_sorted_char_range();
+        assert_eq!((range.start.0, range.end.0), (1, 2));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_active_ime_update_preserves_composition_range() {
+    let mut h = harness("ab");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    for (preedit, expected) in [("\u{301}", "a\u{301}b"), ("x", "axb")] {
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: preedit.into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(1);
+        assert_eq!(h.state().view.board_label_draft().unwrap().2, expected);
+    }
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("y".into())));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ayb");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_line_break_and_ime_keep_snapped_caret_style() {
+    for mode in 0..3 {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        match mode {
+            0 => h.key_press_modifiers(Modifiers::SHIFT, Key::Enter),
+            1 => h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into()))),
+            _ => {
+                h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "x".into(),
+                    active_range_chars: None,
+                }));
+                h.run_steps(1);
+                h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+            }
+        }
+        h.run_steps(2);
+        let (_, text, rich) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            text,
+            if mode == 0 {
+                "a👩\u{200d}💻\nb"
+            } else {
+                "a👩\u{200d}💻xb"
+            }
+        );
+        let rich = rich.unwrap();
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (4, 5));
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
 fn plain_label_processes_text_and_undo_in_event_order() {
     let mut h = harness("a");
     double_click_shape(&mut h);

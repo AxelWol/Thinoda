@@ -7623,6 +7623,11 @@ fn show_label_editor_pass(
                     .any(|event| plain_key_press(event, Key::Escape))
         });
     let editor_owns_keyboard = editor_focused || escape_released_editor;
+    let editor_was_ime_composing = view
+        .board_input
+        .label
+        .as_ref()
+        .is_some_and(|edit| edit.ime_composing);
     if !minimap_blocks_keyboard
         && editor_owns_keyboard
         && let Some(edit) = &mut view.board_input.label
@@ -7726,7 +7731,7 @@ fn show_label_editor_pass(
     if editor_focused
         && !minimap_blocks_keyboard
         && let Some(edit) = &mut view.board_input.label
-        && !edit.ime_composing
+        && !editor_was_ime_composing
     {
         enum GraphemeEdit {
             Delete(bool),
@@ -7755,7 +7760,24 @@ fn show_label_editor_pass(
                 {
                     Some(GraphemeEdit::Delete(*key == Key::Backspace))
                 }
+                (
+                    Some(egui::Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    }),
+                    None,
+                ) if modifiers.matches_exact(Modifiers::SHIFT) => Some(GraphemeEdit::Replace),
                 (Some(egui::Event::Text(_) | egui::Event::Paste(_)), None) => {
+                    Some(GraphemeEdit::Replace)
+                }
+                (
+                    Some(egui::Event::Ime(
+                        egui::ImeEvent::Preedit { text, .. } | egui::ImeEvent::Commit(text),
+                    )),
+                    None,
+                ) if !text.is_empty() && text != "\n" && text != "\r" => {
                     Some(GraphemeEdit::Replace)
                 }
                 (Some(egui::Event::Cut), None) => Some(GraphemeEdit::Cut),
