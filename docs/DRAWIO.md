@@ -261,7 +261,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Add bounded transactional rich-draft state with directional selection, local history and explicit composition grouping
   - [x] Use the actual buffer range for a single eligible shape/connector text or paste insertion, including repeated text and selected replacement
   - [x] Use the actual buffer range for a single eligible shape/connector Backspace or Delete, including repeated text and selected deletion
-  - [ ] Replace final-string reconciliation in existing shape and connector label editors with ordered rich edits, including repeated text, multiple same-frame events, rich undo and IME
+  - [x] Process pointer-free, non-IME rich-label keyboard batches in event order
+  - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches and rich undo
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -303,7 +304,8 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
-| 2026-11-18 | D9 single rich-label deletion (partial) | Shape and connector label editors use the actual buffer range for a single eligible Backspace or Delete, including selected text and repeated characters; pending typing styles are retained at the resulting caret. Multiple events, IME, rich undo and other input remain open. |
+| 2026-11-18 | D9 rich-label keyboard batching (partial) | Pointer-free, non-IME keyboard events in a rich shape or connector label are processed in order, so eligible insertions and deletions retain their actual ranges even when they share a frame with a finish key. Pointer/IME batches and rich undo still require a complete ordered transaction model. |
+| 2026-11-18 | D9 single rich-label deletion (partial) | Shape and connector label editors use the actual buffer range for a single eligible Backspace or Delete, including selected text and repeated characters; pending typing styles are retained at the resulting caret. The following batching slice extends this to eligible same-frame keyboard input. |
 | 2026-11-18 | D9 single rich-label insertion (partial) | Shape and connector label editors use the actual egui buffer range for one eligible text or paste event, including repeated text and selected replacements. Other input still falls back to final-string reconciliation; the following deletion slice covers one more case, but ordered transactions remain incomplete. |
 | 2026-11-18 | D9 editor input audit | Synthetic egui tests show that the layouter does not observe every operation in a frame, and final-string reconciliation can put formatting on the wrong occurrence of repeated text. The following single-insertion slice addresses one case; ordered rich edits are still required before treating that behavior as complete. |
 | 2026-11-18 | D9 PowerPoint list alignment (partial) | Editable list paragraphs use the shared layout's list-block left edge, rather than centering or right-aligning each item independently. Three-slide fixtures opened and exported from Windows PowerPoint for left, center and right alignment; the wrapped fixture broke lines differently from Thinoda. Empty markers remain hidden, host spacing differs, and post-edit alignment is not guaranteed. |

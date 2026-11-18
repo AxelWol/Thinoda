@@ -6247,6 +6247,108 @@ fn repeated_label_deletion_preserves_formatting_at_the_actual_range() {
 }
 
 #[test]
+fn same_frame_repeated_label_insertions_keep_their_positions() {
+    for connector in [false, true] {
+        let mut sheet = board();
+        let id = if connector {
+            let mut line = CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                Endpoint::Point(Vec2::new(100.0, 0.0)),
+            );
+            line.label = "aaa".into();
+            sheet
+                .add_canvas_object(CanvasObject::connector(line))
+                .unwrap()
+        } else {
+            shape(&mut sheet, 0.0, 0.0, "aaa")
+        };
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        let edit_id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.input_mut().events.extend([
+            egui::Event::Text("a".into()),
+            egui::Event::Text("a".into()),
+            egui::Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(3);
+        assert_eq!(h.state().view.editing_board_object(), None);
+        let object = h.state().doc.sheet().canvas.object(id).unwrap();
+        assert_eq!(object.label(), "aaaaa");
+        let rich = object.label_rich_text.as_ref().unwrap();
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (3, 4));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn same_frame_deletion_and_insertion_preserve_rich_edit_order() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 0..1, |style| style.bold = Some(true))
+        .unwrap();
+    sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    let edit_id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(2),
+        )));
+    state.store(&h.ctx, edit_id);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::Backspace,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("a".into()),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    assert_eq!(object.label(), "aaa");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn pending_text_is_applied_before_finishing_board_labels() {
     for connector in [false, true] {
         for key in [Key::Enter, Key::Tab, Key::Escape] {

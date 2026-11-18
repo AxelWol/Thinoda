@@ -7348,44 +7348,41 @@ pub(super) fn show_label_editor(
             return;
         }
     }
-    let split_shortcuts = !minimap_blocks_keyboard
-        && ui.memory(|memory| memory.has_focus(edit_id))
-        && view.board_input.label.as_ref().is_some_and(|edit| {
-            !edit.ime_composing
-                && doc.sheet().canvas.object(edit.id).is_some_and(|object| {
-                    matches!(
-                        object.kind,
-                        CanvasObjectKind::Shape { .. } | CanvasObjectKind::Connector(_)
-                    )
-                })
-        })
-        && ui.input(|input| {
-            input.focused
-                && (view
-                    .board_input
-                    .label
-                    .as_ref()
-                    .is_some_and(|edit| edit.typing_style.is_some())
-                    || input
+    let split_shortcuts =
+        !minimap_blocks_keyboard
+            && ui.memory(|memory| memory.has_focus(edit_id))
+            && view.board_input.label.as_ref().is_some_and(|edit| {
+                !edit.ime_composing
+                    && doc.sheet().canvas.object(edit.id).is_some_and(|object| {
+                        matches!(
+                            object.kind,
+                            CanvasObjectKind::Shape { .. } | CanvasObjectKind::Connector(_)
+                        )
+                    })
+            })
+            && ui.input(|input| {
+                input.focused
+                    && (view.board_input.label.as_ref().is_some_and(|edit| {
+                        edit.typing_style.is_some() || edit.rich_text.is_some()
+                    }) || input
                         .events
                         .iter()
                         .any(|event| label_format_shortcut(event).is_some()))
-                && input
-                    .events
-                    .iter()
-                    .filter(|event| label_keyboard_event(event))
-                    .count()
-                    > 1
-                && !input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::PointerButton { .. } | egui::Event::Ime(_)
-                    ) || plain_key_press(event, Key::F6)
-                })
-        });
+                    && input
+                        .events
+                        .iter()
+                        .filter(|event| label_keyboard_event(event))
+                        .count()
+                        > 1
+                    && !input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::PointerButton { .. } | egui::Event::Ime(_)
+                        ) || plain_key_press(event, Key::F6)
+                    })
+            });
     if split_shortcuts {
-        // TextEdit reports only the final selection, so process formatting keys
-        // between surrounding text events instead of applying them afterward.
+        // Keep ordered keyboard events separate so each edit has its own range.
         let (events, pointer) = ui.input_mut(|input| {
             (
                 std::mem::take(&mut input.events),

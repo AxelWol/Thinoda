@@ -2020,11 +2020,12 @@ also cannot identify where a repeated character was inserted. Shape and
 connector label editors now record the buffer range for a single eligible
 text or paste event or a single eligible Backspace or Delete, preserving
 formatting at the actual position and for selected replacements or deletions.
-Conflicting keyboard events, multiple text events, IME and whole-string undo
-still use the earlier reconciliation and can misplace formatting. This partial
-fix is not a safe card editor: the complete replacement must retain ordered
-operation positions and handle empty deletions, rich undo, input limits and
-IME transactions.
+Pointer-free, non-IME rich-label keyboard batches are now processed one event
+at a time, allowing eligible same-frame insertions and deletions to retain
+their ranges. Pointer/IME batches and whole-string undo can still use the
+earlier reconciliation and misplace formatting. This partial fix is not a safe
+card editor: the complete replacement must retain ordered operation positions
+and handle empty deletions, rich undo, input limits and IME transactions.
 
 Duck check: the single-insertion path accepts only one text or paste event,
 without IME, cut, deletion, finish keys or competing command shortcuts. It
@@ -2041,6 +2042,12 @@ text before applying it. It keeps a pending typing style only at a matching
 deletion boundary; it does not change egui's scalar-level deletion or establish
 grapheme-safe editing. Repeated characters, selected deletion and document
 undo have synthetic shape and connector coverage, including an extra label.
+
+Duck check: keyboard batching reuses the existing invisible per-event editor
+passes and stops when the edit closes. Synthetic repeated insertions and a
+delete-then-insert sequence retain formatting and commit with an Enter in the
+same frame. Pointer events, IME and F6 deliberately bypass batching; real input
+devices, frame-level rejection and rich undo remain separate acceptance gates.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,
