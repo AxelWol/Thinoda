@@ -252,7 +252,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
   - [x] Import/export the supported draw.io HTML subset for formatted sticky/text-card titles
   - [ ] Complete rich-card run editing and visual exports; cover other label kinds and preserve unsupported source HTML
-- [ ] Copy/paste style, set default style, style rules
+  - [x] Copy/paste object and card styles; save and apply reusable quick styles
+- [ ] Default style and declarative style rules
 
 ### D10 — Save back to `.drawio`
 
@@ -291,6 +292,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 style reuse (partial) | Copy/paste style for objects and cards, including undo-safe dimension handling, and reusable quick styles are implemented and covered by focused app regressions. Default styles and declarative style rules remain open. |
 | 2026-11-18 | D9 formatted-card draw.io interchange (partial) | Sticky/text-card titles import and export the supported inert draw.io HTML subset, including inline styles, superscript and list paragraphs; native values are round-trip tested and `InlineTextDropped` is no longer reported for draw.io. Other output formats, run-level card editing and unsupported source HTML preservation remain open. |
 | 2026-11-18 | D9 formatted-card canvas rendering (partial) | Sticky/text card titles render inline runs, font overrides, colours, baseline styling and bullet/number markers through the shared rich-label painter. Core card layout reserves height for rich run sizes and accounts for list markers; the original plain-title painter is unchanged for unformatted cards. The core measurement and line wrapping use bounded glyph-width estimates; run-level editing and SVG/PDF/PNG/PowerPoint export remain unsupported, so visual-export preflight continues to report formatting loss. |
 | 2026-11-18 | D9 formatted-card search (partial) | Search/replace updates existing sticky and text card runs and list paragraphs alongside their titles, including Unicode ranges and inserted paragraph boundaries. Changes remain atomic across locked cards, validation failures and workbook sheets, and are undoable. Canvas editing and draw.io interchange are not yet supported for these cards; canvas rendering is a separate partial slice. |
@@ -821,6 +823,11 @@ supported run and list model and not carrying executable markup. Duck check:
 the source passthrough must not overwrite edits made to the native formatted
 text, and unsupported HTML remains warned/lost rather than being represented
 as if it round-tripped. Do not remove visual-export loss warnings.
+
+**D9 style reuse (partial).** Object/card copy-paste and named quick styles are
+already implemented and regression-tested. Duck check: do not treat named
+quick styles as default-style behavior or declarative style rules; those need
+separate precedence, persistence and undo contracts.
 
 ## 5. Rubber-duck findings
 

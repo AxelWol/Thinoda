@@ -1935,8 +1935,9 @@ The title remains a `String`, with a separate bounded `InlineText` value for
 Sticky/Text cards. The editor keeps a separate string draft; layout's
 `TextMeasure` receives a string and one font, while visual export caches shaped
 text by that same single style. The core model now validates sparse inline
-overrides and paragraph list metadata, but toolbar controls remain disabled:
-a rich selection still must survive editing, layout, save and export.
+overrides and paragraph list metadata. Whole-card style controls are available,
+but the card title editor remains plain: selected-run and list editing still
+must survive editing, layout, save and export.
 
 Implementation contract and remaining work:
 
@@ -1988,7 +1989,7 @@ may accept only plain text. Specify and test caret-only formatting, list
 editing, accessibility and lossy-format consent before exposing these controls.
 Native and browser screen-reader, real IME and physical-device acceptance
 remain separate gates. The model foundation is implemented, but no
-selected-range or list controls are enabled.
+selected-range or list controls are enabled for card rich text.
 
 An editor prototype can investigate egui 0.37's `TextBuffer` interface: typing,
 paste and IME invoke character-indexed insert/delete operations, which avoids
@@ -2012,8 +2013,11 @@ runs. It refuses to change paragraph boundaries while list metadata exists.
 The bounded sparse-style/list model, range style updates, validation,
 history-memory accounting, and native/export loss gates are production code.
 Egui event/undo integration, empty-commit versus cancellation, grapheme
-behavior, paragraph-list editing, external rich-text clipboard interoperability,
-rendering and accessibility are not production implementations.
+behavior, card paragraph-list editing, external rich-text clipboard
+interoperability, cross-format rendering and accessibility are not complete
+production implementations. Canvas painting and the draw.io HTML subset are
+implemented for formatted card titles; other label editors retain their own
+already-shipped rich-text controls.
 
 #### Internal clipboard and recovery checkpoint: critique
 
