@@ -1,4 +1,4 @@
-_Last updated: 2026-11-13 09:21:09 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-17 06:53:06 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -38,6 +38,35 @@ while the version is `0.x`, breaking changes bump the minor version). See
   notes/changelog and download links (no automatic native installation).
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
+## [0.27.0](https://github.com/AxelWol/Thinoda/compare/v0.26.0...v0.27.0) (2026-11-17)
+
+
+### Features
+
+* **canvas:** navigate nested scene containers by keyboard ([bb097fb](https://github.com/AxelWol/Thinoda/commit/bb097fbef84d24db996c60f06cfc7a40d1c7ff90))
+* **core:** enforce shared document transaction guards ([ba364fe](https://github.com/AxelWol/Thinoda/commit/ba364fe92db94f85023380d3f6f83a5636637061))
+* **core:** persist collapsed scene containers ([d795355](https://github.com/AxelWol/Thinoda/commit/d795355266b765786fe7d53ceccdb064bbc93060))
+* **core:** persist free-container scene hierarchy ([21ff8cf](https://github.com/AxelWol/Thinoda/commit/21ff8cf09ddedcb398c5eeb8f0a8401523818542))
+* **core:** project collapsed scene visibility and routing ([d8df198](https://github.com/AxelWol/Thinoda/commit/d8df19892336cc78bc8cf6a6e8410656e445b160))
+* **core:** prototype shared scene hierarchy ([26d69c0](https://github.com/AxelWol/Thinoda/commit/26d69c06217f32d0824dbb71b36a67220dcbfb50))
+* **core:** reconcile nested scene reparent previews ([0086e1d](https://github.com/AxelWol/Thinoda/commit/0086e1d48e2fb114880a8eaf2ee3b107204a005f))
+* **core:** support nested scene ordering and reconnection ([1954f9b](https://github.com/AxelWol/Thinoda/commit/1954f9b8308a0e2ba21ece357f6105270d95b190))
+* **drawio:** expand data-driven stencil support ([844f2cf](https://github.com/AxelWol/Thinoda/commit/844f2cf1d36d213f90508ba7537a7948ba0bfaeb))
+* **editor:** author free-container hierarchy in properties ([368fe2e](https://github.com/AxelWol/Thinoda/commit/368fe2e27eac50dfef7bf754d515b35e4b050b2b))
+* **editor:** expose explicit container collapse controls ([9a3b834](https://github.com/AxelWol/Thinoda/commit/9a3b8348e536a5fcb45653ddffc8f3d2066c36aa))
+* **templates:** add editable Software starter diagrams ([c4acd1d](https://github.com/AxelWol/Thinoda/commit/c4acd1d3c47c60f9e9624adc8f45a4c736baac02))
+
+
+### Bug Fixes
+
+* **drawio:** warn on flattened nested containers ([396a3d4](https://github.com/AxelWol/Thinoda/commit/396a3d4a839fe6df1f273ac890c8c510c9cf9059))
+
+
+### Documentation
+
+* design common swimlane and socio-technical editor foundations ([e41e428](https://github.com/AxelWol/Thinoda/commit/e41e428cc9fd2a3fcc65ff87e2b270d514c0620f))
+* **stc:** define initial semantic data shape ([8ef89e5](https://github.com/AxelWol/Thinoda/commit/8ef89e5e8d0450908de897e051b5d4614fc8e38f))
 
 ## [0.26.0](https://github.com/AxelWol/Thinoda/compare/v0.25.1...v0.26.0) (2026-11-13)
 
