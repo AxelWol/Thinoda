@@ -7704,7 +7704,28 @@ fn show_label_editor_pass(
         } else {
             None
         };
-    let track_edit = track_insertion || tracked_deletion.is_some();
+    let track_line_break = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            matches!(
+                (events.next(), events.next()),
+                (
+                    Some(egui::Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    }),
+                    None,
+                ) if modifiers.matches_exact(Modifiers::SHIFT)
+            )
+        });
+    let track_edit = track_insertion || track_line_break || tracked_deletion.is_some();
     let tracked_source = track_edit.then(|| layout_source.clone());
     let tracked_rich = track_edit.then(|| layout_rich.clone()).flatten();
     let tracked_typing = track_edit.then(|| layout_typing.clone()).flatten();

@@ -2018,7 +2018,7 @@ Synthetic egui tests show that one frame can delete and insert several times
 without the layouter seeing the intermediate text. Final-string reconciliation
 also cannot identify where a repeated character was inserted. Shape and
 connector label editors now record the buffer range for a single eligible
-text or paste event, Backspace, Delete or cut, preserving
+text or paste event, Shift+Enter, Backspace, Delete or cut, preserving
 formatting at the actual position and for selected replacements or deletions.
 Pointer-free, non-IME rich-label keyboard batches are now processed one event
 at a time, allowing eligible same-frame insertions and deletions to retain
@@ -2053,6 +2053,13 @@ passes and stops when the edit closes. Synthetic repeated insertions and a
 delete-then-insert sequence retain formatting and commit with an Enter in the
 same frame. Pointer events, IME and F6 deliberately bypass batching; real input
 devices, frame-level rejection and rich undo remain separate acceptance gates.
+
+Duck check: an eligible Shift+Enter uses the actual insertion or selected
+replacement range. Synthetic shape and connector cases cover repeated newlines,
+list paragraph inheritance and document undo; IME and mixed pointer input are
+not covered by this path. Separately, a synthetic editor check reproduced the
+remaining local-undo bug: after inserting a repeated character, egui restores
+the old text but leaves the rich run at its shifted position.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,

@@ -262,6 +262,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Use the actual buffer range for a single eligible shape/connector text or paste insertion, including repeated text and selected replacement
   - [x] Use the actual buffer range for a single eligible shape/connector Backspace or Delete, including repeated text and selected deletion
   - [x] Preserve remaining rich-label formatting when an eligible cut deletes selected text
+  - [x] Preserve rich runs and list paragraphs for an eligible Shift+Enter line break at the actual selection
   - [x] Process pointer-free, non-IME rich-label keyboard batches in event order
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches and rich undo
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
@@ -305,6 +306,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 rich-label line breaks (partial) | Eligible Shift+Enter edits use the actual buffer range, preserving rich runs and list paragraph inheritance even for repeated newlines and selected replacements. |
 | 2026-11-18 | D9 rich-label cut (partial) | An eligible cut uses the actual selected buffer range to retain formatting on remaining shape and connector label text; egui still emits plain-text clipboard content. Real-host clipboard behavior and rich external clipboard interoperability remain open. |
 | 2026-11-18 | D9 rich-label keyboard batching (partial) | Pointer-free, non-IME keyboard events in a rich shape or connector label are processed in order, so eligible insertions and deletions retain their actual ranges even when they share a frame with a finish key. Pointer/IME batches and rich undo still require a complete ordered transaction model. |
 | 2026-11-18 | D9 single rich-label deletion (partial) | Shape and connector label editors use the actual buffer range for a single eligible Backspace or Delete, including selected text and repeated characters; pending typing styles are retained at the resulting caret. The following batching slice extends this to eligible same-frame keyboard input. |
