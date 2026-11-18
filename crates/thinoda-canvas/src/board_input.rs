@@ -7875,7 +7875,27 @@ fn show_label_editor_pass(
                 ) if modifiers.matches_exact(Modifiers::SHIFT)
             )
         });
-    let track_edit = track_insertion || track_line_break || tracked_deletion.is_some();
+    let track_surrounding = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            matches!(
+                (events.next(), events.next()),
+                (
+                    Some(egui::Event::Ime(egui::ImeEvent::DeleteSurrounding { .. })),
+                    None,
+                )
+            ) && !input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::PointerButton { .. }))
+        });
+    let track_edit =
+        track_insertion || track_line_break || tracked_deletion.is_some() || track_surrounding;
     let tracked_source = track_edit.then(|| layout_source.clone());
     let tracked_rich = track_edit.then(|| layout_rich.clone()).flatten();
     let tracked_typing = track_edit.then(|| layout_typing.clone()).flatten();
@@ -7910,14 +7930,24 @@ fn show_label_editor_pass(
             .as_ref()
             .zip(tracked_source.as_deref())
             .map(|(rich, source)| {
-                label_format::reconcile_tracked_edit(
-                    rich,
-                    source,
-                    text,
-                    &tracked_typing,
-                    &operations.borrow(),
-                    tracked_deletion,
-                )
+                if track_surrounding {
+                    label_format::reconcile_tracked_surrounding_deletion(
+                        rich,
+                        source,
+                        text,
+                        &tracked_typing,
+                        &operations.borrow(),
+                    )
+                } else {
+                    label_format::reconcile_tracked_edit(
+                        rich,
+                        source,
+                        text,
+                        &tracked_typing,
+                        &operations.borrow(),
+                        tracked_deletion,
+                    )
+                }
             });
         let mut applied = false;
         if let Some(result) = tracked {

@@ -255,6 +255,37 @@ impl TextBuffer for TrackedBuffer<'_> {
     }
 }
 
+pub(super) fn reconcile_tracked_surrounding_deletion(
+    rich: &InlineText,
+    before: &str,
+    after: &str,
+    typing: &Option<TypingStyle>,
+    operations: &[TextOperation],
+) -> Result<Option<(InlineText, Option<TypingStyle>)>, String> {
+    let mut text = before.to_owned();
+    let mut updated = rich.clone();
+    let mut typing = typing.clone();
+    for operation in operations {
+        let TextOperation::Delete(range) = operation else {
+            return Ok(None);
+        };
+        let length = text.chars().count();
+        let range = range.start.min(length)..range.end.min(length);
+        if range.start > range.end {
+            return Ok(None);
+        }
+        (text, updated) = updated.replace_label_range(&text, range.clone(), "")?;
+        if let Some(pending) = &mut typing {
+            pending.position = if pending.position > range.end {
+                pending.position - (range.end - range.start)
+            } else {
+                pending.position.min(range.start)
+            };
+        }
+    }
+    Ok((text == after).then_some((updated, typing)))
+}
+
 pub(super) fn reconcile_tracked_edit(
     rich: &InlineText,
     before: &str,
@@ -580,6 +611,32 @@ pub(super) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surrounding_deletion_clamps_ranges_and_remaps_pending_caret() {
+        let mut rich = InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        let typing = Some(TypingStyle {
+            position: 2,
+            style: InlineTextStyle::default(),
+        });
+        let operations = [
+            TextOperation::Delete(2..usize::MAX),
+            TextOperation::Delete(0..1),
+        ];
+        let (updated, pending) =
+            reconcile_tracked_surrounding_deletion(&rich, "aaa", "a", &typing, &operations)
+                .unwrap()
+                .unwrap();
+        assert_eq!((updated.runs[0].start, updated.runs[0].end), (0, 1));
+        assert_eq!(pending.unwrap().position, 1);
+        assert!(
+            reconcile_tracked_surrounding_deletion(&rich, "aaa", "aa", &typing, &operations)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn label_history_groups_typing_and_composition_without_losing_styles() {

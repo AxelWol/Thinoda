@@ -265,6 +265,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Preserve rich runs and list paragraphs for an eligible Shift+Enter line break at the actual selection
   - [x] Process pointer-free, non-IME rich-label keyboard batches in event order
   - [x] Add bounded draft-local keyboard undo/redo for shape and connector text, formatting and synthetic IME composition
+  - [x] Use actual buffer deletion ranges for an isolated IME surrounding-delete event
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -895,6 +896,14 @@ reopened, rather than silently discarding that history.
 Duck check: this is not full ordered editing or physical IME acceptance.
 Pointer/IME batches and other unsupported reconciliation paths remain open;
 the bounded history evicts old states and is not connected to card editing.
+
+**D9 IME surrounding deletion (partial).** An isolated, pointer-free IME
+surrounding-delete event now remaps formatting using the buffer's ordered
+deletion ranges, including clamped oversized ranges, rather than a final-text
+diff. Synthetic repeated text, pending caret style, composition undo/redo and
+empty preedit/commit cancellation are covered. Duck check: adjacent IME and
+pointer events still bypass this narrow path, and the tests do not establish
+real IME or browser acceptance.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,

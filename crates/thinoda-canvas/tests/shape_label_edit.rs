@@ -914,6 +914,38 @@ fn caret_formatting_survives_ime_composition() {
 }
 
 #[test]
+fn caret_formatting_survives_ime_surrounding_deletion() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "n".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
+        before_chars: 0,
+        after_chars: 1,
+    }));
+    h.run_steps(1);
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("x".into())));
+    h.run_steps(1);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "axa");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn caret_formatting_applies_to_pasted_list_paragraphs() {
     let mut h = harness("");
     double_click_shape(&mut h);
