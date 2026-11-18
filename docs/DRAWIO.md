@@ -255,6 +255,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
   - [x] Preserve subsequent initial PowerPoint numbering after empty numbered paragraphs
+  - [x] Position editable PowerPoint list paragraphs as aligned blocks using shared rich-layout geometry
   - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
   - [x] Add explicit-style label range replacement with list remapping for future ordered edits
   - [x] Add bounded transactional rich-draft state with directional selection, local history and explicit composition grouping
@@ -299,6 +300,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 PowerPoint list alignment (partial) | Editable list paragraphs use the shared layout's list-block left edge, rather than centering or right-aligning each item independently. Three-slide fixtures opened and exported from Windows PowerPoint for left, center and right alignment; the wrapped fixture broke lines differently from Thinoda. Empty markers remain hidden, host spacing differs, and post-edit alignment is not guaranteed. |
 | 2026-11-18 | D9 PowerPoint empty-list numbering (partial) | Windows PowerPoint suppressed markers on empty list paragraphs and counted following items differently from Thinoda. Following numbered paragraphs now carry explicit start values; a rotated fixture displays the subsequent 2 and 3 correctly. Empty markers are still hidden in PowerPoint, wrapping/alignment differs, and explicit starts can require manual renumbering after editing. |
 | 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |
 | 2026-11-18 | D9 card baselines (partial) | Sticky/text-card superscript, subscript and explicit normal baselines survive supported draw.io HTML, rendering and persistence. Compatibility gates: native v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind `THINODA-XMIND-CARD-BASELINE-1`, recovery `THINODA-RECOVERY-CARD-BASELINE-1` and `THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open. |
@@ -884,10 +886,18 @@ opened without repair and its numbered list remained editable after saving.
 A second rotated fixture showed that PowerPoint hides markers on empty
 paragraphs and otherwise restarts the following numbering. Explicit starts on
 all following numbered items preserve their initial values (2 and 3 in the
-checked fixture), without adding hidden characters to the text. Duck check:
-those starts can require manual adjustment after list edits; empty markers remain
-hidden, wrapping and alignment differ from Thinoda, and LibreOffice behavior
-is unverified. Viewport slides are rasterized; retain the loss warning.
+checked fixture), without adding hidden characters to the text. Rich layout
+lines now expose their source paragraph index, and PowerPoint uses the shared
+estimated left edge to position each editable list block. Windows PowerPoint
+fixtures confirmed left, centered and right-aligned blocks open and export;
+a wrapped item broke at different words from Thinoda.
+Duck check: the margin is fixed at export and is not recalculated when a user
+edits list content; host font metrics, tabs and wrapping can still differ.
+DrawingML margin limits can clip extreme offsets, and adding the public
+`LabelLine::paragraph_index` field affects external struct literals. Explicit
+number starts can require manual adjustment after edits, empty markers remain
+hidden, and other hosts remain unverified. Viewport slides are rasterized;
+retain the loss warning.
 
 **D9 style reuse (partial).** Object/card copy-paste and named quick styles are
 already implemented and regression-tested. Duck check: do not treat named

@@ -1966,7 +1966,10 @@ Implementation contract and remaining work:
    rotated fixture opened, edited and saved in Windows PowerPoint. A second
    fixture showed hidden empty-list markers and different wrapping/alignment;
    explicit numbering after empty items preserves initial values but may
-   require manual adjustment after editing. Other hosts remain unverified,
+   require manual adjustment after editing. List paragraphs now use the
+   shared layout's estimated block positions, but their margins do not adapt
+   to later PowerPoint edits. A separate Windows PowerPoint fixture still
+   wrapped the same long item differently from Thinoda. Other hosts remain unverified,
    and viewport slides are rasterized. Run-level
    card editing remains open. A validated, locked-
    aware title-and-inline mutation now supplies an atomic undoable commit for

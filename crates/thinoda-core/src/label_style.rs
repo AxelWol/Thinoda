@@ -246,6 +246,8 @@ pub struct LabelLine {
     pub rect: Rect,
     /// Alignment within this line's estimated box.
     pub align: TextAlign,
+    /// Source paragraph index for rich lines, including wrapped continuations.
+    pub paragraph_index: Option<usize>,
     /// Positioned runs; empty for the existing whole-label rendering path.
     pub runs: Vec<LabelRun>,
 }
@@ -453,6 +455,7 @@ pub fn layout_with(
                     Vec2::new(width, line_height),
                 ),
                 align: style.align,
+                paragraph_index: None,
                 runs: Vec::new(),
             }
         })
@@ -611,11 +614,11 @@ fn layout_rich(
         lines.extend(
             rich_lines(&glyphs, layout.frame.size.x, style.wrap, indent)
                 .into_iter()
-                .map(|line| (line, group)),
+                .map(|line| (line, group, paragraph_index)),
         );
     }
     let mut list_widths = vec![0.0_f32; list_groups];
-    for (glyphs, group) in &lines {
+    for (glyphs, group, _) in &lines {
         if let Some(group) = group {
             let width = glyphs.iter().map(|glyph| glyph.width).sum::<f32>();
             list_widths[*group] = list_widths[*group].max(width);
@@ -635,7 +638,7 @@ fn layout_rich(
     layout.lines = lines
         .into_iter()
         .enumerate()
-        .map(|(index, (glyphs, group))| {
+        .map(|(index, (glyphs, group, paragraph_index))| {
             let width = glyphs.iter().map(|glyph| glyph.width).sum::<f32>();
             let aligned_width = group.map_or(width, |group| list_widths[group]);
             let left = match style.align {
@@ -673,6 +676,7 @@ fn layout_rich(
                 } else {
                     style.align
                 },
+                paragraph_index: Some(paragraph_index),
                 runs,
             }
         })
@@ -945,6 +949,9 @@ mod tests {
         assert!(layout.lines.len() >= 3);
         assert!(layout.lines[0].text.starts_with("\u{2022} "));
         assert!(layout.lines[1].text.starts_with("  "));
+        assert_eq!(layout.lines[0].paragraph_index, Some(0));
+        assert_eq!(layout.lines[1].paragraph_index, Some(0));
+        assert_eq!(layout.lines.last().unwrap().paragraph_index, Some(1));
         assert!(layout.lines.iter().flat_map(|line| &line.runs).any(|run| {
             run.text.contains("bold")
                 && run.style.bold == Some(true)

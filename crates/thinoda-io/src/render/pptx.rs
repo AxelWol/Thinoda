@@ -320,7 +320,7 @@ impl Drawing {
         layout: &thinoda_core::label_style::LabelLayout,
         style: &thinoda_core::label_style::LabelStyle,
         color: Color,
-    ) {
+    ) -> Result<(), IoError> {
         use thinoda_core::{InlineTextStyle, ListKind};
 
         let id = self.id();
@@ -370,6 +370,18 @@ impl Drawing {
             fill(Some(color)),
         );
         let mut numbered_prefixes = HashMap::new();
+        let mut paragraph_left = vec![None; text.split('\n').count()];
+        for line in &layout.lines {
+            let index = line.paragraph_index.ok_or_else(|| {
+                IoError::Invalid("rich card layout is missing a paragraph index".into())
+            })?;
+            let left = paragraph_left.get_mut(index).ok_or_else(|| {
+                IoError::Invalid("rich card layout paragraph index is out of range".into())
+            })?;
+            if left.is_none() {
+                *left = Some(line.rect.min.x);
+            }
+        }
         let mut index = 0;
         while index < rich.paragraphs.len() {
             if rich.paragraphs[index].list != ListKind::Numbered {
@@ -424,15 +436,22 @@ impl Drawing {
                 explicit_numbering = true;
             }
             previous_list = list;
-            let indent = list.map_or_else(String::new, |_| {
+            let (paragraph_align, indent) = if list.is_some() {
+                let left = paragraph_left[index].ok_or_else(|| {
+                    IoError::Invalid("rich card layout is missing a list paragraph".into())
+                })?;
                 let prefix_chars = numbered_prefixes.get(&index).copied().unwrap_or(2);
-                let margin = self
+                let prefix = self
                     .emu(
                         style.size() * thinoda_core::label_style::GLYPH_WIDTH * prefix_chars as f32,
                     )
                     .clamp(1, 51_206_400);
-                format!(r#" marL="{margin}" indent="-{margin}""#)
-            });
+                let offset = self.emu((left - layout.frame.min.x).max(0.0));
+                let margin = offset.saturating_add(prefix).min(51_206_400);
+                ("l", format!(r#" marL="{margin}" indent="-{prefix}""#))
+            } else {
+                (align, String::new())
+            };
             let mut runs = String::new();
             let mut segment = String::new();
             let mut segment_style = InlineTextStyle::default();
@@ -472,13 +491,14 @@ impl Drawing {
             }
             scalar += 1;
             paragraphs.push_str(&format!(
-                r#"<a:p><a:pPr algn="{align}"{indent}><a:lnSpc><a:spcPts val="{line_spacing}"/></a:lnSpc>{bullet}{defaults}</a:pPr>{runs}<a:endParaRPr sz="{default_size}"/></a:p>"#
+                r#"<a:p><a:pPr algn="{paragraph_align}"{indent}><a:lnSpc><a:spcPts val="{line_spacing}"/></a:lnSpc>{bullet}{defaults}</a:pPr>{runs}<a:endParaRPr sz="{default_size}"/></a:p>"#
             ));
         }
         self.xml.push_str(&format!(
             r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Card title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t"><a:noAutofit/></a:bodyPr><a:lstStyle/>{paragraphs}</p:txBody></p:sp>"#,
             self.transform(rect),
         ));
+        Ok(())
     }
 
     fn label(&mut self, rect: Rect, value: &str, size: f32, color: Color) {
@@ -1114,7 +1134,7 @@ pub(crate) fn editable_slide(
                 &topic.title,
                 &topic.inline_text,
             );
-            draw.rich_card_title(&topic.title, &topic.inline_text, &rich, &style, text_color);
+            draw.rich_card_title(&topic.title, &topic.inline_text, &rich, &style, text_color)?;
         } else {
             let block = text.topic(*id);
             for (index, line) in block.lines.iter().enumerate() {
@@ -1426,6 +1446,97 @@ mod tests {
     use super::*;
     use image::ImageEncoder;
     use thinoda_core::{PresentationSource, resolve_presentation_slide, resources::Resource};
+
+    #[test]
+    fn editable_card_list_blocks_use_shared_layout_alignment() {
+        use thinoda_core::{
+            InlineParagraph, InlineText, ListKind,
+            label_style::{LabelStyle, layout_rich_in_frame},
+        };
+
+        let text = "short\nlonger words that wrap\n\nplain\nsolo\nend";
+        let rich = InlineText {
+            paragraphs: [
+                (0, ListKind::Bulleted),
+                (1, ListKind::Bulleted),
+                (2, ListKind::Bulleted),
+                (4, ListKind::Numbered),
+            ]
+            .into_iter()
+            .map(|(index, list)| InlineParagraph { index, list })
+            .collect(),
+            ..Default::default()
+        };
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 250.0));
+        for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+            let style = LabelStyle {
+                align,
+                font_size: Some(12.0),
+                spacing: 0.0,
+                ..Default::default()
+            };
+            let layout = layout_rich_in_frame(&style, frame, text, &rich);
+            assert!(
+                layout
+                    .lines
+                    .iter()
+                    .filter(|line| line.paragraph_index == Some(1))
+                    .count()
+                    > 1
+            );
+            let mut draw = Drawing {
+                xml: String::new(),
+                next_id: 1,
+                frame,
+                scale: 12_700.0,
+                width: 9_144_000,
+                height: 6_858_000,
+                rotation: None,
+            };
+            draw.rich_card_title(text, &rich, &layout, &style, Color::rgb(0, 0, 0))
+                .unwrap();
+            let paragraphs: Vec<_> = draw.xml.split("<a:p>").skip(1).collect();
+            assert_eq!(paragraphs.len(), 6);
+            for index in [0, 1, 2, 4] {
+                let paragraph = paragraphs[index];
+                assert!(paragraph.contains(r#"<a:pPr algn="l" "#));
+                let attr = |name: &str| {
+                    paragraph
+                        .split_once(&format!(r#"{name}=""#))
+                        .unwrap()
+                        .1
+                        .split('"')
+                        .next()
+                        .unwrap()
+                        .parse::<i64>()
+                        .unwrap()
+                };
+                let left = layout
+                    .lines
+                    .iter()
+                    .find(|line| line.paragraph_index == Some(index))
+                    .unwrap()
+                    .rect
+                    .min
+                    .x;
+                let expected = draw.emu((left - frame.min.x).max(0.0));
+                assert_eq!(
+                    attr("marL") + attr("indent"),
+                    expected,
+                    "{align:?} paragraph {index}"
+                );
+            }
+            let expected_align = match align {
+                TextAlign::Left => "l",
+                TextAlign::Center => "ctr",
+                TextAlign::Right => "r",
+            };
+            for index in [3, 5] {
+                assert!(paragraphs[index].contains(&format!(r#"<a:pPr algn="{expected_align}">"#)));
+                assert!(paragraphs[index].contains("<a:buNone/>"));
+            }
+        }
+    }
 
     #[test]
     fn editable_sankey_slide_includes_scale_legend_when_enabled() {
