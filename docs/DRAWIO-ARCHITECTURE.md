@@ -761,6 +761,11 @@ families referenced by pending typing or rich draft runs are registered before
 document commit so the editor can preview them; unavailable faces keep the
 existing fallback and warning behavior.
 
+*As implemented in D9 (direct typography):* selected graphemes and pending
+typing can also receive a finite numeric size in the inline-model range or an
+RGB/RGBA hex colour. Values are validated before applying to the draft; the
+existing rich-label gates and atomic document commit remain unchanged.
+
 #### 3.2.3 Connector marker migration (compatibility-critical)
 - Keep `arrow_start`/`arrow_end` bools **as the serialized form** for legacy
   triangles; add optional `start_marker`/`end_marker` fields for exact draw.io

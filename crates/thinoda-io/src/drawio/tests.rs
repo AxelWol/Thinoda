@@ -1672,6 +1672,7 @@ fn rich_shape_html_imports_and_round_trips_styles_lists_and_newlines() {
         style.bold = Some(true);
         style.strikethrough = Some(true);
         style.font_family = Some("Example';url(https://example.invalid/x)".into());
+        style.font_size = Some(24.5);
         style.color = Some(Color::rgba(30, 40, 50, 128));
     })
     .unwrap();

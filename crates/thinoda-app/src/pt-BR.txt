@@ -1,4 +1,5 @@
 # Regional wording overrides.
+Invalid font size|Tamanho de fonte inválido
 On-call (human)|Plantão (pessoa)
 Monitor (software)|Monitoramento (software)
 Record approval|Registrar aprovação

@@ -176,6 +176,11 @@ pub struct BoardLabels {
     pub label_default: String,
     pub label_search: String,
     pub label_monospace: String,
+    pub label_value: String,
+    pub label_apply: String,
+    pub label_custom_color: String,
+    pub label_invalid_color: String,
+    pub label_invalid_size: String,
 }
 
 impl Default for BoardLabels {
@@ -245,6 +250,11 @@ impl Default for BoardLabels {
             label_default: "Default".into(),
             label_search: "Search".into(),
             label_monospace: "Monospace".into(),
+            label_value: "Value".into(),
+            label_apply: "Apply".into(),
+            label_custom_color: "Custom color".into(),
+            label_invalid_color: "Invalid color".into(),
+            label_invalid_size: "Invalid font size".into(),
         }
     }
 }

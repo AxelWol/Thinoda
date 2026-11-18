@@ -1866,6 +1866,7 @@ const DE: &[(&str, &str)] = &[
     ("Low contrast", "Kontrast zu gering"),
     ("Improve contrast", "Kontrast verbessern"),
     ("Invalid color", "Ungültige Farbe"),
+    ("Invalid font size", "Ungültige Schriftgröße"),
     (
         "Contrast compares the symbol with its topic background; it is not an overall accessibility assessment.",
         "Der Kontrast vergleicht das Symbol mit seinem Themenhintergrund; dies ist keine umfassende Bewertung der Barrierefreiheit.",
@@ -5885,6 +5886,7 @@ mod tests {
             "Height",
             "Rotation",
             "Custom color",
+            "Invalid font size",
             "Image card",
             "Pen",
             "Highlighter",

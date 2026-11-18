@@ -244,6 +244,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Typing styles at the caret for shape and primary connector labels
   - [x] Font size and palette colour controls for selected text and caret typing styles
   - [x] Searchable inline font-family selection and draft preview for selected text and caret typing styles
+  - [x] Direct numeric font size and arbitrary RGBA hex colour entry for selected text and caret typing styles
   - [ ] Complete rich-label coverage for extra connector and other label kinds and preserve unsupported source HTML
 - [ ] Copy/paste style, set default style, style rules
 
@@ -284,6 +285,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 direct typography (partial) | Shape and primary connector label editors accept bounded fractional font sizes and arbitrary RGB/RGBA hex colours for a selection or subsequent typing; invalid values are reported without changing the draft. Apply and Enter keep edits atomic, keyboard/IME access and compact layout remain usable, and draw.io rich HTML round-trips fractional sizes and alpha. |
 | 2026-11-18 | D9 inline font families (partial) | Shape and primary connector label editors choose installed, monospace or inherited families for a selection or subsequent typing; a searchable, keyboard-accessible picker fits compact canvases. Draft and pending families are registered for preview before commit, and rapid outside clicks retain the expected atomic-commit behavior. |
 | 2026-11-18 | D9 inline typography (partial) | Shape and primary connector label editors adjust selected or subsequently typed font size and text colour, including inherited defaults, mixed-size indication, grapheme-aware selections, accessible keyboard navigation and compact palettes. Changes remain draft-only until an atomic commit; run-limit failures leave existing formatting intact. |
 | 2026-11-18 | D9 caret typing styles | Character-style toggles at an empty selection affect subsequent text without editing the document until commit. Shape and primary connector editors preserve typing styles across deletion, list changes, paste and IME input; ordered pointer/keyboard processing places later text at the clicked caret. Rich-text limit failures retain the draft and block save/commit until corrected. |
@@ -751,8 +753,7 @@ caret font size in one-unit steps and provides the shared 12-colour palette.
 Default clears that property's override without disturbing other formatting;
 mixed sizes are shown as such and a step starts from the inherited size. Page
 navigation retains the text selection. Narrow canvases use compact swatches.
-Direct numeric size entry and arbitrary colours remain open; the palette does
-not imply full draw.io typography parity.
+Direct numeric sizes and arbitrary colours were added in a later slice.
 
 **D9 inline font families (partial).** The searchable family picker applies an
 installed family, monospace or the inherited default to selected graphemes or
@@ -763,6 +764,15 @@ families to support focus traversal, so its work grows with the number of
 matches; filtering reduces it. Missing installed faces retain their existing
 fallback and warning behavior. Other label kinds and unsupported HTML source
 preservation remain open.
+
+**D9 direct typography (partial).** The size field accepts finite values from
+6 to 256, including fractions. The custom colour field accepts RGB, RRGGBB and
+RRGGBBAA hex values. Enter or Apply transfers a valid value to the label draft;
+invalid input stays visible while editing and does not change it. Keyboard
+input preceding an outside click is processed in order; an invalid submission
+followed immediately by that click is reported. Leaving without applying
+discards the unfinished field value. This supplies arbitrary colours but not a
+graphical spectrum picker.
 
 ## 5. Rubber-duck findings
 

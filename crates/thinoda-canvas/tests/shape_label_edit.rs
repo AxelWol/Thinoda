@@ -696,6 +696,524 @@ fn click_toolbar_button(h: &mut Harness<'_, State>, label: &str) {
     h.run_steps(2);
 }
 
+fn replace_toolbar_value(h: &mut Harness<'_, State>, label: &str, value: &str) {
+    let position = h.get_by_label(label).rect().center();
+    click(h, position);
+    h.run_steps(2);
+    assert!(h.get_by_label(label).is_focused());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    h.event(egui::Event::Text(value.into()));
+    h.run_steps(2);
+}
+
+fn enter_direct_typography(h: &mut Harness<'_, State>, size: &str, color: &str) {
+    click_toolbar_button(h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(h, "Font Size");
+    replace_toolbar_value(h, "Font Size · Value", size);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Board object label").is_focused());
+    click_toolbar_button(h, "Label formatting (F6)");
+    click_toolbar_button(h, "Text Color");
+    click_toolbar_button(h, "Custom color");
+    replace_toolbar_value(h, "Text Color · Value", color);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Board object label").is_focused());
+}
+
+#[test]
+fn direct_size_and_color_are_atomic_for_selected_and_typed_text() {
+    for connector in [false, true] {
+        for caret in [false, true] {
+            let mut h = harness("Label");
+            let id = if connector {
+                begin_connector_label(&mut h, "Label")
+            } else {
+                double_click_shape(&mut h);
+                h.state().shape
+            };
+            if caret {
+                set_label_cursor(&mut h, 5);
+            }
+            let before = h.state().doc.state_id();
+            enter_direct_typography(&mut h, "24.5", "#12A4C080");
+            assert_eq!(h.state().doc.state_id(), before);
+            if caret {
+                assert!(!h.state().view.has_board_label_changes());
+                h.event(egui::Event::Text("x".into()));
+                h.run_steps(2);
+            }
+            let (_, text, rich) = h
+                .state()
+                .view
+                .validated_board_rich_label_draft(&h.state().doc)
+                .unwrap()
+                .unwrap();
+            let rich = rich.unwrap();
+            assert_eq!(text, if caret { "Labelx" } else { "Label" });
+            assert_eq!(
+                (rich.runs[0].start, rich.runs[0].end),
+                if caret { (5, 6) } else { (0, 5) }
+            );
+            assert_eq!(rich.runs[0].style.font_size, Some(24.5));
+            assert_eq!(
+                rich.runs[0].style.color,
+                Some(thinoda_core::Color::rgba(0x12, 0xA4, 0xC0, 0x80))
+            );
+            h.key_press(Key::Enter);
+            h.run_steps(2);
+            assert_eq!(
+                h.state()
+                    .doc
+                    .sheet()
+                    .canvas
+                    .object(id)
+                    .unwrap()
+                    .label_rich_text
+                    .as_deref(),
+                Some(&rich)
+            );
+            assert!(h.state_mut().doc.undo());
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), "Label");
+            assert!(object.label_rich_text.is_none());
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
+fn invalid_direct_typography_stays_in_the_field_until_corrected() {
+    let mut h = harness("Label");
+    double_click_shape(&mut h);
+    let before = h.state().doc.state_id();
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(&mut h, "Font Size");
+    for value in ["NaN", "5.99", "257"] {
+        replace_toolbar_value(&mut h, "Font Size · Value", value);
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+        assert!(h.get_by_label("Font Size · Value").is_focused());
+        assert!(h.query_by_label("Invalid font size (6–256)").is_some());
+        assert_eq!(h.state().doc.state_id(), before);
+        assert!(!h.state().view.has_board_label_changes());
+    }
+    replace_toolbar_value(&mut h, "Font Size · Value", "6");
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Board object label").is_focused());
+    click_toolbar_button(&mut h, "Label formatting (F6)");
+    click_toolbar_button(&mut h, "Text Color");
+    click_toolbar_button(&mut h, "Custom color");
+    assert!(h.query_by_label("Invalid color").is_none());
+    click_toolbar_button(&mut h, "Apply");
+    assert!(h.get_by_label("Text Color · Value").is_focused());
+    assert!(h.query_by_label("Invalid color").is_some());
+    replace_toolbar_value(&mut h, "Text Color · Value", "#12345");
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Text Color · Value").is_focused());
+    assert!(h.query_by_label("Invalid color").is_some());
+    replace_toolbar_value(&mut h, "Text Color · Value", "#abc");
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    let style = &rich.unwrap().runs[0].style;
+    assert_eq!(style.font_size, Some(6.0));
+    assert_eq!(
+        style.color,
+        Some(thinoda_core::Color::rgb(0xAA, 0xBB, 0xCC))
+    );
+    assert_eq!(h.state().doc.state_id(), before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn direct_typography_apply_button_rejects_invalid_values_without_finishing() {
+    let mut h = harness("Label");
+    double_click_shape(&mut h);
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(&mut h, "Font Size");
+    replace_toolbar_value(&mut h, "Font Size · Value", "999");
+    click_toolbar_button(&mut h, "Apply");
+    assert_eq!(h.state().view.editing_board_object(), Some(h.state().shape));
+    assert!(h.get_by_label("Font Size · Value").is_focused());
+    assert!(h.query_by_label("Invalid font size (6–256)").is_some());
+    assert!(!h.state().view.has_board_label_changes());
+    replace_toolbar_value(&mut h, "Font Size · Value", "17.25");
+    click_toolbar_button(&mut h, "Apply");
+    assert!(h.get_by_label("Board object label").is_focused());
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rich.unwrap().runs[0].style.font_size, Some(17.25));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn toolbar_keyboard_input_preceding_an_outside_click_is_applied_in_order() {
+    for direct in [false, true] {
+        let mut h = harness("Label");
+        double_click_shape(&mut h);
+        click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
+        if direct {
+            click_toolbar_button(&mut h, "Font Size");
+            let position = h.get_by_label("Font Size · Value").rect().center();
+            click(&mut h, position);
+            h.run_steps(2);
+            h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+            h.run_steps(1);
+            h.input_mut().events.push(egui::Event::Text("27.5".into()));
+        } else {
+            h.key_press(Key::F6);
+            h.run_steps(2);
+            for _ in 0..3 {
+                h.key_press(Key::Tab);
+                h.run_steps(1);
+            }
+            assert!(
+                h.get_by_role_and_label(Role::Button, "Font Size +")
+                    .is_focused()
+            );
+        }
+        let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+        h.input_mut().events.extend([
+            egui::Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("outside".into()),
+        ]);
+        h.run_steps(3);
+        assert_eq!(h.state().view.editing_board_object(), None);
+        let object = h
+            .state()
+            .doc
+            .sheet()
+            .canvas
+            .object(h.state().shape)
+            .unwrap();
+        assert_eq!(object.label(), "Label");
+        assert_eq!(
+            object.label_rich_text.as_ref().unwrap().runs[0]
+                .style
+                .font_size,
+            Some(if direct { 27.5 } else { 13.0 })
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn text_after_toolbar_enter_and_before_an_outside_click_stays_in_the_label() {
+    let mut h = harness("Label");
+    double_click_shape(&mut h);
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(&mut h, "Font Size");
+    let position = h.get_by_label("Font Size · Value").rect().center();
+    click(&mut h, position);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    h.input_mut().events.extend([
+        egui::Event::Text("27.5".into()),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+        egui::Event::PointerMoved(outside),
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(h.state().shape)
+        .unwrap();
+    assert_eq!(object.label(), "x");
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0]
+            .style
+            .font_size,
+        Some(27.5)
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn invalid_toolbar_submit_before_an_outside_click_is_reported() {
+    let mut h = harness("Label");
+    double_click_shape(&mut h);
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(&mut h, "Font Size");
+    let position = h.get_by_label("Font Size · Value").rect().center();
+    click(&mut h, position);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    h.input_mut().events.extend([
+        egui::Event::Text("999".into()),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerMoved(outside),
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(h.state().shape)
+        .unwrap();
+    assert_eq!(object.label(), "Label");
+    assert!(object.label_rich_text.is_none());
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.contains("Invalid font size"))
+    );
+}
+
+#[test]
+fn corrected_toolbar_submit_before_an_outside_click_does_not_report_a_stale_error() {
+    let mut h = harness("Label");
+    double_click_shape(&mut h);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(&mut h, "Font Size");
+    let position = h.get_by_label("Font Size · Value").rect().center();
+    click(&mut h, position);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    let key = |key, modifiers| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    h.input_mut().events.extend([
+        egui::Event::Text("999".into()),
+        key(Key::Enter, Modifiers::NONE),
+        key(Key::A, Modifiers::COMMAND),
+        egui::Event::Text("24".into()),
+        key(Key::Enter, Modifiers::NONE),
+        egui::Event::PointerMoved(outside),
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(h.state().shape)
+        .unwrap();
+    assert_eq!(
+        object.label_rich_text.as_ref().unwrap().runs[0]
+            .style
+            .font_size,
+        Some(24.0)
+    );
+    assert!(h.state().errors.is_empty());
+}
+
+#[test]
+fn direct_typography_pages_fit_compact_canvases() {
+    let mut h = harness_with_size("Label", vec2(260.0, 180.0));
+    h.state_mut().view.board_labels.label_invalid_size = "Nieprawidłowy rozmiar czcionki".into();
+    double_click_shape(&mut h);
+    click_toolbar_button(&mut h, "Font Size / Text Color / Font Family");
+    click_toolbar_button(&mut h, "Font Size");
+    for label in ["Font Size · Value", "Apply"] {
+        assert!(
+            h.state()
+                .view
+                .canvas_rect()
+                .contains_rect(h.get_by_label(label).rect()),
+            "{label}"
+        );
+    }
+    replace_toolbar_value(&mut h, "Font Size · Value", "999");
+    let toolbar = h
+        .ctx
+        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .unwrap();
+    assert!(h.state().view.canvas_rect().contains_rect(toolbar));
+    assert!(!toolbar.contains(h.get_by_label("Board object label").rect().center()));
+    assert!(
+        h.state().view.canvas_rect().contains_rect(
+            h.get_by_label("Nieprawidłowy rozmiar czcionki (6–256)")
+                .rect()
+        )
+    );
+    replace_toolbar_value(&mut h, "Font Size · Value", "20");
+    click_toolbar_button(&mut h, "Apply");
+    click_toolbar_button(&mut h, "Label formatting (F6)");
+    click_toolbar_button(&mut h, "Text Color");
+    click_toolbar_button(&mut h, "Custom color");
+    for label in ["Text Color · Value", "Apply"] {
+        assert!(
+            h.state()
+                .view
+                .canvas_rect()
+                .contains_rect(h.get_by_label(label).rect()),
+            "{label}"
+        );
+    }
+    let toolbar = h
+        .ctx
+        .memory(|memory| memory.area_rect(MapCanvas::id().with("board-label-formatting")))
+        .unwrap();
+    assert!(!toolbar.contains(h.get_by_label("Board object label").rect().center()));
+    assert!(h.state().view.canvas_rect().contains_rect(toolbar));
+    replace_toolbar_value(&mut h, "Text Color · Value", "123456");
+    click_toolbar_button(&mut h, "Apply");
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    let style = &rich.unwrap().runs[0].style;
+    assert_eq!(style.font_size, Some(20.0));
+    assert_eq!(
+        style.color,
+        Some(thinoda_core::Color::rgb(0x12, 0x34, 0x56))
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn direct_typography_field_is_keyboard_and_ime_accessible() {
+    let mut h = harness("Label");
+    double_click_shape(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    for _ in 0..8 {
+        h.key_press(Key::Tab);
+        h.run_steps(1);
+    }
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    for _ in 0..2 {
+        h.key_press(Key::Tab);
+        h.run_steps(1);
+    }
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Font Size")
+            .is_focused()
+    );
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Font Size · Value").is_focused());
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "25".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert!(h.get_by_label("Font Size · Value").is_focused());
+    assert!(!h.state().view.has_board_label_changes());
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("25".into())));
+    h.run_steps(2);
+    replace_toolbar_value(&mut h, "Font Size · Value", "256");
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let (_, _, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rich.unwrap().runs[0].style.font_size, Some(256.0));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
 #[test]
 fn selected_label_size_and_color_are_atomic_for_shapes_and_connectors() {
     for connector in [false, true] {
@@ -899,6 +1417,8 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
     h.run_steps(1);
     h.key_press(Key::Tab);
     h.run_steps(1);
+    h.key_press(Key::Tab);
+    h.run_steps(1);
     assert!(
         h.get_by_role_and_label(Role::Button, "Font Size +")
             .is_focused()
@@ -921,7 +1441,7 @@ fn keyboard_can_navigate_typography_pages_without_committing_the_draft() {
     assert_eq!(rich.unwrap().runs[0].style.font_size, Some(13.0));
     h.key_press(Key::F6);
     h.run_steps(2);
-    for _ in 0..4 {
+    for _ in 0..5 {
         h.key_press(Key::Tab);
         h.run_steps(1);
     }
