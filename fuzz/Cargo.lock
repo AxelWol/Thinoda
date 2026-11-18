@@ -1952,6 +1952,7 @@ version = "0.27.0"
 dependencies = [
  "base64 0.23.1",
  "image",
+ "log",
  "pulldown-cmark",
  "quick-xml 0.42.0",
  "serde",

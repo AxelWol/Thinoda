@@ -1123,6 +1123,10 @@ macOS packaging signs the complete `.app` bundle before creating its DMG. The
 release workflow verifies both downloadable formats with `codesign --verify
 --deep --strict`, checks the DMG with `hdiutil verify`, and verifies and smoke-tests
 an app copied from the mounted DMG before uploading any macOS artifacts.
+Confirmed Apple ticket connection loss and codesign's "A timestamp was expected
+but was not found" failure receive up to five attempts with 15/30/60/120-second
+backoff. Other signing/notarization failures and exhausted retries still fail;
+timestamps, signature verification and notarization remain mandatory.
 
 ## Releasing
 Versions follow [Semantic Versioning](https://semver.org) and are automated by

@@ -130,7 +130,10 @@ def package(root: Path, target: str) -> None:
     image = output / f"{config['product-name']}_{config['version']}_{suffix}.dmg"
     license = root / "crates" / "thinoda-app" / config["license-file"]
     create_dmg(apps[0], image, license)
-    run("codesign", "--force", "--timestamp", "--sign", os.environ["MACOS_SIGN_IDENTITY"], str(image))
+    run_with_ticket_retry([
+        "codesign", "--force", "--timestamp", "--sign",
+        os.environ["MACOS_SIGN_IDENTITY"], str(image),
+    ], timeout=120)
     run("codesign", "--verify", "--strict", "--verbose=2", str(image))
     notarize_dmg(image)
 
