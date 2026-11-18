@@ -1049,4 +1049,3 @@ app + its shortcuts reference in Phase 0 (each gesture recorded with modifier va
 - Platform look-alike families (Android, iOS, Material) are treated like vendor sets.
 - Vendor sets (AWS, Azure, GCP, Cisco, IBM, …) not bundled; optional user-triggered
   download from pinned URL + SHA-256, vendor terms shown first; PRIVACY.md updated.
-
