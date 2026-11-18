@@ -618,6 +618,33 @@ fn connector_label_deletes_whole_graphemes_and_undoes() {
 }
 
 #[test]
+fn connector_label_modified_delete_expands_partial_selection() {
+    let mut h = harness("Shape");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    let id = add_positioned_connector(&mut h);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set connector label", id, |object| {
+            object.set_label("a🇩🇪b").unwrap();
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    set_label_selection(&mut h, 2, 1);
+    h.key_press_modifiers(Modifiers::CTRL, Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a🇩🇪b");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn rich_label_replacement_and_cut_expand_partial_graphemes() {
     for mode in 0..3 {
         let mut h = harness("a👩\u{200d}💻b");
