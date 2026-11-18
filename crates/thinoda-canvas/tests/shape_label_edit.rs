@@ -886,6 +886,122 @@ fn editor_click_precedes_batched_format_shortcut_and_text() {
 }
 
 #[test]
+fn editor_click_orders_ime_input_before_and_after_the_click() {
+    for ime_before_click in [false, true] {
+        let mut h = harness("aaa");
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 1);
+        let editor = h.get_by_label("Board object label").rect();
+        let position = egui::pos2(editor.left() + 2.0, editor.center().y);
+        let ime = [
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "a".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        ];
+        let click = [
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ];
+        if ime_before_click {
+            h.input_mut().events.extend(ime);
+            h.input_mut().events.extend(click);
+            h.input_mut().events.push(egui::Event::Text("x".into()));
+        } else {
+            h.input_mut().events.extend(click);
+            h.input_mut().events.extend(ime);
+        }
+        h.run_steps(2);
+        let (_, text, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, if ime_before_click { "xaaaa" } else { "aaaa" });
+        let changed = changed.unwrap();
+        assert_eq!(
+            (changed.runs[0].start, changed.runs[0].end),
+            if ime_before_click { (3, 4) } else { (2, 3) }
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn outside_click_commits_preceding_rich_ime_input_in_order() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+    h.input_mut().events.extend([
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "a".into(),
+            active_range_chars: None,
+        }),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        egui::Event::PointerMoved(outside),
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: outside,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let object = h.state().doc.sheet().canvas.object(shape).unwrap();
+    assert_eq!(object.label(), "aaaa");
+    let rich = object.label_rich_text.as_ref().unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 3));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn caret_formatting_survives_ime_composition() {
     let mut h = harness("");
     h.ctx

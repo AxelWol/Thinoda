@@ -269,6 +269,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Use actual buffer ranges for isolated IME preedit/commit replacements
   - [x] Process pointer-free, IME-only batches in event order
   - [x] Process pointer-free mixed IME/keyboard batches without F6 in event order, protecting candidate keys
+  - [x] Cover synthetic editor and outside clicks batched with rich IME input
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -907,8 +908,10 @@ diff. Synthetic repeated text, pending caret style, composition undo/redo and
 empty preedit/commit cancellation are covered. Isolated preedit and commit
 replacements also use actual buffer ranges; pointer-free batches containing
 IME and keyboard events are processed in order unless they contain F6;
-candidate keys remain protected for the whole IME frame. Duck check: F6 and
-pointer batches still bypass this path, and the tests do not establish
+candidate keys remain protected for the whole IME frame. Synthetic editor
+clicks before or after IME input and an outside-click commit retain the
+expected formatting. Duck check: F6 and other pointer batches need further
+work, and the tests do not establish
 real IME or browser acceptance.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF

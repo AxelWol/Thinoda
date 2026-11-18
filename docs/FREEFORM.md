@@ -2077,8 +2077,9 @@ actual buffer ranges, and pointer-free mixed IME/keyboard batches without
 F6 are processed in order while candidate keys remain protected for the
 whole IME frame. Synthetic tests cover repeated text, both sides of a
 composition, empty preedit/commit cancellation, candidate keys, and undo
-before, during and after composition. F6 and pointer batches still require
-separate acceptance.
+before, during and after composition. Synthetic editor clicks around IME
+input and outside-click commit preserve repeated-text formatting. F6 and
+other pointer batches still require separate acceptance.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,
