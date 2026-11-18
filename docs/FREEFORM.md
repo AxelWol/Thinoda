@@ -2052,6 +2052,11 @@ surrounding ranges still need separate grapheme-policy work.
 Synthetic tests also cover empty initial IME events and active preedit updates
 that join adjacent graphemes. An empty initial event can reverse the selection
 direction in egui even though its selected range is preserved.
+Eligible AccessKit `ReplaceSelectedText` requests for the active label use the
+same grapheme boundaries and tracked rich edits, including empty replacement
+and ordered keyboard batches. Synthetic shape and connector tests do not
+establish real assistive-technology behavior or cover other accessibility
+actions.
 Repeated characters, selected deletion and document undo also have synthetic
 shape and connector coverage, including an extra label.
 

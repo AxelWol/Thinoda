@@ -275,6 +275,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Preserve graphemes for Shift+Enter and the start of an eligible IME composition
   - [x] Expand partial grapheme selections for eligible Ctrl, Alt and Command Backspace/Delete
   - [x] Snap interior carets for eligible Ctrl, Alt and Command Backspace/Delete
+  - [x] Handle eligible AccessKit selected-text replacement with tracked rich ranges and grapheme boundaries
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -317,6 +318,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 accessible label replacement (partial) | Eligible AccessKit text replacement uses grapheme-safe selections and tracked rich edits, including empty replacement, pending caret style, ordered keyboard batches and undo. Physical assistive technology and other accessibility actions remain open. |
 | 2026-11-18 | D9 modified deletion caret (partial) | Eligible modified Backspace/Delete snap an interior grapheme caret toward the deletion boundary before egui computes its word deletion; local undo and pending typing styles are preserved. Other deletion endpoints and physical input remain open. |
 | 2026-11-18 | D9 modified selection deletion (partial) | Eligible modified Backspace/Delete expand partial grapheme selections; shape and connector regressions cover deletion and undo. Collapsed modified deletion and platform input remain open. |
 | 2026-11-18 | D9 grapheme-safe line breaks and IME (partial) | Eligible Shift+Enter and initial IME input expand partial selections or snap insertion carets; synthetic tests cover typing styles, empty events and active preedit updates. Physical IME and mixed pointer input remain open. |
@@ -947,6 +949,14 @@ for backward deletion or the start for forward deletion, then egui computes
 the normal deletion from that boundary. Duck check: egui's computed *other*
 endpoint is not expanded, so this is not a general grapheme-safety guarantee
 for modified deletion. Pointer batches and real platform shortcuts remain open.
+
+**D9 accessible label replacement (partial).** An AccessKit
+`ReplaceSelectedText` request for the active label uses the same grapheme
+boundaries and tracked rich edit path as text insertion, including an empty
+value deleting a selection. Requests for other nodes are not captured.
+Synthetic shape and connector tests cover ordering, formatting and undo.
+Duck check: this does not establish screen-reader or physical-device behavior,
+other accessibility actions, or complete mixed pointer/IME ordering.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,
