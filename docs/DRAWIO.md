@@ -92,7 +92,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shape, primary and extra connector labels, with selection and caret typography controls and inert draw.io HTML import/export; cards, zones and container-specific labels remain plain or use their existing text model; unsupported markup warns and is not preserved | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards now render on canvas and affect layout but are not editable or exported; zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
@@ -249,7 +249,8 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Searchable inline font-family selection and draft preview for selected text and caret typing styles
   - [x] Direct numeric font size and arbitrary RGBA hex colour entry for selected text and caret typing styles
   - [x] Preserve existing formatted-card runs and lists during search/replace
-  - [ ] Complete rich-card editing, rendering and draw.io interchange, cover other label kinds and preserve unsupported source HTML
+  - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
+  - [ ] Complete rich-card editing, export and draw.io interchange; cover other label kinds and preserve unsupported source HTML
 - [ ] Copy/paste style, set default style, style rules
 
 ### D10 — Save back to `.drawio`
@@ -289,7 +290,8 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
-| 2026-11-18 | D9 formatted-card search (partial) | Search/replace updates existing sticky and text card runs and list paragraphs alongside their titles, including Unicode ranges and inserted paragraph boundaries. Changes remain atomic across locked cards, validation failures and workbook sheets, and are undoable. Canvas rich editing/rendering and draw.io interchange are not yet supported for these cards. |
+| 2026-11-18 | D9 formatted-card canvas rendering (partial) | Sticky/text card titles render inline runs, font overrides, colours, baseline styling and bullet/number markers through the shared rich-label painter. Core card layout reserves height for rich run sizes and accounts for list markers; the original plain-title painter is unchanged for unformatted cards. The core measurement and line wrapping use bounded glyph-width estimates, and rich cards are not yet editable or supported by SVG/PDF/PNG/PowerPoint or draw.io interchange; export preflight continues to report formatting loss. |
+| 2026-11-18 | D9 formatted-card search (partial) | Search/replace updates existing sticky and text card runs and list paragraphs alongside their titles, including Unicode ranges and inserted paragraph boundaries. Changes remain atomic across locked cards, validation failures and workbook sheets, and are undoable. Canvas editing and draw.io interchange are not yet supported for these cards; canvas rendering is a separate partial slice. |
 | 2026-11-18 | D9 rich extra connector labels (partial) | Positioned extra labels, including Sankey labels, support bounded rich runs and lists, canvas and inspector editing, undo and recovery, placeholder/search remapping, the inert draw.io HTML subset, and canvas and SVG/PNG/PDF/editable PowerPoint rendering. Inspector property changes preserve an active draft, merge unaffected label edits and reject conflicting text changes. Compatibility gates: native v51, sheet clipboard v40, board clipboard v44, XMind `THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1`, recovery `THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1` and `THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1`. Other label kinds and unsupported HTML source preservation remain open. |
 | 2026-11-18 | D9 direct typography (partial) | Shape and primary connector label editors accept bounded fractional font sizes and arbitrary RGB/RGBA hex colours for a selection or subsequent typing; invalid values are reported without changing the draft. Apply and Enter keep edits atomic, keyboard/IME access and compact layout remain usable, and draw.io rich HTML round-trips fractional sizes and alpha. |
 | 2026-11-18 | D9 inline font families (partial) | Shape and primary connector label editors choose installed, monospace or inherited families for a selection or subsequent typing; a searchable, keyboard-accessible picker fits compact canvases. Draft and pending families are registered for preview before commit, and rapid outside clicks retain the expected atomic-commit behavior. |
@@ -798,8 +800,18 @@ remapping as shape and connector labels, inheriting the formatting at each
 changed replacement's start; identical replacements retain mixed formatting.
 Locked cards and values exceeding the rich-text bounds
 reject the whole operation. Direct title editing still rejects formatted cards;
-their formatting is not yet rendered or exposed in the editor, and draw.io
-interchange still drops it. This slice does not claim rich-card support.
+their formatting is now visible on canvas, but it is not exposed in the editor,
+and draw.io interchange and visual exports still drop it. This slice does not
+claim complete rich-card support.
+
+**D9 formatted-card canvas rendering (partial).** Sticky and text cards use the
+shared rich-label layout and painter, including list markers, inline family,
+size, colour, baseline and decoration overrides. Layout reserves the maximum
+run line-height so larger formatting is not clipped by the previous plain-text
+measurement. Duck check: this improves vertical sizing but the shared bounded
+glyph-width estimate is not font shaping; export paths and editing still do
+not preserve the visual model. Keep `InlineTextDropped` preflight warnings
+until those paths are implemented and covered together.
 
 ## 5. Rubber-duck findings
 

@@ -684,6 +684,36 @@ fn layout_rich(
     layout
 }
 
+/// Lay out rich text in a fixed frame. The style controls font, alignment and
+/// wrapping; frame geometry is supplied by the owning object.
+pub fn layout_rich_in_frame(
+    style: &LabelStyle,
+    frame: Rect,
+    text: &str,
+    rich: &InlineText,
+) -> LabelLayout {
+    layout_rich(style, frame, 0.0, frame, text, rich)
+}
+
+/// Estimate the wrapped dimensions of rich text without allocating a text renderer.
+pub fn measure_rich_text(text: &str, rich: &InlineText, size: f32, width: f32) -> Vec2 {
+    let style = LabelStyle {
+        font_size: Some(size),
+        align: TextAlign::Left,
+        vertical_align: LabelVAlign::Top,
+        spacing: 0.0,
+        wrap: true,
+        ..Default::default()
+    };
+    let frame = Rect::from_min_size(
+        Vec2::ZERO,
+        Vec2::new(width.max(1.0), crate::board::MAX_BOARD_COORDINATE),
+    );
+    layout_rich(&style, frame, 0.0, frame, text, rich)
+        .block
+        .size
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
