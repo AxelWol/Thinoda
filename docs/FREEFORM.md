@@ -1963,8 +1963,11 @@ Implementation contract and remaining work:
    sticky/text-card titles.
    PowerPoint branch/zone slides emit each formatted title as one editable
    text box with styled runs and native paragraph/list properties. One
-   rotated fixture opened, edited and saved in Windows PowerPoint; visual
-   parity and other hosts remain unverified, and viewport slides are rasterized. Run-level
+   rotated fixture opened, edited and saved in Windows PowerPoint. A second
+   fixture showed hidden empty-list markers and different wrapping/alignment;
+   explicit numbering after empty items preserves initial values but may
+   require manual adjustment after editing. Other hosts remain unverified,
+   and viewport slides are rasterized. Run-level
    card editing remains open. A validated, locked-
    aware title-and-inline mutation now supplies an atomic undoable commit for
    a future editor; it does not yet expose editing controls or drafts.

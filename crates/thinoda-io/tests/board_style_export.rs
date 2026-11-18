@@ -325,10 +325,14 @@ fn formatted_card_powerpoint_preserves_editable_paragraphs_and_list_numbering() 
         2
     );
     assert_eq!(
+        shape.matches(r#"type="arabicPeriod" startAt="2""#).count(),
+        1
+    );
+    assert_eq!(
         shape
             .matches(r#"<a:buAutoNum type="arabicPeriod"/>"#)
             .count(),
-        1
+        0
     );
     assert_eq!(shape.matches("<a:defRPr ").count(), 6);
     assert_eq!(shape.matches("<a:buNone/>").count(), 2);
@@ -346,6 +350,62 @@ fn formatted_card_powerpoint_preserves_editable_paragraphs_and_list_numbering() 
             break;
         }
     }
+}
+
+#[test]
+fn formatted_card_numbering_resumes_after_empty_numbered_paragraphs() {
+    use thinoda_core::{InlineParagraph, ListKind};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "First\n\n\nFourth\nFifth\nplain\nRestart",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic.inline_text.paragraphs = [0, 1, 2, 3, 4, 6]
+        .into_iter()
+        .map(|index| InlineParagraph {
+            index,
+            list: ListKind::Numbered,
+        })
+        .collect();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let name = slide.find(r#"name="Card title""#).unwrap();
+    let end = slide[name..].find("</p:sp>").unwrap() + name;
+    let shape = &slide[name..end];
+    let numbering: Vec<_> = shape
+        .split("<a:p>")
+        .skip(1)
+        .map(|paragraph| {
+            let start = paragraph.find("<a:bu").unwrap();
+            let end = paragraph[start..].find("/>").unwrap() + start + 2;
+            &paragraph[start..end]
+        })
+        .collect();
+    assert_eq!(
+        numbering,
+        [
+            r#"<a:buAutoNum type="arabicPeriod" startAt="1"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod" startAt="3"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod" startAt="4"/>"#,
+            r#"<a:buAutoNum type="arabicPeriod" startAt="5"/>"#,
+            "<a:buNone/>",
+            r#"<a:buAutoNum type="arabicPeriod" startAt="1"/>"#,
+        ]
+    );
+    assert!(!shape.contains("<a:t> </a:t>"));
 }
 
 #[test]

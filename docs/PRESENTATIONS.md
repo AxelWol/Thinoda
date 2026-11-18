@@ -194,9 +194,11 @@ map deletion.
 For branch and Zone slides, PowerPoint text is emitted as editable text boxes
 with measured line placement and the topic's paragraph alignment and text
 styles. Formatted card titles instead use one editable text box with styled
-runs and native paragraphs and lists. One rotated fixture opened and retained
-its edited list in Windows PowerPoint; visual parity and other hosts remain
-unverified. Connecting curves are editable freeform vector
+runs and native paragraphs and lists. Windows PowerPoint hides markers on
+empty list paragraphs; explicit numbering after an empty numbered item
+preserves subsequent initial values but may require manual renumbering after
+list edits. A rotated fixture also showed different wrapping and alignment
+from Thinoda. Other hosts remain unverified. Connecting curves are editable freeform vector
 paths, not a promise of PowerPoint auto-routing/reconnection; photographs remain
 separate pictures. Viewport slides instead become non-editable images, as
 reported before export. Some frame clipping on editable branch and Zone slides

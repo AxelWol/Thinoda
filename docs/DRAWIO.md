@@ -254,6 +254,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
   - [x] Emit formatted card titles as single editable PowerPoint text boxes with native paragraphs and list properties
+  - [x] Preserve subsequent initial PowerPoint numbering after empty numbered paragraphs
   - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
   - [x] Add explicit-style label range replacement with list remapping for future ordered edits
   - [x] Add bounded transactional rich-draft state with directional selection, local history and explicit composition grouping
@@ -298,6 +299,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 PowerPoint empty-list numbering (partial) | Windows PowerPoint suppressed markers on empty list paragraphs and counted following items differently from Thinoda. Following numbered paragraphs now carry explicit start values; a rotated fixture displays the subsequent 2 and 3 correctly. Empty markers are still hidden in PowerPoint, wrapping/alignment differs, and explicit starts can require manual renumbering after editing. |
 | 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |
 | 2026-11-18 | D9 card baselines (partial) | Sticky/text-card superscript, subscript and explicit normal baselines survive supported draw.io HTML, rendering and persistence. Compatibility gates: native v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind `THINODA-XMIND-CARD-BASELINE-1`, recovery `THINODA-RECOVERY-CARD-BASELINE-1` and `THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open. |
 | 2026-11-18 | D9 rich draft transactions (partial) | A bounded core draft accepts ordered operations atomically, retains directional selection and typing style in local history, and groups explicitly opened composition updates into a single undo entry. It is not connected to the canvas or recovery; the event adapter, grapheme handling and IME lifecycle remain open. |
@@ -877,11 +879,15 @@ fonts; the shared rich-label renderer has the same limitation.
 
 **D9 formatted-card PowerPoint (partial).** Branch/zone slides write one
 editable DrawingML text box per formatted card, with original paragraphs,
-styled runs and native list properties. Duck check: a rotated Windows PowerPoint fixture opened without repair and
-its numbered list remained editable after saving, but its visual parity,
-blank-list rendering and LibreOffice behavior remain unverified. PowerPoint's
-font metrics and wrapping can differ from the canvas. Viewport slides are
-rasterized; retain the loss warning.
+styled runs and native list properties. A rotated Windows PowerPoint fixture
+opened without repair and its numbered list remained editable after saving.
+A second rotated fixture showed that PowerPoint hides markers on empty
+paragraphs and otherwise restarts the following numbering. Explicit starts on
+all following numbered items preserve their initial values (2 and 3 in the
+checked fixture), without adding hidden characters to the text. Duck check:
+those starts can require manual adjustment after list edits; empty markers remain
+hidden, wrapping and alignment differ from Thinoda, and LibreOffice behavior
+is unverified. Viewport slides are rasterized; retain the loss warning.
 
 **D9 style reuse (partial).** Object/card copy-paste and named quick styles are
 already implemented and regression-tested. Duck check: do not treat named

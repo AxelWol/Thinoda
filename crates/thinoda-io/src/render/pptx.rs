@@ -393,6 +393,8 @@ impl Drawing {
         let mut scalar = 0usize;
         let mut run_index = 0usize;
         let mut previous_list = None;
+        let mut explicit_numbering = false;
+        let mut number = 0usize;
         for (index, paragraph) in text.split('\n').enumerate() {
             let list = rich
                 .paragraphs
@@ -401,14 +403,26 @@ impl Drawing {
                 .map(|p| p.list);
             let bullet = match list {
                 Some(ListKind::Bulleted) => "<a:buChar char=\"•\"/>".to_owned(),
+                Some(ListKind::Numbered) if explicit_numbering => {
+                    number += 1;
+                    format!(r#"<a:buAutoNum type="arabicPeriod" startAt="{number}"/>"#)
+                }
                 Some(ListKind::Numbered) if previous_list == list => {
+                    number += 1;
                     r#"<a:buAutoNum type="arabicPeriod"/>"#.to_owned()
                 }
                 Some(ListKind::Numbered) => {
+                    number = 1;
                     r#"<a:buAutoNum type="arabicPeriod" startAt="1"/>"#.to_owned()
                 }
                 None => "<a:buNone/>".to_owned(),
             };
+            if list != Some(ListKind::Numbered) {
+                explicit_numbering = false;
+            } else if paragraph.is_empty() {
+                // PowerPoint skips empty items and does not continue after a non-1 startAt.
+                explicit_numbering = true;
+            }
             previous_list = list;
             let indent = list.map_or_else(String::new, |_| {
                 let prefix_chars = numbered_prefixes.get(&index).copied().unwrap_or(2);
