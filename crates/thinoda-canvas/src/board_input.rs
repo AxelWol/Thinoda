@@ -7057,6 +7057,7 @@ fn show_label_format_toolbar(
 
 pub(super) fn label_keyboard_event(event: &egui::Event) -> bool {
     label_accessibility_replacement(event).is_some()
+        || label_accessibility_set_value(event).is_some()
         || matches!(
             event,
             egui::Event::Text(_)
@@ -7069,13 +7070,25 @@ pub(super) fn label_keyboard_event(event: &egui::Event) -> bool {
 }
 
 fn label_accessibility_replacement(event: &egui::Event) -> Option<&str> {
+    label_accessibility_value(event, egui::accesskit::Action::ReplaceSelectedText)
+}
+
+fn label_accessibility_set_value(event: &egui::Event) -> Option<&str> {
+    label_accessibility_value(event, egui::accesskit::Action::SetValue)
+}
+
+fn label_accessibility_value(
+    event: &egui::Event,
+    expected: egui::accesskit::Action,
+) -> Option<&str> {
     match event {
         egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
-            action: egui::accesskit::Action::ReplaceSelectedText,
+            action,
             target_node,
             target_tree,
             data: Some(egui::accesskit::ActionData::Value(text)),
-        }) if *target_node == MapCanvas::board_label_editor_id().accesskit_id()
+        }) if *action == expected
+            && *target_node == MapCanvas::board_label_editor_id().accesskit_id()
             && *target_tree == egui::accesskit::TreeId::ROOT =>
         {
             Some(text)
@@ -7669,7 +7682,10 @@ fn show_label_editor_pass(
                 matches!(key, Key::Backspace | Key::Delete)
                     || (*key == Key::Enter && modifiers.matches_exact(Modifiers::SHIFT))
             }
-            _ => label_accessibility_replacement(event).is_some(),
+            _ => {
+                label_accessibility_replacement(event).is_some()
+                    || label_accessibility_set_value(event).is_some()
+            }
         }) {
             label_format::HistoryInput::Typing
         } else {
@@ -8043,6 +8059,7 @@ fn show_label_editor_pass(
                     matches!(event, egui::Event::Text(_) | egui::Event::Paste(_))
                         || label_accessibility_replacement(event)
                             .is_some_and(|text| !text.is_empty())
+                        || label_accessibility_set_value(event).is_some_and(|text| !text.is_empty())
                 })
                 .count()
                 == 1
@@ -8086,7 +8103,8 @@ fn show_label_editor_pass(
                     ) => Some(label_format::Deletion::Forward),
                     (Some(egui::Event::Cut), None) => Some(label_format::Deletion::Selection),
                     (Some(event), None)
-                        if label_accessibility_replacement(event).is_some_and(str::is_empty) =>
+                        if label_accessibility_replacement(event).is_some_and(str::is_empty)
+                            || label_accessibility_set_value(event).is_some_and(str::is_empty) =>
                     {
                         Some(label_format::Deletion::Selection)
                     }
@@ -8861,28 +8879,34 @@ mod accessibility_index_tests {
     use thinoda_core::Workbook;
 
     #[test]
-    fn label_accessibility_replacement_only_claims_its_own_node() {
-        let mut request = egui::accesskit::ActionRequest {
-            action: egui::accesskit::Action::ReplaceSelectedText,
-            target_node: MapCanvas::board_label_editor_id().accesskit_id(),
-            target_tree: egui::accesskit::TreeId::ROOT,
-            data: Some(egui::accesskit::ActionData::Value("x".into())),
-        };
-        assert!(label_keyboard_event(&egui::Event::AccessKitActionRequest(
-            request.clone()
-        )));
-        request.target_node = MapCanvas::board_label_editor_id()
-            .with("other")
-            .accesskit_id();
-        assert!(!label_keyboard_event(&egui::Event::AccessKitActionRequest(
-            request.clone()
-        )));
-        request.target_node = MapCanvas::board_label_editor_id().accesskit_id();
-        request.data = None;
-        assert!(!label_keyboard_event(&egui::Event::AccessKitActionRequest(
-            request
-        )));
+    fn label_accessibility_text_actions_only_claim_their_own_node() {
+        for action in [
+            egui::accesskit::Action::ReplaceSelectedText,
+            egui::accesskit::Action::SetValue,
+        ] {
+            let mut request = egui::accesskit::ActionRequest {
+                action,
+                target_node: MapCanvas::board_label_editor_id().accesskit_id(),
+                target_tree: egui::accesskit::TreeId::ROOT,
+                data: Some(egui::accesskit::ActionData::Value("x".into())),
+            };
+            assert!(label_keyboard_event(&egui::Event::AccessKitActionRequest(
+                request.clone()
+            )));
+            request.target_node = MapCanvas::board_label_editor_id()
+                .with("other")
+                .accesskit_id();
+            assert!(!label_keyboard_event(&egui::Event::AccessKitActionRequest(
+                request.clone()
+            )));
+            request.target_node = MapCanvas::board_label_editor_id().accesskit_id();
+            request.data = None;
+            assert!(!label_keyboard_event(&egui::Event::AccessKitActionRequest(
+                request
+            )));
+        }
     }
+
     fn card(sheet: &mut Sheet, title: &str, x: f32) -> TopicId {
         sheet
             .add_card(

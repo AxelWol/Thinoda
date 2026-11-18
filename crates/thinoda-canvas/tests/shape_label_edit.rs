@@ -148,6 +148,15 @@ fn accessible_replace(text: &str) -> egui::Event {
     })
 }
 
+fn accessible_set_value(text: &str) -> egui::Event {
+    egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+        action: egui::accesskit::Action::SetValue,
+        target_node: MapCanvas::board_label_editor_id().accesskit_id(),
+        target_tree: egui::accesskit::TreeId::ROOT,
+        data: Some(egui::accesskit::ActionData::Value(text.into())),
+    })
+}
+
 fn set_label_selection(h: &mut Harness<'_, State>, start: usize, end: usize) {
     let id = MapCanvas::board_label_editor_id();
     let mut state = egui::TextEdit::load_state(&h.ctx, id).unwrap();
@@ -998,6 +1007,148 @@ fn connector_accessibility_replacement_preserves_graphemes_and_undo() {
     h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
     h.run_steps(2);
     assert_eq!(h.state().view.board_label_draft().unwrap().2, "a🇩🇪b");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_accessibility_set_value_matches_select_all_replacement() {
+    let run = |accessible, replacement| {
+        let mut h = harness("aaa");
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        if accessible {
+            h.event(accessible_set_value(replacement));
+        } else {
+            set_label_selection(&mut h, 0, 3);
+            h.event(egui::Event::Text(replacement.into()));
+        }
+        h.run_steps(2);
+        let (_, text, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, replacement);
+        let changed = changed.clone();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, text, restored) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "aaa");
+        assert_eq!(restored, Some(rich));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        changed
+    };
+    for replacement in ["aaaa", "aaa"] {
+        assert_eq!(run(true, replacement), run(false, replacement));
+    }
+}
+
+#[test]
+fn rich_label_accessibility_set_value_works_with_toolbar_focus() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.event(accessible_set_value("aaaa"));
+    h.run_steps(2);
+    let (_, text, changed) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaaa");
+    assert_eq!(changed, None);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, restored) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(rich));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rich_label_accessibility_set_value_follows_keyboard_event_order() {
+    for set_first in [true, false] {
+        let mut h = harness("aaa");
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, 1);
+        let value = accessible_set_value("b");
+        let text = egui::Event::Text("x".into());
+        h.input_mut().events.extend(if set_first {
+            vec![value, text]
+        } else {
+            vec![text, value]
+        });
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            if set_first { "bx" } else { "b" }
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_accessibility_set_empty_value_can_be_undone() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    h.event(accessible_set_value(""));
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    let (_, text, restored) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaa");
+    assert_eq!(restored, Some(rich));
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 

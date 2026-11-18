@@ -276,6 +276,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Expand partial grapheme selections for eligible Ctrl, Alt and Command Backspace/Delete
   - [x] Snap interior carets for eligible Ctrl, Alt and Command Backspace/Delete
   - [x] Handle eligible AccessKit selected-text replacement with tracked rich ranges and grapheme boundaries
+  - [x] Handle eligible AccessKit whole-value replacement as a tracked rich edit
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -318,6 +319,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 accessible whole-value replacement (partial) | Eligible AccessKit SetValue replaces all label text as a tracked rich edit, including empty and unchanged values; focused keyboard ordering and toolbar-focus updates have synthetic coverage. Physical assistive technology and broader event ordering remain open. |
 | 2026-11-18 | D9 accessible label replacement (partial) | Eligible AccessKit text replacement uses grapheme-safe selections and tracked rich edits, including empty replacement, pending caret style, ordered keyboard batches and undo. Physical assistive technology and other accessibility actions remain open. |
 | 2026-11-18 | D9 modified deletion caret (partial) | Eligible modified Backspace/Delete snap an interior grapheme caret toward the deletion boundary before egui computes its word deletion; local undo and pending typing styles are preserved. Other deletion endpoints and physical input remain open. |
 | 2026-11-18 | D9 modified selection deletion (partial) | Eligible modified Backspace/Delete expand partial grapheme selections; shape and connector regressions cover deletion and undo. Collapsed modified deletion and platform input remain open. |
@@ -957,6 +959,13 @@ value deleting a selection. Requests for other nodes are not captured.
 Synthetic shape and connector tests cover ordering, formatting and undo.
 Duck check: this does not establish screen-reader or physical-device behavior,
 other accessibility actions, or complete mixed pointer/IME ordering.
+
+**D9 accessible whole-value replacement (partial).** Eligible AccessKit
+`SetValue` requests use the tracked whole-selection edit, including empty or
+unchanged values, rather than a final-string diff. Focused keyboard batches
+retain event order; a synthetic toolbar-focus test covers a single request.
+Duck check: multi-event ordering without editor focus, physical accessibility
+clients, and other accessibility actions remain open.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,
