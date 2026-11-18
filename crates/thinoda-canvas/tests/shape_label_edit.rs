@@ -2136,6 +2136,55 @@ fn outside_click_commits_preceding_rich_ime_input_in_order() {
 }
 
 #[test]
+fn outside_click_orders_accessibility_set_value_against_label_commit() {
+    for before_click in [true, false] {
+        let mut h = harness("aaa");
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        let outside = h.state().view.canvas_rect().right_bottom() - vec2(20.0, 20.0);
+        let click = [
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ];
+        if before_click {
+            h.input_mut().events.push(accessible_set_value("aaaa"));
+            h.input_mut().events.extend(click);
+        } else {
+            h.input_mut().events.extend(click);
+            h.input_mut().events.push(accessible_set_value("aaaa"));
+        }
+        h.run_steps(3);
+        let object = h.state().doc.sheet().canvas.object(shape).unwrap();
+        assert_eq!(object.label(), if before_click { "aaaa" } else { "aaa" });
+        assert_eq!(
+            object.label_rich_text.as_deref(),
+            if before_click { None } else { Some(&rich) }
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
 fn caret_formatting_survives_ime_composition() {
     let mut h = harness("");
     h.ctx

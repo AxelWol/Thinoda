@@ -279,6 +279,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Handle eligible AccessKit selected-text replacement with tracked rich ranges and grapheme boundaries
   - [x] Handle eligible AccessKit whole-value replacement as a tracked rich edit
   - [x] Order eligible AccessKit whole-value edits with toolbar focus transitions
+  - [x] Cover an AccessKit whole-value request before and after an outside click
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -321,6 +322,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 accessible outside-click ordering (partial) | A synthetic SetValue before an outside click commits with the label; a request after the click does not modify the old label. Other pointer and assistive-technology paths remain open. |
 | 2026-11-18 | D9 ignored text input (partial) | Empty text/paste and standalone newline text events no longer expand a partial grapheme selection or move an interior caret when egui ignores the input. |
 | 2026-11-18 | D9 accessible toolbar ordering (partial) | Eligible SetValue batches beginning with toolbar focus preserve the new caret and process subsequent focus and formatting actions in order. Other unfocused controls, pointer/IME batches and physical accessibility clients remain open. |
 | 2026-11-18 | D9 accessible whole-value replacement (partial) | Eligible AccessKit SetValue replaces all label text as a tracked rich edit, including empty and unchanged values; focused keyboard ordering and toolbar-focus updates have synthetic coverage. Physical assistive technology and broader event ordering remain open. |
@@ -982,6 +984,11 @@ subsequent focus or formatting events in order. The new caret replaces the
 stale pre-update toolbar selection. Duck check: other unfocused controls,
 modified focus shortcuts, pointer/IME batches and physical accessibility
 clients remain open.
+
+**D9 accessible outside-click ordering (partial).** A synthetic `SetValue`
+before an outside click is committed with the label, while one after the click
+does not modify the old label. Duck check: this single click pattern does not
+establish general pointer batching or physical accessibility behavior.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,
