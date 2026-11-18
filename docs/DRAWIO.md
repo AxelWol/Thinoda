@@ -860,9 +860,12 @@ for rich-card editing.
 **D9 rich draft transactions (partial).** Core draft transactions preserve
 ordered replacements, directional selection, formatting and bounded undo/redo;
 composition can be committed as one entry or cancelled without destroying
-redo. Duck check: this model alone does not establish correct egui input,
-grapheme boundaries, per-event batching, composition detection, conflict
-checking or recovery. It is deliberately not yet wired to the title editor.
+redo. A simulated multi-update IME sequence, surrounding deletions and
+commit undo as one transaction, including a rejected oversized range.
+Duck check: this model alone does not establish correct egui input,
+grapheme boundaries, per-event batching, normalization of egui's oversized
+surrounding-deletion ranges, composition detection, conflict checking or
+recovery. It is deliberately not yet wired to the title editor.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,

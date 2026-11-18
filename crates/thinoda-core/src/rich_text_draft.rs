@@ -423,6 +423,73 @@ mod tests {
     }
 
     #[test]
+    fn ime_surrounding_deletion_and_commit_are_one_reversible_composition() {
+        let mut rich = InlineText::default();
+        rich.update_range("aé🙂z", 1..3, |style| style.bold = Some(true))
+            .unwrap();
+        let mut draft = RichTextDraft::new("aé🙂z".into(), rich.clone(), selection(3, 1)).unwrap();
+        let typing = InlineTextStyle {
+            bold: Some(true),
+            ..Default::default()
+        };
+        draft.begin_composition().unwrap();
+        draft
+            .apply(
+                &[
+                    replace(1..3, "", InlineTextStyle::default()),
+                    replace(1..1, "ni", typing.clone()),
+                ],
+                selection(3, 1),
+            )
+            .unwrap();
+        draft
+            .apply(
+                &[
+                    replace(1..3, "", InlineTextStyle::default()),
+                    replace(1..1, "日本", typing.clone()),
+                ],
+                selection(3, 1),
+            )
+            .unwrap();
+        assert!(
+            draft
+                .apply(
+                    &[replace(3..usize::MAX, "", InlineTextStyle::default())],
+                    selection(3, 1),
+                )
+                .is_err()
+        );
+        assert_eq!(draft.text(), "a日本z");
+        draft
+            .apply(
+                &[
+                    replace(3..4, "", InlineTextStyle::default()),
+                    replace(0..1, "", InlineTextStyle::default()),
+                ],
+                selection(2, 0),
+            )
+            .unwrap();
+        draft
+            .apply(
+                &[
+                    replace(0..2, "", InlineTextStyle::default()),
+                    replace(0..0, "語", typing.clone()),
+                ],
+                selection(1, 1),
+            )
+            .unwrap();
+        assert!(draft.commit_composition().unwrap());
+        assert_eq!(draft.text(), "語");
+        assert_eq!(draft.formatting().runs[0].style, typing);
+        assert!(draft.undo().unwrap());
+        assert_eq!(draft.text(), "aé🙂z");
+        assert_eq!(draft.formatting(), &rich);
+        assert_eq!(draft.selection(), selection(3, 1));
+        assert!(draft.redo().unwrap());
+        assert_eq!(draft.text(), "語");
+    }
+
+    #[test]
     fn edits_and_undo_preserve_list_paragraphs_and_typing_style() {
         let rich = InlineText {
             paragraphs: vec![InlineParagraph {
