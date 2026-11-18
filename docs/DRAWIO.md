@@ -241,9 +241,9 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [x] Dash, gradient, shadow, glass, fill patterns, flip on shapes
 - [x] Shape label font family/size/style, alignment, position, spacing, wrap
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
-  - [x] Shape labels: bounded inline runs and lists, selection formatting, atomic undo, recovery, draw.io HTML subset, canvas and visual export
-  - [x] Primary connector labels: the same editing and rendering model, including Sankey labels and draw.io HTML subset
-  - [x] Extra connector labels: the same model, including positioned Sankey labels, with safe inspector/draft reconciliation
+  - [ ] Shape labels: bounded inline runs and lists, selection formatting, atomic undo, recovery, draw.io HTML subset, canvas and visual export implemented; ordered editing remains unsafe for ambiguous input
+  - [ ] Primary connector labels: the same model, including Sankey labels and draw.io HTML subset; ordered editing remains unsafe for ambiguous input
+  - [ ] Extra connector labels: the same model, including positioned Sankey labels and inspector/draft reconciliation; ordered editing remains unsafe for ambiguous input
   - [x] Typing styles at the caret for shape and connector labels
   - [x] Font size and palette colour controls for selected text and caret typing styles
   - [x] Searchable inline font-family selection and draft preview for selected text and caret typing styles
@@ -259,6 +259,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Add an atomic, validated and undoable card-title/run mutation for a future rich editor
   - [x] Add explicit-style label range replacement with list remapping for future ordered edits
   - [x] Add bounded transactional rich-draft state with directional selection, local history and explicit composition grouping
+  - [ ] Replace final-string reconciliation in existing shape and connector label editors with ordered rich edits, including repeated text, multiple same-frame events, rich undo and IME
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
@@ -300,6 +301,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 editor input audit | Synthetic egui tests show that the layouter does not observe every operation in a frame, and final-string reconciliation can put formatting on the wrong occurrence of repeated text. Existing shape and connector label editing remains affected; ordered rich edits are required before treating that behavior as complete. |
 | 2026-11-18 | D9 PowerPoint list alignment (partial) | Editable list paragraphs use the shared layout's list-block left edge, rather than centering or right-aligning each item independently. Three-slide fixtures opened and exported from Windows PowerPoint for left, center and right alignment; the wrapped fixture broke lines differently from Thinoda. Empty markers remain hidden, host spacing differs, and post-edit alignment is not guaranteed. |
 | 2026-11-18 | D9 PowerPoint empty-list numbering (partial) | Windows PowerPoint suppressed markers on empty list paragraphs and counted following items differently from Thinoda. Following numbered paragraphs now carry explicit start values; a rotated fixture displays the subsequent 2 and 3 correctly. Empty markers are still hidden in PowerPoint, wrapping/alignment differs, and explicit starts can require manual renumbering after editing. |
 | 2026-11-18 | D9 card editing foundation (partial) | Added a single validated, undoable title-and-runs mutation for floating sticky/text cards; invalid content and locked or unsupported targets are rejected without changing the document. No card editor uses it yet. |

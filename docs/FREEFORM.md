@@ -2014,6 +2014,17 @@ backspace/delete operate on individual scalar values. A rich-aware history,
 composition transaction and grapheme policy must be verified before wiring the
 adapter to persisted content.
 
+The existing shape and connector label editors reconcile changes from the
+layouter's strings, not the ordered buffer operations. Synthetic egui tests
+show that one frame can delete and insert several times without the layouter
+seeing the intermediate text. A single insertion into repeated text is also
+ambiguous: inserting `a` before the bold second character in `aaa` produces
+`aaaa`, but a prefix/suffix diff leaves the bold run on the wrong character.
+This is a known correctness limitation in those editors, not evidence that
+card editing can safely reuse their reconciliation. A replacement must retain
+the actual operation positions and handle empty deletions, rich undo, input
+limits and IME transactions; changing the diff heuristic is insufficient.
+
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,
 including invalid ranges and budget rejection. It now also explores snapshot
