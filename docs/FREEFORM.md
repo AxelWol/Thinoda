@@ -1960,7 +1960,9 @@ Implementation contract and remaining work:
    limits below; canvas, SVG/PNG/JPEG/PDF rendering and the supported draw.io
    HTML subset are available for formatted sticky/text-card titles. Baseline
    overrides are not valid card data: draw.io import warns and drops them.
-   Run-level editing and editable PowerPoint remain open.
+   PowerPoint branch/zone slides now carry styled editable runs, but split
+   lines and flatten list structure with a warning. Run-level card editing and
+   editable PowerPoint paragraph semantics remain open.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,
@@ -1972,11 +1974,11 @@ Implementation contract and remaining work:
    shared rich-label layout, including wrapping and list markers; SVG and its
    raster/PDF derivatives use the same layout, and draw.io import/export
    round-trips the supported inert HTML subset except baseline overrides.
-   Measure and render mixed fonts, sizes and decorations in editable PowerPoint,
-   including clipping and rotation. Extend export preflight and
+   Editable PowerPoint now renders mixed styles as line-level text runs; retain
+   and improve paragraph/list semantics, including clipping and rotation. Extend export preflight and
    clipboard fallbacks so unsupported formatting or list structure is
    reported, not silently discarded. Editable PowerPoint requires real text
-   runs and paragraph properties, not a plain-text substitute.
+   paragraph properties, not literal markers and separate line shapes.
 
 Rubber-duck blockers: egui's existing text undo stores plain text, so rich
 draft undo and IME updates need a coherent edit-operation history rather than

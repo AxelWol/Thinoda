@@ -71,6 +71,7 @@ Use the board toolbar to add sticky notes, text cards, shapes, connectors and fr
 Board > Hide central topic moves any central-topic content to a floating topic. Board > Show central topic shows the central topic again; floating topics stay separate. FIM sheets always show a central topic.|Quadro > Ocultar tópico central move o conteúdo do tópico central, se houver, para um tópico flutuante. Quadro > Mostrar tópico central exibe o tópico central novamente; os tópicos flutuantes permanecem separados. As folhas FIM sempre exibem um tópico central.
 Save boards as .thinoda to preserve cards, shapes, connectors, frames and board settings. Other formats may change or omit board content; review the export warnings.|Salve os quadros como .thinoda para preservar cartões, formas, conectores, molduras e configurações do quadro. Outros formatos podem alterar ou omitir conteúdo do quadro; confira os avisos de exportação.
 Inline card text and list formatting omitted|Formatação e listas do texto dos cartões omitidas
+Card text and list structure may be flattened|A estrutura do texto e das listas dos cartões pode ser simplificada
 Mind-map topics and links flattened to shapes|Tópicos e conexões do mapa mental convertidos em formas
 Connector-to-connector attachments detached|Conexões entre conectores desfeitas
 Fixed connector attachments detached|Pontos de conexão fixos desconectados

@@ -584,6 +584,10 @@ const DE: &[(&str, &str)] = &[
         "Formatierung und Listen im Kartentext ausgelassen",
     ),
     (
+        "Card text and list structure may be flattened",
+        "Text- und Listenstruktur von Karten kann vereinfacht werden",
+    ),
+    (
         "Mind-map topics and links flattened to shapes",
         "Mind-Map-Themen und -Verbindungen in Formen umgewandelt",
     ),
@@ -6150,6 +6154,7 @@ mod tests {
             "Relationships omitted",
             "Boundaries omitted",
             "Inline card text and list formatting omitted",
+            "Card text and list structure may be flattened",
             "Mind-map topics and links flattened to shapes",
             "Connector-to-connector attachments detached",
             "Fixed connector attachments detached",

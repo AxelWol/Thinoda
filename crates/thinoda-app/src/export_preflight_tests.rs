@@ -9,6 +9,28 @@ fn shape() -> CanvasObject {
 }
 
 #[test]
+fn powerpoint_rich_card_warning_describes_flattening() {
+    let report = LossReport {
+        losses: vec![ExportLoss::InlineTextDropped(1)],
+        ..Default::default()
+    };
+    assert_eq!(
+        loss_lines(&report, Format::PowerPoint),
+        vec![format!(
+            "1 — {}",
+            t("Card text and list structure may be flattened")
+        )]
+    );
+    assert_eq!(
+        loss_lines(&report, Format::PlainText),
+        vec![format!(
+            "1 — {}",
+            t("Inline card text and list formatting omitted")
+        )]
+    );
+}
+
+#[test]
 fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     let losses = vec![
         ExportLoss::ShapesDropped(2),

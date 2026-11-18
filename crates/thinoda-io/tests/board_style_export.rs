@@ -164,6 +164,62 @@ fn formatted_card_overflow_is_inside_the_svg_export_frame() {
 }
 
 #[test]
+fn formatted_card_powerpoint_contains_editable_runs_and_rotated_text() {
+    use thinoda_core::{InlineParagraph, ListKind};
+    use thinoda_io::{ExportLoss, export_losses};
+
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(220.0, 130.0));
+    card.rotation = 15.0;
+    let id = sheet
+        .add_card("Bold plain\nNext", Vec2::ZERO, card)
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic.inline_text.paragraphs = vec![InlineParagraph {
+        index: 0,
+        list: ListKind::Bulleted,
+    }];
+    topic
+        .inline_text
+        .update_range(&topic.title, 0..4, |style| {
+            style.bold = Some(true);
+            style.italic = Some(true);
+            style.font_size = Some(24.0);
+            style.font_family = Some("Arial".into());
+            style.color = Some(Color::rgb(200, 30, 40));
+        })
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet.clone());
+    book.validate().unwrap();
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    let end = slide.find("<a:t>Bold</a:t>").unwrap();
+    let start = slide[..end].rfind("<a:r>").unwrap();
+    let run = &slide[start..end];
+    assert!(run.contains(r#"b="1""#), "{run}");
+    assert!(run.contains(r#"i="1""#), "{run}");
+    assert!(run.contains(r#"typeface="Arial""#), "{run}");
+    assert!(run.contains("C81E28"), "{run}");
+    assert!(slide.contains(r#"<a:t xml:space="preserve">• </a:t>"#));
+    assert!(slide.contains(r#"<a:t xml:space="preserve"> plain</a:t>"#));
+    assert!(slide.contains("<a:t>Next</a:t>"));
+    let shape_start = slide[..end].rfind("<p:sp>").unwrap();
+    assert!(slide[shape_start..end].contains(r#"rot="900000""#));
+    assert!(
+        export_losses(&book, Format::PowerPoint, &ExportOptions::default())
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_)))
+    );
+}
+
+#[test]
 fn styled_board_text_round_trips_and_renders_in_svg_and_powerpoint() {
     let mut sheet = Sheet::new("Board", "Anchor");
     sheet.root_mode = SheetRootMode::Hidden;

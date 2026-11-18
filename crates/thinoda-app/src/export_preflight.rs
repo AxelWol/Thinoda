@@ -180,6 +180,9 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                     *count,
                     "Translucent connector labels may render differently",
                 ),
+                ExportLoss::InlineTextDropped(count) if format == Format::PowerPoint => {
+                    (*count, "Card text and list structure may be flattened")
+                }
                 ExportLoss::InlineTextDropped(count) => {
                     (*count, "Inline card text and list formatting omitted")
                 }

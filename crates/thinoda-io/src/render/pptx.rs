@@ -915,28 +915,43 @@ pub(crate) fn editable_slide(
                 draw.transform(rect)));
         }
         let family = s.font_family.as_deref().unwrap_or("Segoe UI");
-        let block = text.topic(*id);
-        for (index, line) in block.lines.iter().enumerate() {
-            let rect = Rect::from_min_size(
-                Vec2::new(
-                    tl.title_rect.min.x,
-                    tl.title_rect.min.y + index as f32 * block.line_height,
-                ),
-                Vec2::new(tl.title_rect.size.x, block.line_height),
+        if !topic.inline_text.is_empty() {
+            let style = thinoda_core::label_style::card_title_style(s);
+            let rich = thinoda_core::label_style::layout_rich_in_frame(
+                &style,
+                tl.title_rect,
+                &topic.title,
+                &topic.inline_text,
             );
-            draw.text(
-                &format!("Topic {id} text line {index}"),
-                rect,
-                &line.text,
-                s.font_size,
-                family,
-                text_color,
-                s.bold,
-                s.italic,
-                s.underline,
-                s.strikethrough,
-                s.align,
-            );
+            for line in &rich.lines {
+                if !line.runs.is_empty() {
+                    draw.rich_label_line(&rich, line, &style, text_color, 1.0);
+                }
+            }
+        } else {
+            let block = text.topic(*id);
+            for (index, line) in block.lines.iter().enumerate() {
+                let rect = Rect::from_min_size(
+                    Vec2::new(
+                        tl.title_rect.min.x,
+                        tl.title_rect.min.y + index as f32 * block.line_height,
+                    ),
+                    Vec2::new(tl.title_rect.size.x, block.line_height),
+                );
+                draw.text(
+                    &format!("Topic {id} text line {index}"),
+                    rect,
+                    &line.text,
+                    s.font_size,
+                    family,
+                    text_color,
+                    s.bold,
+                    s.italic,
+                    s.underline,
+                    s.strikethrough,
+                    s.align,
+                );
+            }
         }
         if let Some((number, rect)) = &tl.number {
             draw.text(
