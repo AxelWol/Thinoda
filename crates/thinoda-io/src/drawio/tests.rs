@@ -1692,6 +1692,52 @@ fn rich_shape_html_imports_and_round_trips_styles_lists_and_newlines() {
 }
 
 #[test]
+fn rich_card_html_imports_and_round_trips_styles_and_lists() {
+    let markup = "<ul><li><b>A🙂</b></li><li><sup>two</sup></li></ul>";
+    let xml = page(&format!(
+        r##"<mxCell id="rich-card" value="{}" style="shape=note;thinodaCard=sticky;html=1;fillColor=#FFFF88;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="160" height="100" as="geometry"/></mxCell>"##,
+        esc(markup),
+    ));
+    let report = load(&xml);
+    assert!(
+        !report.warnings.contains(&ImportWarning::Formatting),
+        "{:?}",
+        report.warnings
+    );
+    let book = report.workbook;
+    let card = book.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.card.is_some())
+        .unwrap();
+    assert_eq!(card.title, "A🙂\ntwo");
+    let rich = card.inline_text.clone();
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.runs[1].style.baseline,
+        Some(thinoda_core::InlineBaseline::Superscript)
+    );
+    assert_eq!(rich.paragraphs.len(), 2);
+
+    let losses = export_losses(&book, Format::DrawIo, &ExportOptions::default());
+    assert!(
+        !losses
+            .iter()
+            .any(|loss| matches!(loss, ExportLoss::InlineTextDropped(_))),
+        "{losses:?}"
+    );
+    let exported = export(&book).unwrap();
+    let restored = import(&exported).unwrap().workbook;
+    let restored = restored.sheets[0]
+        .topics
+        .values()
+        .find(|topic| topic.card.is_some())
+        .unwrap();
+    assert_eq!(restored.title, card.title);
+    assert_eq!(restored.inline_text, rich);
+}
+
+#[test]
 fn rich_connector_html_imports_and_round_trips_primary_label() {
     use thinoda_core::InlineBaseline;
 

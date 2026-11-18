@@ -293,7 +293,7 @@ pub enum ExportLoss {
     ConnectorLabelCompositingApproximated(usize),
     /// Board grid and snapping settings are not written.
     BoardSettingsDropped,
-    /// Inline card titles with formatting or list semantics are not written.
+    /// Formatted card titles are not supported by this export target.
     InlineTextDropped(usize),
     /// Mind-map topics, branches and annotations are written as unlinked drawn
     /// shapes and lines: they no longer reflow or form a hierarchy.
@@ -542,7 +542,6 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
     let mut flattened = 0;
     let mut details = 0;
     let mut slides = 0;
-    let mut inline_text = 0;
     let mut connector_attachments = 0;
     let mut fixed_connector_attachments = 0;
     let mut fixed_connector_positions = 0;
@@ -571,7 +570,6 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
                     || !topic.markers.is_empty()
                     || topic.todo.is_some(),
             );
-            inline_text += usize::from(!topic.inline_text.is_empty());
             card_appearance += usize::from(topic.card.is_some_and(|card| match card.kind {
                 CardKind::Sticky => true,
                 CardKind::Image => crate::drawio::card_image(sheet, topic).is_none(),
@@ -787,7 +785,6 @@ fn drawio_losses<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> Vec<ExportL
             card_appearance,
         ),
         (ExportLoss::TopicDetailsDropped, details),
-        (ExportLoss::InlineTextDropped, inline_text),
         (ExportLoss::SlidesDropped, slides),
     ] {
         if count > 0 {

@@ -1956,8 +1956,9 @@ Implementation contract and remaining work:
    formatting. Search/replace now remaps runs and list paragraphs atomically,
    while keeping the existing lock and size guards. Internal clipboard and
    recovery propagation preserve this model with the version and compatibility
-   limits below; canvas rendering is now supported for formatted sticky/text
-   card titles, while rich editing and external format fidelity remain open.
+   limits below; canvas rendering and the supported draw.io HTML subset are
+   now available for formatted sticky/text-card titles, while run-level editing
+   and visual export fidelity remain open.
 3. Keep whole-card formatting explicitly separate from selected-text styling.
    Bind selection, pending input and composition to the same document, topic,
    revision, edit session and viewport. Preserve formatting through insertion,
@@ -1966,13 +1967,14 @@ Implementation contract and remaining work:
    multiple edits. Lists need explicit paragraph semantics rather than merely
    painting a bullet.
 4. Canvas rendering now paints formatted sticky/text-card titles with the
-   shared rich-label layout, including wrapping and list markers. Measure and
-   render mixed fonts, sizes and decorations consistently in export paths,
-   including clipping and rotation. Extend export preflight and clipboard
-   fallbacks so unsupported formatting or list structure is reported, not
-   silently discarded. Editable PowerPoint requires real text runs and
-   paragraph properties; SVG-derived PDF and raster output need the same
-   visual layout, not a plain-text substitute.
+   shared rich-label layout, including wrapping and list markers; draw.io
+   import/export round-trips the supported inert HTML subset. Measure and
+   render mixed fonts, sizes and decorations consistently in other export
+   paths, including clipping and rotation. Extend export preflight and
+   clipboard fallbacks so unsupported formatting or list structure is
+   reported, not silently discarded. Editable PowerPoint requires real text
+   runs and paragraph properties; SVG-derived PDF and raster output need the
+   same visual layout, not a plain-text substitute.
 
 Rubber-duck blockers: egui's existing text undo stores plain text, so rich
 draft undo and IME updates need a coherent edit-operation history rather than

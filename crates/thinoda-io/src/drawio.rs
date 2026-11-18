@@ -3928,11 +3928,12 @@ impl<'a> PageImport<'a> {
         let cells = self.cells;
         let cell = &cells[index];
         let style = &cell.style;
-        let (label, rich_label) = if !matches!(kind, Kind::Line | Kind::Card(_) | Kind::Image) {
-            self.rich_label(cell)
-        } else {
-            (self.label(cell), None)
-        };
+        let (label, rich_label) =
+            if !matches!(kind, Kind::Line | Kind::Card(CardKind::Image) | Kind::Image) {
+                self.rich_label(cell)
+            } else {
+                (self.label(cell), None)
+            };
         if style.opacity() < 1.0 && matches!(kind, Kind::Card(_) | Kind::Image)
             || !label.is_empty()
                 && (style.label_opacity_loss()
@@ -4177,6 +4178,7 @@ impl<'a> PageImport<'a> {
                         label,
                         context,
                         Some(image),
+                        None,
                     );
                 }
                 // Remote and library images are never fetched; keep their source as alt text.
@@ -4246,7 +4248,7 @@ impl<'a> PageImport<'a> {
                             plain: false,
                         }
                     });
-                return self.card(index, card_kind, rect, label, context, image);
+                return self.card(index, card_kind, rect, label, context, image, rich_label);
             }
         };
         if matches!(object.kind, CanvasObjectKind::Shape { .. }) {
@@ -4271,6 +4273,7 @@ impl<'a> PageImport<'a> {
             .map(BoardMember::Object)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn card(
         &mut self,
         index: usize,
@@ -4279,6 +4282,7 @@ impl<'a> PageImport<'a> {
         label: String,
         context: Context,
         image: Option<CardImage>,
+        rich: Option<thinoda_core::InlineText>,
     ) -> Option<BoardMember> {
         let cell = &self.cells[index];
         let style = &cell.style;
@@ -4308,6 +4312,7 @@ impl<'a> PageImport<'a> {
                 if let Some(topic) = self.sheet.topic_mut(id) {
                     topic.style.fill = card.color;
                     topic.style.text_color = style.text_color();
+                    topic.inline_text = rich.unwrap_or_default();
                     if matches!(kind, CardKind::Sticky | CardKind::Text) {
                         topic.style.align = style.text_align();
                     }
@@ -7401,13 +7406,16 @@ impl<'a> PageWriter<'a> {
             Band::Above,
         );
         let link = topic.hyperlink.as_deref().unwrap_or_default();
-        self.vertex(
+        self.vertex_with_alternate_bounds(
             &format!("t{}", id.0),
             &topic.title,
             &style,
             &parent,
             rect.translate(Vec2::ZERO - origin),
+            None,
+            false,
             (!link.is_empty()).then_some(("", link)),
+            (!topic.inline_text.is_empty()).then_some((&topic.inline_text, None)),
         );
     }
 
