@@ -1962,8 +1962,9 @@ Implementation contract and remaining work:
    HTML subset, including baseline overrides, are available for formatted
    sticky/text-card titles.
    PowerPoint branch/zone slides emit each formatted title as one editable
-   text box with styled runs and native paragraph/list properties; Office
-   rendering remains unverified, and viewport slides are rasterized. Run-level
+   text box with styled runs and native paragraph/list properties. One
+   rotated fixture opened, edited and saved in Windows PowerPoint; visual
+   parity and other hosts remain unverified, and viewport slides are rasterized. Run-level
    card editing remains open. A validated, locked-
    aware title-and-inline mutation now supplies an atomic undoable commit for
    a future editor; it does not yet expose editing controls or drafts.
