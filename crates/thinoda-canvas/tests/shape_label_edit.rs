@@ -1123,6 +1123,73 @@ fn rich_label_accessibility_set_value_follows_keyboard_event_order() {
 }
 
 #[test]
+fn rich_label_accessibility_set_value_follows_toolbar_focus_change() {
+    for text_before_focus in [false, true] {
+        let mut h = harness("aaa");
+        double_click_shape(&mut h);
+        h.key_press(Key::F6);
+        h.run_steps(2);
+        assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+        h.input_mut().events.push(accessible_set_value("b"));
+        if text_before_focus {
+            h.input_mut()
+                .events
+                .push(egui::Event::Text("ignored".into()));
+        }
+        h.input_mut().events.extend([
+            egui::Event::Key {
+                key: Key::F6,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Text("x".into()),
+        ]);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "bx",
+            "text_before_focus={text_before_focus}"
+        );
+        assert!(h.get_by_label("Board object label").is_focused());
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_accessibility_set_value_precedes_toolbar_formatting() {
+    let mut h = harness("aaa");
+    double_click_shape(&mut h);
+    h.key_press(Key::F6);
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Bold").is_focused());
+    h.input_mut().events.extend([
+        accessible_set_value("b"),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "bx");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn rich_label_accessibility_set_empty_value_can_be_undone() {
     let mut h = harness("aaa");
     let shape = h.state().shape;

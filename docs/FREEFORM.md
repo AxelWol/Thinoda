@@ -2058,9 +2058,10 @@ and ordered keyboard batches. Synthetic shape and connector tests do not
 establish real assistive-technology behavior or cover other accessibility
 actions.
 Eligible AccessKit `SetValue` requests are tracked as whole-selection edits,
-even for empty or unchanged values. Focused keyboard ordering and a single
-toolbar-focus update have synthetic coverage; ordering of multiple events
-without editor focus and real accessibility clients remain open.
+even for empty or unchanged values. Pointer-free, non-IME batches beginning
+with a toolbar button focused now order eligible `SetValue`, focus changes and
+formatting actions while keeping the new caret. Other unfocused controls and
+real accessibility clients remain open.
 Repeated characters, selected deletion and document undo also have synthetic
 shape and connector coverage, including an extra label.
 

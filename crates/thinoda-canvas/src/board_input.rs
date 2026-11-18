@@ -7433,8 +7433,22 @@ pub(super) fn show_label_editor(
             return;
         }
     }
+    let toolbar_has_focus = view.board_input.label.as_ref().is_some_and(|edit| {
+        ui.memory(|memory| {
+            memory
+                .focused()
+                .is_some_and(|id| edit.toolbar_buttons.contains(&id))
+        })
+    });
     let split_shortcuts = !minimap_blocks_keyboard
-        && ui.memory(|memory| memory.has_focus(edit_id))
+        && (ui.memory(|memory| memory.has_focus(edit_id))
+            || (toolbar_has_focus
+                && ui.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| label_accessibility_set_value(event).is_some())
+                })))
         && view.board_input.label.as_ref().is_some_and(|edit| {
             !edit.ime_composing
                 && doc.sheet().canvas.object(edit.id).is_some_and(|object| {
@@ -8371,7 +8385,13 @@ fn show_label_editor_pass(
             *edit_error = Some(error);
         }
     }
-    if output.response.has_focus()
+    let accessibility_set_value = ui.input(|input| {
+        input
+            .events
+            .iter()
+            .any(|event| label_accessibility_set_value(event).is_some())
+    });
+    if (output.response.has_focus() || (accessibility_set_value && output.response.changed()))
         && let Some(range) = output.state.cursor.char_range()
     {
         let range = range.as_sorted_char_range();

@@ -277,6 +277,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Snap interior carets for eligible Ctrl, Alt and Command Backspace/Delete
   - [x] Handle eligible AccessKit selected-text replacement with tracked rich ranges and grapheme boundaries
   - [x] Handle eligible AccessKit whole-value replacement as a tracked rich edit
+  - [x] Order eligible AccessKit whole-value edits with toolbar focus transitions
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -319,6 +320,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 accessible toolbar ordering (partial) | Eligible SetValue batches beginning with toolbar focus preserve the new caret and process subsequent focus and formatting actions in order. Other unfocused controls, pointer/IME batches and physical accessibility clients remain open. |
 | 2026-11-18 | D9 accessible whole-value replacement (partial) | Eligible AccessKit SetValue replaces all label text as a tracked rich edit, including empty and unchanged values; focused keyboard ordering and toolbar-focus updates have synthetic coverage. Physical assistive technology and broader event ordering remain open. |
 | 2026-11-18 | D9 accessible label replacement (partial) | Eligible AccessKit text replacement uses grapheme-safe selections and tracked rich edits, including empty replacement, pending caret style, ordered keyboard batches and undo. Physical assistive technology and other accessibility actions remain open. |
 | 2026-11-18 | D9 modified deletion caret (partial) | Eligible modified Backspace/Delete snap an interior grapheme caret toward the deletion boundary before egui computes its word deletion; local undo and pending typing styles are preserved. Other deletion endpoints and physical input remain open. |
@@ -964,8 +966,15 @@ other accessibility actions, or complete mixed pointer/IME ordering.
 `SetValue` requests use the tracked whole-selection edit, including empty or
 unchanged values, rather than a final-string diff. Focused keyboard batches
 retain event order; a synthetic toolbar-focus test covers a single request.
-Duck check: multi-event ordering without editor focus, physical accessibility
-clients, and other accessibility actions remain open.
+Duck check: multi-event ordering without editor focus is only partially covered
+below; physical accessibility clients and other actions remain open.
+
+**D9 accessible toolbar ordering (partial).** A pointer-free, non-IME batch
+starting with a toolbar button focused processes an eligible `SetValue` and
+subsequent focus or formatting events in order. The new caret replaces the
+stale pre-update toolbar selection. Duck check: other unfocused controls,
+modified focus shortcuts, pointer/IME batches and physical accessibility
+clients remain open.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,
