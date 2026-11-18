@@ -7451,12 +7451,6 @@ pub(super) fn show_label_editor(
                 && keyboard
                     .iter()
                     .all(|event| matches!(event, egui::Event::Ime(_)))
-                && keyboard.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Ime(egui::ImeEvent::DeleteSurrounding { .. })
-                    )
-                })
                 && !input
                     .events
                     .iter()
@@ -7919,8 +7913,32 @@ fn show_label_editor_pass(
                 .iter()
                 .any(|event| matches!(event, egui::Event::PointerButton { .. }))
         });
-    let track_edit =
-        track_insertion || track_line_break || tracked_deletion.is_some() || track_surrounding;
+    let track_ime_replace = layout_rich.is_some()
+        && !require_pending_match
+        && layout_source == edit.text
+        && ui.input(|input| {
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            matches!(
+                (events.next(), events.next()),
+                (
+                    Some(egui::Event::Ime(
+                        egui::ImeEvent::Preedit { .. } | egui::ImeEvent::Commit(_)
+                    )),
+                    None,
+                )
+            ) && !input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::PointerButton { .. }))
+        });
+    let track_edit = track_insertion
+        || track_line_break
+        || tracked_deletion.is_some()
+        || track_surrounding
+        || track_ime_replace;
     let tracked_source = track_edit.then(|| layout_source.clone());
     let tracked_rich = track_edit.then(|| layout_rich.clone()).flatten();
     let tracked_typing = track_edit.then(|| layout_typing.clone()).flatten();
@@ -7964,13 +7982,23 @@ fn show_label_editor_pass(
                         &operations.borrow(),
                     )
                 } else {
+                    let operations = operations.borrow();
+                    let deletion = if track_ime_replace
+                        && matches!(
+                            operations.as_slice(),
+                            [label_format::TextOperation::Delete(_)]
+                        ) {
+                        Some(label_format::Deletion::Selection)
+                    } else {
+                        tracked_deletion
+                    };
                     label_format::reconcile_tracked_edit(
                         rich,
                         source,
                         text,
                         &tracked_typing,
-                        &operations.borrow(),
-                        tracked_deletion,
+                        &operations,
+                        deletion,
                     )
                 }
             });

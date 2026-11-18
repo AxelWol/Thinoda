@@ -2072,11 +2072,12 @@ platform clipboard behavior and rich-card editing remain unverified.
 
 Duck check: an isolated, pointer-free IME surrounding-delete event uses the
 actual ordered buffer deletions, clamping oversized ranges as egui does and
-remapping the pending caret. Pointer-free batches containing only IME events
-are processed in order when they include surrounding deletion. Synthetic tests
-cover repeated text, both sides of a composition, empty preedit/commit
-cancellation and undo/redo. Mixed keyboard/IME and pointer batches still use
-the earlier reconciliation and require separate acceptance.
+remapping the pending caret. Isolated preedit and commit replacements use
+actual buffer ranges, and pointer-free IME-only batches are processed in
+order. Synthetic tests cover repeated text, both sides of a composition,
+empty preedit/commit cancellation and undo/redo. Mixed keyboard/IME and
+pointer batches still use the earlier reconciliation and require separate
+acceptance.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,
