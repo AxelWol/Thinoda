@@ -1325,6 +1325,21 @@ fn rich_label_empty_initial_ime_preserves_partial_selection() {
             .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
         double_click_shape(&mut h);
         set_label_selection(&mut h, 2, 1);
+        let id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(2),
+            )));
+        state.store(&h.ctx, id);
+        let before = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!((before.primary.index.0, before.secondary.index.0), (2, 1));
         h.event(egui::Event::Ime(if preedit {
             egui::ImeEvent::Preedit {
                 text: String::new(),
@@ -1343,6 +1358,10 @@ fn rich_label_empty_initial_ime_preserves_partial_selection() {
             .cursor
             .char_range()
             .unwrap();
+        assert_eq!(
+            (range.primary.index.0, range.secondary.index.0),
+            (before.primary.index.0, before.secondary.index.0)
+        );
         let range = range.as_sorted_char_range();
         assert_eq!((range.start.0, range.end.0), (1, 2));
         assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);

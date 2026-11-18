@@ -2052,8 +2052,8 @@ modified deletion snaps an interior caret toward the deletion direction before
 egui computes its range. That range's other endpoint and active IME
 surrounding ranges still need separate grapheme-policy work.
 Synthetic tests also cover empty initial IME events and active preedit updates
-that join adjacent graphemes. An empty initial event can reverse the selection
-direction in egui even though its selected range is preserved.
+that join adjacent graphemes; the empty events preserve the actual selection
+direction present immediately before the event.
 Eligible AccessKit `ReplaceSelectedText` requests for the active label use the
 same grapheme boundaries and tracked rich edits, including empty replacement
 and ordered keyboard batches. Synthetic shape and connector tests do not

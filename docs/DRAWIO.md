@@ -940,9 +940,9 @@ an insertion caret inside a cluster snaps to its end, retaining its typing
 style. Shift+Enter and the start of an isolated IME composition use the same
 boundary policy, including pending caret style. Synthetic tests cover empty
 initial IME events and active preedit updates that join adjacent graphemes.
-Duck check: egui can reverse selection direction on an empty initial event;
-modified deletion, active IME surrounding ranges, mixed pointer/input batches
-and physical input remain separate policy and acceptance work.
+Duck check: modified deletion, active IME surrounding ranges, mixed
+pointer/input batches and physical input remain separate policy and acceptance
+work.
 
 **D9 ignored input (partial).** Empty text/paste and standalone newline text
 events do not trigger grapheme selection changes because egui ignores them.
