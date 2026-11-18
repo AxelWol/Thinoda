@@ -525,6 +525,72 @@ fn rich_label_delete_expands_partial_grapheme_selection() {
 }
 
 #[test]
+fn rich_label_modified_delete_expands_partial_grapheme_selection() {
+    for (modifiers, key) in [
+        (Modifiers::CTRL, Key::Backspace),
+        (Modifiers::CTRL, Key::Delete),
+        (Modifiers::ALT, Key::Backspace),
+        (Modifiers::ALT, Key::Delete),
+        (Modifiers::COMMAND, Key::Backspace),
+        (Modifiers::COMMAND, Key::Delete),
+    ] {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("a👩\u{200d}💻b", 4..5, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        set_label_selection(&mut h, 2, 1);
+        h.key_press_modifiers(modifiers, key);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "ab",
+            "{modifiers:?} {key:?}"
+        );
+        let (_, _, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        let changed = changed.unwrap();
+        assert_eq!((changed.runs[0].start, changed.runs[0].end), (1, 2));
+        assert_eq!(changed.runs[0].style.bold, Some(true));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, text, restored) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "a👩\u{200d}💻b");
+        assert_eq!(restored, Some(rich));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_modified_delete_keeps_word_deletion_at_collapsed_caret() {
+    let mut h = harness("hello world");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 11);
+    h.key_press_modifiers(Modifiers::CTRL, Key::Backspace);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "hello ");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn connector_label_deletes_whole_graphemes_and_undoes() {
     let mut h = harness("Shape");
     h.ctx

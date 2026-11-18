@@ -7735,6 +7735,7 @@ fn show_label_editor_pass(
     {
         enum GraphemeEdit {
             Delete(bool),
+            SelectedDelete,
             Replace,
             Cut,
         }
@@ -7759,6 +7760,21 @@ fn show_label_editor_pass(
                     && matches!(key, Key::Backspace | Key::Delete) =>
                 {
                     Some(GraphemeEdit::Delete(*key == Key::Backspace))
+                }
+                (
+                    Some(egui::Event::Key {
+                        pressed: true,
+                        modifiers,
+                        key,
+                        ..
+                    }),
+                    None,
+                ) if matches!(key, Key::Backspace | Key::Delete)
+                    && (modifiers.matches_exact(Modifiers::CTRL)
+                        || modifiers.matches_exact(Modifiers::ALT)
+                        || modifiers.matches_exact(Modifiers::COMMAND)) =>
+                {
+                    Some(GraphemeEdit::SelectedDelete)
                 }
                 (
                     Some(egui::Event::Key {
@@ -7797,7 +7813,7 @@ fn show_label_editor_pass(
                 GraphemeEdit::Replace => {
                     label_format::grapheme_replacement_range(&edit.text, selection.clone(), true)
                 }
-                GraphemeEdit::Cut => {
+                GraphemeEdit::Cut | GraphemeEdit::SelectedDelete => {
                     label_format::grapheme_replacement_range(&edit.text, selection.clone(), false)
                 }
             };

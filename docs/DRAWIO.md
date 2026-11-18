@@ -273,6 +273,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Delete whole grapheme clusters with unmodified Backspace/Delete in label editors
   - [x] Preserve graphemes for eligible text/paste replacement and cut; snap an interior insertion caret to the cluster end
   - [x] Preserve graphemes for Shift+Enter and the start of an eligible IME composition
+  - [x] Expand partial grapheme selections for Ctrl, Alt and Command Backspace/Delete
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -930,6 +931,12 @@ initial IME events and active preedit updates that join adjacent graphemes.
 Duck check: egui can reverse selection direction on an empty initial event;
 modified deletion, active IME surrounding ranges, mixed pointer/input batches
 and physical input remain separate policy and acceptance work.
+
+**D9 modified selection deletion (partial).** Ctrl, Alt and Command
+Backspace/Delete expand a partial selected grapheme before egui deletes it;
+local undo restores the original text and formatting. Collapsed word-deletion
+behavior is unchanged. Duck check: grapheme safety for collapsed modified
+deletion, other modifier combinations and platform input remains unverified.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,
