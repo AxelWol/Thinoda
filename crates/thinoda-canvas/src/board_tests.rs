@@ -6247,6 +6247,66 @@ fn repeated_label_deletion_preserves_formatting_at_the_actual_range() {
 }
 
 #[test]
+fn cutting_repeated_label_text_preserves_formatting_on_remaining_characters() {
+    for connector in [false, true] {
+        for (anchor, focus) in [(0, 1), (1, 0)] {
+            let mut sheet = board();
+            let id = if connector {
+                let mut line = CanvasConnector::new(
+                    Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                line.label = "aaa".into();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(line))
+                    .unwrap()
+            } else {
+                shape(&mut sheet, 0.0, 0.0, "aaa")
+            };
+            let mut rich = thinoda_core::InlineText::default();
+            rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+                .unwrap();
+            sheet.canvas.object_mut(id).unwrap().label_rich_text =
+                Some(std::sync::Arc::new(rich.clone()));
+            let mut h = harness(sheet);
+            {
+                let state = h.state_mut();
+                assert!(state.view.begin_board_label(&state.doc, id));
+            }
+            h.run_steps(3);
+            let edit_id = MapCanvas::board_label_editor_id();
+            let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(anchor),
+                    egui::text::CCursor::new(focus),
+                )));
+            state.store(&h.ctx, edit_id);
+            h.event(egui::Event::Cut);
+            h.run_steps(1);
+            assert!(
+                h.output()
+                    .platform_output
+                    .commands
+                    .contains(&egui::OutputCommand::CopyText("a".into()))
+            );
+            h.key_press(Key::Enter);
+            h.run_steps(3);
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), "aa");
+            let updated = object.label_rich_text.as_ref().unwrap();
+            assert_eq!((updated.runs[0].start, updated.runs[0].end), (0, 1));
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+            assert!(h.state_mut().doc.undo());
+            let object = h.state().doc.sheet().canvas.object(id).unwrap();
+            assert_eq!(object.label(), "aaa");
+            assert_eq!(object.label_rich_text.as_deref(), Some(&rich));
+        }
+    }
+}
+
+#[test]
 fn same_frame_repeated_label_insertions_keep_their_positions() {
     for connector in [false, true] {
         let mut sheet = board();

@@ -2018,7 +2018,7 @@ Synthetic egui tests show that one frame can delete and insert several times
 without the layouter seeing the intermediate text. Final-string reconciliation
 also cannot identify where a repeated character was inserted. Shape and
 connector label editors now record the buffer range for a single eligible
-text or paste event or a single eligible Backspace or Delete, preserving
+text or paste event, Backspace, Delete or cut, preserving
 formatting at the actual position and for selected replacements or deletions.
 Pointer-free, non-IME rich-label keyboard batches are now processed one event
 at a time, allowing eligible same-frame insertions and deletions to retain
@@ -2042,6 +2042,11 @@ text before applying it. It keeps a pending typing style only at a matching
 deletion boundary; it does not change egui's scalar-level deletion or establish
 grapheme-safe editing. Repeated characters, selected deletion and document
 undo have synthetic shape and connector coverage, including an extra label.
+
+Duck check: an eligible cut retains formatting outside the actual removed
+selection and clears a pending caret style. Synthetic forward and reverse
+selections verify the plain-text clipboard command and document undo; this
+does not verify host clipboard delivery or preserve rich clipboard content.
 
 Duck check: keyboard batching reuses the existing invisible per-event editor
 passes and stops when the edit closes. Synthetic repeated insertions and a

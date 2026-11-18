@@ -7697,6 +7697,7 @@ fn show_label_editor_pass(
                         }),
                         None,
                     ) => Some(label_format::Deletion::Forward),
+                    (Some(egui::Event::Cut), None) => Some(label_format::Deletion::Selection),
                     _ => None,
                 }
             })

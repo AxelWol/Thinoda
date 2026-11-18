@@ -69,6 +69,7 @@ pub(super) struct TypingStyle {
 pub(super) enum Deletion {
     Backward,
     Forward,
+    Selection,
 }
 
 #[derive(Debug)]
@@ -164,6 +165,7 @@ pub(super) fn reconcile_tracked_edit(
     let pending = typing.as_ref().filter(|pending| match deletion {
         Some(Deletion::Backward) => pending.position == range.end,
         Some(Deletion::Forward) => pending.position == range.start,
+        Some(Deletion::Selection) => false,
         None => range.is_empty() && pending.position == range.start,
     });
     let (text, mut updated) = if let Some(pending) = pending {
@@ -332,7 +334,7 @@ pub(super) fn reconcile_typing(
                     .checked_add(removed)
                     .filter(|end| *end <= before_count)
                     .map(|end| pending.position..end),
-                None => None,
+                Some(Deletion::Selection) | None => None,
             };
             if let Some(range) = range {
                 let (text, updated) = rich.replace_label_range(before, range.clone(), "")?;
