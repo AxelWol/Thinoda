@@ -552,6 +552,72 @@ fn connector_label_deletes_whole_graphemes_and_undoes() {
 }
 
 #[test]
+fn rich_label_replacement_and_cut_expand_partial_graphemes() {
+    for mode in 0..3 {
+        let mut h = harness("a👩\u{200d}💻b");
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        double_click_shape(&mut h);
+        set_label_selection(&mut h, 2, 1);
+        h.event(match mode {
+            0 => egui::Event::Text("x".into()),
+            1 => egui::Event::Paste("x".into()),
+            _ => egui::Event::Cut,
+        });
+        h.run_steps(1);
+        if mode == 2 {
+            assert!(
+                h.output()
+                    .platform_output
+                    .commands
+                    .contains(&egui::OutputCommand::CopyText("👩\u{200d}💻".into()))
+            );
+        }
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            if mode == 2 { "ab" } else { "axb" }
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().view.board_label_draft().unwrap().2,
+            "a👩\u{200d}💻b"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_insertion_snaps_a_caret_inside_a_grapheme() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "a👩\u{200d}💻xb");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (4, 5));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        "a👩\u{200d}💻b"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn plain_label_processes_text_and_undo_in_event_order() {
     let mut h = harness("a");
     double_click_shape(&mut h);

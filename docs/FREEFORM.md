@@ -2042,7 +2042,10 @@ text before applying it. It keeps a pending typing style only at a matching
 deletion boundary. Unmodified Backspace/Delete now expand collapsed and
 partial selections to grapheme boundaries, with synthetic shape/connector
 coverage for combining marks, flags, ZWJ emoji and local undo. Modified
-deletions, cut, insertion and IME ranges need separate grapheme-policy work.
+deletions and IME ranges need separate grapheme-policy work. Isolated
+text/paste replacement and cut expand partial grapheme selections; a caret
+inside a grapheme snaps to its end before insertion, preserving its pending
+typing style.
 Repeated characters, selected deletion and document undo also have synthetic
 shape and connector coverage, including an extra label.
 

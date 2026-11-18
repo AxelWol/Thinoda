@@ -7725,10 +7725,15 @@ fn show_label_editor_pass(
     }
     if editor_focused
         && !minimap_blocks_keyboard
-        && let Some(edit) = &view.board_input.label
+        && let Some(edit) = &mut view.board_input.label
         && !edit.ime_composing
     {
-        let backward = ui.input(|input| {
+        enum GraphemeEdit {
+            Delete(bool),
+            Replace,
+            Cut,
+        }
+        let operation = ui.input(|input| {
             if input.pointer.any_pressed() || input.pointer.any_released() {
                 return None;
             }
@@ -7748,22 +7753,41 @@ fn show_label_editor_pass(
                 ) if modifiers.matches_exact(Modifiers::NONE)
                     && matches!(key, Key::Backspace | Key::Delete) =>
                 {
-                    Some(*key == Key::Backspace)
+                    Some(GraphemeEdit::Delete(*key == Key::Backspace))
                 }
+                (Some(egui::Event::Text(_) | egui::Event::Paste(_)), None) => {
+                    Some(GraphemeEdit::Replace)
+                }
+                (Some(egui::Event::Cut), None) => Some(GraphemeEdit::Cut),
                 _ => None,
             }
         });
-        if let Some(backward) = backward
+        if let Some(operation) = operation
             && let Some(mut state) = TextEdit::load_state(ui.ctx(), edit_id)
             && let Some(selection) = state.cursor.char_range()
         {
             let selection = selection.as_sorted_char_range();
-            match label_format::grapheme_deletion_range(
-                &edit.text,
-                selection.start.0..selection.end.0,
-                backward,
-            ) {
-                Ok(range) if !range.is_empty() => {
+            let selection = selection.start.0..selection.end.0;
+            let range = match operation {
+                GraphemeEdit::Delete(backward) => {
+                    label_format::grapheme_deletion_range(&edit.text, selection.clone(), backward)
+                }
+                GraphemeEdit::Replace => {
+                    label_format::grapheme_replacement_range(&edit.text, selection.clone(), true)
+                }
+                GraphemeEdit::Cut => {
+                    label_format::grapheme_replacement_range(&edit.text, selection.clone(), false)
+                }
+            };
+            match range {
+                Ok(range) if range != selection => {
+                    if selection.is_empty()
+                        && range.is_empty()
+                        && let Some(typing) = &mut edit.typing_style
+                        && typing.position == selection.start
+                    {
+                        typing.position = range.start;
+                    }
                     state
                         .cursor
                         .set_char_range(Some(egui::text::CCursorRange::two(

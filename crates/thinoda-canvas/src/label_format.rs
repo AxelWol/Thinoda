@@ -447,6 +447,30 @@ pub(super) fn grapheme_deletion_range(
     grapheme_range(text, range)
 }
 
+pub(super) fn grapheme_replacement_range(
+    text: &str,
+    selection: Range<usize>,
+    snap_caret: bool,
+) -> Result<Range<usize>, String> {
+    let length = text.chars().count();
+    if selection.start > selection.end || selection.end > length {
+        return Err("inline replacement selection is out of range".into());
+    }
+    if !selection.is_empty() {
+        grapheme_range(text, selection)
+    } else if snap_caret && selection.start < length {
+        let cluster = grapheme_range(text, selection.start..selection.start + 1)?;
+        let position = if cluster.start < selection.start {
+            cluster.end
+        } else {
+            selection.start
+        };
+        Ok(position..position)
+    } else {
+        Ok(selection)
+    }
+}
+
 pub(super) fn apply_style(
     rich: &mut InlineText,
     text: &str,
