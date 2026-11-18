@@ -1736,26 +1736,35 @@ fn rich_card_html_imports_and_round_trips_styles_and_lists() {
 }
 
 #[test]
-fn rich_card_baseline_is_warned_and_other_styles_are_preserved() {
-    let markup = "<b>Bold</b> <sup><i>up</i></sup>";
+fn rich_card_baseline_and_other_styles_round_trip() {
+    let markup = "<b>Bold</b> <sup><i>up</i></sup> <sub>down</sub> <span style=\"vertical-align:baseline\">normal</span>";
     let xml = page(&format!(
         r#"<mxCell id="card" value="{}" style="shape=note;html=1;" vertex="1" parent="1"><mxGeometry width="160" height="100" as="geometry"/></mxCell>"#,
         esc(markup)
     ));
     let report = load(&xml);
-    assert!(report.warnings.contains(&ImportWarning::Formatting));
+    assert!(!report.warnings.contains(&ImportWarning::Formatting));
     report.workbook.validate().unwrap();
     let card = report.workbook.sheets[0]
         .topics
         .values()
         .find(|topic| topic.card.is_some())
         .unwrap();
-    assert_eq!(card.title, "Bold up");
+    assert_eq!(card.title, "Bold up down normal");
+    assert!(card.inline_text.runs.iter().any(|run| run.style.baseline
+        == Some(thinoda_core::InlineBaseline::Superscript)
+        && run.style.italic == Some(true)));
     assert!(
         card.inline_text
             .runs
             .iter()
-            .all(|run| run.style.baseline.is_none())
+            .any(|run| run.style.baseline == Some(thinoda_core::InlineBaseline::Subscript))
+    );
+    assert!(
+        card.inline_text
+            .runs
+            .iter()
+            .any(|run| run.style.baseline == Some(thinoda_core::InlineBaseline::Normal))
     );
     assert!(
         card.inline_text
@@ -1772,6 +1781,14 @@ fn rich_card_baseline_is_warned_and_other_styles_are_preserved() {
     let bytes = export_bytes(&report.workbook, Format::Thinoda, &ExportOptions::default()).unwrap();
     let restored = crate::import_bytes(Format::Thinoda, &bytes).unwrap();
     assert_eq!(restored, report.workbook);
+    let drawio = export(&restored).unwrap();
+    let reimported = import(&drawio).unwrap().workbook;
+    let reimported_card = reimported.sheets[0]
+        .topics
+        .values()
+        .find(|t| t.card.is_some())
+        .unwrap();
+    assert_eq!(reimported_card.inline_text, card.inline_text);
 }
 
 #[test]

@@ -384,6 +384,56 @@ mod tests {
     }
 
     #[test]
+    fn rich_card_baseline_runs_paint_above_and_below_normal_text() {
+        let text = "up normal down";
+        let mut rich = InlineText::default();
+        rich.update_range(text, 0..2, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+        })
+        .unwrap();
+        rich.update_range(text, 10..14, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Subscript);
+        })
+        .unwrap();
+        let style = LabelStyle {
+            font_size: Some(20.0),
+            align: TextAlign::Left,
+            spacing: 0.0,
+            ..Default::default()
+        };
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(220.0, 100.0));
+        let layout = thinoda_core::label_style::layout_rich_in_frame(&style, frame, text, &rich);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            paint(
+                &ctx.layer_painter(egui::LayerId::background()),
+                &layout,
+                &style,
+                Color32::BLACK,
+                1.0,
+                Xf {
+                    origin: Pos2::ZERO,
+                    zoom: 1.0,
+                },
+            );
+        });
+        output.textures_delta.clear();
+        let center = |value: &str| {
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == value => Some(text),
+                    _ => None,
+                })
+                .unwrap();
+            text.pos.y + text.galley.size().y / 2.0
+        };
+        assert!(center("up") < center(" normal "));
+        assert!(center("down") > center(" normal "));
+    }
+
+    #[test]
     fn connector_list_items_share_the_same_canvas_left_edge() {
         let text = "Short\nMuch longer";
         let rich = InlineText {

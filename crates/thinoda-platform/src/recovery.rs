@@ -126,6 +126,8 @@ const RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION: &str =
     "THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1";
 const RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION: &str =
     "THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1";
+const CARD_BASELINE_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-CARD-BASELINE-1";
+const CARD_BASELINE_INK_WORKBOOK_VERSION: &str = "THINODA-RECOVERY-INK-CARD-BASELINE-1";
 
 /// Bound the transient input envelope separately from the workbook.
 pub const MAX_PENDING_INK_BYTES: usize = 16 * 1024 * 1024;
@@ -147,7 +149,9 @@ impl Serialize for BorrowedWorkbook<'_> {
             return Err(serde::ser::Error::custom("invalid pending ink size"));
         }
         let mut tuple = serializer.serialize_tuple(3)?;
-        tuple.serialize_element(if self.workbook.has_rich_extra_connector_labels() {
+        tuple.serialize_element(if self.workbook.has_card_baseline_overrides() {
+            CARD_BASELINE_INK_WORKBOOK_VERSION
+        } else if self.workbook.has_rich_extra_connector_labels() {
             RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
         } else if self.workbook.has_rich_connector_labels() {
             RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
@@ -293,7 +297,9 @@ fn serialize_workbook<S>(workbook: &Workbook, serializer: S) -> std::result::Res
 where
     S: Serializer,
 {
-    let version = if workbook.has_rich_extra_connector_labels() {
+    let version = if workbook.has_card_baseline_overrides() {
+        CARD_BASELINE_WORKBOOK_VERSION
+    } else if workbook.has_rich_extra_connector_labels() {
         RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
     } else if workbook.has_rich_connector_labels() {
         RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
@@ -406,6 +412,11 @@ where
             A: MapAccess<'de>,
         {
             let workbook = Workbook::deserialize(MapAccessDeserializer::new(map))?;
+            if workbook.has_card_baseline_overrides() {
+                return Err(A::Error::custom(
+                    "card baseline overrides require a card-baseline-aware recovery workbook",
+                ));
+            }
             if workbook.has_rich_labels() {
                 return Err(A::Error::custom(
                     "rich labels require a rich-label-aware recovery workbook",
@@ -615,6 +626,8 @@ where
                 && version != RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
                 && version != RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
                 && version != RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                && version != CARD_BASELINE_WORKBOOK_VERSION
+                && version != CARD_BASELINE_INK_WORKBOOK_VERSION
             {
                 return Err(A::Error::custom(format!(
                     "unsupported recovery workbook version {version}"
@@ -624,9 +637,17 @@ where
             let mut workbook: Workbook = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::custom("missing recovery workbook"))?;
+            let card_baseline_envelope = version == CARD_BASELINE_WORKBOOK_VERSION
+                || version == CARD_BASELINE_INK_WORKBOOK_VERSION;
+            if workbook.has_card_baseline_overrides() != card_baseline_envelope {
+                return Err(A::Error::custom(
+                    "card baseline overrides require a card-baseline-aware recovery workbook",
+                ));
+            }
             let rich_extra_connector_labels_envelope = version
                 == RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
-                || version == RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION;
+                || version == RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+                || card_baseline_envelope && workbook.has_rich_extra_connector_labels();
             if workbook.has_rich_extra_connector_labels() != rich_extra_connector_labels_envelope {
                 return Err(A::Error::custom(
                     "rich extra connector labels require a rich-extra-connector-label-aware recovery workbook",
@@ -634,7 +655,8 @@ where
             }
             let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_WORKBOOK_VERSION
                 || version == RICH_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
-                || rich_extra_connector_labels_envelope && workbook.has_rich_connector_labels();
+                || (rich_extra_connector_labels_envelope || card_baseline_envelope)
+                    && workbook.has_rich_connector_labels();
             if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
                 return Err(A::Error::custom(
                     "rich connector labels require a rich-connector-label-aware recovery workbook",
@@ -642,8 +664,10 @@ where
             }
             let rich_labels_envelope = version == RICH_LABELS_WORKBOOK_VERSION
                 || version == RICH_LABELS_INK_WORKBOOK_VERSION
-                || rich_connector_labels_envelope
-                || rich_extra_connector_labels_envelope && workbook.has_rich_labels();
+                || (rich_connector_labels_envelope
+                    || rich_extra_connector_labels_envelope
+                    || card_baseline_envelope)
+                    && workbook.has_rich_labels();
             if workbook.has_rich_labels() != rich_labels_envelope {
                 return Err(A::Error::custom(
                     "rich labels require a rich-label-aware recovery workbook",
@@ -651,7 +675,10 @@ where
             }
             let label_styles_envelope = version == LABEL_STYLES_WORKBOOK_VERSION
                 || version == LABEL_STYLES_INK_WORKBOOK_VERSION
-                || (rich_labels_envelope || rich_extra_connector_labels_envelope)
+                || (rich_labels_envelope
+                    || rich_connector_labels_envelope
+                    || rich_extra_connector_labels_envelope
+                    || card_baseline_envelope)
                     && workbook.has_label_styles();
             if workbook.has_label_styles() != label_styles_envelope {
                 return Err(A::Error::custom(
@@ -660,7 +687,9 @@ where
             }
             let version = if !label_styles_envelope
                 && !rich_labels_envelope
+                && !rich_connector_labels_envelope
                 && !rich_extra_connector_labels_envelope
+                && !card_baseline_envelope
             {
                 version
             } else {
@@ -3242,6 +3271,89 @@ mod lock_tests {
                     assert!(serde_json::from_value::<Snapshot>(mismatched).is_err());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn card_baseline_requires_aware_recovery_with_and_without_pending_ink() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let id = sheet
+            .add_card(
+                "A🙂B",
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("A🙂B", 1..2, |style| {
+                style.baseline = Some(thinoda_core::InlineBaseline::Subscript);
+            })
+            .unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
+            assert_eq!(snapshot.pending_ink.as_deref(), ink);
+            let mut older: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                older["workbook"][0],
+                if ink.is_some() {
+                    CARD_BASELINE_INK_WORKBOOK_VERSION
+                } else {
+                    CARD_BASELINE_WORKBOOK_VERSION
+                }
+            );
+            older["workbook"][0] = serde_json::json!(if ink.is_some() {
+                RICH_EXTRA_CONNECTOR_LABELS_INK_WORKBOOK_VERSION
+            } else {
+                RICH_EXTRA_CONNECTOR_LABELS_WORKBOOK_VERSION
+            });
+            assert!(serde_json::from_value::<Snapshot>(older).is_err());
+            let mut unversioned: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            unversioned["workbook"] = serde_json::to_value(&book).unwrap();
+            assert!(serde_json::from_value::<Snapshot>(unversioned).is_err());
+        }
+        let mut connector = thinoda_core::board::CanvasConnector::new(
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::ZERO),
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("label", 0..5, |style| style.bold = Some(true))
+            .unwrap();
+        connector
+            .extra_labels
+            .push(thinoda_core::board::ConnectorLabel {
+                text: "label".into(),
+                rich_text: Some(Arc::new(rich.clone())),
+                ..Default::default()
+            });
+        let mut object = thinoda_core::board::CanvasObject::connector(connector);
+        object.set_label("label").unwrap();
+        object.label_rich_text = Some(Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        for ink in [None, Some("pending ink")] {
+            let bytes = match ink {
+                Some(ink) => {
+                    Snapshot::to_bytes_with_pending_ink(SnapshotMeta::default(), &book, ink)
+                        .unwrap()
+                }
+                None => Snapshot::to_bytes(SnapshotMeta::default(), &book).unwrap(),
+            };
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snapshot.workbook, book);
         }
     }
 

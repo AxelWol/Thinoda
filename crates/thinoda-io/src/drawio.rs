@@ -4282,19 +4282,10 @@ impl<'a> PageImport<'a> {
         label: String,
         context: Context,
         image: Option<CardImage>,
-        mut rich: Option<thinoda_core::InlineText>,
+        rich: Option<thinoda_core::InlineText>,
     ) -> Option<BoardMember> {
         let cell = &self.cells[index];
         let style = &cell.style;
-        if let Some(rich) = rich.as_mut()
-            && rich.runs.iter().any(|run| run.style.baseline.is_some())
-        {
-            for run in &mut rich.runs {
-                run.style.baseline = None;
-            }
-            rich.runs.retain(|run| !run.style.is_empty());
-            self.warn(ImportWarning::Formatting);
-        }
         let mut card = Card::new(
             kind,
             Vec2::new(

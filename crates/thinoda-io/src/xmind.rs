@@ -56,6 +56,7 @@ const RICH_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-LABELS-1";
 const RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str = "THINODA-XMIND-RICH-CONNECTOR-LABELS-1";
 const RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION: &str =
     "THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1";
+const CARD_BASELINE_SNAPSHOT_VERSION: &str = "THINODA-XMIND-CARD-BASELINE-1";
 
 type PackageResources = HashMap<String, Resource>;
 
@@ -745,7 +746,12 @@ fn content_digest(content: &Value) -> Result<String, IoError> {
 }
 
 fn private_snapshot(book: &Workbook) -> Result<String, IoError> {
-    if book.has_rich_extra_connector_labels() {
+    if book.has_card_baseline_overrides() {
+        Ok(serde_json::to_string(&(
+            CARD_BASELINE_SNAPSHOT_VERSION,
+            book,
+        ))?)
+    } else if book.has_rich_extra_connector_labels() {
         Ok(serde_json::to_string(&(
             RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION,
             book,
@@ -963,6 +969,7 @@ fn strict_private_snapshot(source: &str) -> bool {
                 || version == RICH_LABELS_SNAPSHOT_VERSION
                 || version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
                 || version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
+                || version == CARD_BASELINE_SNAPSHOT_VERSION
         })
 }
 
@@ -980,6 +987,24 @@ fn snapshot_contains_versioned_fields(source: &str) -> bool {
         .is_some_and(|sheets| {
             sheets.iter().any(|sheet| {
                 sheet.get("sankey").is_some_and(|v| !v.is_null())
+                    || sheet
+                        .get("topics")
+                        .and_then(Value::as_object)
+                        .is_some_and(|topics| {
+                            topics.values().any(|topic| {
+                                topic
+                                    .get("inline_text")
+                                    .and_then(|text| text.get("runs"))
+                                    .and_then(Value::as_array)
+                                    .is_some_and(|runs| {
+                                        runs.iter().any(|run| {
+                                            run.get("style")
+                                                .and_then(|style| style.get("baseline"))
+                                                .is_some_and(|value| !value.is_null())
+                                        })
+                                    })
+                            })
+                        })
                     || sheet
                         .get("canvas")
                         .and_then(|canvas| canvas.get("scene"))
@@ -1094,12 +1119,21 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             && version != RICH_LABELS_SNAPSHOT_VERSION
             && version != RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
             && version != RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            && version != CARD_BASELINE_SNAPSHOT_VERSION
         {
             return Err(IoError::NewerVersion(version));
         }
         let (_, mut workbook): (String, Workbook) = serde_json::from_str(source)?;
-        let rich_extra_connector_labels_envelope =
-            version == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION;
+        let card_baseline_envelope = version == CARD_BASELINE_SNAPSHOT_VERSION;
+        if workbook.has_card_baseline_overrides() != card_baseline_envelope {
+            return Err(IoError::NewerVersion(
+                "card baseline overrides require a card-baseline-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
+        let rich_extra_connector_labels_envelope = version
+            == RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION
+            || card_baseline_envelope && workbook.has_rich_extra_connector_labels();
         if workbook.has_rich_extra_connector_labels() != rich_extra_connector_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich extra connector labels require a rich-extra-connector-label-aware private XMind snapshot"
@@ -1107,7 +1141,8 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             ));
         }
         let rich_connector_labels_envelope = version == RICH_CONNECTOR_LABELS_SNAPSHOT_VERSION
-            || rich_extra_connector_labels_envelope && workbook.has_rich_connector_labels();
+            || (rich_extra_connector_labels_envelope || card_baseline_envelope)
+                && workbook.has_rich_connector_labels();
         if workbook.has_rich_connector_labels() != rich_connector_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich connector labels require a rich-connector-label-aware private XMind snapshot"
@@ -1115,15 +1150,20 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
             ));
         }
         let rich_labels_envelope = version == RICH_LABELS_SNAPSHOT_VERSION
-            || rich_connector_labels_envelope
-            || rich_extra_connector_labels_envelope && workbook.has_rich_labels();
+            || (rich_connector_labels_envelope
+                || rich_extra_connector_labels_envelope
+                || card_baseline_envelope)
+                && workbook.has_rich_labels();
         if workbook.has_rich_labels() != rich_labels_envelope {
             return Err(IoError::NewerVersion(
                 "rich labels require a rich-label-aware private XMind snapshot".into(),
             ));
         }
         let label_styles_envelope = version == LABEL_STYLES_SNAPSHOT_VERSION
-            || (rich_labels_envelope || rich_extra_connector_labels_envelope)
+            || (rich_labels_envelope
+                || rich_connector_labels_envelope
+                || rich_extra_connector_labels_envelope
+                || card_baseline_envelope)
                 && workbook.has_label_styles();
         if workbook.has_label_styles() != label_styles_envelope {
             return Err(IoError::NewerVersion(
@@ -1132,7 +1172,9 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         }
         let version = if !label_styles_envelope
             && !rich_labels_envelope
+            && !rich_connector_labels_envelope
             && !rich_extra_connector_labels_envelope
+            && !card_baseline_envelope
         {
             version
         } else if workbook.has_shape_styles() {
@@ -1634,6 +1676,12 @@ fn read_private_snapshot(source: &str) -> Result<Workbook, IoError> {
         Ok(workbook)
     } else {
         let workbook: Workbook = serde_json::from_str(source)?;
+        if workbook.has_card_baseline_overrides() {
+            return Err(IoError::NewerVersion(
+                "card baseline overrides require a card-baseline-aware private XMind snapshot"
+                    .into(),
+            ));
+        }
         if workbook.has_rich_labels() {
             return Err(IoError::NewerVersion(
                 "rich labels require a rich-label-aware private XMind snapshot".into(),
@@ -2687,6 +2735,74 @@ mod tests {
         child_topic.image = Some(reference);
         child_topic.image_below = false;
         (Workbook::new(sheet), bytes)
+    }
+
+    #[test]
+    fn card_baseline_requires_matching_private_snapshot_envelope() {
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let id = sheet
+            .add_card(
+                "A🙂B",
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Card::new(
+                    thinoda_core::CardKind::Sticky,
+                    thinoda_core::Vec2::new(160.0, 100.0),
+                ),
+            )
+            .unwrap();
+        sheet
+            .topic_mut(id)
+            .unwrap()
+            .inline_text
+            .update_range("A🙂B", 1..2, |style| {
+                style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+            })
+            .unwrap();
+        let snapshot = private_snapshot(&book).unwrap();
+        assert!(snapshot.contains(CARD_BASELINE_SNAPSHOT_VERSION));
+        assert!(strict_private_snapshot(&snapshot));
+        assert_eq!(read_private_snapshot(&snapshot).unwrap(), book);
+        let raw = serde_json::to_string(&book).unwrap();
+        assert!(snapshot_contains_versioned_fields(&raw));
+        assert!(read_private_snapshot(&raw).is_err());
+        assert!(
+            read_private_snapshot(
+                &serde_json::to_string(&(RICH_EXTRA_CONNECTOR_LABELS_SNAPSHOT_VERSION, &book))
+                    .unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            read_private_snapshot(
+                &serde_json::to_string(&(CARD_BASELINE_SNAPSHOT_VERSION, &Workbook::default()))
+                    .unwrap()
+            )
+            .is_err()
+        );
+        assert_eq!(import(&export(&book).unwrap()).unwrap(), book);
+        let mut connector = thinoda_core::board::CanvasConnector::new(
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::ZERO),
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::new(100.0, 0.0)),
+        );
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("label", 0..5, |style| style.bold = Some(true))
+            .unwrap();
+        connector
+            .extra_labels
+            .push(thinoda_core::board::ConnectorLabel {
+                text: "label".into(),
+                rich_text: Some(std::sync::Arc::new(rich.clone())),
+                ..Default::default()
+            });
+        let mut object = thinoda_core::board::CanvasObject::connector(connector);
+        object.set_label("label").unwrap();
+        object.label_rich_text = Some(std::sync::Arc::new(rich));
+        book.active_mut().add_canvas_object(object).unwrap();
+        assert_eq!(
+            read_private_snapshot(&private_snapshot(&book).unwrap()).unwrap(),
+            book
+        );
     }
 
     #[test]

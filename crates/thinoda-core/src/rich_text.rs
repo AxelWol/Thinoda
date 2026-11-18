@@ -13,7 +13,7 @@ pub const MAX_INLINE_FONT_SIZE: f32 = 256.0;
 pub const FORMATTED_CARD_REQUIRED: &str =
     "Formatted card text must remain on a floating sticky note or text card.";
 
-/// Baseline override for a run within a shape label.
+/// Baseline override for a formatted text run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum InlineBaseline {
@@ -110,6 +110,11 @@ pub struct InlineText {
 }
 
 impl InlineText {
+    /// Whether any run carries a baseline override.
+    pub fn has_baseline_overrides(&self) -> bool {
+        self.runs.iter().any(|run| run.style.baseline.is_some())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.runs.is_empty() && self.paragraphs.is_empty()
     }

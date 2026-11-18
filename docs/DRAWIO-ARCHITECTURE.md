@@ -762,6 +762,14 @@ clipboard v40, board clipboard v44, XMind
 including combinations with earlier rich-label and style features. Unsupported
 HTML and other label kinds remain open.
 
+*As implemented in D9 (card baseline subset):* floating sticky and text cards
+use the shared `InlineText` layout and inert draw.io HTML interchange for
+baseline overrides. Their previously invalid baseline values require native
+v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind
+`THINODA-XMIND-CARD-BASELINE-1`, and recovery
+`THINODA-RECOVERY-CARD-BASELINE-1` /
+`THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open.
+
 *As implemented in D9 (inline typography):* shape and primary connector
 label drafts can adjust a selected grapheme range or pending caret style's size
 and palette colour. Resetting either property restores inheritance, and the

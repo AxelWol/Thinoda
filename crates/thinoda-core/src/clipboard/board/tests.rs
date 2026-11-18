@@ -2572,6 +2572,44 @@ fn rich_extra_connector_label_board_clipboard_requires_version_forty_four() {
 }
 
 #[test]
+fn card_baseline_board_clipboard_requires_version_forty_five() {
+    let mut source = Sheet::new("Board", "Root");
+    let id = source
+        .add_card(
+            "A🙂B",
+            Vec2::ZERO,
+            crate::Card::new(crate::CardKind::Sticky, Vec2::new(160.0, 100.0)),
+        )
+        .unwrap();
+    source
+        .topic_mut(id)
+        .unwrap()
+        .inline_text
+        .update_range("A🙂B", 1..2, |style| {
+            style.baseline = Some(crate::InlineBaseline::Subscript);
+        })
+        .unwrap();
+    let payload = copy(&source, &[id], &[]);
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(encoded.starts_with(CARD_BASELINE_BOARD_PREFIX));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+    let forged = encoded.replacen(
+        CARD_BASELINE_BOARD_PREFIX,
+        RICH_EXTRA_CONNECTOR_LABELS_BOARD_PREFIX,
+        1,
+    );
+    assert!(
+        decode_board_payload(&forged)
+            .unwrap_err()
+            .contains("card baseline overrides require board clipboard version 45")
+    );
+}
+
+#[test]
 fn label_style_board_clipboard_requires_version_forty_one() {
     let mut source = Sheet::new("Source", "Root");
     let mut object = CanvasObject::shape(

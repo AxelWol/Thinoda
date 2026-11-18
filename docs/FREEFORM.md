@@ -1949,7 +1949,8 @@ Implementation contract and remaining work:
    characters, 1,024 runs and 1,024 list paragraphs; font families are limited
    to 128 bytes and sizes to 6–256 points. `None` inherits whole-card style,
    while `Some(false)` explicitly disables a property.
-2. Native format v8 is required only when inline content is present; older
+2. Native format v8 is required only when inline content is present; card
+   baseline overrides require v52. Older
    documents retain their previous version. The importer rejects inline data
    in pre-v8 archives and legacy unversioned JSON. Export preflight reports
    inline formatting/list loss for unsupported formats. Until rich-aware
@@ -1958,8 +1959,8 @@ Implementation contract and remaining work:
    while keeping the existing lock and size guards. Internal clipboard and
    recovery propagation preserve this model with the version and compatibility
    limits below; canvas, SVG/PNG/JPEG/PDF rendering and the supported draw.io
-   HTML subset are available for formatted sticky/text-card titles. Baseline
-   overrides are not valid card data: draw.io import warns and drops them.
+   HTML subset, including baseline overrides, are available for formatted
+   sticky/text-card titles.
    PowerPoint branch/zone slides now carry styled editable runs, but split
    lines and flatten list structure with a warning. Run-level card editing and
    editable PowerPoint paragraph semantics remain open.
@@ -1973,7 +1974,7 @@ Implementation contract and remaining work:
 4. Canvas rendering now paints formatted sticky/text-card titles with the
    shared rich-label layout, including wrapping and list markers; SVG and its
    raster/PDF derivatives use the same layout, and draw.io import/export
-   round-trips the supported inert HTML subset except baseline overrides.
+   round-trips the supported inert HTML subset, including baseline overrides.
    Editable PowerPoint now renders mixed styles as line-level text runs; retain
    and improve paragraph/list semantics, including clipping and rotation. Extend export preflight and
    clipboard fallbacks so unsupported formatting or list structure is

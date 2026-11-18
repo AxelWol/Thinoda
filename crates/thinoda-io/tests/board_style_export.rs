@@ -126,6 +126,66 @@ fn formatted_card_titles_render_in_visual_exports() {
 }
 
 #[test]
+fn card_baseline_overrides_render_in_svg_and_powerpoint() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let id = sheet
+        .add_card(
+            "up down",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(220.0, 130.0)),
+        )
+        .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic
+        .inline_text
+        .update_range(&topic.title, 0..2, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Superscript);
+        })
+        .unwrap();
+    topic
+        .inline_text
+        .update_range(&topic.title, 3..7, |style| {
+            style.baseline = Some(thinoda_core::InlineBaseline::Subscript);
+        })
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "Card",
+            PresentationSource::Branch(id),
+            Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(400.0, 400.0)),
+        )
+        .unwrap();
+    let book = Workbook::new(sheet.clone());
+    book.validate().unwrap();
+    let svg = String::from_utf8(
+        export_bytes_with_consent(&book, Format::Svg, &ExportOptions::default(), true).unwrap(),
+    )
+    .unwrap();
+    for (text, expected_negative) in [("up", true), ("down", false)] {
+        let end = svg.find(&format!(">{text}</tspan>")).unwrap();
+        let start = svg[..end].rfind("<tspan ").unwrap();
+        let shift: f32 = svg[start..end]
+            .split("dy=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(if expected_negative {
+            shift < 0.0
+        } else {
+            shift > 0.0
+        });
+    }
+    let slide = slide_xml(&export_presentation_pptx(&sheet, &ExportOptions::default()).unwrap());
+    assert!(slide.contains(r#"baseline="30000""#));
+    assert!(slide.contains(r#"baseline="-25000""#));
+}
+
+#[test]
 fn formatted_card_overflow_is_inside_the_svg_export_frame() {
     for rotation in [0.0, 90.0] {
         let mut sheet = Sheet::new("Board", "");

@@ -92,7 +92,7 @@ approximately with a warning; **Preserved** = kept in the passthrough envelope
 | Style | Fill, stroke, width, opacity, rounding | Native | — |
 | Style | Dash on shapes, gradient, shadow, glass, fill patterns, flip | Native (D9) for `dashed`/`dashPattern`/`fixDash`, `gradientColor`/`gradientDirection` (4 sides and radial), `shadow`, `glass`, `fillStyle` hatch/cross-hatch/dots/dashed/zigzag-line and `flipH`/`flipV` on built-in and stencil shapes; sketch-only fill styles approximate, shadow/hatch parameters stay passthrough | D9 |
 | Text | Font family/size/style, alignment, label position, spacing, wrap | Native (D9) on shape labels for `fontFamily` (closest installed font on canvas/PNG/PDF, exact name in SVG/PPTX/draw.io), `fontSize`, `fontStyle` bold/italic/underline/strikethrough, `align`, `verticalAlign`, `labelPosition`/`verticalLabelPosition`, `spacing` and per-side spacing, `whiteSpace`, `labelBackgroundColor`, `labelBorderColor` and `horizontal=0`; `overflow`, `textDirection` and `labelWidth` stay passthrough and warn; connector labels and cards keep their own text options | D9 |
-| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; PowerPoint exports editable styled runs, but splits text into line shapes and flattens list semantics, with a warning. Card baseline overrides warn and are dropped; card run editing remains unsupported; zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
+| Text | Rich HTML labels, sub/superscript, lists | Partial (D9): bounded editable runs and lists on shapes and connector labels, with selection and caret typography controls and inert draw.io HTML import/export; formatted sticky/text cards, including baseline overrides, render on canvas and SVG/PNG/JPEG/PDF and round-trip supported draw.io HTML; PowerPoint exports editable styled runs, but splits text into line shapes and flattens list semantics, with a warning. Card run editing remains unsupported; zones and container-specific labels retain their existing models; unsupported markup warns and is not preserved | D9 |
 | Data | Custom properties, tooltips, links, placeholders, tags | Native (D7) for links, tooltips, properties, tags and `%name%` placeholders (own data, then scene containers, `id`, `width`, `height`, `page`); dates, page numbers, file name and lengths stay literal | D7 |
 | Structure | Groups, containers, swimlanes, stack layouts, collapse | Native (scene hierarchy SC0-SC3) | — |
 | Structure | Tables (rows, columns, merge, stripes) | Native (scene table on the container engine; stripes per cell start slot, grid lines as cell sides) | D8 |
@@ -250,10 +250,10 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Direct numeric font size and arbitrary RGBA hex colour entry for selected text and caret typing styles
   - [x] Preserve existing formatted-card runs and lists during search/replace
   - [x] Render formatted sticky/text-card titles on canvas and reserve layout space for larger runs and list markers
-  - [x] Import/export supported draw.io card HTML (except baseline overrides, which warn and are dropped)
+  - [x] Import/export supported draw.io card HTML, including baseline overrides
   - [x] Render formatted card titles in SVG, PNG, JPEG and PDF
   - [x] Export styled card runs to editable PowerPoint line shapes
-  - [ ] Complete rich-card run editing, baseline overrides and PowerPoint paragraph/list semantics; cover other label kinds and preserve unsupported source HTML
+  - [ ] Complete rich-card run editing and PowerPoint paragraph/list semantics; cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
 - [ ] Default style and declarative style rules
 
@@ -294,11 +294,12 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 card baselines (partial) | Sticky/text-card superscript, subscript and explicit normal baselines survive supported draw.io HTML, rendering and persistence. Compatibility gates: native v52, sheet clipboard v41, board clipboard v45, topic clipboard v2, XMind `THINODA-XMIND-CARD-BASELINE-1`, recovery `THINODA-RECOVERY-CARD-BASELINE-1` and `THINODA-RECOVERY-INK-CARD-BASELINE-1`. Card run editing remains open. |
 | 2026-11-18 | D9 formatted-card PowerPoint (partial) | Editable branch/zone slides export styled runs and visible list markers in line shapes, including card rotation. List structure and whole-paragraph editability are not preserved, so preflight retains a localized flattening warning. Viewport slides remain rasterized. |
 | 2026-11-18 | D9 formatted-card visual export (partial) | SVG, PNG, JPEG and PDF use the same rich-card layout as the canvas, including inline styles and list markers, and no longer report inline-text loss. Rewrapping caused by coordinate rounding is bounded. PowerPoint line-run output is a separate partial slice. Corrected draw.io import to warn and remove unsupported card baseline overrides rather than producing an invalid native document. |
 | 2026-11-18 | D9 style reuse (partial) | Copy/paste style for objects and cards, including undo-safe dimension handling, and reusable quick styles are implemented and covered by focused app regressions. Default styles and declarative style rules remain open. |
-| 2026-11-18 | D9 formatted-card draw.io interchange (partial) | Sticky/text-card titles import and export supported inert draw.io HTML inline styles and list paragraphs; card baseline overrides warn and are dropped. Native values are round-trip tested and `InlineTextDropped` is no longer reported for draw.io. Run-level card editing and unsupported source HTML preservation remain open. |
-| 2026-11-18 | D9 formatted-card canvas rendering (partial) | Sticky/text card titles render inline runs, font overrides, colours and bullet/number markers through the shared rich-label painter. Core card layout reserves height for rich run sizes and accounts for list markers; the original plain-title painter is unchanged for unformatted cards. The core measurement and line wrapping use bounded glyph-width estimates; card baseline overrides and run-level editing remain unsupported. |
+| 2026-11-18 | D9 formatted-card draw.io interchange (partial) | Sticky/text-card titles import and export supported inert draw.io HTML inline styles and list paragraphs; initially baseline overrides warned and were dropped, until the later baseline slice. Native values are round-trip tested and `InlineTextDropped` is no longer reported for draw.io. Run-level card editing and unsupported source HTML preservation remain open. |
+| 2026-11-18 | D9 formatted-card canvas rendering (partial) | Sticky/text card titles render inline runs, font overrides, colours and bullet/number markers through the shared rich-label painter. Core card layout reserves height for rich run sizes and accounts for list markers; the original plain-title painter is unchanged for unformatted cards. The core measurement and line wrapping use bounded glyph-width estimates; run-level editing remains unsupported. |
 | 2026-11-18 | D9 formatted-card search (partial) | Search/replace updates existing sticky and text card runs and list paragraphs alongside their titles, including Unicode ranges and inserted paragraph boundaries. Changes remain atomic across locked cards, validation failures and workbook sheets, and are undoable. Canvas editing and draw.io interchange are not yet supported for these cards; canvas rendering is a separate partial slice. |
 | 2026-11-18 | D9 rich extra connector labels (partial) | Positioned extra labels, including Sankey labels, support bounded rich runs and lists, canvas and inspector editing, undo and recovery, placeholder/search remapping, the inert draw.io HTML subset, and canvas and SVG/PNG/PDF/editable PowerPoint rendering. Inspector property changes preserve an active draft, merge unaffected label edits and reject conflicting text changes. Compatibility gates: native v51, sheet clipboard v40, board clipboard v44, XMind `THINODA-XMIND-RICH-EXTRA-CONNECTOR-LABELS-1`, recovery `THINODA-RECOVERY-RICH-EXTRA-CONNECTOR-LABELS-1` and `THINODA-RECOVERY-INK-RICH-EXTRA-CONNECTOR-LABELS-1`. Other label kinds and unsupported HTML source preservation remain open. |
 | 2026-11-18 | D9 direct typography (partial) | Shape and primary connector label editors accept bounded fractional font sizes and arbitrary RGB/RGBA hex colours for a selection or subsequent typing; invalid values are reported without changing the draft. Apply and Enter keep edits atomic, keyboard/IME access and compact layout remain usable, and draw.io rich HTML round-trips fractional sizes and alpha. |
@@ -824,8 +825,15 @@ and export reuse the existing bounded HTML parser/writer, preserving the
 supported run and list model and not carrying executable markup. Duck check:
 the source passthrough must not overwrite edits made to the native formatted
 text, and unsupported HTML remains warned/lost rather than being represented
-as if it round-tripped. Card baseline overrides are not yet valid native data:
-import drops only that property, retains other overrides and warns.
+as if it round-tripped. Card baseline overrides now use the same inert model
+and versioned persistence as other supported run styles.
+
+**D9 card baselines (partial).** Supported subscript, superscript and explicit
+normal baselines are retained by draw.io interchange and the shared renderers.
+Duck check: a new field value changes validation compatibility even though the
+JSON schema already contained it, so native files, clipboard payloads, XMind
+snapshots and recovery use newer gates; downgraded payloads are rejected.
+Canvas run editing and real PowerPoint paragraph semantics remain open.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,

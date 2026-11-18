@@ -12,7 +12,7 @@ use thinoda_core::{
 };
 
 /// Native `.thinoda` format version written by this build.
-pub const NATIVE_FORMAT_VERSION: u64 = 51;
+pub const NATIVE_FORMAT_VERSION: u64 = 52;
 
 /// Lowest native format version able to represent `book`.
 ///
@@ -37,10 +37,13 @@ pub const NATIVE_FORMAT_VERSION: u64 = 51;
 /// named board layers, and 46 native tables, and 47 shape style effects
 /// (dash, gradient, fill pattern, shadow, glass and flips), and 48 shape
 /// label text styles, 49 inline shape-label formatting, and 50 inline
-/// primary connector-label formatting, and 51 additional connector-label formatting.
+/// primary connector-label formatting, 51 additional connector-label formatting,
+/// and 52 card text baseline overrides.
 /// Workbooks without newer content keep their previous format version.
 pub fn required_native_version(book: &Workbook) -> u64 {
-    if book.has_rich_extra_connector_labels() {
+    if book.has_card_baseline_overrides() {
+        52
+    } else if book.has_rich_extra_connector_labels() {
         51
     } else if book.has_rich_connector_labels() {
         50

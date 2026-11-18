@@ -765,6 +765,13 @@ impl Sheet {
             .any(|topic| !topic.inline_text.is_empty())
     }
 
+    /// Whether card text uses baseline overrides introduced after inline formatting.
+    pub fn has_card_baseline_overrides(&self) -> bool {
+        self.topics
+            .values()
+            .any(|topic| topic.inline_text.has_baseline_overrides())
+    }
+
     /// Whether the sheet needs waypoint-aware persistence.
     pub fn has_connector_waypoints(&self) -> bool {
         self.canvas.has_connector_waypoints()
@@ -1638,15 +1645,6 @@ impl Sheet {
                 t.inline_text
                     .validate(&t.title)
                     .map_err(|error| format!("topic {id}: {error}"))?;
-                if t.inline_text
-                    .runs
-                    .iter()
-                    .any(|run| run.style.baseline.is_some())
-                {
-                    return Err(format!(
-                        "topic {id} has a baseline override reserved for shape labels"
-                    ));
-                }
             }
             if t.marker_colors
                 .keys()
@@ -2622,6 +2620,11 @@ impl Workbook {
     /// Whether any sheet needs inline-card-text-aware persistence.
     pub fn has_inline_text(&self) -> bool {
         self.sheets.iter().any(Sheet::has_inline_text)
+    }
+
+    /// Whether any sheet uses card baseline overrides.
+    pub fn has_card_baseline_overrides(&self) -> bool {
+        self.sheets.iter().any(Sheet::has_card_baseline_overrides)
     }
 
     /// Whether any sheet needs waypoint-aware persistence.
