@@ -7437,7 +7437,32 @@ pub(super) fn show_label_editor(
                     ) || plain_key_press(event, Key::F6)
                 })
         });
-    if split_shortcuts {
+    let split_ime = !minimap_blocks_keyboard
+        && ui.memory(|memory| memory.has_focus(edit_id))
+        && view.board_input.label.is_some()
+        && ui.input(|input| {
+            let keyboard: Vec<_> = input
+                .events
+                .iter()
+                .filter(|event| label_keyboard_event(event))
+                .collect();
+            input.focused
+                && keyboard.len() > 1
+                && keyboard
+                    .iter()
+                    .all(|event| matches!(event, egui::Event::Ime(_)))
+                && keyboard.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Ime(egui::ImeEvent::DeleteSurrounding { .. })
+                    )
+                })
+                && !input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::PointerButton { .. }))
+        });
+    if split_shortcuts || split_ime {
         // Keep ordered keyboard events separate so each edit has its own range.
         let (events, pointer) = ui.input_mut(|input| {
             (
