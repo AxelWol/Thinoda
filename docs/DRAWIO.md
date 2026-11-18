@@ -241,6 +241,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
 - [ ] Rich text labels (bold/italic/underline runs, sub/superscript, lists)
   - [x] Shape labels: bounded inline runs and lists, selection formatting, atomic undo, recovery, draw.io HTML subset, canvas and visual export
   - [x] Primary connector labels: the same editing and rendering model, including Sankey labels and draw.io HTML subset
+  - [x] Typing styles at the caret for shape and primary connector labels
   - [ ] Complete rich-label coverage for extra connector and other label kinds and preserve unsupported source HTML
 - [ ] Copy/paste style, set default style, style rules
 
@@ -281,6 +282,7 @@ recovery) and binary `.vsd`.
 
 | Date | Phase | Result |
 |---|---|---|
+| 2026-11-18 | D9 caret typing styles | Character-style toggles at an empty selection affect subsequent text without editing the document until commit. Shape and primary connector editors preserve typing styles across deletion, list changes, paste and IME input; ordered pointer/keyboard processing places later text at the clicked caret. Rich-text limit failures retain the draft and block save/commit until corrected. |
 | 2026-11-18 | D9 rich primary connector labels (partial) | Primary connector labels reuse bounded inline runs and list paragraphs, selection formatting and atomic undo; formatting-only drafts refresh recovery; search, replacement and placeholders remap runs; canvas, SVG/PNG/PDF and editable PowerPoint render them, including the authored portion of Sankey labels. Supported draw.io HTML imports and exports, with stale Sankey extensions rejected when externally edited formatting cannot be represented. Compatibility gates: native v50, sheet clipboard v39, board clipboard v43, XMind `THINODA-XMIND-RICH-CONNECTOR-LABELS-1`, recovery `THINODA-RECOVERY-RICH-CONNECTOR-LABELS-1` and `THINODA-RECOVERY-INK-RICH-CONNECTOR-LABELS-1`. Extra labels and unsupported HTML source preservation remain open. |
 | 2026-11-18 | D9 label font registration | Installed font families referenced by whole shape-label styles and inline shape or card runs are registered before canvas rendering, so their requested faces are used rather than silently falling back. Missing families retain the existing warning and fallback behavior. |
 | 2026-11-18 | D9 rich shape labels (partial) | Shape labels reuse bounded Unicode-scalar inline runs and list paragraphs; selection toolbar and Ctrl/Command+B/I/U edit the draft without changing the document until one undoable commit; drafts and formatting-only changes recover; native v49, sheet clipboard v38, board clipboard v42, XMind `THINODA-XMIND-RICH-LABELS-1`, recovery `THINODA-RECOVERY-RICH-LABELS-1` and `THINODA-RECOVERY-INK-RICH-LABELS-1`; supported draw.io HTML imports as inert text and exports escaped HTML; canvas and SVG/PNG/PDF/editable PowerPoint display the runs and list markers. Other label kinds and unsupported HTML source preservation remain open. |
@@ -697,8 +699,7 @@ box with multiple runs. Known limitations:
   wrapping, backgrounds, hit bounds and mixed-font baselines need visual parity
   work. The editor approximates bold and baseline offsets.
 - Inline font family, size and colour can be imported and retained but do not
-  yet have per-selection editor controls. Formatting at an empty selection is
-  not a typing-style toggle; select text first.
+  yet have per-selection editor controls.
 - Extra connector labels, cards, zones and container/table-specific title
   import paths are not covered by this shape-label implementation.
 - HTML is parsed inertly and bounded; unsupported tags, attributes, nested
@@ -722,8 +723,8 @@ escaped and parsed inertly; edited generated Sankey suffix formatting makes the
 native extension stale instead of losing that edit. Known limitations:
 
 - Extra labels remain plain text, and whole-label connector font, spacing and
-  alignment controls are not yet implemented. Empty-selection typing styles and
-  per-selection family, size and color controls also remain open.
+  alignment controls are not yet implemented. Per-selection family, size and
+  color controls also remain open.
 - Bounds and line breaking still estimate glyph sizes. A small draw.io reference
   comparison exposed and corrected list-item alignment; fonts and label-backdrop
   gaps still differ, and broad visual parity remains D15 work. Unsupported HTML
@@ -731,6 +732,15 @@ native extension stale instead of losing that edit. Known limitations:
   requirement.
 - Recovery now detects formatting-only changes even after earlier draft edits,
   at the cost of retaining the last observed rich draft while editing.
+
+**D9 caret typing styles.** The toolbar and Ctrl/Command shortcuts now toggle
+the style inherited at the caret. Typed or pasted graphemes receive that style;
+moving the caret clears the pending override. Batched keyboard and in-editor
+pointer events are handled in order, and deleting text or toggling lists keeps
+the pending style. A text/run limit failure leaves the draft in the editor and
+blocks commit, save and recovery snapshots until the edit is corrected or
+undone; the unrepresentable draft cannot itself be persisted. Typing style is
+transient and is not saved until text is entered.
 
 ## 5. Rubber-duck findings
 

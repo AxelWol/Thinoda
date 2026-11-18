@@ -87,6 +87,596 @@ fn begin_connector_label(h: &mut Harness<'_, State>, label: &str) -> CanvasObjec
     id
 }
 
+fn set_label_cursor(h: &mut Harness<'_, State>, index: usize) {
+    let id = MapCanvas::board_label_editor_id();
+    let mut state = egui::TextEdit::load_state(&h.ctx, id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(index),
+        )));
+    state.store(&h.ctx, id);
+    h.run_steps(2);
+}
+
+#[test]
+fn caret_formatting_styles_new_text_and_toggles_off() {
+    for connector in [false, true] {
+        let mut h = harness("");
+        let id = if connector {
+            begin_connector_label(&mut h, "")
+        } else {
+            double_click_shape(&mut h);
+            h.state().shape
+        };
+        let before = h.state().doc.state_id();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        assert_eq!(h.state().doc.state_id(), before);
+        h.event(egui::Event::Text("Bold".into()));
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+        h.run_steps(2);
+        h.event(egui::Event::Text(" plain".into()));
+        h.run_steps(2);
+        let (_, text, rich) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "Bold plain");
+        let rich = rich.unwrap();
+        assert_eq!(rich.runs.len(), 1);
+        assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 4));
+        assert_eq!(rich.runs[0].style.bold, Some(true));
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().label(),
+            "Bold plain"
+        );
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.sheet().canvas.object(id).unwrap().label(), "");
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn caret_formatting_preserves_repeated_text_and_existing_runs() {
+    let mut h = harness("aaa");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("aaa", 0..1, |style| style.bold = Some(true))
+        .unwrap();
+    rich.update_range("aaa", 2..3, |style| style.underline = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Initial formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 0);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    h.event(egui::Event::Text("a".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "aaaa");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 1));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert_eq!((rich.runs[1].start, rich.runs[1].end), (1, 2));
+    assert_eq!(rich.runs[1].style.bold, Some(true));
+    assert_eq!((rich.runs[2].start, rich.runs[2].end), (3, 4));
+    assert_eq!(rich.runs[2].style.underline, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_can_override_and_restore_the_whole_label_style() {
+    let mut h = harness("AB");
+    let shape = h.state().shape;
+    h.state_mut()
+        .doc
+        .update_canvas_object("Whole label bold", shape, |object| {
+            object.label_style = Some(std::sync::Arc::new(thinoda_core::label_style::LabelStyle {
+                bold: true,
+                ..Default::default()
+            }));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("y".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "ABxy");
+    let rich = rich.unwrap();
+    assert_eq!(rich.runs.len(), 1);
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (2, 3));
+    assert_eq!(rich.runs[0].style.bold, Some(false));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_survives_backspace_and_list_toggles() {
+    let mut h = harness("AB");
+    let shape = h.state().shape;
+    let mut rich = thinoda_core::InlineText::default();
+    rich.update_range("AB", 1..2, |style| style.bold = Some(true))
+        .unwrap();
+    h.state_mut()
+        .doc
+        .update_canvas_object("Initial formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    let bullet = h
+        .get_by_role_and_label(Role::Button, "Bulleted list")
+        .rect()
+        .center();
+    click(&mut h, bullet);
+    h.run_steps(2);
+    h.event(egui::Event::Text("X".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "AX");
+    let rich = rich.unwrap();
+    assert_eq!(rich.paragraphs[0].list, thinoda_core::ListKind::Bulleted);
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_survives_forward_delete() {
+    let mut h = harness("ABC");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "AxC");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (1, 2));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_expands_new_combining_graphemes() {
+    let mut h = harness("a");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("\u{301}".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "a\u{301}");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_limit_failure_cannot_be_committed_without_the_pending_style() {
+    let original = "a".repeat(thinoda_core::rich_text::MAX_INLINE_TEXT_CHARS);
+    let mut h = harness(&original);
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, original.len());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.contains("formatted text exceeds"))
+    );
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        format!("{original}x")
+    );
+    assert!(h.state().view.board_rich_label_draft().unwrap().3.is_none());
+    assert!(
+        h.state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .is_err()
+    );
+    assert!(h.get_by_label("Board object label").is_focused());
+    let position = h.state().view.canvas_rect().center() + h.state().view.offset;
+    click(&mut h, position);
+    let state = h.state_mut();
+    assert!(
+        state
+            .view
+            .validated_board_rich_label_draft(&state.doc)
+            .is_err()
+    );
+    assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+    assert_eq!(
+        state.view.board_label_draft().unwrap().2,
+        format!("{original}x")
+    );
+    assert_eq!(
+        state
+            .doc
+            .sheet()
+            .canvas
+            .object(state.shape)
+            .unwrap()
+            .label(),
+        original
+    );
+
+    set_label_cursor(&mut h, original.len() + 1);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    h.event(egui::Event::Text("b".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, format!("{}b", "a".repeat(original.len() - 1)));
+    let rich = rich.unwrap();
+    assert_eq!(
+        (rich.runs[0].start as usize, rich.runs[0].end as usize),
+        (original.len() - 1, original.len())
+    );
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+}
+
+#[test]
+fn caret_formatting_run_limit_failure_preserves_the_uncommitted_style() {
+    use thinoda_core::rich_text::{InlineTextRun, InlineTextStyle, MAX_INLINE_TEXT_RUNS};
+
+    let original = "a".repeat(MAX_INLINE_TEXT_RUNS * 2);
+    let mut h = harness(&original);
+    let shape = h.state().shape;
+    let rich = thinoda_core::InlineText {
+        runs: (0..MAX_INLINE_TEXT_RUNS)
+            .map(|index| InlineTextRun {
+                start: (index * 2) as u32,
+                end: (index * 2 + 2) as u32,
+                style: if index % 2 == 0 {
+                    InlineTextStyle {
+                        bold: Some(true),
+                        ..Default::default()
+                    }
+                } else {
+                    InlineTextStyle {
+                        italic: Some(true),
+                        ..Default::default()
+                    }
+                },
+            })
+            .collect(),
+        ..Default::default()
+    };
+    h.state_mut()
+        .doc
+        .update_canvas_object("Initial formatting", shape, |object| {
+            object.label_rich_text = Some(std::sync::Arc::new(rich));
+        })
+        .unwrap();
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::U);
+    h.run_steps(2);
+    h.event(egui::Event::Text("x".into()));
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.contains("style runs"))
+    );
+    h.run_steps(40);
+    let position = h.state().view.canvas_rect().center() + h.state().view.offset;
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("z".into()),
+    ]);
+    h.run_steps(2);
+    let state = h.state_mut();
+    assert!(
+        state
+            .view
+            .validated_board_rich_label_draft(&state.doc)
+            .is_err()
+    );
+    assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+    assert!(state.view.board_label_draft().unwrap().2.contains('x'));
+    assert!(state.view.board_label_draft().unwrap().2.contains('z'));
+    assert_eq!(
+        state.doc.sheet().canvas.object(shape).unwrap().label(),
+        original
+    );
+}
+
+#[test]
+fn moving_the_caret_clears_pending_typing_format_even_with_batched_input() {
+    let mut h = harness("AB");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    h.input_mut().events.extend([
+        egui::Event::Key {
+            key: Key::ArrowLeft,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "AxB");
+    assert!(rich.is_none());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn editor_click_resets_pending_style_before_batched_text_input() {
+    let mut h = harness("abc");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 3);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    let editor = h.get_by_label("Board object label").rect();
+    let position = egui::pos2(editor.left() + 2.0, editor.center().y);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "xabc");
+    assert!(rich.is_none());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn editor_click_keeps_preceding_batched_text_in_its_pending_style() {
+    let mut h = harness("AB");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::I);
+    h.run_steps(2);
+    let editor = h.get_by_label("Board object label").rect();
+    let position = egui::pos2(editor.left() + 2.0, editor.center().y);
+    h.input_mut().events.extend([
+        egui::Event::Text("x".into()),
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Text("y".into()),
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "yABx");
+    let rich = rich.unwrap();
+    assert_eq!(rich.runs.len(), 1);
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (3, 4));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn editor_click_precedes_batched_format_shortcut_and_text() {
+    let mut h = harness("AB");
+    double_click_shape(&mut h);
+    set_label_cursor(&mut h, 2);
+    let editor = h.get_by_label("Board object label").rect();
+    let position = egui::pos2(editor.left() + 2.0, editor.center().y);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::Key {
+            key: Key::I,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        },
+        egui::Event::Text("x".into()),
+    ]);
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "xAB");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 1));
+    assert_eq!(rich.runs[0].style.italic, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_survives_ime_composition() {
+    let mut h = harness("");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "composition".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    h.event(egui::Event::Ime(egui::ImeEvent::Commit("日本".into())));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "日本");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 2));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn caret_formatting_applies_to_pasted_list_paragraphs() {
+    let mut h = harness("");
+    double_click_shape(&mut h);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+    h.run_steps(2);
+    let bullet = h
+        .get_by_role_and_label(Role::Button, "Bulleted list")
+        .rect()
+        .center();
+    click(&mut h, bullet);
+    h.run_steps(2);
+    h.event(egui::Event::Paste("one\ntwo".into()));
+    h.run_steps(2);
+    let (_, text, rich) = h
+        .state()
+        .view
+        .validated_board_rich_label_draft(&h.state().doc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "one\ntwo");
+    let rich = rich.unwrap();
+    assert_eq!((rich.runs[0].start, rich.runs[0].end), (0, 7));
+    assert_eq!(rich.runs[0].style.bold, Some(true));
+    assert_eq!(
+        rich.paragraphs
+            .iter()
+            .map(|paragraph| (paragraph.index, paragraph.list))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, thinoda_core::ListKind::Bulleted),
+            (1, thinoda_core::ListKind::Bulleted),
+        ]
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
 #[test]
 fn rich_label_toolbar_keeps_the_draft_and_commits_one_undoable_change() {
     let mut h = harness("Formatted label");

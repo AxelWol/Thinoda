@@ -328,6 +328,8 @@ pub(super) struct LabelEdit {
     rich_source_text: String,
     original_label_style: Option<std::sync::Arc<thinoda_core::label_style::LabelStyle>>,
     selection: Option<std::ops::Range<usize>>,
+    typing_style: Option<label_format::TypingStyle>,
+    rich_reconciliation_error: Option<String>,
     toolbar_rect: Option<Rect>,
     toolbar_buttons: Vec<Id>,
     sheet: usize,
@@ -528,12 +530,27 @@ impl MapView {
 }
 
 fn reconciled_label_rich_text(edit: &LabelEdit) -> EditResult<Option<InlineText>> {
-    let Some(rich) = &edit.rich_text else {
+    if let Some(error) = &edit.rich_reconciliation_error {
+        return Err(EditError::Invalid(error.clone()));
+    }
+    let default = InlineText::default();
+    let Some(rich) = edit
+        .rich_text
+        .as_ref()
+        .or_else(|| edit.typing_style.as_ref().map(|_| &default))
+    else {
         return Ok(None);
     };
-    let updated = rich
-        .reconcile_label(&edit.rich_source_text, &edit.text)
-        .map_err(EditError::Invalid)?;
+    let mut typing = edit.typing_style.clone();
+    let updated = label_format::reconcile_typing(
+        rich,
+        &edit.rich_source_text,
+        &edit.text,
+        &mut typing,
+        None,
+        false,
+    )
+    .map_err(EditError::Invalid)?;
     Ok((!updated.is_empty()).then_some(updated))
 }
 
@@ -587,6 +604,8 @@ pub(super) fn begin_label(view: &mut MapView, doc: &Document, id: CanvasObjectId
         rich_source_text: object.label().to_owned(),
         original_label_style: object.label_style.clone(),
         selection: None,
+        typing_style: None,
+        rich_reconciliation_error: None,
         toolbar_rect: None,
         toolbar_buttons: Vec::new(),
         sheet: doc.active_index(),
@@ -6241,11 +6260,20 @@ fn show_label_format_toolbar(
                 }
                 ui.horizontal_wrapped(|ui| {
                     for (format, glyph, label) in controls {
-                        let enabled = !edit.ime_composing
-                            && (!selection.is_empty()
-                                || matches!(format, Format::Bulleted | Format::Numbered));
-                        let selected =
-                            label_format::active(rich, &edit.text, selection.clone(), base, format);
+                        let enabled = !edit.ime_composing;
+                        let selected = if selection.is_empty() && format.list().is_none() {
+                            let style = edit
+                                .typing_style
+                                .as_ref()
+                                .filter(|typing| typing.position == selection.start)
+                                .map_or_else(
+                                    || label_format::style_at_caret(rich, selection.start),
+                                    |typing| typing.style.clone(),
+                                );
+                            label_format::active_at_caret(&style, base, format)
+                        } else {
+                            label_format::active(rich, &edit.text, selection.clone(), base, format)
+                        };
                         let glyph = match format {
                             Format::Bold => egui::RichText::new(glyph).strong(),
                             Format::Italic => egui::RichText::new(glyph).italics(),
@@ -6475,6 +6503,125 @@ pub(super) fn show_label_editor(
     input_only: bool,
 ) {
     let edit_id = MapCanvas::board_label_editor_id();
+    let editor_focused = !minimap_blocks_keyboard && ui.memory(|memory| memory.has_focus(edit_id));
+    let editor_press = view.board_input.label.as_ref().and_then(|edit| {
+        let object = doc.sheet().canvas.object(edit.id)?;
+        let item = scene.item(SceneId::Object(edit.id))?;
+        let rect = label_editor_rect(object, item, view)?;
+        ui.input(|input| {
+            if !input.focused || !editor_focused || !input.pointer.any_pressed() {
+                return None;
+            }
+            let (index, position) =
+                input
+                    .events
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, event)| match event {
+                        egui::Event::PointerButton {
+                            pos, pressed: true, ..
+                        } => Some((index, *pos)),
+                        _ => None,
+                    })?;
+            (rect.contains(position)
+                && !edit
+                    .toolbar_rect
+                    .is_some_and(|toolbar| toolbar.contains(position)))
+            .then_some(index)
+        })
+    });
+    if let Some(index) = editor_press {
+        let later_keyboard_input =
+            ui.input(|input| input.events[index + 1..].iter().any(label_keyboard_event));
+        if ui.input(|input| input.events[..index].iter().any(label_keyboard_event)) {
+            let (events, pointer) = ui.input_mut(|input| {
+                let events = std::mem::take(&mut input.events);
+                input.events = events[..index].to_vec();
+                (events, std::mem::take(&mut input.pointer))
+            });
+            let mut child = Ui::new(
+                ui.ctx().clone(),
+                edit_id.with("before-editor-press"),
+                egui::UiBuilder::new()
+                    .layer_id(ui.layer_id())
+                    .max_rect(ui.max_rect())
+                    .layout(*ui.layout())
+                    .style(ui.style().clone()),
+            );
+            child.set_clip_rect(Rect::NOTHING);
+            show_label_editor(&mut child, doc, view, scene, false, edit_error, true);
+            ui.input_mut(|input| {
+                input.pointer = pointer;
+                input.events = events
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(event_index, event)| {
+                        (event_index >= index || !label_keyboard_event(&event)).then_some(event)
+                    })
+                    .collect();
+            });
+        }
+        if let Some(edit) = &mut view.board_input.label
+            && edit.rich_reconciliation_error.is_none()
+        {
+            edit.typing_style = None;
+        }
+        if later_keyboard_input && view.board_input.label.is_some() {
+            // TextEdit normally applies keyboard events before pointer selection.
+            // Resolve the click first so subsequent input uses the clicked caret.
+            let events = ui.input_mut(|input| {
+                let events = std::mem::take(&mut input.events);
+                input.events = events
+                    .iter()
+                    .filter(|event| !label_keyboard_event(event))
+                    .cloned()
+                    .collect();
+                events
+            });
+            let mut child = Ui::new(
+                ui.ctx().clone(),
+                edit_id.with("editor-press"),
+                egui::UiBuilder::new()
+                    .layer_id(ui.layer_id())
+                    .max_rect(ui.max_rect())
+                    .layout(*ui.layout())
+                    .style(ui.style().clone()),
+            );
+            child.set_clip_rect(ui.clip_rect());
+            child.set_opacity(0.0);
+            show_label_editor_pass(&mut child, doc, view, scene, false, edit_error, true);
+            let pointer = ui.input_mut(|input| {
+                input.events = events
+                    .iter()
+                    .filter(|event| !matches!(event, egui::Event::PointerButton { .. }))
+                    .cloned()
+                    .collect();
+                std::mem::take(&mut input.pointer)
+            });
+            show_label_editor(
+                ui,
+                doc,
+                view,
+                scene,
+                minimap_blocks_keyboard,
+                edit_error,
+                input_only,
+            );
+            ui.input_mut(|input| {
+                let mut remaining = std::mem::take(&mut input.events).into_iter().peekable();
+                for event in events {
+                    if matches!(event, egui::Event::PointerButton { .. }) {
+                        input.events.push(event);
+                    } else if remaining.peek() == Some(&event) {
+                        input.events.extend(remaining.next());
+                    }
+                }
+                input.events.extend(remaining);
+                input.pointer = pointer;
+            });
+            return;
+        }
+    }
     let split_shortcuts = !minimap_blocks_keyboard
         && ui.memory(|memory| memory.has_focus(edit_id))
         && view.board_input.label.as_ref().is_some_and(|edit| {
@@ -6488,10 +6635,15 @@ pub(super) fn show_label_editor(
         })
         && ui.input(|input| {
             input.focused
-                && input
-                    .events
-                    .iter()
-                    .any(|event| label_format_shortcut(event).is_some())
+                && (view
+                    .board_input
+                    .label
+                    .as_ref()
+                    .is_some_and(|edit| edit.typing_style.is_some())
+                    || input
+                        .events
+                        .iter()
+                        .any(|event| label_format_shortcut(event).is_some()))
                 && input
                     .events
                     .iter()
@@ -6515,22 +6667,10 @@ pub(super) fn show_label_editor(
             )
         });
         let mut batches: Vec<Vec<usize>> = Vec::new();
-        let mut pending = Vec::new();
         for (index, event) in events.iter().enumerate() {
-            if !label_keyboard_event(event) {
-                continue;
-            }
-            if label_format_shortcut(event).is_some() {
-                if !pending.is_empty() {
-                    batches.push(std::mem::take(&mut pending));
-                }
+            if label_keyboard_event(event) {
                 batches.push(vec![index]);
-            } else {
-                pending.push(index);
             }
-        }
-        if !pending.is_empty() {
-            batches.push(pending);
         }
         let mut processed = vec![false; events.len()];
         for (batch_index, batch) in batches.into_iter().enumerate() {
@@ -6756,9 +6896,30 @@ fn show_label_editor_pass(
     let zoom = view.zoom;
     let edit = view.board_input.label.as_mut().unwrap();
     let empty = edit.text.is_empty();
-    let use_rich_layout = edit.rich_text.is_some() || label_style.is_some();
-    let mut layout_rich = edit.rich_text.clone();
+    let use_rich_layout =
+        edit.rich_text.is_some() || label_style.is_some() || edit.typing_style.is_some();
+    let mut layout_rich = edit
+        .rich_text
+        .clone()
+        .or_else(|| edit.typing_style.as_ref().map(|_| InlineText::default()));
+    let mut layout_typing = edit.typing_style.clone();
     let mut layout_source = edit.rich_source_text.clone();
+    let require_pending_match = edit.rich_reconciliation_error.is_some();
+    let deletion = ui.input(|input| {
+        input.events.iter().find_map(|event| match event {
+            egui::Event::Key {
+                key: Key::Backspace,
+                pressed: true,
+                ..
+            } => Some(label_format::Deletion::Backward),
+            egui::Event::Key {
+                key: Key::Delete,
+                pressed: true,
+                ..
+            } => Some(label_format::Deletion::Forward),
+            _ => None,
+        })
+    });
     let base = edit
         .original_label_style
         .as_deref()
@@ -6773,7 +6934,14 @@ fn show_label_editor_pass(
         if let Some(rich) = &mut layout_rich
             && layout_source != text
         {
-            match rich.reconcile_label(&layout_source, text) {
+            match label_format::reconcile_typing(
+                rich,
+                &layout_source,
+                text,
+                &mut layout_typing,
+                deletion,
+                require_pending_match,
+            ) {
                 Ok(updated) => {
                     *rich = updated;
                     layout_source = text.to_owned();
@@ -6853,13 +7021,18 @@ fn show_label_editor_pass(
     // Text queued with a finish key must reach the editor before the commit.
     let output = text_edit.show(&mut child);
     drop(layouter);
+    let layout_failed = layout_error.is_some();
     if let Some(error) = layout_error {
+        edit.rich_reconciliation_error = Some(error.clone());
         *edit_error = Some(EditError::Invalid(error));
+    } else if layout_source == edit.text {
+        edit.rich_reconciliation_error = None;
     }
     if output.response.changed() {
-        if use_rich_layout && edit.rich_text.is_some() {
+        if use_rich_layout && (edit.rich_text.is_some() || edit.typing_style.is_some()) {
             edit.rich_text = layout_rich.filter(|rich| !rich.is_empty());
             edit.rich_source_text = layout_source;
+            edit.typing_style = layout_typing;
         } else if let Err(error) = sync_label_rich_text(edit) {
             *edit_error = Some(error);
         }
@@ -6868,7 +7041,16 @@ fn show_label_editor_pass(
         && let Some(range) = output.state.cursor.char_range()
     {
         let range = range.as_sorted_char_range();
-        edit.selection = Some(range.start.0..range.end.0);
+        let selection = range.start.0..range.end.0;
+        if !layout_failed
+            && edit
+                .typing_style
+                .as_ref()
+                .is_some_and(|typing| !selection.is_empty() || selection.start != typing.position)
+        {
+            edit.typing_style = None;
+        }
+        edit.selection = Some(selection);
     }
     if let Some(index) = halo {
         let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
@@ -6975,9 +7157,25 @@ fn show_label_editor_pass(
                     .as_deref()
                     .cloned()
                     .unwrap_or_default();
-                label_format::apply(&mut rich, &edit.text, selection.clone(), &base, format)
-                    .map_err(EditError::Invalid)?;
-                edit.rich_text = (!rich.is_empty()).then_some(rich);
+                if selection.is_empty() && format.list().is_none() {
+                    let mut typing = edit
+                        .typing_style
+                        .take()
+                        .filter(|typing| typing.position == selection.start)
+                        .unwrap_or_else(|| label_format::TypingStyle {
+                            position: selection.start,
+                            style: label_format::style_at_caret(&rich, selection.start),
+                        });
+                    label_format::toggle_at_caret(&mut typing.style, &base, format);
+                    edit.typing_style = Some(typing);
+                } else {
+                    if !selection.is_empty() {
+                        edit.typing_style = None;
+                    }
+                    label_format::apply(&mut rich, &edit.text, selection.clone(), &base, format)
+                        .map_err(EditError::Invalid)?;
+                    edit.rich_text = (!rich.is_empty()).then_some(rich);
+                }
                 Ok(())
             });
             if let Err(error) = result {

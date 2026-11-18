@@ -19,7 +19,7 @@ pub(super) enum Format {
 }
 
 impl Format {
-    fn list(self) -> Option<ListKind> {
+    pub(super) fn list(self) -> Option<ListKind> {
         match self {
             Self::Bulleted => Some(ListKind::Bulleted),
             Self::Numbered => Some(ListKind::Numbered),
@@ -58,6 +58,35 @@ impl Format {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct TypingStyle {
+    pub position: usize,
+    pub style: InlineTextStyle,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Deletion {
+    Backward,
+    Forward,
+}
+
+pub(super) fn style_at_caret(rich: &InlineText, position: usize) -> InlineTextStyle {
+    let index = position.saturating_sub(1);
+    rich.runs
+        .iter()
+        .find(|run| run.start as usize <= index && index < run.end as usize)
+        .map_or_else(InlineTextStyle::default, |run| run.style.clone())
+}
+
+pub(super) fn active_at_caret(style: &InlineTextStyle, base: &LabelStyle, format: Format) -> bool {
+    format.enabled(style, base)
+}
+
+pub(super) fn toggle_at_caret(style: &mut InlineTextStyle, base: &LabelStyle, format: Format) {
+    let enabled = !format.enabled(style, base);
+    format.set(style, base, enabled);
+}
+
 fn grapheme_range(text: &str, range: Range<usize>) -> Result<Range<usize>, String> {
     let count = text.chars().count();
     if range.start > range.end || range.end > count {
@@ -79,6 +108,81 @@ fn grapheme_range(text: &str, range: Range<usize>) -> Result<Range<usize>, Strin
         start = end;
     }
     Ok(result)
+}
+
+pub(super) fn reconcile_typing(
+    rich: &InlineText,
+    before: &str,
+    after: &str,
+    typing: &mut Option<TypingStyle>,
+    deletion: Option<Deletion>,
+    require_pending_match: bool,
+) -> Result<InlineText, String> {
+    if before == after {
+        return Ok(rich.clone());
+    }
+    if let Some(pending) = typing.as_mut() {
+        let before_count = before.chars().count();
+        let after_count = after.chars().count();
+        if pending.position <= before_count
+            && let Some(added) = after_count
+                .checked_sub(before_count)
+                .filter(|added| *added > 0)
+        {
+            let byte_at = |text: &str, index: usize| {
+                text.char_indices()
+                    .nth(index)
+                    .map_or(text.len(), |(byte, _)| byte)
+            };
+            let before_at = byte_at(before, pending.position);
+            let after_at = byte_at(after, pending.position);
+            let after_end = byte_at(after, pending.position + added);
+            if before[..before_at] == after[..after_at] && before[before_at..] == after[after_end..]
+            {
+                let (text, mut updated) = rich.replace_label_range(
+                    before,
+                    pending.position..pending.position,
+                    &after[after_at..after_end],
+                )?;
+                debug_assert_eq!(text, after);
+                let range = grapheme_range(after, pending.position..pending.position + added)?;
+                updated.update_range(after, range, |style| *style = pending.style.clone())?;
+                pending.position += added;
+                return Ok(updated);
+            }
+        }
+        if let Some(removed) = before_count
+            .checked_sub(after_count)
+            .filter(|removed| *removed > 0)
+        {
+            let range = match deletion {
+                Some(Deletion::Backward) => pending
+                    .position
+                    .checked_sub(removed)
+                    .map(|start| start..pending.position),
+                Some(Deletion::Forward) => pending
+                    .position
+                    .checked_add(removed)
+                    .filter(|end| *end <= before_count)
+                    .map(|end| pending.position..end),
+                None => None,
+            };
+            if let Some(range) = range {
+                let (text, updated) = rich.replace_label_range(before, range.clone(), "")?;
+                if text == after {
+                    pending.position = range.start;
+                    return Ok(updated);
+                }
+            }
+        }
+        if require_pending_match {
+            return Err(
+                "Pending formatting could not be reconciled; correct or undo the edit".into(),
+            );
+        }
+        *typing = None;
+    }
+    rich.reconcile_label(before, after)
 }
 
 fn paragraphs(text: &str, range: &Range<usize>) -> Range<usize> {
