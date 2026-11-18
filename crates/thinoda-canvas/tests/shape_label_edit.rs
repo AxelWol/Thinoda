@@ -449,6 +449,109 @@ fn caret_formatting_expands_new_combining_graphemes() {
 }
 
 #[test]
+fn rich_label_backspace_and_delete_keep_graphemes_intact() {
+    for (original, cursor, key, expected) in [
+        ("a\u{301}b", 2, Key::Backspace, "b"),
+        ("a\u{301}b", 0, Key::Delete, "b"),
+        ("a🇩🇪b", 3, Key::Backspace, "ab"),
+        ("a🇩🇪b", 1, Key::Delete, "ab"),
+        ("a👩\u{200d}💻b", 4, Key::Backspace, "ab"),
+        ("a👩\u{200d}💻b", 2, Key::Delete, "ab"),
+    ] {
+        let mut h = harness(original);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        let shape = h.state().shape;
+        let mut rich = thinoda_core::InlineText::default();
+        let last = original.chars().count();
+        rich.update_range(original, last - 1..last, |style| style.bold = Some(true))
+            .unwrap();
+        h.state_mut()
+            .doc
+            .update_canvas_object("Set formatting", shape, |object| {
+                object.label_rich_text = Some(std::sync::Arc::new(rich.clone()));
+            })
+            .unwrap();
+        double_click_shape(&mut h);
+        set_label_cursor(&mut h, cursor);
+        h.key_press(key);
+        h.run_steps(2);
+        let (_, text, changed) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, expected, "key={key:?}");
+        let changed = changed.unwrap();
+        assert_eq!(changed.runs[0].end as usize, expected.chars().count());
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run_steps(2);
+        let (_, text, restored) = h
+            .state()
+            .view
+            .validated_board_rich_label_draft(&h.state().doc)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, original);
+        assert_eq!(restored, Some(rich.clone()));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rich_label_delete_expands_partial_grapheme_selection() {
+    let mut h = harness("a👩\u{200d}💻b");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    double_click_shape(&mut h);
+    set_label_selection(&mut h, 2, 1);
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.board_label_draft().unwrap().2,
+        "a👩\u{200d}💻b"
+    );
+    let cursor = egui::TextEdit::load_state(&h.ctx, MapCanvas::board_label_editor_id())
+        .unwrap()
+        .cursor
+        .char_range()
+        .unwrap();
+    assert_eq!((cursor.primary.index.0, cursor.secondary.index.0), (2, 1));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connector_label_deletes_whole_graphemes_and_undoes() {
+    let mut h = harness("Shape");
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    let id = add_positioned_connector(&mut h);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Set connector label", id, |object| {
+            object.set_label("a🇩🇪b").unwrap();
+        })
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    set_label_cursor(&mut h, 3);
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "ab");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_label_draft().unwrap().2, "a🇩🇪b");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn plain_label_processes_text_and_undo_in_event_order() {
     let mut h = harness("a");
     double_click_shape(&mut h);

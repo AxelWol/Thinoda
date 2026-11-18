@@ -7723,6 +7723,60 @@ fn show_label_editor_pass(
             }
         }
     }
+    if editor_focused
+        && !minimap_blocks_keyboard
+        && let Some(edit) = &view.board_input.label
+        && !edit.ime_composing
+    {
+        let backward = ui.input(|input| {
+            if input.pointer.any_pressed() || input.pointer.any_released() {
+                return None;
+            }
+            let mut events = input.events.iter().filter(|event| {
+                label_keyboard_event(event)
+                    && !matches!(event, egui::Event::Key { pressed: false, .. })
+            });
+            match (events.next(), events.next()) {
+                (
+                    Some(egui::Event::Key {
+                        pressed: true,
+                        modifiers,
+                        key,
+                        ..
+                    }),
+                    None,
+                ) if modifiers.matches_exact(Modifiers::NONE)
+                    && matches!(key, Key::Backspace | Key::Delete) =>
+                {
+                    Some(*key == Key::Backspace)
+                }
+                _ => None,
+            }
+        });
+        if let Some(backward) = backward
+            && let Some(mut state) = TextEdit::load_state(ui.ctx(), edit_id)
+            && let Some(selection) = state.cursor.char_range()
+        {
+            let selection = selection.as_sorted_char_range();
+            match label_format::grapheme_deletion_range(
+                &edit.text,
+                selection.start.0..selection.end.0,
+                backward,
+            ) {
+                Ok(range) if !range.is_empty() => {
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(range.end),
+                            egui::text::CCursor::new(range.start),
+                        )));
+                    state.store(ui.ctx(), edit_id);
+                }
+                Ok(_) => {}
+                Err(error) => *edit_error = Some(EditError::Invalid(error)),
+            }
+        }
+    }
     let family_filter_id = MapCanvas::id().with("board-label-family-filter");
     let toolbar_value_id = MapCanvas::id().with("board-label-toolbar-value");
     if let Some(edit) = &mut view.board_input.label {

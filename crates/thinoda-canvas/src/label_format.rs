@@ -426,6 +426,27 @@ fn grapheme_range(text: &str, range: Range<usize>) -> Result<Range<usize>, Strin
     Ok(result)
 }
 
+pub(super) fn grapheme_deletion_range(
+    text: &str,
+    selection: Range<usize>,
+    backward: bool,
+) -> Result<Range<usize>, String> {
+    let length = text.chars().count();
+    if selection.start > selection.end || selection.end > length {
+        return Err("inline deletion selection is out of range".into());
+    }
+    let range = if !selection.is_empty() {
+        selection
+    } else if backward && selection.start > 0 {
+        selection.start - 1..selection.start
+    } else if !backward && selection.start < length {
+        selection.start..selection.start + 1
+    } else {
+        selection
+    };
+    grapheme_range(text, range)
+}
+
 pub(super) fn apply_style(
     rich: &mut InlineText,
     text: &str,

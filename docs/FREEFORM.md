@@ -2039,9 +2039,12 @@ establish real clipboard, IME or browser acceptance.
 Duck check: the single-deletion path requires exactly one pressed Backspace or
 Delete among keyboard events and validates the captured range and resulting
 text before applying it. It keeps a pending typing style only at a matching
-deletion boundary; it does not change egui's scalar-level deletion or establish
-grapheme-safe editing. Repeated characters, selected deletion and document
-undo have synthetic shape and connector coverage, including an extra label.
+deletion boundary. Unmodified Backspace/Delete now expand collapsed and
+partial selections to grapheme boundaries, with synthetic shape/connector
+coverage for combining marks, flags, ZWJ emoji and local undo. Modified
+deletions, cut, insertion and IME ranges need separate grapheme-policy work.
+Repeated characters, selected deletion and document undo also have synthetic
+shape and connector coverage, including an extra label.
 
 Duck check: an eligible cut retains formatting outside the actual removed
 selection and clears a pending caret style. Synthetic forward and reverse

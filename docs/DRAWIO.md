@@ -270,6 +270,7 @@ editable native kind; otherwise a bundled alias, but only from an explicit
   - [x] Process pointer-free, IME-only batches in event order
   - [x] Process pointer-free mixed IME/keyboard batches in event order, protecting candidate keys and routing F6 focus
   - [x] Cover synthetic editor and outside clicks batched with rich IME input
+  - [x] Delete whole grapheme clusters with unmodified Backspace/Delete in label editors
   - [ ] Replace the remaining final-string reconciliation in existing shape and connector label editors with ordered rich edits, including pointer/IME batches; validate history with real platform input
   - [ ] Complete rich-card run editing, validate PowerPoint paragraph/list rendering in Office, cover other label kinds and preserve unsupported source HTML
   - [x] Copy/paste object and card styles; save and apply reusable quick styles
@@ -914,6 +915,14 @@ clicks before or after IME input and an outside-click commit retain the
 expected formatting. Duck check: modified F6 and other pointer batches need
 further work, and the tests do not establish
 real IME or browser acceptance.
+
+**D9 grapheme deletion (partial).** Unmodified Backspace/Delete expand a
+collapsed or partially selected label range to whole Unicode graphemes before
+egui edits it; local undo restores the original directional selection.
+Synthetic shape and connector tests cover combining marks, flags and ZWJ
+emoji. Duck check: modified deletion, insertion or cut at partial grapheme
+boundaries, IME operations and physical input remain separate policy and
+acceptance work.
 
 **D9 formatted-card visual export (partial).** SVG and its PNG/JPEG/PDF
 derivatives use the shared canvas rich-label geometry and style inheritance,
