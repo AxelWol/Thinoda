@@ -7434,7 +7434,14 @@ pub(super) fn show_label_editor(
                     matches!(
                         event,
                         egui::Event::PointerButton { .. } | egui::Event::Ime(_)
-                    ) || plain_key_press(event, Key::F6)
+                    ) || (matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::F6,
+                            pressed: true,
+                            ..
+                        }
+                    ) && !plain_key_press(event, Key::F6))
                 })
         });
     let split_ime = !minimap_blocks_keyboard
@@ -7451,9 +7458,16 @@ pub(super) fn show_label_editor(
                 && keyboard
                     .iter()
                     .any(|event| matches!(event, egui::Event::Ime(_)))
-                && !keyboard
-                    .iter()
-                    .any(|event| matches!(event, egui::Event::Key { key: Key::F6, .. }))
+                && !keyboard.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::F6,
+                            pressed: true,
+                            ..
+                        }
+                    ) && !plain_key_press(event, Key::F6)
+                })
                 && !input
                     .events
                     .iter()
@@ -7497,6 +7511,9 @@ pub(super) fn show_label_editor(
         }
         let mut processed = vec![false; events.len()];
         for (batch_index, batch) in batches.into_iter().enumerate() {
+            let formatting_focus = batch
+                .iter()
+                .any(|&index| plain_key_press(&events[index], Key::F6));
             ui.input_mut(|input| {
                 input.events = batch.iter().map(|&index| events[index].clone()).collect();
             });
@@ -7510,7 +7527,15 @@ pub(super) fn show_label_editor(
                     .style(ui.style().clone()),
             );
             child.set_clip_rect(Rect::NOTHING);
-            show_label_editor_pass(&mut child, doc, view, scene, false, edit_error, true);
+            show_label_editor_pass(
+                &mut child,
+                doc,
+                view,
+                scene,
+                false,
+                edit_error,
+                !formatting_focus,
+            );
             for index in batch {
                 processed[index] = true;
             }
