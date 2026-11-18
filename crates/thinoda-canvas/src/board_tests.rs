@@ -6545,6 +6545,52 @@ fn rich_label_undo_before_ime_commit_in_same_frame() {
 }
 
 #[test]
+fn rich_label_ime_candidate_keys_keep_ordered_formatting() {
+    for key in [Key::Enter, Key::Tab, Key::Escape] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "aaa");
+        let mut rich = thinoda_core::InlineText::default();
+        rich.update_range("aaa", 1..2, |style| style.bold = Some(true))
+            .unwrap();
+        sheet.canvas.object_mut(id).unwrap().label_rich_text = Some(std::sync::Arc::new(rich));
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        let edit_id = MapCanvas::board_label_editor_id();
+        let mut state = egui::TextEdit::load_state(&h.ctx, edit_id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(1),
+            )));
+        state.store(&h.ctx, edit_id);
+        h.input_mut().events.extend([
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "a".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::Ime(egui::ImeEvent::Commit("a".into())),
+        ]);
+        h.run_steps(2);
+        let (_, _, text, changed) = h.state().view.board_rich_label_draft().unwrap();
+        assert_eq!(text, "aaaa", "key={key:?}");
+        let changed = changed.unwrap();
+        assert_eq!((changed.runs[0].start, changed.runs[0].end), (2, 3));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
 fn rich_label_empty_ime_preserves_redo_when_composition_cancels() {
     for empty_preedit in [true, false] {
         let mut sheet = board();

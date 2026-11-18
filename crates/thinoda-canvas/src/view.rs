@@ -289,18 +289,22 @@ pub fn protect_ime_candidate_keys(ctx: &egui::Context, editor_id: Id, composing:
         active
     });
     if ime_frame {
-        let candidate_key = ctx.input_mut(|input| {
-            let mut consumed = false;
-            for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
-                for key in [Key::Enter, Key::Tab, Key::Escape] {
-                    consumed |= input.consume_key(modifiers, key);
-                }
+        consume_ime_candidate_keys(ctx, editor_id);
+    }
+}
+
+fn consume_ime_candidate_keys(ctx: &egui::Context, editor_id: Id) {
+    let candidate_key = ctx.input_mut(|input| {
+        let mut consumed = false;
+        for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
+            for key in [Key::Enter, Key::Tab, Key::Escape] {
+                consumed |= input.consume_key(modifiers, key);
             }
-            consumed
-        });
-        if candidate_key {
-            ctx.memory_mut(|memory| memory.request_focus(editor_id));
         }
+        consumed
+    });
+    if candidate_key {
+        ctx.memory_mut(|memory| memory.request_focus(editor_id));
     }
 }
 

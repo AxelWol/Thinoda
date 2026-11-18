@@ -7451,21 +7451,37 @@ pub(super) fn show_label_editor(
                 && keyboard
                     .iter()
                     .any(|event| matches!(event, egui::Event::Ime(_)))
-                && !keyboard.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Key {
-                            key: Key::Enter | Key::Tab | Key::Escape | Key::F6,
-                            ..
-                        }
-                    )
-                })
+                && !keyboard
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Key { key: Key::F6, .. }))
                 && !input
                     .events
                     .iter()
                     .any(|event| matches!(event, egui::Event::PointerButton { .. }))
         });
     if split_shortcuts || split_ime {
+        #[allow(deprecated)]
+        if split_ime
+            && (view
+                .board_input
+                .label
+                .as_ref()
+                .is_some_and(|edit| edit.ime_composing)
+                || ui.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Ime(
+                                egui::ImeEvent::Preedit { .. }
+                                    | egui::ImeEvent::Commit(_)
+                                    | egui::ImeEvent::Disabled
+                            )
+                        )
+                    })
+                }))
+        {
+            consume_ime_candidate_keys(ui.ctx(), edit_id);
+        }
         // Keep ordered keyboard events separate so each edit has its own range.
         let (events, pointer) = ui.input_mut(|input| {
             (

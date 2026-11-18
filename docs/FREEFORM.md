@@ -2074,10 +2074,11 @@ Duck check: an isolated, pointer-free IME surrounding-delete event uses the
 actual ordered buffer deletions, clamping oversized ranges as egui does and
 remapping the pending caret. Isolated preedit and commit replacements use
 actual buffer ranges, and pointer-free mixed IME/keyboard batches without
-candidate keys or F6 are processed in order. Synthetic tests cover repeated
-text, both sides of a composition, empty preedit/commit cancellation, and
-undo before, during and after composition. Candidate-key and pointer batches
-still use the earlier reconciliation and require separate acceptance.
+F6 are processed in order while candidate keys remain protected for the
+whole IME frame. Synthetic tests cover repeated text, both sides of a
+composition, empty preedit/commit cancellation, candidate keys, and undo
+before, during and after composition. F6 and pointer batches still require
+separate acceptance.
 
 The standalone experiment under `work-in-progress/freeform/rich-text` exercises
 explicit scalar-indexed replacements and broader style-run operations,
