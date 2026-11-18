@@ -7450,7 +7450,16 @@ pub(super) fn show_label_editor(
                 && keyboard.len() > 1
                 && keyboard
                     .iter()
-                    .all(|event| matches!(event, egui::Event::Ime(_)))
+                    .any(|event| matches!(event, egui::Event::Ime(_)))
+                && !keyboard.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::Enter | Key::Tab | Key::Escape | Key::F6,
+                            ..
+                        }
+                    )
+                })
                 && !input
                     .events
                     .iter()
